@@ -60,11 +60,38 @@ Git.worktree.remove_force(repo_cwd, path) -> IO(String)
 
 - `Git.branch.sanitize(s)` gives a lowercase name built from `[a-z0-9._/-]`. Any other character becomes `-`. Each run of separators collapses to one: `/` wins over `-`, and `-` wins over `.`. So `..`, `//`, `/.` and `-/` cannot appear. The name has no leading or trailing separator and is at most 64 characters. The result is `""` when nothing is left.
 - `Git.branch.temp(seed)` hashes the seed with murmur3's 32-bit finalizer.
-- `Git.worktree.path` answers `<base_dir>/worktrees/<repo_name>/<branch with / as ->`.
+- `Git.worktree.path` answers `<base_dir>/worktrees/<repo_name>/<branch with / as ->`. Threads use `Git.thread_wt` instead (below).
 - `Git.worktree.create` runs `git worktree add -b <sanitized branch> <path> [base_branch]` and answers the path. To get a fresh branch, pass `Git.branch.temp(seed)`.
 - `Git.branch.rename` sanitizes `new` and answers the new name.
 - `Git.worktree.remove` answers `""`. Git refuses to remove a worktree that has changes.
 - `Git.worktree.remove_force` removes the worktree even when it has changes.
+
+## Thread worktrees
+
+```
+Git.thread_wt(project_dir, carry, branch) -> IO(String)     the thread's directory, "skip: <why>" or "error: ..."
+Git.thread_wt.again(project_dir, branch) -> IO(String)      the same, on a kept branch
+Git.thread_wt.path(top, branch) -> String                   <top>/.backplane/worktrees/<branch with / as ->
+Git.exclude(cwd) -> IO(String)                              /.backplane/ in <common git dir>/info/exclude, once
+Git.skipped(s) -> Bool
+```
+
+- Every new thread gets a worktree of its project's repository on a fresh `backplane/<8 hex>` branch from HEAD (the thread setting `thread.env`: `auto`, the default, or `worktree`; `local` works in the folder). The first message names the branch.
+- The worktree lives in the repository, under `.backplane/worktrees/`, listed in `info/exclude` (not `.gitignore`), so the folder's status, file list and checkpoints never see it. A project that is a folder inside a bigger repository works at the same place in its worktree.
+- No repository, or no commit yet: the thread works in the project folder (`WorktreeSkipped`). Until the worktree exists (at most two minutes), the thread's messages wait in its queue.
+- A hardware project (KiCad files in the project folder) brings its uncommitted work into the new worktree: changed and untracked files (not ignored ones, KiCad backups, locks, autosaves or the footprint cache), and deletions. A software project starts clean from HEAD.
+- The viewer shows the selected thread's worktree, so it shows the board that thread edits.
+
+Removal (`M.Worktree.drop`, laws `worktree_kept_*`, `worktree_dropped_*`):
+- A worktree goes once its thread is idle and settled for `worktree.days` (default 3, since it settled), hidden (archived or deleted) that long since its last activity, or settled by a merge (at once, on the next tick).
+- Never while a turn runs or something waits on the user, never while the thread is active, pinned or snoozed, and never a directory outside `.backplane/worktrees/`.
+- First a checkpoint of the worktree is taken, then `git worktree remove --force`; the branch stays (`WorktreeRemoved`).
+- A message to such a thread makes the worktree again from its branch, restores that last checkpoint, and then runs (law `worktree_revives`).
+
+## Merges
+
+- Each minute, a project with threads on the active or pinned shelf that have a branch asks `gh pr list --state merged --json headRefName,url` (one call per project, 30 s timeout). A thread whose branch shows up settles (`ThreadMerged`, kept as the setting `merged.<id>`), with a note linking the pull request.
+- A merge settles a thread once (law `merge_once`): brought back, it stays back. Without `gh`, its login or a GitHub remote, nothing happens.
 
 ## Checkpoints
 

@@ -968,9 +968,97 @@ def GitJob.cp0.k(n: Nat, +cwd: String, +thread: String) -> IO(Unit):
     case _:
       IO.pure(Unit, Unit{})
 
-def GitJob.worktree.k(+r: String, +inbox: Chan(Msg), +thread: String, +branch: String) -> IO(Unit):
-  Bool.pick(IO(Unit), GT.Git.failed(r), GitJob.note(inbox, thread, "error", "worktree: " ++ r),
-    GitJob.say(inbox, "thread.worktree", [J.KV{"thread", J.Str{thread}}, J.KV{"branch", J.Str{branch}}, J.KV{"path", J.Str{r}}]))
+# A new thread's worktree (Git.thread_wt, in <repo>/.backplane/worktrees).
+# When there is no repository to branch, or git fails, the thread works in
+# the project folder (thread.local); only a worktree asked for by name
+# ("worktree" rather than the default "auto") reports that as an error.
+
+def WtJob.skip(+inbox: Chan(Msg), +thread: String, +tone: String, +why: String) -> IO(Unit):
+  do IO<Unit>:
+    GitJob.note(inbox, thread, tone, "working in the project folder: " ++ why)
+    GitJob.say(inbox, "thread.local", [J.KV{"thread", J.Str{thread}}])
+
+def WtJob.made(+inbox: Chan(Msg), +thread: String, +branch: String, +path: String, carried: Bool) -> IO(Unit):
+  do IO<Unit>:
+    GitJob.say(inbox, "thread.worktree", [J.KV{"thread", J.Str{thread}}, J.KV{"branch", J.Str{branch}}, J.KV{"path", J.Str{path}}])
+    GitJob.note(inbox, thread, "info", "worktree " ++ path ++ Bool.pick(String, carried, " (with the folder's uncommitted work)", ""))
+
+def WtJob.done(+r: String, +inbox: Chan(Msg), +thread: String, +mode: String, +branch: String, +carried: Bool) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.skipped(r), WtJob.skip(inbox, thread, Bool.pick(String, String.eq(mode, "worktree"), "error", "info"), String.drop(r, 6n)),
+    Bool.pick(IO(Unit), GT.Git.failed(r), WtJob.skip(inbox, thread, "error", String.trim(r)),
+      WtJob.made(inbox, thread, branch, r, carried)))
+
+def WtJob.go(+hw: Bool, +inbox: Chan(Msg), +thread: String, +root: String, +mode: String) -> IO(Unit):
+  IO.bind(String, Unit, GT.Git.thread_wt(root, hw, GT.Git.branch.temp(B.Wt.seed(thread))),
+    r => WtJob.done(r, inbox, thread, mode, GT.Git.branch.sanitize(GT.Git.branch.temp(B.Wt.seed(thread))), hw))
+
+def WtJob.restore.k(n: Nat, +inbox: Chan(Msg), +thread: String, +path: String) -> IO(Unit):
+  match n:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+last:
+      IO.bind(String, Unit, GT.Git.checkpoint.revert(path, thread, last), r => IO.pure(Unit, Unit{}))
+
+# a worktree made again gets back what it held when it was removed (the
+# checkpoint taken then), before anything that waited for it runs
+def WtJob.again.k(+r: String, +inbox: Chan(Msg), +thread: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Bool.or(GT.Git.failed(r), GT.Git.skipped(r)), WtJob.done(r, inbox, thread, "worktree", branch, False{}),
+    IO.bind(Nat, Unit, GitJob.count(r, thread), n => IO.bind(Unit, Unit, WtJob.restore.k(n, inbox, thread, r), _ => WtJob.done(r, inbox, thread, "worktree", branch, False{}))))
+
+def WtJob.run(+inbox: Chan(Msg), +thread: String, +root: String, +mode: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(mode, "again"),
+    IO.bind(String, Unit, GT.Git.thread_wt.again(root, branch), r => WtJob.again.k(r, inbox, thread, branch)),
+    IO.bind(List<&2, String>, Unit, K.Io.names(root), ns => WtJob.go(B.Wt.hardware(ns), inbox, thread, root, mode)))
+
+# Removing a thread's worktree (M.Worktree.drop): its state is kept first as
+# a checkpoint (a hidden ref, so nothing is lost; the branch stays too),
+# then the worktree goes. Only a directory under .backplane/worktrees is
+# ever removed. A worktree already gone is reported gone.
+
+def RmJob.done(+r: String, +inbox: Chan(Msg), +thread: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.failed(r), Log.info("worktree not removed: " ++ r),
+    do IO<Unit>:
+      GitJob.say(inbox, "thread.unrooted", [J.KV{"thread", J.Str{thread}}])
+      GitJob.note(inbox, thread, "info", "worktree removed; branch " ++ branch ++ " and its last state are kept"))
+
+def RmJob.top(+top: String, +inbox: Chan(Msg), +thread: String, +root: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Bool.not(M.Worktree.ours(top ++ "/")), Log.info("worktree not ours, kept: " ++ top),
+    IO.bind(String, Unit, GT.Git.worktree.remove_force(root, top), r => RmJob.done(r, inbox, thread, branch)))
+
+def RmJob.saved(+cp: String, +inbox: Chan(Msg), +thread: String, +wt: String, +root: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.failed(cp), Log.info("worktree kept, no checkpoint: " ++ cp),
+    IO.bind(String, Unit, GT.Git.root(wt), top => RmJob.top(top, inbox, thread, root, branch)))
+
+def RmJob.there(r: P.Ran, +inbox: Chan(Msg), +thread: String, +wt: String, +root: String, +branch: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, _}:
+      IO.bind(Nat, Unit, GitJob.count(wt, thread), n => IO.bind(String, Unit, GT.Git.checkpoint.capture(wt, thread, n), cp => RmJob.saved(cp, inbox, thread, wt, root, branch)))
+    case _:
+      GitJob.say(inbox, "thread.unrooted", [J.KV{"thread", J.Str{thread}}])
+
+def RmJob.run(+inbox: Chan(Msg), +thread: String, +wt: String, +root: String, +branch: String) -> IO(Unit):
+  IO.bind(P.Ran, Unit, P.Proc.run("test", ["-d", wt], "/"), r => RmJob.there(r, inbox, thread, wt, root, branch))
+
+# Merges: which of a project's due branches gh reports merged (one call per
+# project per tick; nothing happens without gh, auth or a GitHub remote)
+
+def MergeJob.tell(hs: List<&2, J.KV>, +inbox: Chan(Msg)) -> IO(Unit):
+  match hs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case J.KV{th, u} <> t:
+      IO.bind(Unit, Unit, GitJob.say(inbox, "thread.merged", [J.KV{"thread", J.Str{th}}, J.KV{"url", u}]), _ => MergeJob.tell(t, inbox))
+
+def MergeJob.got(r: P.Ran, +inbox: Chan(Msg), +lines: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, out}:
+      MergeJob.tell(B.Merge.hits(out, lines), inbox)
+    case _:
+      IO.pure(Unit, Unit{})
+
+def MergeJob.run(+inbox: Chan(Msg), +root: String, +lines: String) -> IO(Unit):
+  IO.bind(P.Ran, Unit, P.Proc.run("env", ["GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "timeout", "30", "gh", "pr", "list", "--state", "merged", "--limit", "100", "--json", "headRefName,url"], root),
+    r => MergeJob.got(r, inbox, lines))
 
 def GitJob.text.k(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +what: String, +r: String) -> IO(Unit):
   do IO<Unit>:
@@ -1057,7 +1145,7 @@ def AgentJob.act(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, 
 def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
   match i:
     case 0n:
-      IO.bind(String, Unit, GT.Git.worktree.create(cwd, home, a, GT.Git.branch.temp(seed), ""), r => GitJob.worktree.k(r, inbox, thread, GT.Git.branch.temp(seed)))
+      WtJob.run(inbox, thread, cwd, a, b)
     case 1n:
       IO.bind(Nat, Unit, GitJob.count(cwd, thread), n => GitJob.cp0.k(n, cwd, thread))
     case 2n:
@@ -1155,12 +1243,18 @@ def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: Str
       Files.list(inbox, client, id, thread, cwd)
     case 1n:
       Snooze.tomorrow(inbox, client, id, thread, a)
+    case 2n:
+      WtJob.run(inbox, thread, cwd, a, b)
+    case 3n:
+      MergeJob.run(inbox, cwd, a)
+    case 4n:
+      RmJob.run(inbox, thread, cwd, a, b)
     case _:
       GitJob.run.git(job, inbox, client, id, thread, cwd, a, b, home)
 
 # a job the hub asked for: a git job, or one of the sidebar's
 def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  GitJob.run.k(C.Codec.pos(["files", "snooze"], job), job, inbox, client, id, thread, cwd, a, b, home)
+  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove"], job), job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------

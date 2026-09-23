@@ -185,6 +185,15 @@ type Change is Data:
   # a manual place on the "pinned" or "active" shelf: an order key (Key
   # below, shown as hex); "" drops it
   ThreadOrdered{id: String, section: String, key: String, at: Nat}
+  # a new thread's worktree could not be made (not a git repository, no
+  # commit yet): it works in the project folder
+  WorktreeSkipped{id: String, at: Nat}
+  # the thread's branch was merged (a GitHub pull request, seen by gh): it
+  # settles, and the merge is kept as the setting merged.<id>
+  ThreadMerged{id: String, url: String, at: Nat}
+  # the thread's worktree was removed (settled long enough, or merged); its
+  # branch stays, and its last state is a checkpoint
+  WorktreeRemoved{id: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -364,6 +373,14 @@ def Thread.worktree_set(b: String, w: String, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, _, _, pr, mo, rm, im, se, de} = t
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, Worktree{}, b, w, pr, mo, rm, im, se, de}
 
+def Thread.local(t: Thread) -> Thread:
+  Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, _, _, _, pr, mo, rm, im, se, de} = t
+  Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, Local{}, "", "", pr, mo, rm, im, se, de}
+
+def Thread.unrooted(t: Thread) -> Thread:
+  Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, _, pr, mo, rm, im, se, de} = t
+  Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, "", pr, mo, rm, im, se, de}
+
 def Thread.session_set(s: String, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, _, de} = t
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, s, de}
@@ -426,6 +443,103 @@ def Nav.keyed(n: Nav, +section: String, +key: String) -> Nav:
   match n:
     case Nav{+u, +p, +a}:
       Bool.pick(Nav, String.eq(section, "pinned"), Nav{u, key, a}, Nav{u, p, key})
+
+# Worktrees
+# ---------
+# A new thread gets its own worktree of the project's repository (made by
+# the server under <repo>/.backplane/worktrees). Until it exists the
+# thread's messages wait in its queue, for at most Worktree.wait() seconds
+# after the thread was made; past that (or once skipped: no repository) the
+# thread works in the project folder (laws worktree_pending_*).
+#
+# A worktree is removed once its thread is idle and put away: settled or
+# hidden for Worktree days (the "worktree.days" setting), or settled by a
+# merge, at once. Only worktrees Backplane made (under .backplane/worktrees)
+# are ever removed, and the branch stays (laws worktree_kept_*,
+# worktree_dropped_*). A message to a thread whose worktree is gone makes
+# it again from the branch, and waits for it like a new thread's first
+# message (law worktree_revives).
+
+def Worktree.wait() -> Nat:
+  120n
+
+def Worktree.pending.k(env: EnvMode, +wt: String, +since: Nat, +now: Nat) -> Bool:
+  match env:
+    case Worktree{}:
+      Bool.and(Nat.is_lt(now, Nat.add(since, Worktree.wait())), String.is_empty(wt))
+    case Local{}:
+      False{}
+
+# when the wait started: a new thread's creation, or, for a thread whose
+# worktree is being made again, the message that asked for it
+def Worktree.since(+branch: String, +created: Nat, +activity: Nat) -> Nat:
+  Bool.pick(Nat, String.is_empty(branch), created, activity)
+
+# whether a thread still waits for its worktree
+def Worktree.pending(t: Thread, +now: Nat) -> Bool:
+  Thread{_, _, _, +c, +a, _, _, _, _, _, _, _, en, +br, +wt, _, _, _, _, _, _} = t
+  Worktree.pending.k(en, wt, Worktree.since(br, c, a), now)
+
+def Worktree.gone.k(env: EnvMode, +wt: String, +branch: String) -> Bool:
+  match env:
+    case Worktree{}:
+      Bool.and(String.is_empty(wt), Bool.not(String.is_empty(branch)))
+    case Local{}:
+      False{}
+
+# a worktree thread whose worktree was removed (its branch is kept)
+def Worktree.gone(t: Thread) -> Bool:
+  Thread{_, _, _, _, _, _, _, _, _, _, _, _, en, +br, +wt, _, _, _, _, _, _} = t
+  Worktree.gone.k(en, wt, br)
+
+# a directory Backplane made for a thread, the only kind it removes
+def Worktree.ours(+wt: String) -> Bool:
+  String.contains(wt, "/.backplane/worktrees/")
+
+# the shelves a thread is put away on
+def Worktree.parked(sh: Shelf) -> Bool:
+  match sh:
+    case Settled{}:
+      True{}
+    case Hidden{}:
+      True{}
+    case _:
+      False{}
+
+def Worktree.drop.s(sh: Shelf, +ours: Bool, merged: Bool, aged: Bool) -> Bool:
+  match sh:
+    case Settled{}:
+      Bool.and(ours, Bool.or(merged, aged))
+    case Hidden{}:
+      Bool.and(ours, aged)
+    case _:
+      False{}
+
+# whether a worktree goes now: never while its thread is busy
+def Worktree.drop.k(busy: Bool, sh: Shelf, +ours: Bool, merged: Bool, aged: Bool) -> Bool:
+  match busy:
+    case True{}:
+      False{}
+    case False{}:
+      Worktree.drop.s(sh, ours, merged, aged)
+
+# Merges
+# ------
+# A thread whose branch is merged settles by itself, once: the merge is
+# recorded (merged.<id>), and a recorded merge is never due again, so a
+# thread the user brings back stays back (laws merge_*).
+
+def Merge.key(+id: String) -> String:
+  "merged." ++ id
+
+def Merge.due.k(sh: Shelf, +branch: String, +merged: String) -> Bool:
+  match sh:
+    case Pinned{}:
+      Bool.and(Bool.not(String.is_empty(branch)), String.is_empty(merged))
+    case Active{}:
+      Bool.and(Bool.not(String.is_empty(branch)), String.is_empty(merged))
+    case _:
+      False{}
 
 # Projection
 # ----------
@@ -592,6 +706,38 @@ def Setting.get(s: State, +k: String, d: String) -> String:
     case State{_, _, _, _, _, sg, qu, ak, _, _}:
       State.get.k(Map.get(String, d, sg, k))
 
+def Merge.branch(t: Thread) -> String:
+  match t:
+    case Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, br, _, _, _, _, _, _, _}:
+      br
+
+def Merge.id(t: Thread) -> String:
+  match t:
+    case Thread{i, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      i
+
+# whether a merge of this thread's branch should still settle it: it has a
+# branch, sits on the pinned or active shelf, and no merge is recorded
+def Merge.due(+s: State, +t: Thread) -> Bool:
+  Merge.due.k(Shelf.of(t), Merge.branch(t), Setting.get(s, Merge.key(Merge.id(t)), ""))
+
+def Worktree.clock(sh: Shelf, +settled_at: Nat, +activity: Nat) -> Nat:
+  match sh:
+    case Settled{}:
+      settled_at
+    case _:
+      activity
+
+def Worktree.drop.t(t: Thread, +now: Nat, +window: Nat, +merged: String, +sh: Shelf) -> Bool:
+  match t:
+    case Thread{_, _, _, _, +a, tu, +pe, _, _, +sa, _, _, _, _, +wt, _, _, _, _, _, _}:
+      Worktree.drop.k(Thread.busy(tu, pe), sh, Worktree.ours(wt), Bool.not(String.is_empty(merged)), Settle.stale(now, Worktree.clock(sh, sa, a), window))
+
+# whether this thread's worktree is removed now: put away for the window
+# (settled: since it settled; hidden: since its last activity), or merged
+def Worktree.drop(+s: State, +t: Thread, +now: Nat, +window: Nat) -> Bool:
+  Worktree.drop.t(t, now, window, Setting.get(s, Merge.key(Merge.id(t)), ""), Shelf.of(t))
+
 # Devices
 # -------
 # Push registrations, keyed by token: registering a token again replaces
@@ -692,6 +838,12 @@ def State.apply.go(s: State, e: Change) -> State:
       State.nav((x => Nav.snoozed(x, until)), s, id)
     case ThreadOrdered{+id, +section, +key, _}:
       State.nav((x => Nav.keyed(x, section, key)), s, id)
+    case WorktreeSkipped{+id, _}:
+      State.thread((t => Thread.local(t)), s, id)
+    case ThreadMerged{+id, url, +at}:
+      State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
+    case WorktreeRemoved{+id, _}:
+      State.thread((t => Thread.unrooted(t)), s, id)
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:

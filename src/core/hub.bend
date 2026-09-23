@@ -194,16 +194,28 @@ def Hub.entries(s: M.State) -> List<&2, M.Entry>:
     case M.State{_, _, es, _, _, _, _, _, _, _}:
       es
 
+# a thread works in its own worktree unless asked for the project folder
+# ("local"): "auto" (the default) and "worktree" both ask the server for
+# one, which falls back to the folder outside a repository
+def Hub.env.of(+mode: String) -> M.EnvMode:
+  Bool.pick(M.EnvMode, String.eq(mode, "local"), M.Local{}, M.Worktree{})
+
+def Hub.env.outs(e: M.EnvMode, +th: String, +root: String, +mode: String) -> List<&2, Out>:
+  match e:
+    case M.Worktree{}:
+      [Git{0, "", "worktree", th, root, mode, ""}]
+    case M.Local{}:
+      Nil{}
+
 def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   +project = J.Json.get_str(p, "project", "")
   +title = J.Json.get_str(p, "title", "New thread")
-  +env = J.Json.get_str(p, "env", M.Setting.get(s, "thread.env", "local"))
+  +env = J.Json.get_str(p, "env", M.Setting.get(s, "thread.env", "auto"))
   +th = Hub.id("t", now, Hub.seq(s))
   Step{[M.ThreadCreated{th, project, title,
-    C.Env.of(env), "", "", J.Json.get_str(p, "provider", M.Setting.get(s, "agent.provider", "claude")),
+    Hub.env.of(env), "", "", J.Json.get_str(p, "provider", M.Setting.get(s, "agent.provider", "claude")),
     J.Json.get_str(p, "model", M.Setting.get(s, "agent.model", "")), now}],
-    Reply.ok(client, id) <> Bool.pick(List<&2, Out>, String.eq(env, "worktree"),
-      [Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, project)), Hub.base(Hub.project.root(Hub.project(s, project))), ""}], Nil{})}
+    Reply.ok(client, id) <> Hub.env.outs(Hub.env.of(env), th, Hub.project.root(Hub.project(s, project)), env)}
 
 def Hub.root.norm.fin(+r: String) -> String:
   Bool.pick(String, String.is_empty(r), "/", r)
@@ -418,7 +430,7 @@ def Hub.reorder(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
-  ["thread.branch", "skills.list", "thread.effort"]
+  ["thread.branch", "skills.list", "thread.effort", "thread.local", "thread.merged", "thread.unrooted"]
 
 def Hub.provider_of(t: M.Thread) -> String:
   match t:
@@ -450,12 +462,47 @@ def Name.out(t: M.Thread, +text: String) -> List<&2, Out>:
     case M.Thread{+id, _, +title, _, _, _, _, _, _, _, _, _, _, +br, +wt, _, _, _, _, _, _}:
       Name.out.k(Bool.and(Bool.and(String.eq(title, "New thread"), AG.Name.temp(br)), Bool.not(String.is_empty(wt))), id, wt, br, text)
 
+# a worktree thread's first turn, run once its worktree exists
+def Name.first(t: M.Thread, +text: String) -> List<&2, Out>:
+  match t:
+    case M.Thread{+id, _, _, _, _, _, _, _, _, _, _, _, _, +br, +wt, _, _, _, _, _, _}:
+      Name.out.k(Bool.and(AG.Name.temp(br), Bool.not(String.is_empty(wt))), id, wt, br, text)
+
 # Commit & push and Open PR without a message: the server writes one from
 # the thread's diff (the thread's title when it cannot)
 def Hub.act(+s: M.State, +client: U32, +id: String, +thread: String, +action: String, +p: J.Json) -> Step:
   Bool.pick(Step, Bool.and(String.contains(action, "commit"), String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(p, "message"), J.Null{})), "null")),
     Hub.git(s, client, id, "act_gen", thread, action, Hub.thread_title(Hub.thread(s, thread))),
     Hub.git(s, client, id, "act", thread, action, J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, thread)))))
+
+# A thread's worktree is ready (thread.worktree) or cannot be made
+# (thread.local): what waited for it runs now, in the thread's directory.
+# The first message of a worktree thread names its branch here, since the
+# worktree did not exist when it was sent.
+def Wt.name(first: Bool, t: M.Thread, +text: String) -> List<&2, Out>:
+  match first:
+    case True{}:
+      Name.first(t, text)
+    case False{}:
+      Nil{}
+
+def Wt.start.k(go: Bool, +first: Bool, +t: M.Thread, +cwd: String, +queued: String, +now: Nat, +thread: String) -> Step:
+  match go:
+    case True{}:
+      Step{[M.QueueTaken{thread, now}, M.TurnChanged{thread, M.Running{}, now}],
+        Git{0, "", "checkpoint0", thread, cwd, "", ""} <> List.append(&2, Out, Wt.name(first, t, queued), Hub.run(t, cwd, queued))}
+    case False{}:
+      Step.none()
+
+# gh saw the thread's branch merged: it settles, once (a recorded merge is
+# not due again)
+def Merge.found(due: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +url: String) -> Step:
+  match due:
+    case True{}:
+      Step.reply(client, id, [M.ThreadMerged{thread, url, now},
+        M.ActivityLogged{thread, Hub.id("g", now, Hub.seq(s)), "info", "git", "merged" ++ Bool.pick(String, String.is_empty(url), "", ": " ++ url), now}])
+    case False{}:
+      Step.outs([Reply.ok(client, id)])
 
 # attachments, files and the web client's panes
 def Hub.methods.media() -> List<&2, String>:
@@ -489,65 +536,6 @@ def Hub.media(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
       Step.outs([Git{client, id, "update.check", "", "", M.Setting.get(s, "update.channel", "stable"), ""}])
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
-
-def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
-  match i:
-    case 0n:
-      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), Hub.worktree(Hub.thread(s, J.Json.get_str(p, "thread", ""))), now}])
-    case 1n:
-      Hub.git(s, client, id, "skills", J.Json.get_str(p, "thread", ""), "", "")
-    case 2n:
-      Hub.effort(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "effort", ""))
-    case _:
-      Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
-
-def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
-  match i:
-    case 0n:
-      Hub.snooze(now, client, id, p)
-    case 1n:
-      Hub.reorder(s, now, client, id, p)
-    case 2n:
-      Step.outs([Git{client, id, "files", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
-    case _:
-      Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
-
-def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
-  match i:
-    case 0n:
-      Step.outs([Fs{client, id, "list", J.Json.get_str(p, "path", "")}])
-    case 1n:
-      Step.outs([Fs{client, id, "mkdir", J.Json.get_str(p, "path", "")}])
-    case 2n:
-      Step.outs([Fs{client, id, "new", J.Json.get_str(p, "path", "")}])
-    case 3n:
-      Hub.project_add(s, now, client, id, p)
-    case _:
-      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
-
-def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
-  match i:
-    case 0n:
-      Hub.git(s, client, id, "diff", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "from"), "0"), J.Json.as_raw(J.Json.get(p, "to"), "-1"))
-    case 1n:
-      Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
-    case 2n:
-      Hub.act(s, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), p)
-    case 3n:
-      Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
-    case 4n:
-      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), J.Json.get_str(p, "path", ""), now}])
-    case 5n:
-      Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
-        J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
-    case 6n:
-      Hub.term(s, client, id, "open", p)
-    case 7n:
-      Hub.term(s, client, id, "input", p)
-    case 8n:
-      Hub.term(s, client, id, "resize", p)
-    case _:
-      Hub.fs(C.Codec.pos(Hub.methods.fs(), m), s, now, client, id, p, m)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
@@ -664,20 +652,130 @@ def Hub.running(t: M.Thread) -> Bool:
     case _:
       False{}
 
+# first: the thread's first worktree (not one made again), whose waiting
+# message names its branch
+def Wt.start(+s: M.State, +now: Nat, +thread: String, +first: Bool) -> Step:
+  Wt.start.k(Bool.and(Bool.not(Hub.running(Hub.thread(s, thread))), Bool.not(String.is_empty(M.Queue.of(s, thread)))), first,
+    Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread)
+
+def Wt.ready(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +c: M.Change) -> Step:
+  Step.before([c], [Reply.ok(client, id)], Wt.start(M.State.replay([c], s), now, thread, String.is_empty(M.Merge.branch(Hub.thread(s, thread)))))
+
+def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), Hub.worktree(Hub.thread(s, J.Json.get_str(p, "thread", ""))), now}])
+    case 1n:
+      Hub.git(s, client, id, "skills", J.Json.get_str(p, "thread", ""), "", "")
+    case 2n:
+      Hub.effort(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "effort", ""))
+    case 3n:
+      Wt.ready(s, now, client, id, J.Json.get_str(p, "thread", ""), M.WorktreeSkipped{J.Json.get_str(p, "thread", ""), now})
+    case 4n:
+      Merge.found(M.Merge.due(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "url", ""))
+    case 5n:
+      Step.reply(client, id, [M.WorktreeRemoved{J.Json.get_str(p, "thread", ""), now}])
+    case _:
+      Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
+
+def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Hub.snooze(now, client, id, p)
+    case 1n:
+      Hub.reorder(s, now, client, id, p)
+    case 2n:
+      Step.outs([Git{client, id, "files", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
+    case _:
+      Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
+
+def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Step.outs([Fs{client, id, "list", J.Json.get_str(p, "path", "")}])
+    case 1n:
+      Step.outs([Fs{client, id, "mkdir", J.Json.get_str(p, "path", "")}])
+    case 2n:
+      Step.outs([Fs{client, id, "new", J.Json.get_str(p, "path", "")}])
+    case 3n:
+      Hub.project_add(s, now, client, id, p)
+    case _:
+      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
+
+def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Hub.git(s, client, id, "diff", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "from"), "0"), J.Json.as_raw(J.Json.get(p, "to"), "-1"))
+    case 1n:
+      Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
+    case 2n:
+      Hub.act(s, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), p)
+    case 3n:
+      Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
+    case 4n:
+      Wt.ready(s, now, client, id, J.Json.get_str(p, "thread", ""), M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), J.Json.get_str(p, "path", ""), now})
+    case 5n:
+      Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
+        J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
+    case 6n:
+      Hub.term(s, client, id, "open", p)
+    case 7n:
+      Hub.term(s, client, id, "input", p)
+    case 8n:
+      Hub.term(s, client, id, "resize", p)
+    case _:
+      Hub.fs(C.Codec.pos(Hub.methods.fs(), m), s, now, client, id, p, m)
+
 # a message for a thread's agent: it starts a turn, or, while a Codex or
-# Grok turn runs (one turn at a time), it is stored and waits in the
-# thread's queue (Claude takes input mid-turn itself)
+# Grok turn runs (one turn at a time) or the thread's worktree is still
+# being made, it is stored and waits in the thread's queue (Claude takes
+# input mid-turn itself)
+def Hub.thread_project(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      p
+
+# the worktree made again from a thread's kept branch
+def Wt.revive(+s: M.State, +th: String) -> Out:
+  Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, Hub.thread_project(Hub.thread(s, th)))), "again", M.Merge.branch(Hub.thread(s, th))}
+
+# whether a message makes a thread's removed worktree again first: the
+# thread is idle, its worktree is gone, and it is not being made already
+def Hub.revive(+running: Bool, gone: Bool, +pending: Bool) -> Bool:
+  Bool.and(Bool.not(running), Bool.and(gone, Bool.not(pending)))
+
+def Hub.post.v(revive: Bool, +running: Bool, +pending: Bool, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  match revive:
+    case True{}:
+      Step.before(Nil{}, [Wt.revive(s, thread)], Hub.post.go(True{}, Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread, msg, role, text))
+    case False{}:
+      Hub.post.go(Bool.or(Bool.and(running, Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude"))), pending),
+        Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread, msg, role, text)
+
+def Hub.post.w(+running: Bool, gone: Bool, +pending: Bool, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  Hub.post.v(Hub.revive(running, gone, pending), running, pending, s, now, thread, msg, role, text)
+
 def Hub.post(+s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
-  Hub.post.go(Bool.and(Hub.running(Hub.thread(s, thread)), Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude"))),
-    Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread, msg, role, text)
+  Hub.post.w(Hub.running(Hub.thread(s, thread)), M.Worktree.gone(Hub.thread(s, thread)), M.Worktree.pending(Hub.thread(s, thread), now), s, now, thread, msg, role, text)
 
 # a message from another thread (thread_send, a delegated task's result):
 # it lands in the target's inbox and waits while the target works, for
 # every provider (it never interrupts a running turn, Claude's included);
 # its id names the sender, which is what the link visuals read
+def Hub.inbox.v(revive: Bool, +running: Bool, +pending: Bool, +s: M.State, +now: Nat, +from: String, +to: String, role: M.Role, +text: String) -> Step:
+  match revive:
+    case True{}:
+      Step.before(Nil{}, [Wt.revive(s, to)], Hub.post.go(True{}, Hub.thread(s, to), Hub.cwd(s, Hub.thread(s, to)), M.Queue.of(s, to), now, to,
+        M.Link.id(from, Hub.id("m", now, Hub.seq(s))), role, text))
+    case False{}:
+      Hub.post.go(Bool.or(running, pending), Hub.thread(s, to), Hub.cwd(s, Hub.thread(s, to)), M.Queue.of(s, to), now, to,
+        M.Link.id(from, Hub.id("m", now, Hub.seq(s))), role, text)
+
+def Hub.inbox.w(+running: Bool, gone: Bool, +pending: Bool, +s: M.State, +now: Nat, +from: String, +to: String, role: M.Role, +text: String) -> Step:
+  Hub.inbox.v(Hub.revive(running, gone, pending), running, pending, s, now, from, to, role, text)
+
 def Hub.inbox(+s: M.State, +now: Nat, +from: String, +to: String, role: M.Role, +text: String) -> Step:
-  Hub.post.go(Hub.running(Hub.thread(s, to)), Hub.thread(s, to), Hub.cwd(s, Hub.thread(s, to)), M.Queue.of(s, to), now, to,
-    M.Link.id(from, Hub.id("m", now, Hub.seq(s))), role, text)
+  Hub.inbox.w(Hub.running(Hub.thread(s, to)), M.Worktree.gone(Hub.thread(s, to)), M.Worktree.pending(Hub.thread(s, to), now), s, now, from, to, role, text)
 
 def Hub.answer.plan(impl: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, +answer: String, +th: String) -> Step:
   match impl:
@@ -811,11 +909,120 @@ def Hub.settle.go(ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat, +w: 
 def Hub.settle.window(+s: M.State) -> Nat:
   Nat.mul(Nat.max(1n, Nat.min(90n, Maybe.default(&2, Nat, Nat.read(M.Setting.get(s, "settle.days", "3")), 3n))), 86400n)
 
-# every thread that should settle now, settled (a snoozed one never is)
-def Hub.tick(+s: M.State, +now: Nat) -> Step:
+# Merges
+# ------
+# Each tick, a project with threads whose merge is due asks gh which of
+# their branches were merged (one call per project); the server answers
+# thread.merged for each.
+
+def Merge.line.k(due: Bool, +in: Bool, +t: M.Thread, rest: List<&2, String>) -> List<&2, String>:
+  match due in:
+    case True{} True{}:
+      (M.Merge.id(t) ++ "\t" ++ M.Merge.branch(t)) <> rest
+    case _ _:
+      rest
+
+# "<thread>\t<branch>" for each of a project's threads whose merge is due
+def Merge.lines(ts: List<&2, M.Thread>, +s: M.State, +pid: String) -> List<&2, String>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      Merge.line.k(M.Merge.due(s, t), M.Thread.in_project(pid, t), t, Merge.lines(rest, s, pid))
+
+def Merge.ask.k(ls: List<&2, String>, +root: String, rest: List<&2, Out>) -> List<&2, Out>:
+  match ls:
+    case Nil{}:
+      rest
+    case +l <> t:
+      Git{0, "", "merged", "", root, String.join(l <> t, "\n"), ""} <> rest
+
+def Merge.ask.p(removed: Bool, +ts: List<&2, M.Thread>, +s: M.State, +id: String, +root: String, rest: List<&2, Out>) -> List<&2, Out>:
+  match removed:
+    case True{}:
+      rest
+    case False{}:
+      Merge.ask.k(Merge.lines(ts, s, id), root, rest)
+
+def Merge.asks(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +s: M.State) -> List<&2, Out>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case M.Project{+id, _, +root, _, rm} <> rest:
+      Merge.ask.p(rm, ts, s, id, root, Merge.asks(rest, ts, s))
+
+# gh's merged pull requests (gh pr list --json headRefName,url) against
+# "<thread>\t<branch>" lines: each thread whose branch was merged, with the
+# pull request's url
+def Merge.find(prs: List<&2, J.Json>, +branch: String) -> Maybe<&2, String>:
+  match prs:
+    case Nil{}:
+      None{}
+    case +o <> t:
+      Bool.pick(Maybe<&2, String>, String.eq(J.Json.get_str(o, "headRefName", ""), branch), Some{J.Json.get_str(o, "url", "")}, Merge.find(t, branch))
+
+def Merge.hit(m: Maybe<&2, String>, +th: String, rest: List<&2, J.KV>) -> List<&2, J.KV>:
+  match m:
+    case Some{u}:
+      J.KV{th, J.Str{u}} <> rest
+    case None{}:
+      rest
+
+def Merge.pair(parts: List<&2, String>, +prs: List<&2, J.Json>, rest: List<&2, J.KV>) -> List<&2, J.KV>:
+  match parts:
+    case +th <> +br <> Nil{}:
+      Merge.hit(Merge.find(prs, br), th, rest)
+    case _:
+      rest
+
+def Merge.hits.go(ls: List<&2, String>, +prs: List<&2, J.Json>) -> List<&2, J.KV>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      Merge.pair(String.split(l, '\t'), prs, Merge.hits.go(t, prs))
+
+def Merge.hits(+json: String, +lines: String) -> List<&2, J.KV>:
+  Merge.hits.go(String.lines(lines), J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(json), J.Null{})))
+
+def Wt.stale.one.k(t: M.Thread, +now: Nat, +pending: Bool) -> Bool:
+  match t:
+    case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, M.Worktree{}, +br, +wt, _, _, _, _, _, _}:
+      Bool.and(Bool.and(String.is_empty(wt), String.is_empty(br)), Bool.not(pending))
+    case _:
+      False{}
+
+def Wt.stale.one(+t: M.Thread, +now: Nat) -> Bool:
+  Wt.stale.one.k(t, now, M.Worktree.pending(t, now))
+
+# a hardware project: KiCad files in the project folder. Its new worktrees
+# bring the folder's uncommitted work along (board work is often not
+# committed yet, and boards do not merge by hand)
+def Wt.hardware(ns: List<&2, String>) -> Bool:
+  match ns:
+    case Nil{}:
+      False{}
+    case +n <> t:
+      Bool.or(Bool.or(String.ends_with(n, ".kicad_pro"), String.ends_with(n, ".kicad_pcb")), Bool.or(String.ends_with(n, ".kicad_sch"), Wt.hardware(t)))
+
+def Wt.digit(keep: Bool, +c: U32, rest: String) -> String:
+  match keep:
+    case True{}:
+      SCon{Chr{c}, rest}
+    case False{}:
+      rest
+
+def Wt.digits(s: String) -> String:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
-      Step{Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), now, Hub.settle.window(s)), Nil{}}
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{+c}, t}:
+      Wt.digit(Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)), c, Wt.digits(t))
+
+# a thread's temporary branch seed: its id's digits (time and sequence), so
+# two threads made in the same second get different branches
+def Wt.seed(+id: String) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Wt.digits(id)), 0n)
 
 # Codex (codex exec --json)
 # -------------------------
@@ -1064,3 +1271,58 @@ def Step.outs_of(st: Step) -> List<&2, Out>:
   match st:
     case Step{_, os}:
       os
+
+# Worktrees on the tick
+# ---------------------
+# A new thread whose worktree never came (the server restarted while
+# making it) runs what waited for it in the project folder once the wait
+# is over. A thread whose worktree was removed never does: its next
+# message makes the worktree again.
+
+def Wt.stale.k(stale: Bool, +s: M.State, +now: Nat, +th: String, rest: Step) -> Step:
+  match stale:
+    case True{}:
+      Step.before(Queue.changes(Wt.start(s, now, th, False{})), Step.outs_of(Wt.start(s, now, th, False{})), rest)
+    case False{}:
+      rest
+
+def Wt.stale(ts: List<&2, M.Thread>, +s: M.State, +now: Nat) -> Step:
+  match ts:
+    case Nil{}:
+      Step.none()
+    case +t <> rest:
+      Wt.stale.k(Bool.and(Wt.stale.one(t, now), Bool.not(String.is_empty(M.Queue.of(s, M.Thread.id(t))))), s, now, M.Thread.id(t), Wt.stale(rest, s, now))
+
+# Removing worktrees
+# ------------------
+# Each tick, the worktrees of threads put away long enough (or merged) are
+# removed by the server (M.Worktree.drop), which reports thread.unrooted.
+
+# how long a settled thread keeps its worktree: the "worktree.days"
+# setting (1..90), else 3 days
+def Hub.wt.window(+s: M.State) -> Nat:
+  Nat.mul(Nat.max(1n, Nat.min(90n, Maybe.default(&2, Nat, Nat.read(M.Setting.get(s, "worktree.days", "3")), 3n))), 86400n)
+
+def Drop.k(go: Bool, +s: M.State, +t: M.Thread, rest: List<&2, Out>) -> List<&2, Out>:
+  match go:
+    case True{}:
+      Git{0, "", "wt_remove", M.Thread.id(t), Hub.worktree(t), Hub.project.root(Hub.project(s, Hub.thread_project(t))), M.Merge.branch(t)} <> rest
+    case False{}:
+      rest
+
+def Drop.asks(ts: List<&2, M.Thread>, +s: M.State, +now: Nat, +w: Nat) -> List<&2, Out>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      Drop.k(M.Worktree.drop(s, t, now, w), s, t, Drop.asks(rest, s, now, w))
+
+# every thread that should settle now, settled (a snoozed one never is);
+# gh asked about due merges; worktrees put away long enough removed;
+# stranded worktree waits run
+def Hub.tick(+s: M.State, +now: Nat) -> Step:
+  match s:
+    case M.State{ps, +ts, _, _, _, _, _, _, _, _}:
+      Step.before(Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), now, Hub.settle.window(s)),
+        List.append(&2, Out, Merge.asks(Map.values(&2, M.Project, ps), Map.values(&2, M.Thread, ts), s), Drop.asks(Map.values(&2, M.Thread, ts), s, now, Hub.wt.window(s))),
+        Wt.stale(Map.values(&2, M.Thread, ts), s, now))

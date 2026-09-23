@@ -576,11 +576,20 @@ def Ui.thread_project(t: M.Thread) -> String:
     case M.Thread{_, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       p
 
-# the selected thread's project directory ("" with nothing selected)
+def Ui.thread_worktree(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, wt, _, _, _, _, _, _}:
+      wt
+
+def Ui.dir(+st: M.State, +wt: String, +project: String) -> String:
+  Bool.pick(String, String.is_empty(wt), Ui.project_root(st, project), wt)
+
+# the selected thread's directory: its worktree, else its project's folder
+# ("" with nothing selected). The viewer shows the board the thread edits.
 def Ui.root(u: Ui) -> String:
   match u:
     case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, nf, ob, tr}:
-      Bool.pick(String, String.is_empty(sel), "", Ui.project_root(st, Ui.thread_project(Ui.thread(st, sel))))
+      Bool.pick(String, String.is_empty(sel), "", Ui.dir(st, Ui.thread_worktree(Ui.thread(st, sel)), Ui.thread_project(Ui.thread(st, sel))))
 
 # Views both clients share
 # ------------------------

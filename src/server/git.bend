@@ -369,6 +369,89 @@ def Git.worktree.remove(repo_cwd: String, path: String) -> IO(String):
 def Git.worktree.remove_force(repo_cwd: String, path: String) -> IO(String):
   Git.seq(Git.run(repo_cwd, ["worktree", "remove", "--force", path]), _ => Git.done(""))
 
+# Thread worktrees
+# ----------------
+# A new thread gets a worktree inside its repository, at
+# <top>/.backplane/worktrees/<branch with / as ->. The repository's
+# info/exclude lists /.backplane/, so neither git status nor a checkpoint of
+# the main folder ever sees them. The thread works at the project's place
+# in the worktree (a project may be a folder inside a bigger repository).
+
+def Git.thread_wt.path(+top: String, branch: String) -> String:
+  top ++ "/.backplane/worktrees/" ++ Git.slash_dash.go(branch, "")
+
+def Git.thread_wt.sub(+prefix: String) -> String:
+  Bool.pick(String, String.ends_with(prefix, "/"), String.take(prefix, Nat.sub(String.length(prefix), 1n)), prefix)
+
+# where the thread works: the worktree, plus the project's place in the
+# repository (git rev-parse --show-prefix of the project folder)
+def Git.thread_wt.cwd(+path: String, +prefix: String) -> String:
+  Bool.pick(String, String.is_empty(prefix), path, path ++ "/" ++ Git.thread_wt.sub(prefix))
+
+def Git.exclude.sh() -> String:
+  "f=\"$1/info/exclude\"; mkdir -p \"$1/info\" && { grep -qxF '/.backplane/' \"$f\" 2>/dev/null || printf '\\n# Backplane thread worktrees\\n/.backplane/\\n' >> \"$f\"; }"
+
+# list /.backplane/ in the repository's info/exclude (once)
+def Git.exclude(+cwd: String) -> IO(String):
+  Git.seq(Git.run(cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"]),
+    dir => Git.seq(P.Proc.run("sh", ["-c", Git.exclude.sh(), "sh", dir], cwd), _ => Git.done("")))
+
+# Copy the folder's uncommitted work (changed and untracked files, not
+# ignored ones) into a new worktree, and delete there what is deleted here.
+# KiCad's own droppings (backups, locks, autosaves, the footprint cache)
+# stay behind.
+def Git.carry.sh() -> String:
+  "cd \"$1\" || exit 1; git ls-files -z -m -o --exclude-standard | grep -zv -e '-backups/' -e '\\.lck$' -e 'fp-info-cache$' -e '_autosave-' | tar -c --null -T - -f - 2>/dev/null | tar -x -f - -C \"$2\" 2>/dev/null; git ls-files -z -d | (cd \"$2\" && xargs -0 -r rm -f --); exit 0"
+
+def Git.carry(+top: String, +path: String) -> IO(String):
+  Git.seq(P.Proc.run("sh", ["-c", Git.carry.sh(), "sh", top, path], top), _ => Git.done(""))
+
+def Git.thread_wt.carry(carry: Bool, +top: String, +path: String, +cwd: String) -> IO(String):
+  match carry:
+    case True{}:
+      Git.and(Git.carry(top, path), _ => Git.done(cwd))
+    case False{}:
+      Git.done(cwd)
+
+def Git.thread_wt.made(+carry: Bool, +top: String, +prefix: String, +b: String) -> IO(String):
+  Git.and(Git.exclude(top), _ =>
+    Git.seq(Git.run(top, ["worktree", "add", "-b", b, Git.thread_wt.path(top, b)]),
+      _ => Git.thread_wt.carry(carry, top, Git.thread_wt.path(top, b), Git.thread_wt.cwd(Git.thread_wt.path(top, b), prefix))))
+
+def Git.thread_wt.head(r: P.Ran, +carry: Bool, +top: String, +prefix: String, +b: String) -> IO(String):
+  match r:
+    case P.Ran{0, _}:
+      Git.thread_wt.made(carry, top, prefix, b)
+    case _:
+      IO.pure(String, "skip: no commit yet")
+
+def Git.thread_wt.top(+top: String, +cwd: String, +carry: Bool, +b: String) -> IO(String):
+  Bool.pick(IO(String), String.is_empty(top), IO.pure(String, "skip: not a git repository"),
+    Git.and(Git.seq.raw(Git.run(cwd, ["rev-parse", "--show-prefix"]), p => Git.done(String.trim(p))),
+      +prefix => IO.bind(P.Ran, String, Git.run(cwd, ["rev-parse", "--verify", "-q", "HEAD"]), r => Git.thread_wt.head(r, carry, top, prefix, b))))
+
+# a new thread's worktree on a new branch from HEAD, for the project folder
+# cwd; carry: bring the folder's uncommitted work along. Answers the
+# thread's directory, "skip: <why>" when there is no repository to branch
+# (the thread then works in the folder), or "error: ...".
+def Git.thread_wt(+cwd: String, +carry: Bool, branch: String) -> IO(String):
+  IO.bind(String, String, Git.root(cwd), top => Git.thread_wt.top(top, cwd, carry, Git.branch.sanitize(branch)))
+
+def Git.thread_wt.again.top(+top: String, +cwd: String, +b: String) -> IO(String):
+  Bool.pick(IO(String), String.is_empty(top), IO.pure(String, "skip: not a git repository"),
+    Git.and(Git.seq.raw(Git.run(cwd, ["rev-parse", "--show-prefix"]), p => Git.done(String.trim(p))),
+      +prefix => Git.and(Git.exclude(top), _ =>
+        IO.bind(P.Ran, String, Git.run(top, ["worktree", "prune"]),
+          _ => Git.seq(Git.run(top, ["worktree", "add", Git.thread_wt.path(top, b), b]), _ => Git.done(Git.thread_wt.cwd(Git.thread_wt.path(top, b), prefix)))))))
+
+# a removed thread worktree made again on its kept branch; answers like
+# Git.thread_wt
+def Git.thread_wt.again(+cwd: String, +branch: String) -> IO(String):
+  IO.bind(String, String, Git.root(cwd), top => Git.thread_wt.again.top(top, cwd, branch))
+
+def Git.skipped(+s: String) -> Bool:
+  String.starts_with(s, "skip: ")
+
 def Git.b64url.map(+c: Char) -> U32:
   Bool.pick(U32, Char.is_eq(c, '+'), 45, Bool.pick(U32, Char.is_eq(c, '/'), 95, Bool.pick(U32, Char.is_eq(c, '='), 0, Char.to_u32(c))))
 

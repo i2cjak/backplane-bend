@@ -374,6 +374,131 @@ law inbox_never_interrupts:
   for +text: String
   for h: {H.Hub.running(H.Hub.thread(s, to)) == True{} : Bool}
   {H.Step.outs_of(H.Hub.inbox(s, now, from, to, role, text)) == [] : List<&2, H.Out>}
+# Worktrees
+# ---------
+
+# a thread in the project folder never waits for a worktree
+law worktree_pending_local:
+  for +wt: String
+  for +c: Nat
+  for +now: Nat
+  {M.Worktree.pending.k(M.Local{}, wt, c, now) == False{} : Bool}
+
+# no thread waits for its worktree past the wait: its messages then run in
+# the project folder
+law worktree_pending_ends:
+  for e: M.EnvMode
+  for +wt: String
+  for +c: Nat
+  for +now: Nat
+  for h: {Nat.is_lt(now, Nat.add(c, M.Worktree.wait())) == False{} : Bool}
+  {M.Worktree.pending.k(e, wt, c, now) == False{} : Bool}
+
+# a message to a thread whose worktree is still being made starts nothing:
+# it waits in the thread's queue
+law worktree_waits:
+  for +s: M.State
+  for +now: Nat
+  for +th: String
+  for +msg: String
+  for role: M.Role
+  for +text: String
+  for h: {M.Worktree.pending(H.Hub.thread(s, th), now) == True{} : Bool}
+  {H.Step.outs_of(H.Hub.post(s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+
+# only "local" asks for the project folder; every other mode (the default
+# "auto" included) asks for a worktree
+law worktree_by_default:
+  {H.Hub.env.of("auto") == M.Worktree{} : M.EnvMode}
+
+# a message to a thread whose worktree was removed makes it again from the
+# kept branch, and does nothing else: the turn waits for the worktree and
+# never runs in the project folder
+law worktree_revives:
+  for +s: M.State
+  for +now: Nat
+  for +th: String
+  for +msg: String
+  for role: M.Role
+  for +text: String
+  for h1: {H.Hub.running(H.Hub.thread(s, th)) == False{} : Bool}
+  for h2: {M.Worktree.gone(H.Hub.thread(s, th)) == True{} : Bool}
+  for h3: {M.Worktree.pending(H.Hub.thread(s, th), now) == False{} : Bool}
+  {H.Step.outs_of(H.Hub.post(s, now, th, msg, role, text)) == [H.Wt.revive(s, th)] : List<&2, H.Out>}
+
+# a worktree is never removed while its thread works or waits on the user
+law worktree_kept_while_busy:
+  for sh: M.Shelf
+  for +ours: Bool
+  for merged: Bool
+  for aged: Bool
+  {M.Worktree.drop.k(True{}, sh, ours, merged, aged) == False{} : Bool}
+
+# a worktree is never removed while its thread is out (active, pinned,
+# snoozed): only settled or hidden threads lose theirs
+law worktree_kept_out:
+  for busy: Bool
+  for sh: M.Shelf
+  for +ours: Bool
+  for merged: Bool
+  for aged: Bool
+  for h: {M.Worktree.parked(sh) == False{} : Bool}
+  {M.Worktree.drop.k(busy, sh, ours, merged, aged) == False{} : Bool}
+
+# only a directory Backplane made (under .backplane/worktrees) is removed
+law worktree_kept_unless_ours:
+  for busy: Bool
+  for sh: M.Shelf
+  for +wt: String
+  for merged: Bool
+  for aged: Bool
+  for h: {M.Worktree.ours(wt) == False{} : Bool}
+  {M.Worktree.drop.k(busy, sh, M.Worktree.ours(wt), merged, aged) == False{} : Bool}
+
+# a settled thread that was not merged keeps its worktree for the window
+law worktree_kept_fresh:
+  for +ours: Bool
+  {M.Worktree.drop.k(False{}, M.Settled{}, ours, False{}, False{}) == False{} : Bool}
+
+# a merged (so settled) idle thread's worktree goes at once
+law worktree_dropped_on_merge:
+  for aged: Bool
+  {M.Worktree.drop.k(False{}, M.Settled{}, True{}, True{}, aged) == True{} : Bool}
+
+# a settled idle thread's worktree goes once the window has passed
+law worktree_dropped_when_aged:
+  for merged: Bool
+  {M.Worktree.drop.k(False{}, M.Settled{}, True{}, merged, True{}) == True{} : Bool}
+
+# so does a hidden (archived or deleted) thread's
+law worktree_dropped_when_hidden:
+  for merged: Bool
+  {M.Worktree.drop.k(False{}, M.Hidden{}, True{}, merged, True{}) == True{} : Bool}
+
+# Merges
+# ------
+
+# a merged thread settles, pinned or brought back before or not
+law merge_settles:
+  for t: M.Thread
+  for +at: Nat
+  for h: {M.Thread.hidden(t) == False{} : Bool}
+  {M.Shelf.of(M.Thread.settled(True{}, at, t)) == M.Settled{} : M.Shelf}
+
+# a recorded merge is never due again, so it settles a thread once
+law merge_once:
+  for sh: M.Shelf
+  for +branch: String
+  for +url: String
+  for h: {String.is_empty(url) == False{} : Bool}
+  {M.Merge.due.k(sh, branch, url) == False{} : Bool}
+
+# a thread without a branch is never merged
+law merge_needs_branch:
+  for sh: M.Shelf
+  for +merged: String
+  {M.Merge.due.k(sh, "", merged) == False{} : Bool}
+
 # Phone alerts
 # ------------
 

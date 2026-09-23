@@ -201,6 +201,54 @@ def worktree_checks(+root: String) -> IO(Bool):
     u3 : Bool <- chk("remove forced", rm3, "")
     return all([t1, t2, t3, t4, t5, t6, t7, t8, t9, u1, u2, u3])
 
+# thread worktrees in <repo>/.backplane: a KiCad project in a subfolder,
+# its uncommitted work carried over, the folder never seeing them, removal
+# after a checkpoint, and making one again from the kept branch
+def thread_wt_checks(+root: String) -> IO(Bool):
+  +repo = root ++ "/tw"
+  +hw = root ++ "/tw/hw"
+  +wt = root ++ "/tw/.backplane/worktrees/backplane-abc"
+  do IO<Bool>:
+    s0 : P.Ran <- sh(root, "mkdir -p tw/hw plain unborn && cd tw && git init -q -b main && git config user.email t@t && git config user.name t && printf 'p\\n' > hw/board.kicad_pro && printf 'v1\\n' > hw/board.kicad_pcb && printf 'old\\n' > hw/old.txt && git add -A && git commit -q -m one && printf 'v2\\n' > hw/board.kicad_pcb && printf 'sym\\n' > hw/new.kicad_sym && mkdir -p hw/board-backups && printf 'z' > hw/board-backups/b.zip && printf 'l' > hw/~board.kicad_pcb.lck && rm hw/old.txt && cd ../unborn && git init -q")
+    +p : String <- G.Git.thread_wt(hw, True{}, "backplane/abc")
+    a1 : Bool <- chk("thread worktree", p, wt ++ "/hw")
+    pc : String <- cat(wt ++ "/hw/board.kicad_pcb")
+    a2 : Bool <- chk("carries changes", pc, "v2")
+    ns : String <- exists(wt ++ "/hw/new.kicad_sym")
+    a3 : Bool <- chk("carries new files", ns, "True")
+    bk : String <- exists(wt ++ "/hw/board-backups")
+    a4 : Bool <- chk("leaves backups", bk, "False")
+    lk : String <- exists(wt ++ "/hw/~board.kicad_pcb.lck")
+    a5 : Bool <- chk("leaves locks", lk, "False")
+    od : String <- exists(wt ++ "/hw/old.txt")
+    a6 : Bool <- chk("carries deletions", od, "False")
+    st : String <- git(repo, ["status", "--porcelain", "-uall"])
+    a7 : Bool <- chk("folder never sees it", Bool.show(String.contains(st, ".backplane")), "False")
+    x2 : String <- G.Git.exclude(hw)
+    ex : P.Ran <- sh(repo, "grep -c -x /.backplane/ .git/info/exclude")
+    a8 : Bool <- chk("excluded once", out(ex), "1")
+    pl : String <- G.Git.thread_wt(root ++ "/plain", False{}, "backplane/p")
+    a9 : Bool <- chk("no repository", pl, "skip: not a git repository")
+    ub : String <- G.Git.thread_wt(root ++ "/unborn", False{}, "backplane/u")
+    b1 : Bool <- chk("no commit", ub, "skip: no commit yet")
+    +sw : String <- G.Git.thread_wt(repo, False{}, "backplane/sw")
+    sp : String <- cat(sw ++ "/hw/board.kicad_pcb")
+    b2 : Bool <- chk("software starts clean", sp, "v1")
+    s1 : P.Ran <- sh(wt ++ "/hw", "printf 'v3\\n' > board.kicad_pcb")
+    k : String <- G.Git.checkpoint.capture(p, "tw-thread", 0n)
+    b3 : Bool <- chk("checkpoint before removal", len(k), "40")
+    rm : String <- G.Git.worktree.remove_force(hw, wt)
+    ew : String <- exists(wt)
+    b4 : Bool <- chk("removed", rm ++ ew, "False")
+    br : String <- git(repo, ["branch", "--list", "backplane/abc"])
+    b5 : Bool <- chk("branch kept", br, "backplane/abc")
+    +p2 : String <- G.Git.thread_wt.again(hw, "backplane/abc")
+    b6 : Bool <- chk("made again", p2, wt ++ "/hw")
+    rv : String <- G.Git.checkpoint.revert(p2, "tw-thread", 0n)
+    p3 : String <- cat(p2 ++ "/board.kicad_pcb")
+    b7 : Bool <- chk("state restored", rv ++ p3, "v3")
+    return all([a1, a2, a3, a4, a5, a6, a7, a8, a9, b1, b2, b3, b4, b5, b6, b7])
+
 def act_checks(+root: String) -> IO(Bool):
   +repo = root ++ "/repo"
   do IO<Bool>:
@@ -233,5 +281,6 @@ def main() -> IO(Unit):
     b : Bool <- checkpoint_checks(root)
     c : Bool <- worktree_checks(root)
     d : Bool <- act_checks(root)
+    e : Bool <- thread_wt_checks(root)
     x : P.Ran <- P.Proc.run("rm", ["-rf", root], "")
-    finish(all([a, b, c, d]))
+    finish(all([a, b, c, d, e]))

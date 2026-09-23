@@ -521,8 +521,8 @@ def Laws.resume_is_replay(a, b, s):
       Laws.resume_is_replay(t, b, M.State.apply(s, h))
 
 def Laws.queue_never_concurrent(s, now, th, msg, role, text, h1, h2):
-  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, th)), True{}, h1) : {H.Step.outs_of(H.Hub.post.go(Bool.and(_, Bool.not(String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"))), H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
-  %Equal.sym(Bool, String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"), False{}, h2) : {H.Step.outs_of(H.Hub.post.go(Bool.and(True{}, Bool.not(_)), H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, th)), True{}, h1) : {H.Step.outs_of(H.Hub.post.w(_, M.Worktree.gone(H.Hub.thread(s, th)), M.Worktree.pending(H.Hub.thread(s, th), now), s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"), False{}, h2) : {H.Step.outs_of(H.Hub.post.go(Bool.or(Bool.and(True{}, Bool.not(_)), M.Worktree.pending(H.Hub.thread(s, th), now)), H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
   {==}
 
 def Laws.resend_stored_once(s, now, client, id, th, text, msg, h1, h2):
@@ -531,8 +531,153 @@ def Laws.resend_stored_once(s, now, client, id, th, text, msg, h1, h2):
   {==}
 
 def Laws.inbox_never_interrupts(s, now, from, to, role, text, h):
-  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, to)), True{}, h) : {H.Step.outs_of(H.Hub.post.go(_, H.Hub.thread(s, to), H.Hub.cwd(s, H.Hub.thread(s, to)), M.Queue.of(s, to), now, to, M.Link.id(from, H.Hub.id("m", now, H.Hub.seq(s))), role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, to)), True{}, h) : {H.Step.outs_of(H.Hub.inbox.w(_, M.Worktree.gone(H.Hub.thread(s, to)), M.Worktree.pending(H.Hub.thread(s, to), now), s, now, from, to, role, text)) == [] : List<&2, H.Out>}
   {==}
+
+law or_true_r:
+  for b: Bool
+  {Bool.or(b, True{}) == True{} : Bool}
+
+def or_true_r(b):
+  match b:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+law and_false_r:
+  for b: Bool
+  {Bool.and(b, False{}) == False{} : Bool}
+
+def and_false_r(b):
+  match b:
+    case False{}:
+      {==}
+    case True{}:
+      {==}
+
+def Laws.worktree_pending_local(wt, c, now):
+  {==}
+
+def Laws.worktree_pending_ends(e, wt, c, now, h):
+  match e:
+    case M.Worktree{}:
+      %Equal.sym(Bool, Nat.is_lt(now, Nat.add(c, M.Worktree.wait())), False{}, h) : {Bool.and(_, String.is_empty(wt)) == False{} : Bool}
+      {==}
+    case M.Local{}:
+      {==}
+
+def Laws.worktree_waits(s, now, th, msg, role, text, h):
+  %Equal.sym(Bool, M.Worktree.pending(H.Hub.thread(s, th), now), True{}, h) : {H.Step.outs_of(H.Hub.post.w(H.Hub.running(H.Hub.thread(s, th)), M.Worktree.gone(H.Hub.thread(s, th)), _, s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, Bool.and(M.Worktree.gone(H.Hub.thread(s, th)), False{}), False{}, and_false_r(M.Worktree.gone(H.Hub.thread(s, th)))) : {H.Step.outs_of(H.Hub.post.v(Bool.and(Bool.not(H.Hub.running(H.Hub.thread(s, th))), _), H.Hub.running(H.Hub.thread(s, th)), True{}, s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, Bool.and(Bool.not(H.Hub.running(H.Hub.thread(s, th))), False{}), False{}, and_false_r(Bool.not(H.Hub.running(H.Hub.thread(s, th))))) : {H.Step.outs_of(H.Hub.post.v(_, H.Hub.running(H.Hub.thread(s, th)), True{}, s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, Bool.or(Bool.and(H.Hub.running(H.Hub.thread(s, th)), Bool.not(String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"))), True{}), True{}, or_true_r(Bool.and(H.Hub.running(H.Hub.thread(s, th)), Bool.not(String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"))))) : {H.Step.outs_of(H.Hub.post.go(_, H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  {==}
+
+def Laws.worktree_by_default():
+  {==}
+
+def Laws.worktree_revives(s, now, th, msg, role, text, h1, h2, h3):
+  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, th)), False{}, h1) : {H.Step.outs_of(H.Hub.post.w(_, M.Worktree.gone(H.Hub.thread(s, th)), M.Worktree.pending(H.Hub.thread(s, th), now), s, now, th, msg, role, text)) == [H.Wt.revive(s, th)] : List<&2, H.Out>}
+  %Equal.sym(Bool, M.Worktree.gone(H.Hub.thread(s, th)), True{}, h2) : {H.Step.outs_of(H.Hub.post.w(False{}, _, M.Worktree.pending(H.Hub.thread(s, th), now), s, now, th, msg, role, text)) == [H.Wt.revive(s, th)] : List<&2, H.Out>}
+  %Equal.sym(Bool, M.Worktree.pending(H.Hub.thread(s, th), now), False{}, h3) : {H.Step.outs_of(H.Hub.post.w(False{}, True{}, _, s, now, th, msg, role, text)) == [H.Wt.revive(s, th)] : List<&2, H.Out>}
+  {==}
+
+def Laws.worktree_kept_while_busy(sh, ours, merged, aged):
+  {==}
+
+def Laws.worktree_kept_out(busy, sh, ours, merged, aged, h):
+  match busy sh:
+    case True{} _:
+      {==}
+    case False{} M.Settled{}:
+      Empty.absurd({M.Worktree.drop.k(False{}, M.Settled{}, ours, merged, aged) == False{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case False{} M.Hidden{}:
+      Empty.absurd({M.Worktree.drop.k(False{}, M.Hidden{}, ours, merged, aged) == False{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case False{} M.Pinned{}:
+      {==}
+    case False{} M.Active{}:
+      {==}
+    case False{} M.Snoozed{}:
+      {==}
+
+law worktree_drop_not_ours:
+  for busy: Bool
+  for sh: M.Shelf
+  for merged: Bool
+  for aged: Bool
+  {M.Worktree.drop.k(busy, sh, False{}, merged, aged) == False{} : Bool}
+
+def worktree_drop_not_ours(busy, sh, merged, aged):
+  match busy sh:
+    case True{} _:
+      {==}
+    case False{} M.Settled{}:
+      {==}
+    case False{} M.Hidden{}:
+      {==}
+    case False{} M.Pinned{}:
+      {==}
+    case False{} M.Active{}:
+      {==}
+    case False{} M.Snoozed{}:
+      {==}
+
+def Laws.worktree_kept_unless_ours(busy, sh, wt, merged, aged, h):
+  %Equal.sym(Bool, M.Worktree.ours(wt), False{}, h) : {M.Worktree.drop.k(busy, sh, _, merged, aged) == False{} : Bool}
+  worktree_drop_not_ours(busy, sh, merged, aged)
+
+def Laws.worktree_kept_fresh(ours):
+  and_false_r(ours)
+
+def Laws.worktree_dropped_on_merge(aged):
+  {==}
+
+def Laws.worktree_dropped_when_aged(merged):
+  or_true_r(merged)
+
+def Laws.worktree_dropped_when_hidden(merged):
+  {==}
+
+def Laws.merge_settles(t, at, h):
+  match t:
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, True{}}:
+      Empty.absurd({M.Shelf.of(M.Thread.settled(True{}, at, M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, True{}})) == M.Settled{} : M.Shelf},
+        false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case M.Thread{id, p, ti, c, a, tu, pe, True{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}:
+      Empty.absurd({M.Shelf.of(M.Thread.settled(True{}, at, M.Thread{id, p, ti, c, a, tu, pe, True{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de})) == M.Settled{} : M.Shelf},
+        false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+
+def Laws.merge_once(sh, branch, url, h):
+  match sh:
+    case M.Pinned{}:
+      %Equal.sym(Bool, String.is_empty(url), False{}, h) : {Bool.and(Bool.not(String.is_empty(branch)), _) == False{} : Bool}
+      and_false_r(Bool.not(String.is_empty(branch)))
+    case M.Active{}:
+      %Equal.sym(Bool, String.is_empty(url), False{}, h) : {Bool.and(Bool.not(String.is_empty(branch)), _) == False{} : Bool}
+      and_false_r(Bool.not(String.is_empty(branch)))
+    case M.Settled{}:
+      {==}
+    case M.Hidden{}:
+      {==}
+    case M.Snoozed{}:
+      {==}
+
+def Laws.merge_needs_branch(sh, merged):
+  match sh:
+    case M.Pinned{}:
+      {==}
+    case M.Active{}:
+      {==}
+    case M.Settled{}:
+      {==}
+    case M.Hidden{}:
+      {==}
+    case M.Snoozed{}:
+      {==}
+
 def Laws.alert_needs_running(t):
   {==}
 
