@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
@@ -683,3 +684,13 @@ def Laws.status_approval_top(a, i, t, q):
               {==}
             case M.Interrupted{} False{}:
               {==}
+
+def Laws.fuzzy_empty_matches(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{Chr{c}, t}:
+      {==}
+
+def Laws.caret_shows_when_moved():
+  {==}

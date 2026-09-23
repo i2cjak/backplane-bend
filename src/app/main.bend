@@ -33,6 +33,7 @@ type ShellMsg is Data:
   Mesh3{key: String, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
   Shot{key: String, bmp: BM.Bitmap}
+  Blink{}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -84,6 +85,13 @@ def Timer.once(+q: Chan(ShellMsg)) -> IO(Unit):
     ok : Bool <- Chan.send(ShellMsg, q, Frame{})
     return Unit{}
 
+# the caret's next toggle
+def Timer.blink(+q: Chan(ShellMsg), wait: Nat) -> IO(Unit):
+  do IO<Unit>:
+    IO.sleep(U32.from_nat(wait))
+    ok : Bool <- Chan.send(ShellMsg, q, Blink{})
+    return Unit{}
+
 # Drawing
 # -------
 
@@ -109,11 +117,27 @@ def Shell.again(anim: Bool, a: Shell) -> IO(Shell):
     case False{}:
       IO.pure(Shell, a)
 
-def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool) -> IO(Shell):
+# a focused field asks for one frame at its caret's next toggle, unless
+# one is already due
+def Shell.blink.k(go: Bool, +n: N.Nui, +q: Chan(ShellMsg), +wait: Nat, +ms: Nat) -> IO(N.Nui):
+  match go:
+    case True{}:
+      do IO<N.Nui>:
+        IO.spawn(Unit, Timer.blink(q, wait))
+        return N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "caret.due", Nat.show(Nat.add(ms, wait))))
+    case False{}:
+      IO.pure(N.Nui, n)
+
+def Shell.blink(+n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
+  Shell.blink.k(Bool.and(Nat.is_gt(N.Blink.wait(n, ms), 0n), Nat.is_le(Maybe.default(&2, Nat, Nat.read(U.Ui.info(N.Nui.ui(n), "caret.due")), 0n), ms)),
+    n, q, N.Blink.wait(n, ms), ms)
+
+def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
   (w, img) = r
   do IO<Shell>:
     Unit <- IO.pure(Unit, Image.drop!(img))
-    Shell.again(anim, Shell{n, w, False{}, False{}, q, i, wa})
+    n2 : N.Nui <- Shell.blink(n, q, ms)
+    Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa})
 
 def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
   match vw:
@@ -146,6 +170,12 @@ def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
       IO.pure(Shell, a)
     case c <> t:
       IO.bind(Shell, Shell, Shell.cmd(a, c), a2 => Shell.cmds(t, a2))
+
+# the caret toggled: the next frame redraws it
+def Shell.blinked(a: Shell) -> Shell:
+  match a:
+    case Shell{n, w, _, qd, q, i, wa}:
+      Shell{n, w, True{}, qd, q, i, wa}
 
 def Shell.dirty(a: Shell) -> IO(Shell):
   match a:
@@ -599,7 +629,7 @@ def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan
   match o:
     case L.Out{+ops, hs}:
       IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms)),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms))))
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), ms))
 
 def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   Shell.paint.out(L.Lay.frame(Aux.ty(wa), n), n, w, q, i, wa, epoch, ms)
@@ -611,7 +641,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
         Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
 
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.k(N.Nui.prepare(n), w, q, i, wa, epoch, ms)
+  Shell.paint.k(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), w, q, i, wa, epoch, ms)
 
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):
@@ -632,6 +662,8 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.recv(a, t)
     case Frame{}:
       Shell.frame(a)
+    case Blink{}:
+      Shell.frame(Shell.blinked(a))
     case Gone{}:
       IO.die(Shell, 0, "")
     case Board{key, items}:

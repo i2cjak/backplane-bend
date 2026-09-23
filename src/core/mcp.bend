@@ -3,6 +3,7 @@ import ./json.bend as J
 import ./model.bend as M
 import ./codec.bend as C
 import ./hub.bend as B
+import ./acp.bend as AC
 
 # The Backplane MCP server, as a decider. Each agent session gets its own
 # endpoint (/mcp/<thread>), so every call knows which thread is asking. A
@@ -407,9 +408,18 @@ def Mcp.permission.reply.k(+o: J.Json, +answer: String) -> String:
   Mcp.result(J.Json.get_obj(o, "id"), Perm.text(Perm.verdict.k(C.Codec.pos(["AskUserQuestion"], J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "tool_name", "")),
     J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "tool_name", ""), J.Json.get_obj(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "input"), answer)))
 
-# the parked MCP reply for a request body, once the user answered
+def Mcp.permission.reply.acp(acp: Bool, +o: J.Json, +body: String, +answer: String) -> String:
+  match acp:
+    case True{}:
+      AC.Acp.permit.answer(body, answer)
+    case False{}:
+      Mcp.permission.reply.k(o, answer)
+
+# the parked reply for a request body, once the user answered: an MCP
+# permission_prompt result, or the ACP response to a Grok request
 def Mcp.permission.reply(+body: String, +answer: String) -> String:
-  Mcp.permission.reply.k(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), answer)
+  Mcp.permission.reply.acp(String.eq(J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), "method", ""), "session/request_permission"),
+    Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, answer)
 
 def Mcp.reply(+id: J.Json, r: Res) -> McpOut:
   match r:
@@ -450,9 +460,35 @@ def Mcp.method.pos.k(note: Bool, +m: String) -> Nat:
 def Mcp.method.pos(+m: String) -> Nat:
   Mcp.method.pos.k(String.starts_with(m, "notifications/"), m)
 
+# Grok's permission requests
+# --------------------------
+# The Grok runner hands an ACP session/request_permission here (Grok has
+# no permission MCP tool): a tool already allowed for the session in this
+# thread is allowed again at once; otherwise it becomes an approval ask
+# and the request waits, parked, for the user's answer (Park, then
+# Acp.permit.answer).
+
+def Grok.permit.k(ok: Bool, +ask: String, +now: Nat, +thread: String, +o: J.Json, +tool: String) -> McpOut:
+  match ok:
+    case True{}:
+      McpOut{AC.Acp.permit.reply(AC.Acp.id(J.Json.get(o, "id")), J.Json.get_obj(o, "params"), "accept"), B.Step.none(), ""}
+    case False{}:
+      McpOut{"", B.Step{[M.AskOpened{ask, thread, "approval", tool, AC.Acp.detail(J.Json.get_obj(o, "params")), "", now}], Nil{}}, ask}
+
+def Grok.permit(+s: M.State, +now: Nat, +thread: String, +o: J.Json) -> McpOut:
+  Grok.permit.k(Perm.session_ok(M.Asks.all(s), thread, AC.Acp.tool(J.Json.get_obj(o, "params"))), B.Hub.id("q", now, B.Hub.seq(s)), now, thread, o,
+    AC.Acp.tool(J.Json.get_obj(o, "params")))
+
+def Mcp.handle.k(grok: Bool, +s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String, +o: J.Json) -> McpOut:
+  match grok:
+    case True{}:
+      Grok.permit(s, now, thread, o)
+    case False{}:
+      Mcp.method.k(Mcp.method.pos(J.Json.get_str(o, "method", "")), s, now, thread, models, version, J.Json.get_obj(o, "id"), J.Json.get_obj(o, "params"))
+
 # one JSON-RPC message from an agent of `thread` ("" reply: a notification)
 def Mcp.handle(+s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String, +o: J.Json) -> McpOut:
-  Mcp.method.k(Mcp.method.pos(J.Json.get_str(o, "method", "")), s, now, thread, models, version, J.Json.get_obj(o, "id"), J.Json.get_obj(o, "params"))
+  Mcp.handle.k(String.eq(J.Json.get_str(o, "method", ""), "session/request_permission"), s, now, thread, models, version, o)
 
 def Mcp.text.k(m: Maybe<&2, J.Json>, +s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String) -> McpOut:
   match m:

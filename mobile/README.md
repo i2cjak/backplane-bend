@@ -20,7 +20,7 @@ runs xcodebuild there. Debug builds read `BACKPLANE_LINK` and
 `BACKPLANE_SELECT` from the environment (`SIMCTL_CHILD_…`) to pair and open
 a thread without taps.
 
-Pairing: paste the hub's tailnet link (`http://host:3773/#token=…`), or open
+Pairing: paste the hub's tailnet link (`http://host:3787/#token=…`), or open
 `backplane://pair?url=<that link, URL-encoded>`.
 
 ## TestFlight

@@ -122,7 +122,7 @@ def View.sidebar(u: U.Ui) -> D.Node:
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
-            D.Dom.button("icon", "toggle-add", "", "Add project", "+")]}],
+            D.Dom.button("icon", "proj-open", "", "Add project", "+")]}],
           D.Dom.cat(View.add(adding),
             D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now),
             [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")])))}
@@ -269,13 +269,36 @@ def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
     case +m <> t:
       D.Dom.button(Bool.pick(String, String.eq(m, cur), "on", ""), "model", m, "Use " ++ m, m) <> View.models(t, cur)
 
-def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String) -> D.Node:
+# reasoning effort chips, the provider's default first
+def View.efforts(es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      D.Dom.button(Bool.pick(String, String.eq(e, cur), "on", ""), "effort", e, "Reasoning effort: " ++ U.Effort.name(e), U.Effort.name(e)) <> View.efforts(t, cur)
+
+def View.effort_row(+es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, es), Nil{}, [D.El{"div", "", [D.At{"class", "efforts"}], View.efforts(es, cur)}])
+
+# the skills a `$` being typed may complete to (Tab or Enter takes the first)
+def View.skills.go(rs: List<&2, U.SkillRow>) -> List<&2, D.Node>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case U.SkillRow{+n, d} <> t:
+      D.El{"button", "", [D.At{"class", "skill"}, D.At{"data-value", n}, D.On{"click", "skill"}], [D.Dom.span("name", "$" ++ n), D.Dom.span("desc", d)]} <> View.skills.go(t)
+
+def View.skills(+rs: List<&2, U.SkillRow>) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, U.SkillRow, rs), Nil{}, [D.El{"div", "", [D.At{"class", "skills"}], View.skills.go(rs)}])
+
+def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
-    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], View.models(ms, model)}), [
-    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}], Nil{}},
+    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], D.Dom.cat(View.effort_row(es, effort), View.models(ms, model))}), D.Dom.cat(View.skills(rs), [
+    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
+      D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
-      D.Dom.button("model-chip", "flag", "models", "Choose the model", label ++ " ▾"),
-      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])}
+      D.Dom.button("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort) ++ " ▾"),
+      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}]))}
 
 # Subagents
 # ---------
@@ -357,7 +380,8 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
-        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo)]}
+        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo,
+          U.Effort.chips(pr), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf))]}
 
 # Settings
 # --------
@@ -391,8 +415,8 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
     D.El{"header", "", [D.At{"class", "thread-head"}], [D.Dom.span("title", "Settings"), D.Dom.span("meta", ""), D.Dom.button("", "flag", "settings", "Close settings", "Close")]},
     D.El{"div", "", [D.At{"class", "settings"}], [
       View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
-      View.setrow("Provider for new threads", "Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
-      View.setrow("Model for new threads", "The models this machine's " ++ prov ++ " install offers.", View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
+      View.setrow("Provider for new threads", Bool.pick(String, String.is_empty(U.Models.cli(U.Str.get(nf, "models"), prov)), prov ++ " is not installed", U.Models.cli(U.Str.get(nf, "models"), prov)) ++ ". Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
+      View.setrow("Model for new threads", Bool.pick(String, String.is_empty(M.Setting.get(st, "agent.model", "")), "default", M.Setting.get(st, "agent.model", "")) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), prov, M.Setting.get(st, "agent.model", "")), View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
       View.setrow("KiCad CLI", U.Str.get(nf, "kicad.cli"), View.fork(U.Str.get(nf, "kicad.fork"))),
       View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
@@ -426,6 +450,30 @@ def View.error(e: String) -> List<&2, D.Node>:
     case SCon{h, t}:
       [D.El{"div", "error", [D.At{"class", "toast"}, D.On{"click", "dismiss"}], [D.Txt{SCon{h, t}}]}]
 
+# Project picker
+# --------------
+
+def View.prows(ps: List<&2, U.PItem>, +i: Nat, +sel: Nat) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case U.PItem{+l, +a, v} <> t:
+      D.Dom.button(Bool.pick(String, String.eq(a, "proj-cd"), "prow", Bool.pick(String, String.is_empty(a), "prow off", "prow act")) ++ Bool.pick(String, Nat.is_eq(i, sel), " sel", ""),
+        a, v, l, l) <> View.prows(t, 1n+i, sel)
+
+def View.picker(open: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "modal-back"}, D.On{"click", "proj-close"}], Nil{}},
+        D.El{"div", "picker", [D.At{"class", "picker"}], D.Dom.cat([
+          D.El{"div", "", [D.At{"class", "dir"}], [D.Txt{U.Proj.dir(u)}]},
+          D.El{"input", "proj", [D.At{"id", "proj"}, D.At{"placeholder", "Filter, name a new folder, or type a path"}, D.At{"autocomplete", "off"},
+            D.On{"input", "proj-q"}, D.At{"data-enter", "proj-enter"}], Nil{}}],
+          D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(U.Ui.info(u, "proj.err")), Nil{}, [D.El{"div", "", [D.At{"class", "perr"}], [D.Txt{U.Ui.info(u, "proj.err")}]}]),
+            [D.El{"div", "", [D.At{"class", "prows"}], View.prows(U.Proj.items(u), 0n, U.Proj.index(u))}]))}]
+    case False{}:
+      Nil{}
+
 # the whole page
 def View.page(u: U.Ui) -> D.Node:
   match u:
@@ -434,4 +482,4 @@ def View.page(u: U.Ui) -> D.Node:
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
           View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
           D.Dom.cat(D.Dom.when(pa, D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}),
-            View.error(e)))}
+            D.Dom.cat(View.picker(U.Flag.get(o, "proj"), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}), View.error(e))))}

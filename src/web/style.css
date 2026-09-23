@@ -100,6 +100,13 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .picker { position: absolute; bottom: 100%; left: 16px; display: flex; flex-direction: column; min-width: 200px; background: var(--panel); border: 1px solid var(--line); padding: 4px; }
 .picker button { text-align: left; border-color: transparent; background: none; }
 .picker button.on { color: var(--text); background: var(--raise); }
+.picker .efforts { display: flex; gap: 2px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.picker .efforts button { text-align: center; flex: 1; padding: 2px 6px; }
+.composer .skills { position: absolute; bottom: 100%; left: 16px; right: 16px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); padding: 4px; }
+.composer .skills button { display: flex; gap: 10px; text-align: left; border-color: transparent; background: none; }
+.composer .skills button:first-child { background: var(--raise); }
+.composer .skills .name { color: var(--text); white-space: nowrap; }
+.composer .skills .desc { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer textarea:focus, .add input:focus { outline: none; border-color: var(--accent); }
 .tasks { border: 1px solid var(--line); background: var(--panel); max-width: 860px; }
 .tasks-head { display: block; padding: 6px 10px; color: var(--faint); font-size: 11px; }
@@ -162,3 +169,15 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .msg.sending { opacity: 0.6; } .msg .note { color: var(--faint); font-size: 11px; }
 .link { align-self: flex-start; background: none; border: 0; border-left: 2px solid var(--accent); color: var(--accent); padding: 2px 8px; font-size: 12px; max-width: 860px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link.in { align-self: flex-end; border-left: 0; border-right: 2px solid var(--accent); }
+
+.modal-back { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 20; }
+.picker { position: fixed; z-index: 21; top: 10vh; left: 50%; transform: translateX(-50%); width: min(640px, calc(100vw - 24px)); max-height: 76vh; display: flex; flex-direction: column; background: var(--raise); border: 1px solid var(--line); }
+.picker .dir { padding: 8px 14px 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker input { margin: 6px 10px 8px; background: var(--bg); border: 1px solid var(--line); padding: 6px 8px; font-size: 16px; }
+.picker input:focus { outline: none; border-color: var(--accent); }
+.picker .perr { padding: 0 14px 6px; color: var(--bad); font-size: 12px; }
+.prows { overflow-y: auto; border-top: 1px solid var(--line); padding: 4px 0; }
+.prow { display: block; width: 100%; text-align: left; padding: 6px 14px; background: none; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow:hover, .prow.sel { background: var(--sel, rgba(255,255,255,.06)); }
+.prow.act { color: var(--accent); }
+.prow.off { color: var(--faint, var(--dim)); cursor: default; }
