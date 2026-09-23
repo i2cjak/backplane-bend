@@ -1,0 +1,11 @@
+{
+  "name": "backplane-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
