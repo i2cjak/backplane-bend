@@ -34,3 +34,30 @@ ASC_KEY_ID=XXXXXXXXXX                 # App Store Connect API key (App Manager)
 ASC_ISSUER_ID=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 ASC_KEY_PATH=/Users/h/.appstoreconnect/AuthKey_XXXXXXXXXX.p8
 ```
+
+## Notifications and the Dynamic Island
+
+When a turn ends (Completed or Failed; a stop the user asked for is not
+news), the phone alerts, and while turns run it shows a live status. What
+counts is decided in `src/mobile/notify.bend` (laws `alert_*`).
+
+- iOS in front: the app posts the alert itself and runs one Live Activity
+  (lock screen + Dynamic Island) from the screen's `island`.
+- iOS asleep: the hub pushes through APNs (`src/server/push.bend`): an
+  alert, and Live Activity updates to the activity's push token. The app
+  registers its tokens with the `device.register` rpc; tokens never leave
+  the hub (laws `device_*`).
+- Android: a foreground service keeps the socket open while turns run and
+  shows an ongoing notification (promoted to a status-bar chip on Android
+  16); alerts come from the same Bend `notify` commands.
+
+APNs needs a key from developer.apple.com (Keys, with Apple Push
+Notifications service enabled). Put the .p8 on the hub machine and set:
+
+```
+push.apns.key    /path/to/AuthKey_XXXXXXXXXX.p8
+push.apns.keyid  XXXXXXXXXX
+push.apns.team   <Team ID>
+```
+
+(settings via `setting.set`; only the path is stored, never the key).
