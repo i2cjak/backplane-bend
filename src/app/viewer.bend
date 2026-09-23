@@ -502,13 +502,21 @@ def Pick.info(ss: List<&2, Seen>, +key: String) -> String:
     case Seen{B.Item{+k, _, _, _, info}, _} <> t:
       Bool.pick(String, String.eq(k, key), info, Pick.info(t, key))
 
+# (a match: only the picked item's ops are made, not every item's)
+def Ops.picked.k(hit: Bool, p: B.Prim, +v: View, +c: D.Clip, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+  match hit:
+    case True{}:
+      Ops.prim(p, v, c, 16777215, 200)
+    case False{}:
+      rest
+
 # the picked item drawn again on top, bright
 def Ops.picked(ss: List<&2, Seen>, +key: String, +v: View, +c: D.Clip) -> List<&2, R.Op>:
   match ss:
     case Nil{}:
       Nil{}
     case Seen{B.Item{+k, _, _, p, _}, _} <> t:
-      Bool.pick(List<&2, R.Op>, String.eq(k, key), Ops.prim(p, v, c, 16777215, 200), Ops.picked(t, key, v, c))
+      Ops.picked.k(String.eq(k, key), p, v, c, Ops.picked(t, key, v, c))
 
 # some item's fade ended after the base was drawn: fold it into the base
 def Vw.late(ss: List<&2, Seen>, +cut: Nat, +now: Nat) -> Bool:

@@ -15,6 +15,7 @@ import ../gfx/bitmap.bend as BM
 import ../core/diff.bend as DF
 import ../core/vt.bend as VT
 import ../core/attach.bend as AT
+import ../core/eq.bend as Q
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -1331,6 +1332,13 @@ def Lay.diff(+ty: Ty, +text: String, +x0: U32, +x1: U32, +h: U32, +scroll: U32) 
     Lay.button(ty, D.Clip.all(), (x1 - 32 - bc - bp - Lay.button.w(ty, "Revert thread") : U32), 60, "Revert thread", T.Th.bad(), "revert", "0"),
     Out.ops(DRow.go(ty, List.drop(&2, DRow, DRow.files(fs), U32.to_nat((scroll / 20 : U32))), D.Clip{x0, top, x1, h}, x0, x1, top, h))])
 
+def Lay.diff.if(open: Bool, +ty: Ty, +diff: String, +x0: U32, +x1: U32, +h: U32, +scroll: U32) -> Out:
+  match open:
+    case True{}:
+      Lay.diff(ty, diff, x0, x1, h, scroll)
+    case False{}:
+      Out.none()
+
 def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32) -> Out:
   match x:
     case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, bm}:
@@ -1346,7 +1354,7 @@ def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +i
         Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
         Lay.tab(ty, "Browser", 3, k, (x0 + 40 + bw + sw + tw : U32)),
         Lay.tab(ty, "Diff", 4, k, (x0 + 48 + bw + sw + tw + Lay.button.w(ty, "Browser") : U32)),
-        Out.when(U32.is_eq(k, 4), Lay.diff(ty, diff, x0, x1, h, scroll)),
+        Lay.diff.if(U32.is_eq(k, 4), ty, diff, x0, x1, h, scroll),
         Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32)), D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32))) : U32), 0, 52, T.Th.faint())),
         Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.not(Lay.shown(k, empty, ts, bm))),
           Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - U32.min(Ty.width(ty, 3n, busy), (x1 - x0 : U32)) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
@@ -1502,8 +1510,15 @@ def Lay.term_on(+n: S.Nui) -> Bool:
 def Lay.term_h(+n: S.Nui) -> U32:
   Bool.pick(U32, Lay.term_on(n), (S.Nui.height(n) * 2 / 5 : U32), 0)
 
+def Lay.term.of.k(on: Bool, +ty: Ty, +n: S.Nui, +x1: U32, +h: U32) -> Out:
+  match on:
+    case True{}:
+      Lay.term(ty, U.Ui.term(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), 264, x1, (h - Lay.term_h(n) : U32), h, String.eq(S.Nui.focus_of(n), "terminal"), S.Blink.on(n))
+    case False{}:
+      Out.none()
+
 def Lay.term.of(+ty: Ty, +n: S.Nui, +x1: U32, +h: U32) -> Out:
-  Out.when(Lay.term_on(n), Lay.term(ty, U.Ui.term(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), 264, x1, (h - Lay.term_h(n) : U32), h, String.eq(S.Nui.focus_of(n), "terminal"), S.Blink.on(n)))
+  Lay.term.of.k(Lay.term_on(n), ty, n, x1, h)
 
 # the window as the main area sees it with the terminal below
 def Lay.shrink(n: S.Nui, +dh: U32) -> S.Nui:
@@ -1556,37 +1571,148 @@ def TL.bubble.a(+ty: Ty, +text: String, +px: U32) -> List<&2, TLine>:
   +w = {(TL.widest(ty, List.append(&2, String, ls, TL.chips.texts(ps)), 0) + 40 : U32) : U32}
   List.concat(&2, TLine, [[TLine{"", 0, 6, "", w}], TL.user(ls, AT.Att.body(text), True{}, w), TL.chips(ps, w), [TLine{"", 0, 6, "", w}, TLine{"", 0, 4, "", 0}]])
 
-def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+# an entry's own lines in three parts: what depends on the entry and the
+# width alone (the costly part: markdown, wrapping, measuring; kept across
+# frames), the image paths it names, and its footer. The images' lines
+# are made each frame, since their sizes arrive later.
+type TLPart is Data:
+  TLPart{head: List<&2, TLine>, paths: List<&2, String>, tail: List<&2, TLine>}
+
+def TL.part.own(+ty: Ty, e: M.Entry, +px: U32) -> TLPart:
   match e:
     case M.Msg{_, _, M.User{}, +text, _}:
-      TL.bubble.a(ty, text, px)
+      TLPart{TL.bubble.a(ty, text, px), Nil{}, Nil{}}
     case M.Msg{_, _, _, +text, _}:
-      List.concat(&2, TLine, [TL.blocks(ty, N.Md.render(text), px), TL.images(ty, IM.Img.paths(text), pics, px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}]])
+      TLPart{TL.blocks(ty, N.Md.render(text), px), IM.Img.paths(text), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}]}
     case M.Act{_, _, +tone, kind, summary, _}:
-      [TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}]
+      TLPart{[TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}], Nil{}, Nil{}}
+
+# only this thread's own entries have parts; a line it sent elsewhere is
+# made each frame (it names the other thread)
+def TL.part(mine: Bool, +ty: Ty, e: M.Entry, +px: U32) -> TLPart:
+  match mine:
+    case True{}:
+      TL.part.own(ty, e, px)
+    case False{}:
+      TLPart{Nil{}, Nil{}, Nil{}}
+
+def TL.part.join(+ty: Ty, p: TLPart, +pics: Map<&2, String>, +px: U32) -> List<&2, TLine>:
+  match p:
+    case TLPart{h, ps, t}:
+      List.concat(&2, TLine, [h, TL.images(ty, ps, pics, px), t])
+
+def TL.mine_of(+e: M.Entry, +sel: String) -> Bool:
+  String.eq(TL.thread_of(e), sel)
 
 # an entry of this thread (headed by the thread it came from, if another
-# thread sent it) or one this thread sent elsewhere (a link line)
-def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+# thread sent it) or one this thread sent elsewhere (a link line), from
+# its part
+def TL.entry.p(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32, +pics: Map<&2, String>, p: TLPart) -> List<&2, TLine>:
   match mine e:
-    case True{} M.Msg{+id, t, r, x, at}:
-      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px, pics))
+    case True{} M.Msg{+id, _, _, _, _}:
+      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.part.join(ty, p, pics, px))
     case True{} _:
-      TL.entry.own(ty, e, px, pics)
+      TL.part.join(ty, p, pics, px)
     case False{} M.Msg{_, +t, _, +x, _}:
       [TLine{Ty.fit(ty, 2n, "→ " ++ U.Tasks.title(st, t) ++ ":  " ++ TL.first_line(x), px), T.Th.accent(), 10, t, 0}]
     case False{} _:
       Nil{}
 
 def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
-  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px, pics)
+  TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, TL.part(TL.mine_of(e, sel), ty, e, px))
 
+# the timeline from scratch
 def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   match es:
     case Nil{}:
       Nil{}
     case e <> t:
       List.append(&2, TLine, TL.entry(ty, e, st, sel, px, pics), TL.entries(ty, t, st, sel, px, pics))
+
+# The timeline's memo
+# -------------------
+# Each entry of the open thread with its part, made at one width. The next
+# frame keeps the part of every entry exactly equal to the one it was made
+# for and makes the rest (laws tl_again_exact, tl_keep, tl_memo_exact,
+# tl_entries_memo: the memo's timeline is the timeline from scratch).
+
+type TLE is Data:
+  TLE{e: M.Entry, part: TLPart}
+
+type TLMemo is Data:
+  TLMemo{px: U32, sel: String, items: List<&2, TLE>}
+
+def TL.memo.none() -> TLMemo:
+  TLMemo{0, "", Nil{}}
+
+def TL.memo.item(+ty: Ty, +e: M.Entry, +px: U32, +sel: String) -> TLE:
+  TLE{e, TL.part(TL.mine_of(e, sel), ty, e, px)}
+
+def TL.memo.make(+ty: Ty, es: List<&2, M.Entry>, +px: U32, +sel: String) -> List<&2, TLE>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      TL.memo.item(ty, e, px, sel) <> TL.memo.make(ty, t, px, sel)
+
+def TL.memo.one.k(same: Bool, +ty: Ty, +e: M.Entry, +px: U32, +sel: String, it: TLE) -> TLE:
+  match same:
+    case True{}:
+      it
+    case False{}:
+      TL.memo.item(ty, e, px, sel)
+
+# an entry equal to the one its item was made for keeps the item
+def TL.memo.one(+ty: Ty, +e: M.Entry, +px: U32, +sel: String, it: TLE) -> TLE:
+  match it:
+    case TLE{+pe, +pp}:
+      TL.memo.one.k(Q.Eq.entry(e, pe), ty, e, px, sel, TLE{pe, pp})
+
+# the entries now, over the items last made at the same width and thread
+def TL.memo.again(es: List<&2, M.Entry>, +ty: Ty, +px: U32, +sel: String, prev: List<&2, TLE>) -> List<&2, TLE>:
+  match es prev:
+    case Nil{} _:
+      Nil{}
+    case +e <> t +it <> pt:
+      TL.memo.one(ty, e, px, sel, it) <> TL.memo.again(t, ty, px, sel, pt)
+    case +e <> t Nil{}:
+      TL.memo.item(ty, e, px, sel) <> TL.memo.make(ty, t, px, sel)
+
+def TL.memo.of.k(same: Bool, +ty: Ty, es: List<&2, M.Entry>, +px: U32, +sel: String, prev: List<&2, TLE>) -> TLMemo:
+  match same:
+    case True{}:
+      TLMemo{px, sel, TL.memo.again(es, ty, px, sel, prev)}
+    case False{}:
+      TLMemo{px, sel, TL.memo.make(ty, es, px, sel)}
+
+def TL.memo.of(+ty: Ty, es: List<&2, M.Entry>, +px: U32, +sel: String, prev: TLMemo) -> TLMemo:
+  match prev:
+    case TLMemo{ppx, psel, items}:
+      TL.memo.of.k(Bool.and(U32.is_eq(ppx, px), Q.Eq.str(psel, sel)), ty, es, px, sel, items)
+
+# the timeline from the memo's items
+def TL.entries.m(+ty: Ty, its: List<&2, TLE>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  match its:
+    case Nil{}:
+      Nil{}
+    case TLE{+e, p} <> t:
+      List.append(&2, TLine, TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, p), TL.entries.m(ty, t, st, sel, px, pics))
+
+def TL.memo.lines.k(same: Bool, +ty: Ty, m: TLMemo, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  match same m:
+    case True{} TLMemo{_, _, its}:
+      TL.entries.m(ty, TL.memo.again(es, ty, px, sel, its), st, sel, px, pics)
+    case False{} _:
+      TL.entries(ty, es, st, sel, px, pics)
+
+def TL.memo.fits(m: TLMemo, +px: U32, +sel: String) -> Bool:
+  match m:
+    case TLMemo{mpx, msel, _}:
+      Bool.and(U32.is_eq(mpx, px), Q.Eq.str(msel, sel))
+
+# the timeline, from the memo when it was made for this width and thread
+def TL.memo.lines(+ty: Ty, +m: TLMemo, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  TL.memo.lines.k(TL.memo.fits(m, px, sel), ty, m, es, st, sel, px, pics)
 
 # messages the server has not stored yet, marked as sending
 def TL.sending(+ty: Ty, ps: List<&2, String>, +px: U32) -> List<&2, TLine>:
@@ -1627,7 +1753,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +caret: Nat, +focus: String, +blink:
     Lay.button(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - Lay.button.w(ty, "Attach") : U32), (y + 64 : U32), "Attach", T.Th.soft(), "focus", "attach-path"),
     Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, x0, x1, (y - 36 : U32))])
 
-def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focus: String, +blink: Bool,
+def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
     +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>) -> Out:
   match t:
@@ -1642,7 +1768,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
       Lay.timeline(ty,
-        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw, pics), TL.sending(ty, pend, cw),
+        List.concat(&2, TLine, [TL.memo.lines(ty, memo, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw, pics), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
         cx0, cx1, top, (h - ah - qh : U32), sc,
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel))),
@@ -1653,29 +1779,82 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
           Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
 
-def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
+      Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
         U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf)
 
-def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+# only the screen shown is laid out (a Bool.pick would lay out all three)
+def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match settings empty:
+    case True{} _:
+      Lay.settings(ty, st, nf, v, note, x0, x1, h)
+    case False{} True{}:
+      Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st)))
+    case False{} False{}:
+      Lay.thread(ty, memo, n, x0, x1)
+
+def Lay.main(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
-      Bool.pick(Out, U.Flag.get(op, "settings"), Lay.settings(ty, st, nf, v, note, x0, x1, h),
-        Bool.pick(Out, String.is_empty(sel), Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(ty, n, x0, x1)))
+      Lay.main.k(U.Flag.get(op, "settings"), String.is_empty(sel), ty, memo, n, st, nf, v, note, x0, x1, h)
+
+def Lay.viewer.if(open: Bool, +ty: Ty, +n: S.Nui, +x0: U32, +w: U32, +h: U32) -> Out:
+  match open:
+    case True{}:
+      Lay.viewer(ty, n, x0, w, h)
+    case False{}:
+      Out.none()
+
+def Lay.palette.if(open: Bool, +ty: Ty, +n: S.Nui, +w: U32, +h: U32) -> Out:
+  match open:
+    case True{}:
+      Lay.palette(ty, S.Nui.ui(n), w, h, S.Blink.on(n))
+    case False{}:
+      Out.none()
+
+def Lay.proj.if(open: Bool, +ty: Ty, +n: S.Nui, +w: U32, +h: U32) -> Out:
+  match open:
+    case True{}:
+      Lay.proj(ty, S.Nui.ui(n), w, h, S.Blink.on(n))
+    case False{}:
+      Out.none()
 
 # the whole window, topmost first
-def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
+def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
   match n:
     case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _, _, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
-        Lay.main(ty, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
-        Bool.pick(Out, pa, Lay.viewer(ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
+        Lay.main(ty, memo, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
+        Lay.viewer.if(pa, ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h),
         Lay.term.of(ty, n, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w), h),
         Lay.sidebar(ty, n, h),
         Lay.toast(ty, err, w, h),
-        Out.when(U.Ui.flag(S.Nui.ui(n), "palette"), Lay.palette(ty, S.Nui.ui(n), w, h, S.Blink.on(n))),
-        Out.when(U.Ui.flag(S.Nui.ui(n), "proj"), Lay.proj(ty, S.Nui.ui(n), w, h, S.Blink.on(n))),
+        Lay.palette.if(U.Ui.flag(S.Nui.ui(n), "palette"), ty, n, w, h),
+        Lay.proj.if(U.Ui.flag(S.Nui.ui(n), "proj"), ty, n, w, h),
         Lay.hover(U.Ui.info(S.Nui.ui(n), "hover"), S.Hover.alpha(n, S.Nui.ms_of(n)))]))
+
+# the timeline's width, as Lay.frame lays it out
+def Lay.tl.px(+n: S.Nui) -> U32:
+  +w = S.Nui.width(n)
+  +x1 = Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((w - 264 : U32)) : U32), w)
+  U32.min((x1 - 264 - 64 : U32), 780)
+
+# the open thread's entries (none with no thread open)
+def Lay.memo.es(none: Bool, +n: S.Nui) -> List<&2, M.Entry>:
+  match none:
+    case True{}:
+      Nil{}
+    case False{}:
+      TL.mine(U.Ui.entries(U.Ui.state(S.Nui.ui(n))), U.Ui.sel(S.Nui.ui(n)), Nil{})
+
+# the memo brought up to this frame: the open thread's entries at its width
+def Lay.memo(+ty: Ty, +n: S.Nui, prev: TLMemo) -> TLMemo:
+  TL.memo.of(ty, Lay.memo.es(String.is_empty(U.Ui.sel(S.Nui.ui(n))), n), Lay.tl.px(n), U.Ui.sel(S.Nui.ui(n)), prev)
+
+def TL.memo.size(m: TLMemo) -> Nat:
+  match m:
+    case TLMemo{_, _, its}:
+      List.length(&2, TLE, its)

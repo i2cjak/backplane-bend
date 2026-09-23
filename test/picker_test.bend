@@ -2,6 +2,7 @@ import Base
 import ./check.bend as C
 import ../src/core/client.bend as U
 import ../src/core/fuzzy.bend as FZ
+import ../src/core/json.bend as J
 
 def labels(ps: List<&2, U.PItem>) -> String:
   match ps:
@@ -10,10 +11,11 @@ def labels(ps: List<&2, U.PItem>) -> String:
     case U.PItem{l, _, _} <> t:
       l ++ "|" ++ labels(t)
 
-# a picker listing /home/h with a few folders, filtered by q
+# a picker listing /home/h with a few folders (as the fs.list reply
+# arrives), filtered by q
 def at(+q: String) -> String:
-  labels(U.Proj.items(U.Proj.set(U.Ui.info_set(U.Ui.info_set(U.Ui.init(0n), "proj.dir", "/home/h"), "proj.entries",
-    "[\"Development\",\"docs\",\".cache\",\"dev-notes\"]"), q, 0n)))
+  labels(U.Proj.items(U.Proj.set(U.Proj.reply(True{}, U.Ui.init(0n),
+    Maybe.default(&2, J.Json, J.Json.parse("{\"result\":{\"dir\":\"/home/h\",\"entries\":[\"Development\",\"docs\",\".cache\",\"dev-notes\"]}}"), J.Null{})), q, 0n)))
 
 def main() -> IO(Unit):
   do IO<Unit>:

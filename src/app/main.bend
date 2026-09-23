@@ -22,6 +22,7 @@ import ./link.bend as LK
 import ./imgfx.bend as IF
 import ../core/images.bend as IM
 import ../gfx/bitmap.bend as BM
+import ../gfx/tiles.bend as TI
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -47,9 +48,13 @@ type ShellMsg is Data:
 type Tie is Data:
   Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat, pics: Map<&2, BM.Bitmap>, asked: Map<&2, Bool>}
 
+# what one frame keeps for the next: its tiles and the timeline's memo
+type Kept is Data:
+  Kept{frames: TI.Frames, memo: L.TLMemo}
+
 # the boards being watched and the fonts
 type Aux is Data:
-  Aux{watched: List<&2, String>, ty: L.Ty, tie: Tie}
+  Aux{watched: List<&2, String>, ty: L.Ty, tie: Tie, kept: Kept}
 
 type Shell is Type:
   Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg), aux: Aux}
@@ -255,8 +260,8 @@ def Pics.keep(m: Maybe<&2, BM.Bitmap>, ps: Map<&2, BM.Bitmap>, +path: String) ->
 
 def Pics.store(a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
   match a:
-    case Shell{+n, w, _, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, ps, ak}}}:
-      Shell.later(Shell{N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "img:" ++ path, note)), w, True{}, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, Pics.keep(m, ps, path), ak}}})
+    case Shell{+n, w, _, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, ps, ak}, fr}}:
+      Shell.later(Shell{N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "img:" ++ path, note)), w, True{}, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, Pics.keep(m, ps, path), ak}, fr}})
 
 # an image loaded (or failed) for this connection: keep it and redraw
 def Pics.got(current: Bool, a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
@@ -283,9 +288,9 @@ def Pics.uniq(ps: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
 # images the frame shows that were never asked for start loading
 def Pics.ask(+hs: List<&2, N.Hit>, wa: Aux, +q: Chan(ShellMsg)) -> IO(Aux):
   match wa:
-    case Aux{ws, ty, Tie{home, +url, +tag, n, ps, +ak}}:
+    case Aux{ws, ty, Tie{home, +url, +tag, n, ps, +ak}, fr}:
       +fresh = Pics.uniq(Pics.new(hs, ak), Nil{})
-      IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}}))
+      IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}, fr}))
 
 def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
   (w, img) = r
@@ -355,13 +360,13 @@ def Shell.joined(+i2: Chan(S.Msg), +q: Chan(ShellMsg), +tag: String) -> IO(Unit)
 
 def Shell.connect.k(t: Tie, a: Shell, +url: String) -> IO(Shell):
   match t a:
-    case Tie{+home, _, _, +n, _, _} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _}}:
+    case Tie{+home, _, _, +n, _, _} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _, fr}}:
       do IO<Shell>:
         ok : Bool <- Chan.send(S.Msg, i, S.Leave{0})
         +tag : String = url ++ "#" ++ Nat.show(n)
         +i2 : Chan(S.Msg) <- Shell.hub(String.is_empty(url), home, url)
         Shell.joined(i2, q, tag)
-        return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}}}
+        return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, fr}}
 
 def Shell.retry.later(+q: Chan(ShellMsg), +tag: String) -> IO(Unit):
   do IO<Unit>:
@@ -424,30 +429,30 @@ def Shell.has(ws: List<&2, String>, +r: String) -> Bool:
 
 def Aux.ty(a: Aux) -> L.Ty:
   match a:
-    case Aux{_, t, _}:
+    case Aux{_, t, _, _}:
       t
 
 def Aux.watched(a: Aux) -> List<&2, String>:
   match a:
-    case Aux{ws, _, _}:
+    case Aux{ws, _, _, _}:
       ws
 
 def Aux.add(a: Aux, r: String) -> Aux:
   match a:
-    case Aux{ws, t, ti}:
-      Aux{r <> ws, t, ti}
+    case Aux{ws, t, ti, fr}:
+      Aux{r <> ws, t, ti, fr}
 
 def Aux.tie(a: Aux) -> Tie:
   match a:
-    case Aux{_, _, ti}:
+    case Aux{_, _, ti, _}:
       ti
 
 # talk to the hub at url ("" is this machine's): leave the one now joined,
 # join the other; its log replaces what the window shows
 def Shell.connect(a: Shell, +url: String) -> IO(Shell):
   match a:
-    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti}}:
-      Shell.connect.k(ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti}}, url)
+    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti, fr}}:
+      Shell.connect.k(ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti, fr}}, url)
 
 # Commands
 # --------
@@ -509,8 +514,8 @@ def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
 
 def Shell.tagged(a: Shell, m: ShellMsg) -> IO(Shell):
   match a:
-    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti}}:
-      Shell.tagged.k(m, ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti}})
+    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti, fr}}:
+      Shell.tagged.k(m, ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti, fr}})
 
 def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
   match cs:
@@ -548,8 +553,8 @@ def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
 
 def Aux.with_tie(a: Aux, ti: Tie) -> Aux:
   match a:
-    case Aux{ws, t, _}:
-      Aux{ws, t, ti}
+    case Aux{ws, t, _, fr}:
+      Aux{ws, t, ti, fr}
 
 # no display: keep serving the web UI
 def Shell.nowin(e: U32 & String) -> IO(Unit):
@@ -901,31 +906,63 @@ def Vx.pick(x: V.Vx) -> String:
     case V.Vx{_, p, _, _, _, _, _, _, _, _, bm}:
       p
 
-# UI ops over the fading items and the picked item, over the base
-def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>) -> Image:
+# UI ops over the fading items and the picked item, over the base; tiles
+# the last frame drew the same way are kept (TI.Frame.again)
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
-      R.Frame.over(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
+      TI.Frame.again(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx))),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
-        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)))
+        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev)
 
 # the frame: UI ops over the fading items over the base
-def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>) -> Image:
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
   match pa:
     case True{}:
-      Shell.image.over(ops, vw, ww, hh, x0, now, hs, pics)
+      Shell.image.over(ops, vw, ww, hh, x0, now, hs, pics, prev)
     case False{}:
-      R.Frame.over(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}))
+      TI.Frame.again(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev)
+
+def Aux.frames(a: Aux) -> TI.Frames:
+  match a:
+    case Aux{_, _, _, Kept{f, _}}:
+      f
+
+def Aux.memo(a: Aux) -> L.TLMemo:
+  match a:
+    case Aux{_, _, _, Kept{_, m}}:
+      m
+
+def Aux.with_frames(a: Aux, f: TI.Frames) -> Aux:
+  match a:
+    case Aux{ws, ty, ti, Kept{_, m}}:
+      Aux{ws, ty, ti, Kept{f, m}}
+
+def Aux.with_memo(a: Aux, m: L.TLMemo) -> Aux:
+  match a:
+    case Aux{ws, ty, ti, Kept{f, _}}:
+      Aux{ws, ty, ti, Kept{f, m}}
+
+# present the frame's tiles and keep them for the next frame
+def Shell.present(+tiles: TI.Tiles, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  match o:
+    case L.Out{_, +hs}:
+      IO.bind(Window & Image, Shell, W.Win.present(w, TI.Tiles.image(tiles)),
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), ms))
 
 def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
     case L.Out{+ops, +hs}:
-      IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)))),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), ms))
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
+        L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
+
+# the timeline's memo is brought up to this frame first; layout draws from it
+def Shell.paint.m(+memo: L.TLMemo, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(L.Lay.frame(Aux.ty(wa), memo, n), n, w, q, i, Aux.with_memo(wa, memo), epoch, ms)
 
 def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(L.Lay.frame(Aux.ty(wa), n), n, w, q, i, wa, epoch, ms)
+  Shell.paint.m(L.Lay.memo(Aux.ty(wa), n, Aux.memo(wa)), n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match n0:
@@ -1003,7 +1040,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     ty : L.Ty <- L.Ty.load()
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, L.TL.memo.none()}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg)) -> IO(Unit):

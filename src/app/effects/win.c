@@ -31,6 +31,7 @@
   X(XMapRaised, int, (Display*, Window)) \
   X(XFlush, int, (Display*)) \
   X(XPending, int, (Display*)) \
+  X(XEventsQueued, int, (Display*, int)) \
   X(XNextEvent, int, (Display*, XEvent*)) \
   X(XLookupString, int, (XKeyEvent*, char*, int, KeySym*, XComposeStatus*)) \
   X(XCreateImage, XImage*, (Display*, Visual*, unsigned, int, int, char*, unsigned, unsigned, int, int)) \
@@ -210,6 +211,26 @@ static void win_pump(AppWin* a) {
   }
 }
 
+// Any Xlib call off the pump (XPutImage, XFlush...) may read waiting
+// input into Xlib's own queue; the pump sleeps on the socket, which is
+// then empty, so those events would wait for the next one to arrive (a
+// key typed would show only on the key after it). After such a call,
+// queued events make the window send itself a no-op ClientMessage: the
+// socket wakes the pump, which drains the queue.
+static void win_nudge(AppWin* a) {
+  if (x_XEventsQueued(a->dpy, QueuedAlready) == 0) {
+    return;
+  }
+  XEvent ev;
+  memset(&ev, 0, sizeof ev);
+  ev.xclient.type = ClientMessage;
+  ev.xclient.window = a->win;
+  ev.xclient.message_type = a->prop;
+  ev.xclient.format = 32;
+  x_XSendEvent(a->dpy, a->win, False, NoEventMask, &ev);
+  x_XFlush(a->dpy);
+}
+
 // the pending events as a flat list of words, five per event (kind, a,
 // b, c, d); Bend's Win.decode turns them into WinEv (a module's
 // constructor ids depend on its path, so C only speaks words)
@@ -280,7 +301,10 @@ static Term win_words_more(Env e, IoWork* w) {
   AppWin* a = (AppWin*)w->hand;
   win_pump(a);
   if (a->n == 0) {
-    return io_wait_on(w, ConnectionNumber(a->dpy), POLLIN, 0, win_words_more);
+    // the nudge can still lose a race with the presenting thread (an event
+    // read into Xlib's queue after it looked); a short deadline re-checks
+    // the queue, so no key waits for the next one to show
+    return io_wait_on(w, ConnectionNumber(a->dpy), POLLIN, io_tick() + 30000000ull, win_words_more);
   }
   return io_tup(e, io_hand(w->hand), win_list(e, a));
 }
@@ -369,6 +393,7 @@ Term win_present_run(Env e, Term* f, IoWork* w) {
   x_XPutImage(a->dpy, a->win, DefaultGC(a->dpy, DefaultScreen(a->dpy)), a->img,
     0, 0, 0, 0, a->w, a->h);
   x_XFlush(a->dpy);
+  win_nudge(a);
   win_snap(a);
   return io_tup(e, f[0], image);
 }
@@ -388,6 +413,7 @@ Term win_copy_run(Env e, Term* f, IoWork* w) {
   a->copy = io_cstr(e, f[1], &a->copy_len);
   x_XSetSelectionOwner(a->dpy, a->clip, a->win, CurrentTime);
   x_XFlush(a->dpy);
+  win_nudge(a);
   return f[0];
 }
 
@@ -411,6 +437,7 @@ Term win_paste_run(Env e, Term* f, IoWork* w) {
   } else {
     x_XConvertSelection(a->dpy, a->clip, a->utf8, a->prop, a->win, CurrentTime);
     x_XFlush(a->dpy);
+    win_nudge(a);
   }
   return f[0];
 }
@@ -470,6 +497,7 @@ Term win_title_run(Env e, Term* f, IoWork* w) {
   char* t = io_cstr(e, f[1], &n);
   x_XStoreName(a->dpy, a->win, t);
   x_XFlush(a->dpy);
+  win_nudge(a);
   free(t);
   return f[0];
 }

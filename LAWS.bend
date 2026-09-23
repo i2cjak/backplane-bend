@@ -11,6 +11,10 @@ import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
+import ./src/gfx/tiles.bend as T
+import ./src/gfx/raster.bend as R
+import ./src/app/layout.bend as L
+import ./src/core/eq.bend as Q
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -453,3 +457,91 @@ law caret_shows_when_moved:
 law tailnet_no_owner_no_trust:
   for login: String
   {TN.Tailnet.trusts("", login) == False{} : Bool}
+
+# Drawing only what changed
+# ------------------------
+# A frame is kept as tiles and the timeline as per-entry parts; the next
+# frame reuses exactly what is equal and draws the rest.
+
+# drawing a frame over the last one's tiles gives exactly the tiles drawn
+# from scratch: a kept tile is never stale, whatever changed (ops, base)
+law tiles_again_exact:
+  for k: Nat
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +old: List<&2, R.Op>
+  for +base0: Image
+  for +base1: Image
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  {T.Tiles.again(k, e, ops, base1, T.Tiles.make(k, e, old, base0, rx, ry, n), rx, ry, n) == T.Tiles.make(k, e, ops, base1, rx, ry, n) : T.Tiles}
+
+# a tile whose ops and base are unchanged is kept as it is, whatever image
+# it holds: it is not drawn again
+law tile_keep:
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for +img: Image
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  {T.Tile.again(e, ops, base, T.Tile{ops, base, img}, rx, ry, n) == T.Tile{ops, base, img} : T.Tile}
+
+# the same for a whole frame as the window draws it, even when the window
+# was resized in between
+law frame_again_exact:
+  for +w0: U32
+  for +h0: U32
+  for +w: U32
+  for +h: U32
+  for +ops: List<&2, R.Op>
+  for +old: List<&2, R.Op>
+  for +base0: Image
+  for +base: Image
+  {T.Frame.again(w, h, ops, base, T.FSome{w0, h0, T.Frame.make(w0, h0, old, base0)}) == T.Frame.make(w, h, ops, base) : T.Tiles}
+
+# the timeline's memo brought up to date is exactly the memo made from
+# scratch, for any earlier entries
+law tl_again_exact:
+  for es: List<&2, M.Entry>
+  for +ty: L.Ty
+  for +old: List<&2, M.Entry>
+  for +px: U32
+  for +sel: String
+  {L.TL.memo.again(es, ty, px, sel, L.TL.memo.make(ty, old, px, sel)) == L.TL.memo.make(ty, es, px, sel) : List<&2, L.TLE>}
+
+# an entry equal to the one its memo item was made for keeps the item:
+# its markdown is not laid out again
+law tl_keep:
+  for +ty: L.Ty
+  for +e: M.Entry
+  for +px: U32
+  for +sel: String
+  for +p: L.TLPart
+  {L.TL.memo.one(ty, e, px, sel, L.TLE{e, p}) == L.TLE{e, p} : L.TLE}
+
+# the same for the whole memo, whatever width and thread it was made for
+law tl_memo_exact:
+  for +ty: L.Ty
+  for +es: List<&2, M.Entry>
+  for +old: List<&2, M.Entry>
+  for +px0: U32
+  for +sel0: String
+  for +px: U32
+  for +sel: String
+  {L.TL.memo.of(ty, es, px, sel, L.TLMemo{px0, sel0, L.TL.memo.make(ty, old, px0, sel0)}) == L.TLMemo{px, sel, L.TL.memo.make(ty, es, px, sel)} : L.TLMemo}
+
+# the timeline drawn from a memo is the timeline drawn from scratch
+law tl_lines_exact:
+  for +ty: L.Ty
+  for +es: List<&2, M.Entry>
+  for +old: List<&2, M.Entry>
+  for +px0: U32
+  for +sel0: String
+  for +st: M.State
+  for +sel: String
+  for +px: U32
+  for +pics: Map<&2, String>
+  {L.TL.memo.lines(ty, L.TLMemo{px0, sel0, L.TL.memo.make(ty, old, px0, sel0)}, es, st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}

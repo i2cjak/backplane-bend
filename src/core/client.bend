@@ -1458,16 +1458,35 @@ def Proj.names(xs: List<&2, J.Json>) -> List<&2, String>:
     case _ <> t:
       Proj.names(t)
 
+# names are kept joined by NUL, which no file name holds: split once per
+# use rather than parsing JSON every frame
+def Proj.sep() -> Char:
+  Chr{0}
+
+def Proj.nonempty.k(skip: Bool, x: String, rest: List<&2, String>) -> List<&2, String>:
+  match skip:
+    case True{}:
+      rest
+    case False{}:
+      x <> rest
+
+def Proj.nonempty(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Proj.nonempty.k(String.is_empty(x), x, Proj.nonempty(t))
+
 # the subfolders of the listed folder
 def Proj.entries(u: Ui) -> List<&2, String>:
-  Proj.names(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(Ui.info(u, "proj.entries")), J.Null{})))
+  Proj.nonempty(String.split(Ui.info(u, "proj.entries"), Proj.sep()))
 
 # a listing (or its error) arrived
 def Proj.reply(has: Bool, u: Ui, +o: J.Json) -> Ui:
   match has:
     case True{}:
       Ui.info_set(Ui.info_set(Ui.info_set(u, "proj.dir", J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")), "proj.entries",
-        J.Json.show(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), "proj.err", "")
+        String.join(Proj.names(J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), SCon{Proj.sep(), SNil{}})), "proj.err", "")
     case False{}:
       Ui.info_set(u, "proj.err", J.Json.get_str(J.Json.get_obj(o, "result"), "error", ""))
 
@@ -1528,17 +1547,23 @@ def Proj.is_project(ps: List<&2, M.Project>, +root: String) -> Bool:
 def Proj.add(+u: Ui, +dir: String) -> List<&2, PItem>:
   Bool.pick(List<&2, PItem>, Proj.is_project(Ui.projects(Ui.state(u)), dir), [PItem{dir ++ " is already a project", "", ""}], [PItem{"Add " ++ dir ++ " as a project", "proj-add", dir}])
 
+# (a match, not Bool.pick: only the list shown is made)
+def Proj.items.q(empty: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, String>) -> List<&2, PItem>:
+  match empty:
+    case True{}:
+      List.concat(&2, PItem, [Proj.add(u, dir), Bool.pick(List<&2, PItem>, String.eq(dir, "/"), Nil{}, [PItem{"..", "proj-cd", Proj.parent(dir)}]),
+        Proj.rows(Proj.scored(ns, q), dir)])
+    case False{}:
+      List.concat(&2, PItem, [Proj.rows(List.sort(~Scored, ~Scored.before, Proj.scored(ns, q)), dir),
+        Bool.pick(List<&2, PItem>, Bool.and(Proj.name_ok(q), Bool.not(Proj.exact(ns, q))), [PItem{"Create folder '" ++ q ++ "' here", "proj-mkdir", Proj.join(dir, q)}], Nil{}),
+        Proj.add(u, dir)])
+
 def Proj.items.k(path: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, String>) -> List<&2, PItem>:
   match path:
     case True{}:
       [PItem{"Go to " ++ q, "proj-cd", q}]
     case False{}:
-      Bool.pick(List<&2, PItem>, String.is_empty(q),
-        List.concat(&2, PItem, [Proj.add(u, dir), Bool.pick(List<&2, PItem>, String.eq(dir, "/"), Nil{}, [PItem{"..", "proj-cd", Proj.parent(dir)}]),
-          Proj.rows(Proj.scored(ns, q), dir)]),
-        List.concat(&2, PItem, [Proj.rows(List.sort(~Scored, ~Scored.before, Proj.scored(ns, q)), dir),
-          Bool.pick(List<&2, PItem>, Bool.and(Proj.name_ok(q), Bool.not(Proj.exact(ns, q))), [PItem{"Create folder '" ++ q ++ "' here", "proj-mkdir", Proj.join(dir, q)}], Nil{}),
-          Proj.add(u, dir)]))
+      Proj.items.q(String.is_empty(q), u, q, dir, ns)
 
 # what the picker offers. No filter: add the listed folder (once), the
 # parent, the subfolders. A filter: matching subfolders best first, then
