@@ -239,6 +239,26 @@ law alert_never_running:
   for b: Bool
   {Nt.Note.kind(b, M.Running{}) == "" : String}
 
+# a stop the user asked for is not news
+law alert_not_on_stop:
+  for b: Bool
+  {Nt.Note.kind(b, M.Interrupted{}) == "" : String}
+
+# connecting (no turn seen running yet) raises no alerts, however many
+# threads and finished turns the log holds
+law alert_none_on_connect:
+  for ts: List<&2, M.Thread>
+  for +es: List<&2, M.Entry>
+  {Nt.Note.alerts(ts, [], es) == [] : List<&2, J.Json>}
+
+# with no thread running the island is empty, so the Live Activity (iOS)
+# ends and the live service (Android) stops
+law island_idle_empty:
+  for ts: List<&2, M.Thread>
+  for +es: List<&2, M.Entry>
+  for h: {Nt.Note.busy(ts) == False{} : Bool}
+  {Nt.Note.lines(ts, es) == [] : List<&2, J.Json>}
+
 # Phone pushes
 # ------------
 

@@ -437,6 +437,36 @@ def Laws.alert_never_running(b):
     case False{}:
       {==}
 
+def Laws.alert_not_on_stop(b):
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.alert_none_on_connect(ts, es):
+  match ts:
+    case Nil{}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Laws.alert_none_on_connect(t, es)
+
+def Laws.island_idle_empty(ts, es, h):
+  match ts:
+    case Nil{}:
+      {==}
+    case M.Thread{id, p, ti, c, a, M.Running{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Empty.absurd({Nt.Note.lines(M.Thread{id, p, ti, c, a, M.Running{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t, es) == [] : List<&2, J.Json>},
+        false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case M.Thread{id, p, ti, c, a, M.Idle{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Laws.island_idle_empty(t, es, h)
+    case M.Thread{id, p, ti, c, a, M.Completed{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Laws.island_idle_empty(t, es, h)
+    case M.Thread{id, p, ti, c, a, M.Interrupted{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Laws.island_idle_empty(t, es, h)
+    case M.Thread{id, p, ti, c, a, M.Failed{}, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Laws.island_idle_empty(t, es, h)
+
 # a string compares equal to itself, handing both copies back
 law string_cmp_refl:
   for +s: String

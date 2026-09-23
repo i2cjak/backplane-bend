@@ -30,6 +30,15 @@ def Note.running(t: M.TurnState) -> Bool:
     case _:
       False{}
 
+# is any thread running (the island shows, and the Live Activity lives,
+# exactly while one is: law island_idle_empty)
+def Note.busy(ts: List<&2, M.Thread>) -> Bool:
+  match ts:
+    case Nil{}:
+      False{}
+    case M.Thread{_, _, _, _, _, turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
+      Bool.or(Note.running(turn), Note.busy(t))
+
 # which threads were running, taken before a server message is folded in
 type Seen is Data:
   Seen{id: String, running: Bool}
