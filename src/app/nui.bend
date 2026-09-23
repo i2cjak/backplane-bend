@@ -276,7 +276,7 @@ def Hit.find(+hs: List<&2, Hit>, +x: U32, +y: U32) -> Maybe<&2, Hit>:
 def Vw.kind_set(v: V.Vw, +k: U32, +path: String) -> V.Vw:
   match v:
     case V.Vw{_, vi, _, r, d, lx, ly, b, _, cu, V.Vx{_, _, t, c, sh, bu, px, py, _, se, bm}}:
-      V.Vw{Nil{}, vi, False{}, "", d, lx, ly, b, False{}, cu, V.Vx{k, "", t, c, sh, bu, px, py, path, se, bm}}
+      V.Vw{Nil{}, V.View{1.0, 0.0, 0.0}, False{}, "", d, lx, ly, b, False{}, cu, V.Vx{k, "", t, c, sh, bu, px, py, path, se, bm}}
 
 def Vw.pick_set(v: V.Vw, +key: String) -> V.Vw:
   match v:
@@ -450,8 +450,21 @@ def Vw.zoom.k(three: Bool, v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
     case True{} V.Vw{s, vi, fi, r, d, lx, ly, b, _, cu, vx}:
       V.Vw{s, vi, fi, r, d, lx, ly, b, False{}, cu, Vx.zoom(vx, f)}
 
+def Vw.scroll(v: V.Vw, +up: Bool) -> V.Vw:
+  match v:
+    case V.Vw{s, V.View{z, ox, +oy}, fi, r, d, lx, ly, b, fr, cu, vx}:
+      V.Vw{s, V.View{z, ox, Bool.pick(F32, up, F32.max(F32.sub(oy, 66.0), 0.0), F32.add(oy, 66.0))}, fi, r, d, lx, ly, b, fr, cu, vx}
+
+# the diff view scrolls on the wheel; the others zoom
+def Vw.zoom.d(diff: Bool, +v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
+  match diff:
+    case True{}:
+      Vw.scroll(v, F32.is_gt(f, 1.0))
+    case False{}:
+      Vw.zoom.k(U32.is_eq(Vw.kind(v), 2), v, f, x, y)
+
 def Vw.zoom(+v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
-  Vw.zoom.k(U32.is_eq(Vw.kind(v), 2), v, f, x, y)
+  Vw.zoom.d(U32.is_eq(Vw.kind(v), 4), v, f, x, y)
 
 def Vw.refit(v: V.Vw) -> V.Vw:
   match v:
@@ -560,7 +573,7 @@ def Nui.status(+n: Nui, +key: String, +text: String) -> Nui:
 def Nui.source.k(x: V.Vx, +root: String, +frames: String) -> String:
   match x:
     case V.Vx{+k, _, _, _, _, _, _, _, +pa, _, bm}:
-      Bool.pick(String, U32.is_eq(k, 3), V.Src.key(3, "", frames), V.Src.key(k, root, pa))
+      Bool.pick(String, U32.is_eq(k, 3), V.Src.key(3, "", frames), Bool.pick(String, U32.is_eq(k, 4), V.Src.key(4, "", ""), V.Src.key(k, root, pa)))
 
 # the source the viewer should show now (Src.key)
 def Nui.source(+n: Nui) -> String:
@@ -588,21 +601,27 @@ def Nui.height(n: Nui) -> U32:
     case Nui{_, _, h, _, _, _, _, _, _, _, _, _, _}:
       h
 
-def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
+def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
   match open:
     case True{}:
       Nui.with_vw(n, Vw.fit(Nui.vw(n), Nui.vx0(n), Nui.height(n), Nui.width(n)))
     case False{}:
       n
 
+# fit a board, schematic or model when first shown (the diff view scrolls
+# from the top instead)
+def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
+  Nui.prepare.fit(Bool.and(open, Bool.not(U32.is_eq(Vw.kind(Nui.vw(n)), 4))), n)
+
 # the kind of view for a requested file: named, else from its extension
 def View.kind_of(+kind: String, +path: String) -> U32:
+  Bool.pick(U32, String.eq(kind, "diff"), 4,
   Bool.pick(U32, String.eq(kind, "browser"), 3,
   Bool.pick(U32, String.eq(kind, "schematic"), 1,
     Bool.pick(U32, Bool.or(String.eq(kind, "3d"), String.eq(kind, "step")), 2,
       Bool.pick(U32, String.eq(kind, "board"), 0,
         Bool.pick(U32, String.ends_with(path, ".kicad_sch"), 1,
-          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0))))))
+          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0)))))))
 
 def Vx.seen(x: V.Vx) -> String:
   match x:

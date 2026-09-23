@@ -17,6 +17,7 @@ import ../core/acp.bend as AC
 import ../core/cbor.bend as CB
 import ./push.bend as PU
 import ./park.bend as PK
+import ./git.bend as GT
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -889,6 +890,100 @@ def Codex.fed(r: U.Lines & List<&2, String>, s: Socket, +ended: Bool, +thread: S
   (carry, ls) = r
   IO.bind(Bool, Unit, Codex.lines(ls, ended, thread, inbox), e2 => k(s, carry, e2))
 
+# Git jobs
+# --------
+# The hub asks; git runs here off the hub's thread; results go back as a
+# reply to the asking client, and as thread notes/events through the hub.
+
+def GitJob.say(+inbox: Chan(Msg), +m: String, p: List<&2, J.KV>) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- Chan.send(Msg, inbox, Rpc{0, J.Json.show(J.Json.obj([J.KV{"id", J.Num{"0"}}, J.KV{"m", J.Str{m}}, J.KV{"p", J.Json.obj(p)}]))})
+    return Unit{}
+
+def GitJob.note(+inbox: Chan(Msg), +thread: String, +tone: String, +summary: String) -> IO(Unit):
+  GitJob.say(inbox, "thread.note", [J.KV{"thread", J.Str{thread}}, J.KV{"tone", J.Str{tone}}, J.KV{"kind", J.Str{"git"}}, J.KV{"summary", J.Str{summary}}])
+
+def GitJob.reply(+inbox: Chan(Msg), +client: U32, +id: String, +ok: Bool, r: J.Json) -> IO(Unit):
+  do IO<Unit>:
+    sent : Bool <- Chan.send(Msg, inbox, Push{client, J.Json.show(J.Json.obj([J.KV{"t", J.Str{"reply"}}, J.KV{"id", J.Num{id}}, J.KV{"ok", J.Flag{ok}}, J.KV{"result", r}]))})
+    return Unit{}
+
+def GitJob.nonblank(ls: List<&2, String>, +n: Nat) -> Nat:
+  match ls:
+    case Nil{}:
+      n
+    case l <> t:
+      GitJob.nonblank(t, Bool.pick(Nat, String.is_empty(String.trim(l)), n, 1n+n))
+
+def GitJob.count.k(r: P.Ran) -> Nat:
+  match r:
+    case P.Ran{0, out}:
+      GitJob.nonblank(String.lines(out), 0n)
+    case _:
+      0n
+
+# how many checkpoints a thread has (its next turn number)
+def GitJob.count(+cwd: String, +thread: String) -> IO(Nat):
+  IO.bind(P.Ran, Nat, P.Proc.run("git", ["for-each-ref", "--format=%(refname)", "refs/backplane/checkpoints/" ++ GT.Git.b64url(thread) ++ "/turn/"], cwd),
+    r => IO.pure(Nat, GitJob.count.k(r)))
+
+def GitJob.cp0.k(n: Nat, +cwd: String, +thread: String) -> IO(Unit):
+  match n:
+    case 0n:
+      IO.bind(String, Unit, GT.Git.checkpoint.capture(cwd, thread, 0n), r => IO.pure(Unit, Unit{}))
+    case _:
+      IO.pure(Unit, Unit{})
+
+def GitJob.worktree.k(+r: String, +inbox: Chan(Msg), +thread: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.failed(r), GitJob.note(inbox, thread, "error", "worktree: " ++ r),
+    GitJob.say(inbox, "thread.worktree", [J.KV{"thread", J.Str{thread}}, J.KV{"branch", J.Str{branch}}, J.KV{"path", J.Str{r}}]))
+
+def GitJob.text.k(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +what: String, +r: String) -> IO(Unit):
+  do IO<Unit>:
+    GitJob.reply(inbox, client, id, Bool.not(GT.Git.failed(r)), J.Json.obj([J.KV{"text", J.Str{r}}, J.KV{"thread", J.Str{thread}}]))
+    GitJob.note(inbox, thread, Bool.pick(String, GT.Git.failed(r), "error", "info"), what ++ Bool.pick(String, String.is_empty(r), "", ": " ++ String.trim(r)))
+
+def GitJob.diff.k(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +r: String) -> IO(Unit):
+  GitJob.reply(inbox, client, id, Bool.not(GT.Git.failed(r)), J.Json.obj([J.KV{"diff", J.Str{r}}, J.KV{"thread", J.Str{thread}}]))
+
+def GitJob.diff(+cwd: String, +thread: String, +a: String, +b: String) -> IO(String):
+  Bool.pick(IO(String), String.eq(b, "-1"), GT.Git.checkpoint.diff_worktree(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n)),
+    GT.Git.checkpoint.diff(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n), Maybe.default(&2, Nat, Nat.read(b), 0n)))
+
+def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
+  match i:
+    case 0n:
+      IO.bind(String, Unit, GT.Git.worktree.create(cwd, home, a, GT.Git.branch.temp(seed), ""), r => GitJob.worktree.k(r, inbox, thread, GT.Git.branch.temp(seed)))
+    case 1n:
+      IO.bind(Nat, Unit, GitJob.count(cwd, thread), n => GitJob.cp0.k(n, cwd, thread))
+    case 2n:
+      IO.bind(Nat, Unit, GitJob.count(cwd, thread), n => IO.bind(String, Unit, GT.Git.checkpoint.capture(cwd, thread, n), r => IO.pure(Unit, Unit{})))
+    case 3n:
+      IO.bind(String, Unit, GitJob.diff(cwd, thread, a, b), r => GitJob.diff.k(inbox, client, id, thread, r))
+    case 4n:
+      IO.bind(String, Unit, GT.Git.checkpoint.revert(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n)), r => GitJob.text.k(inbox, client, id, thread, "reverted to turn " ++ a, r))
+    case 5n:
+      IO.bind(String, Unit, GT.Git.act(cwd, a, Bool.pick(String, String.is_empty(b), "Backplane: changes from this thread", b), "", ""), r => GitJob.text.k(inbox, client, id, thread, a, r))
+    case 6n:
+      IO.bind(String, Unit, GT.Git.status(cwd), r => GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"status", J.Str{r}}, J.KV{"thread", J.Str{thread}}])))
+    case _:
+      IO.pure(Unit, Unit{})
+
+def GitJob.repo(ok: Bool, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
+  match ok:
+    case True{}:
+      GitJob.go(C.Codec.pos(["worktree", "checkpoint0", "checkpoint", "diff", "revert", "act", "status"], job), inbox, client, id, thread, cwd, a, b, home, seed)
+    case False{}:
+      Bool.pick(IO(Unit), String.is_empty(id), IO.pure(Unit, Unit{}), GitJob.reply(inbox, client, id, False{}, J.Json.obj([J.KV{"text", J.Str{"not a git repository: " ++ cwd}}])))
+
+# one git job; nothing happens outside a git repository (checkpoints are
+# skipped, requests answer why)
+def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- GT.Git.is_repo(cwd)
+    t : U32 <- H.Clock.epoch()
+    GitJob.repo(ok, job, inbox, client, id, thread, cwd, a, b, home, U32.to_nat(t))
+
 # Grok (grok agent stdio, ACP)
 # ----------------------------
 # One process per turn. Acp.line decides what to write back and what to
@@ -1474,6 +1569,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
         IO.spawn(Unit, PU.Push.turn_ended(Cfg.home(cfg), st, thread, state))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
+      do IO<Hub>:
+        IO.spawn(Unit, GitJob.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg)))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.AskAnswered{+ask, +answer}:
       do IO<Hub>:

@@ -27,6 +27,7 @@ type Out is Data:
   GrokTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
   TurnEnded{thread: String, state: String}
   AskAnswered{id: String, answer: String}
+  Git{client: U32, id: String, job: String, thread: String, cwd: String, a: String, b: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -154,7 +155,7 @@ def Hub.run(t: M.Thread, +cwd: String, +text: String) -> List<&2, Out>:
     case M.Thread{+id, _, _, _, _, _, _, _, _, _, _, _, _, _, _, +provider, model, runtime, interaction, session, _}:
       Hub.run.k(C.Codec.pos(["claude", "codex", "grok"], provider), id, cwd, provider, model, session, runtime, interaction, text)
 
-def Hub.post.go(wait: Bool, +t: M.Thread, cwd: String, +queued: String, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+def Hub.post.go(wait: Bool, +t: M.Thread, +cwd: String, +queued: String, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
   match wait:
     case True{}:
       Step{[M.MessagePosted{thread, msg, role, text, now}, M.TurnQueued{thread, msg, text, now}], Nil{}}
@@ -162,7 +163,7 @@ def Hub.post.go(wait: Bool, +t: M.Thread, cwd: String, +queued: String, +now: Na
       Step{List.concat(&2, M.Change, [[M.MessagePosted{thread, msg, role, text, now}],
           Bool.pick(List<&2, M.Change>, String.is_empty(queued), Nil{}, [M.QueueTaken{thread, now}]),
           [M.TurnChanged{thread, M.Running{}, now}]]),
-        Hub.run(t, cwd, M.Queue.join(queued, text))}
+        Git{0, "", "checkpoint0", thread, cwd, "", ""} <> Hub.run(t, cwd, M.Queue.join(queued, text))}
 
 def Step.before(cs: List<&2, M.Change>, os: List<&2, Out>, st: Step) -> Step:
   match st:
@@ -186,9 +187,13 @@ def Hub.entries(s: M.State) -> List<&2, M.Entry>:
 def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   +project = J.Json.get_str(p, "project", "")
   +title = J.Json.get_str(p, "title", "New thread")
-  Step.reply(client, id, [M.ThreadCreated{Hub.id("t", now, Hub.seq(s)), project, title,
-    C.Env.of(J.Json.get_str(p, "env", "local")), "", "", J.Json.get_str(p, "provider", M.Setting.get(s, "agent.provider", "claude")),
-    J.Json.get_str(p, "model", M.Setting.get(s, "agent.model", "")), now}])
+  +env = J.Json.get_str(p, "env", M.Setting.get(s, "thread.env", "local"))
+  +th = Hub.id("t", now, Hub.seq(s))
+  Step{[M.ThreadCreated{th, project, title,
+    C.Env.of(env), "", "", J.Json.get_str(p, "provider", M.Setting.get(s, "agent.provider", "claude")),
+    J.Json.get_str(p, "model", M.Setting.get(s, "agent.model", "")), now}],
+    Reply.ok(client, id) <> Bool.pick(List<&2, Out>, String.eq(env, "worktree"),
+      [Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, project)), Hub.base(Hub.project.root(Hub.project(s, project))), ""}], Nil{})}
 
 def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   +root = J.Json.get_str(p, "path", "")
@@ -219,6 +224,41 @@ def Hub.implement.k(t: M.Thread, +now: Nat) -> List<&2, M.Change>:
 # the state the implementing turn starts from: the plan is out of the way
 def Hub.impl.state(+s: M.State, +th: String, +now: Nat) -> M.State:
   M.State.replay(Hub.implement.k(Hub.thread(s, th), now), s)
+
+# Git: worktrees, checkpoints, diffs, stacked actions
+# ---------------------------------------------------
+# The hub decides; the server runs git (src/server/git.bend) and reports
+# back: thread.worktree and thread.note come from the server itself.
+
+# a commit made from a thread says what the thread was about
+def Hub.title_of(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      ti
+
+def Hub.methods.git() -> List<&2, String>:
+  ["git.diff", "git.revert", "git.act", "git.status", "thread.worktree", "thread.note"]
+
+def Hub.git(+s: M.State, +client: U32, +id: String, +job: String, +thread: String, +a: String, +b: String) -> Step:
+  Step.outs([Git{client, id, job, thread, Hub.cwd(s, Hub.thread(s, thread)), a, b}])
+
+def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  match i:
+    case 0n:
+      Hub.git(s, client, id, "diff", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "from"), "0"), J.Json.as_raw(J.Json.get(p, "to"), "-1"))
+    case 1n:
+      Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
+    case 2n:
+      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.title_of(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
+    case 3n:
+      Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
+    case 4n:
+      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), J.Json.get_str(p, "path", ""), now}])
+    case 5n:
+      Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
+        J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
+    case _:
+      Step.outs([Reply.err(client, id, "unknown method")])
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
@@ -390,7 +430,7 @@ def Hub.turn.m(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: Strin
 def Hub.turn(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +text: String, +msg: String) -> Step:
   Hub.turn.m(s, now, client, id, thread, text, Bool.pick(String, String.is_empty(msg), Hub.id("m", now, Hub.seq(s)), msg), Bool.not(String.is_empty(msg)))
 
-def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
     case 0n:
       Hub.project_add(s, now, client, id, p)
@@ -431,12 +471,12 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 18n:
       Hub.answer(s, now, client, id, J.Json.get_str(p, "id", ""), J.Json.get_str(p, "answer", ""))
     case _:
-      Step.outs([Reply.err(client, id, "unknown method")])
+      Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p)
 
 # one client request {"id": n, "m": method, "p": params}
 def Hub.request(+s: M.State, +now: Nat, +client: U32, +o: J.Json) -> Step:
   Hub.request.k(C.Codec.pos(Hub.methods(), J.Json.get_str(o, "m", "")), s, now, client,
-    J.Json.as_raw(J.Json.get(o, "id"), "0"), J.Json.get_obj(o, "p"))
+    J.Json.as_raw(J.Json.get(o, "id"), "0"), J.Json.get_obj(o, "p"), J.Json.get_str(o, "m", ""))
 
 def Hub.request_text.k(m: Maybe<&2, J.Json>, +s: M.State, +now: Nat, +client: U32) -> Step:
   match m:
@@ -571,19 +611,19 @@ def Ended.state(cs: List<&2, M.Change>, +thread: String) -> String:
     case _ <> t:
       Ended.state(t, thread)
 
-def Ended.out.k(none: Bool, +state: String, +thread: String, st: Step) -> Step:
+def Ended.out.k(none: Bool, +state: String, +thread: String, +cwd: String, st: Step) -> Step:
   match none st:
     case True{} _:
       st
     case False{} Step{cs, os}:
-      Step{cs, List.append(&2, Out, os, [TurnEnded{thread, state}])}
+      Step{cs, List.append(&2, Out, os, [TurnEnded{thread, state}, Git{0, "", "checkpoint", thread, cwd, "", ""}])}
 
-def Ended.out.s(+state: String, +thread: String, st: Step) -> Step:
-  Ended.out.k(String.is_empty(state), state, thread, st)
+def Ended.out.s(+state: String, +thread: String, +cwd: String, st: Step) -> Step:
+  Ended.out.k(String.is_empty(state), state, thread, cwd, st)
 
 # a turn that ends tells the server (phone notifications hang off this)
-def Ended.out(+thread: String, +st: Step) -> Step:
-  Ended.out.s(Ended.state(Queue.changes(st), thread), thread, st)
+def Ended.out(+s: M.State, +thread: String, +st: Step) -> Step:
+  Ended.out.s(Ended.state(Queue.changes(st), thread), thread, Hub.cwd(s, Hub.thread(s, thread)), st)
 
 def Queue.drain(+s: M.State, +now: Nat, +thread: String, +st: Step) -> Step:
   Queue.drain.k(Bool.and(Queue.ended(Queue.changes(st), thread), Bool.not(String.is_empty(M.Queue.of(s, thread)))), st,
@@ -720,11 +760,11 @@ def Task.finish(+s: M.State, +now: Nat, +thread: String, st: Step) -> Step:
 
 # one line of an agent's stdout
 def Hub.agent_line(+s: M.State, +now: Nat, +thread: String, line: String) -> Step:
-  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(thread, Hub.agent_line.k(Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude")), s, now, thread, line))))
+  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(s, thread, Hub.agent_line.k(Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude")), s, now, thread, line))))
 
 # an agent process ended; a turn still running ends with it
 def Hub.agent_gone(+s: M.State, +now: Nat, +thread: String, +code: U32) -> Step:
-  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(thread, Hub.agent_gone.k(Hub.running(Hub.thread(s, thread)), thread, now, code))))
+  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(s, thread, Hub.agent_gone.k(Hub.running(Hub.thread(s, thread)), thread, now, code))))
 
 def Step.outs_of(st: Step) -> List<&2, Out>:
   match st:

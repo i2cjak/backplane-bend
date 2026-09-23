@@ -187,11 +187,33 @@ def Ui.delta(u: Ui, +thread: String, text: String) -> Ui:
     case Ui{st, sel, dr, +live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob}:
       Ui{st, sel, dr, Map.set(&2, String, live, thread, Str.get(live, thread) ++ text), op, on, now, ad, pa, v, rid, w, er, note, nf, ob}
 
+# a failed request shows its error, or the text of a failed git step
+def Ui.reply.err(+o: J.Json) -> String:
+  Bool.pick(String, J.Json.get_bool(o, "ok", True{}), "", J.Json.get_str(o, "error", String.take(J.Json.get_str(J.Json.get_obj(o, "result"), "text", "failed"), 200n)))
+
 # an answer: its request leaves the outbox
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+def Ui.reply.k(u: Ui, +o: J.Json) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf, ob}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, J.Json.get_str(o, "error", ""), note, nf, Map.set(&2, String, ob, J.Json.as_raw(J.Json.get(o, "id"), ""), "")}
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, Ui.reply.err(o), note, nf, Map.set(&2, String, ob, J.Json.as_raw(J.Json.get(o, "id"), ""), "")}
+
+def Ui.diff(u: Ui, +r: J.Json) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob}:
+      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
+        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "diff", J.Json.get_str(r, "diff", "")), "view.kind", "diff"), "view.path", ""),
+          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n))), ob}
+
+def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.diff(Ui.reply.k(u, o), J.Json.get_obj(o, "result"))
+    case False{}:
+      Ui.reply.k(u, o)
+
+# an answer: its request leaves the outbox; a diff opens the diff view
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o)
 
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
@@ -326,6 +348,12 @@ def Ui.rpc(u: Ui, m: String, p: List<&2, J.KV>) -> Act:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, +rid, w, er, note, nf, ob}:
       Act{Ui{st, sel, dr, live, op, on, now, ad, pa, v, 1n+rid, w, er, note, nf, ob}, [Send{Rpc.text(rid, m, p)}]}
 
+# a request about the selected thread, with more params
+def Ui.on_thread.p(u: Ui, m: String, p: List<&2, J.KV>) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob}:
+      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob}, m, J.KV{"thread", J.Str{sel}} <> p)
+
 def Ui.on_thread(u: Ui, m: String) -> Act:
   match u:
     case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob}:
@@ -429,7 +457,7 @@ def Ui.dismiss(u: Ui) -> Act:
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
-   "flag", "setting", "model", "kicad-install", "answer"]
+   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert"]
 
 # Reading the client state
 # ------------------------
@@ -628,6 +656,12 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.rpc(u, "kicad.install", Nil{})
     case 22n:
       Ui.answer(u, value)
+    case 23n:
+      Ui.on_thread.p(u, "git.act", [J.KV{"action", J.Str{value}}])
+    case 24n:
+      Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
+    case 25n:
+      Ui.on_thread.p(u, "git.revert", [J.KV{"turn", J.Num{Bool.pick(String, String.is_empty(value), "0", value)}}])
     case _:
       Act{u, Nil{}}
 

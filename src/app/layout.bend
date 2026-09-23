@@ -11,6 +11,7 @@ import ./nui.bend as S
 import ./viewer.bend as V
 import ../core/glb.bend as G
 import ../gfx/bitmap.bend as BM
+import ../core/diff.bend as DF
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -113,6 +114,10 @@ def Ty.load() -> IO(Ty):
 
 # Shapes
 # ------
+
+# a - b, or 0 when b is larger (U32 subtraction wraps)
+def U32.dim(+a: U32, +b: U32) -> U32:
+  Bool.pick(U32, U32.is_gt(a, b), (a - b : U32), 0)
 
 def Lay.hit(+x: U32, +y: U32, +w: U32, +h: U32, action: String, value: String) -> S.Hit:
   S.Hit{x, y, (x + w : U32), (y + h : U32), action, value}
@@ -680,6 +685,7 @@ def Lay.buttons.w(+ty: Ty, bs: List<&2, S.Hit>) -> U32:
 def Lay.header.bs(turn: M.TurnState, override: M.Override, +sa: Nat, +ua: Nat, pinned: Bool, panel: Bool) -> List<&2, S.Hit>:
   List.concat(&2, S.Hit, [
     [S.Hit{0, 0, 0, 0, Bool.pick(String, panel, "Hide viewer", "Viewer"), "panel"},
+     S.Hit{0, 0, 0, 0, "Diff", "diff"},
      S.Hit{0, 0, 0, 0, "Archive", "archive"}],
     Lay.settle(override, Nat.is_gt(sa, ua)),
     [Lay.pin(pinned)],
@@ -691,13 +697,13 @@ def Lay.fit_or_none(+ty: Ty, +k: Nat, +s: String, +px: U32) -> String:
   Bool.pick(String, U32.is_lt(px, 32), "", Ty.fit(ty, k, s, px))
 
 def Lay.header.k(+ty: Ty, +title: String, +branch: String, +bs: List<&2, S.Hit>, +x0: U32, +x1: U32) -> Out:
-  +room = {U32.sub(U32.sub((x1 - x0 : U32), Lay.buttons.w(ty, bs)), 56) : U32}
+  +room = {U32.dim(U32.dim((x1 - x0 : U32), Lay.buttons.w(ty, bs)), 56) : U32}
   +t = Ty.fit(ty, 0n, title, room)
   +tw = Ty.width(ty, 0n, t)
   Out.all([
     Out.ops([D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)]),
     Out.ops(Ty.text(ty, 0n, t, D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())),
-    Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.sub(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 36 + tw : U32), 0, 52, T.Th.faint())),
+    Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.dim(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 36 + tw : U32), 0, 52, T.Th.faint())),
     Lay.buttons(ty, bs, 12, (x1 - 16 : U32))])
 
 def Lay.header(+ty: Ty, t: M.Thread, +x0: U32, +x1: U32, panel: Bool) -> Out:
@@ -972,8 +978,8 @@ def Set.head(+ty: Ty, +label: String, +x: U32, +y: U32) -> Out:
 
 # a row whose right `rw` pixels hold controls
 def Set.row.r(+ty: Ty, +label: String, +note: String, +x: U32, +y: U32, +w: U32, +rw: U32) -> Out:
-  Out.ops(List.append(&2, R.Op, Ty.text(ty, 0n, Ty.fit(ty, 0n, label, U32.sub(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), y, 28, T.Th.soft()),
-    Ty.text(ty, 2n, Ty.fit(ty, 2n, note, U32.sub(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), (y + 24 : U32), 20, T.Th.faint())))
+  Out.ops(List.append(&2, R.Op, Ty.text(ty, 0n, Ty.fit(ty, 0n, label, U32.dim(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), y, 28, T.Th.soft()),
+    Ty.text(ty, 2n, Ty.fit(ty, 2n, note, U32.dim(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), (y + 24 : U32), 20, T.Th.faint())))
 
 def Set.row(+ty: Ty, +label: String, +note: String, +x: U32, +y: U32, +w: U32) -> Out:
   Set.row.r(ty, label, note, x, y, w, 0)
@@ -1115,13 +1121,83 @@ def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
 def Lay.shown(+k: U32, +empty: Bool, +ts: List<&2, G.Tri3>, b: BM.Bitmap) -> Bool:
   match b:
     case BM.Bitmap{w, _, _, _, _, _, _, _}:
-      Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(List.is_empty(&2, G.Tri3, ts)), Bool.not(empty)))
+      Bool.pick(Bool, U32.is_ge(k, 4), True{}, Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(List.is_empty(&2, G.Tri3, ts)), Bool.not(empty))))
 
 def Lay.help(+k: U32) -> String:
+  Bool.pick(String, U32.is_eq(k, 4), "wheel scroll",
   Bool.pick(String, U32.is_eq(k, 3), "what the agents' browser shows, live",
-    Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit"))
+    Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit")))
 
-def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String) -> Out:
+# Diff view
+# ---------
+
+type DRow is Data:
+  DRow{text: String, kind: U32}
+
+def DRow.lines(ls: List<&2, DF.DLine>, rest: List<&2, DRow>) -> List<&2, DRow>:
+  match ls:
+    case Nil{}:
+      rest
+    case DF.DLine{k, t, _, _} <> tl:
+      DRow{t, (k + 10 : U32)} <> DRow.lines(tl, rest)
+
+def DRow.hunks(hs: List<&2, DF.DHunk>, rest: List<&2, DRow>) -> List<&2, DRow>:
+  match hs:
+    case Nil{}:
+      rest
+    case DF.DHunk{hd, ls} <> t:
+      DRow{hd, 3} <> DRow.lines(ls, DRow.hunks(t, rest))
+
+def DRow.files(fs: List<&2, DF.DFile>) -> List<&2, DRow>:
+  match fs:
+    case Nil{}:
+      Nil{}
+    case DF.DFile{_, nw, st, hs} <> t:
+      DRow{nw ++ "  " ++ st, 1} <> DRow.hunks(hs, DRow{"", 2} <> DRow.files(t))
+
+def DRow.color(+k: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(k, 11), T.Th.ok(), Bool.pick(U32, U32.is_eq(k, 12), T.Th.bad(), Bool.pick(U32, Bool.or(U32.is_eq(k, 3), U32.is_eq(k, 13)), T.Th.faint(), T.Th.soft())))
+
+def DRow.draw(+ty: Ty, r: DRow, +c: D.Clip, +x0: U32, +x1: U32, +y: U32) -> List<&2, R.Op>:
+  match r:
+    case DRow{t, +k}:
+      List.append(&2, R.Op,
+        Bool.pick(List<&2, R.Op>, U32.is_eq(k, 11), [D.Draw.rect(c, x0, y, (x1 - x0 : U32), 20, 1127459, 255)], Bool.pick(List<&2, R.Op>, U32.is_eq(k, 12), [D.Draw.rect(c, x0, y, (x1 - x0 : U32), 20, 3279380, 255)], Nil{})),
+        Ty.text(ty, Bool.pick(Nat, U32.is_eq(k, 1), 1n, 4n), Bool.pick(String, U32.is_eq(k, 11), "+", Bool.pick(String, U32.is_eq(k, 12), "-", " ")) ++ t, c, (x0 + 12 : U32), y, 20, Bool.pick(U32, U32.is_eq(k, 1), T.Th.text(), DRow.color(k))))
+
+def DRow.more(rs: List<&2, DRow>, +y: U32, +y1: U32) -> Bool:
+  match rs:
+    case Nil{}:
+      False{}
+    case _ <> _:
+      U32.is_lt(y, y1)
+
+# rows from y down while they start above y1
+def DRow.all(+ty: Ty, rs: List<&2, DRow>, more: Bool, +c: D.Clip, +x0: U32, +x1: U32, +y: U32, +y1: U32) -> List<&2, R.Op>:
+  match rs more:
+    case r <> +t True{}:
+      List.append(&2, R.Op, DRow.draw(ty, r, c, x0, x1, y), DRow.all(ty, t, DRow.more(t, (y + 20 : U32), y1), c, x0, x1, (y + 20 : U32), y1))
+    case _ _:
+      Nil{}
+
+def DRow.go(+ty: Ty, +rs: List<&2, DRow>, +c: D.Clip, +x0: U32, +x1: U32, +y: U32, +y1: U32) -> List<&2, R.Op>:
+  DRow.all(ty, rs, DRow.more(rs, y, y1), c, x0, x1, y, y1)
+
+# what this thread changed (checkpoint 0 against the files now), with the
+# git actions T3Code offers
+def Lay.diff(+ty: Ty, +text: String, +x0: U32, +x1: U32, +h: U32, +scroll: U32) -> Out:
+  +fs = DF.Diff.parse(text)
+  +top = {96 : U32}
+  +bc = Lay.button.w(ty, "Commit & push")
+  +bp = Lay.button.w(ty, "Open PR")
+  Out.all([
+    Out.ops(Ty.text(ty, 2n, Bool.pick(String, List.is_empty(&2, DF.DFile, fs), "No changes since this thread began.", DF.Diff.summary(fs)), D.Clip.all(), (x0 + 16 : U32), 58, 30, T.Th.dim())),
+    Lay.button(ty, D.Clip.all(), (x1 - 16 - bc : U32), 60, "Commit & push", T.Th.accent(), "git", "commit_push"),
+    Lay.button(ty, D.Clip.all(), (x1 - 24 - bc - bp : U32), 60, "Open PR", T.Th.soft(), "git", "commit_push_pr"),
+    Lay.button(ty, D.Clip.all(), (x1 - 32 - bc - bp - Lay.button.w(ty, "Revert thread") : U32), 60, "Revert thread", T.Th.bad(), "revert", "0"),
+    Out.ops(DRow.go(ty, List.drop(&2, DRow, DRow.files(fs), U32.to_nat((scroll / 20 : U32))), D.Clip{x0, top, x1, h}, x0, x1, top, h))])
+
+def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32) -> Out:
   match x:
     case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, bm}:
       +help = Lay.help(k)
@@ -1135,6 +1211,8 @@ def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +i
         Lay.tab(ty, "Schematic", 1, k, (x0 + 24 + bw : U32)),
         Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
         Lay.tab(ty, "Browser", 3, k, (x0 + 40 + bw + sw + tw : U32)),
+        Lay.tab(ty, "Diff", 4, k, (x0 + 48 + bw + sw + tw + Lay.button.w(ty, "Browser") : U32)),
+        Out.when(U32.is_eq(k, 4), Lay.diff(ty, diff, x0, x1, h, scroll)),
         Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32)), D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32))) : U32), 0, 52, T.Th.faint())),
         Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.not(Lay.shown(k, empty, ts, bm))),
           Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - U32.min(Ty.width(ty, 3n, busy), (x1 - x0 : U32)) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
@@ -1145,14 +1223,14 @@ def Lay.picked(x: V.Vx) -> String:
     case V.Vx{_, p, _, _, _, _, _, _, _, _, bm}:
       p
 
-def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   match v:
-    case V.Vw{+ss, _, _, _, _, _, _, _, _, _, +vx}:
-      Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft)
+    case V.Vw{+ss, V.View{_, _, oy}, _, _, _, _, _, _, _, _, +vx}:
+      Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft, diff, D.Draw.floor(F32.max(oy, 0.0)))
 
 # the viewer's chrome; the scene under it is drawn by the viewer
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
-  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)
+  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.info(S.Nui.ui(n), "diff"), x0, x1, h)
 
 def Lay.toast(+ty: Ty, +e: String, +w: U32, +h: U32) -> Out:
   +tw = {(Ty.width(ty, 2n, e) + 28 : U32) : U32}
