@@ -6,6 +6,8 @@ import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
 import ./src/mobile/notify.bend as Nt
+import ./src/core/codec.bend as C
+import ./src/core/json.bend as J
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -236,3 +238,54 @@ law alert_needs_running:
 law alert_never_running:
   for b: Bool
   {Nt.Note.kind(b, M.Running{}) == "" : String}
+
+# Phone pushes
+# ------------
+
+# a push token never goes to clients: what they get of a registration is
+# the same whatever the token (and the rest of the registration) was
+law device_token_never_sent:
+  for tok: String
+  for p: String
+  for k: String
+  for th: String
+  for e: String
+  for b: String
+  for +at: Nat
+  {C.Change.wire(M.DeviceRegistered{tok, p, k, th, e, b, at}) == C.Change.wire(M.DeviceRegistered{"", "", "", "", "", "", at}) : J.Json}
+
+# nor when a token is dropped
+law device_drop_never_sent:
+  for tok: String
+  for +at: Nat
+  {C.Change.wire(M.DeviceDropped{tok, at}) == C.Change.wire(M.DeviceDropped{"", at}) : J.Json}
+
+# a registration without a token (what clients fold) registers nothing
+law device_blank_ignored:
+  for s: M.State
+  for p: String
+  for k: String
+  for th: String
+  for e: String
+  for b: String
+  for at: Nat
+  {M.State.devices(M.State.apply(s, M.DeviceRegistered{"", p, k, th, e, b, at})) == M.State.devices(s) : Map<&2, M.Device>}
+
+# registering the same token twice leaves one device: the second
+# registration replaces the first
+law device_register_once:
+  for +tok: String
+  for h: {String.is_empty(tok) == False{} : Bool}
+  for p: String
+  for k: String
+  for th: String
+  for e: String
+  for b: String
+  for at: Nat
+  for p2: String
+  for k2: String
+  for th2: String
+  for e2: String
+  for b2: String
+  for at2: Nat
+  {Map.size(&2, M.Device, M.State.devices(M.State.apply(M.State.apply(M.State.empty(), M.DeviceRegistered{tok, p, k, th, e, b, at}), M.DeviceRegistered{tok, p2, k2, th2, e2, b2, at2}))) == 1n : Nat}

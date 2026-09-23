@@ -177,6 +177,9 @@ type Change is Data:
   QueueTaken{thread: String, at: Nat}
   AskOpened{id: String, thread: String, kind: String, tool: String, detail: String, options: String, at: Nat}
   AskClosed{id: String, answer: String, at: Nat}
+  # a phone asks for pushes (APNs/FCM); keyed by token, never sent to clients
+  DeviceRegistered{token: String, platform: String, kind: String, thread: String, env: String, bundle: String, at: Nat}
+  DeviceDropped{token: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -313,6 +316,12 @@ def Thread.modes_set(r: RuntimeMode, i: InteractionMode, m: String, t: Thread) -
 # question ("input", options one per line) or a proposed plan ("plan").
 # Opened by the agent, closed once by the user's answer.
 
+# a phone's push registration. kind is "alert" (notifications), "activity"
+# (a Live Activity's update token; thread "" is the all-agents island) or
+# "start" (push-to-start). The token is a secret: it stays on the server.
+type Device is Data:
+  Device{token: String, platform: String, kind: String, thread: String, env: String, bundle: String, at: Nat}
+
 type Ask is Data:
   Ask{id: String, thread: String, kind: String, tool: String, detail: String, options: String, open: Bool, answer: String}
 
@@ -328,47 +337,48 @@ type State is Data:
     tasks: Map<&2, Task>,
     settings: Map<&2, String>,
     queued: Map<&2, String>,
-    asks: Map<&2, Ask>
+    asks: Map<&2, Ask>,
+    devices: Map<&2, Device>
   }
 
 def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, String), Map.new(&2, Ask)}
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, String), Map.new(&2, Ask), Map.new(&2, Device)}
 
 # apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Thread> & Thread) -> State:
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, id: String, r: Map<&2, Thread> & Thread) -> State:
   (ts, t) = r
-  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu, ak}
+  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu, ak, dv}
 
 def State.thread(f: Thread -> Thread, s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State.thread.fin(f, ps, es, n, tk, sg, qu, ak, id, Map.get(Thread, Thread.blank(id), ts, id))
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State.thread.fin(f, ps, es, n, tk, sg, qu, ak, dv, id, Map.get(Thread, Thread.blank(id), ts, id))
 
 def State.put_thread(s: State, t: Thread) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
   Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n, tk, sg, qu, ak}
+  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n, tk, sg, qu, ak, dv}
 
 def State.put_project(s: State, p: Project) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
   Project{+id, ti, r, c, rm} = p
-  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu, ak}
+  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu, ak, dv}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
-  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu, ak}
+  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu, ak, dv}
 
 def State.remove_project(s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State.remove_project.fin(ts, es, n, tk, sg, qu, ak, id, Map.get(Project, Project.blank(id), ps, id))
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State.remove_project.fin(ts, es, n, tk, sg, qu, ak, dv, id, Map.get(Project, Project.blank(id), ps, id))
 
 def State.post(s: State, e: Entry) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, e <> es, n, tk, sg, qu, ak}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, e <> es, n, tk, sg, qu, ak, dv}
 
 def State.tick(s: State) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, es, 1n+n, tk, sg, qu, ak}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, 1n+n, tk, sg, qu, ak, dv}
 
 def State.message(s: State, +thread: String, msg: String, role: Role, text: String, +at: Nat) -> State:
   match role:
@@ -377,31 +387,31 @@ def State.message(s: State, +thread: String, msg: String, role: Role, text: Stri
     case _:
       State.post(s, Msg{msg, thread, role, text, at})
 
-def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Task> & Task) -> State:
+def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, id: String, r: Map<&2, Task> & Task) -> State:
   (tk, t) = r
-  State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu, ak}
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu, ak, dv}
 
 # apply f to the task at `id` (a blank, settled task when absent)
 def State.task(f: Task -> Task, s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State.task.fin(f, ps, ts, es, n, sg, qu, ak, id, Map.get(Task, Task.blank(id), tk, id))
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State.task.fin(f, ps, ts, es, n, sg, qu, ak, dv, id, Map.get(Task, Task.blank(id), tk, id))
 
 def State.put_task(s: State, t: Task) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
   Task{+id, p, c, d, st, su, dl, pr, mo} = t
-  State{ps, ts, es, n, Map.set(&2, Task, tk, id, Task{id, p, c, d, st, su, dl, pr, mo}), sg, qu, ak}
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, Task{id, p, c, d, st, su, dl, pr, mo}), sg, qu, ak, dv}
 
 def State.setting(s: State, k: String, v: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, es, n, tk, Map.set(&2, String, sg, k, v), qu, ak}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, n, tk, Map.set(&2, String, sg, k, v), qu, ak, dv}
 
 def Ask.blank(id: String) -> Ask:
   Ask{id, "", "", "", "", "", False{}, ""}
 
 def State.ask(s: State, a: Ask) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
   Ask{+id, th, k, tool, d, o, op, an} = a
-  State{ps, ts, es, n, tk, sg, qu, Map.set(&2, Ask, ak, id, Ask{id, th, k, tool, d, o, op, an})}
+  State{ps, ts, es, n, tk, sg, qu, Map.set(&2, Ask, ak, id, Ask{id, th, k, tool, d, o, op, an}), dv}
 
 def Ask.close.set(m: Map<&2, Ask>, +id: String, x: Ask, a: String) -> Map<&2, Ask>:
   match x:
@@ -416,12 +426,12 @@ def Ask.close.k(r: Map<&2, Ask> & Ask, +id: String, a: String) -> Map<&2, Ask>:
 
 # the answer closes an ask for good (a second answer changes nothing)
 def State.ask.close(s: State, +id: String, a: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, es, n, tk, sg, qu, Ask.close.k(Map.get(Ask, Ask.blank(id), ak, id), id, a)}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, n, tk, sg, qu, Ask.close.k(Map.get(Ask, Ask.blank(id), ak, id), id, a), dv}
 
 def Asks.all(s: State) -> List<&2, Ask>:
   match s:
-    case State{_, _, _, _, _, _, _, ak}:
+    case State{_, _, _, _, _, _, _, ak, _}:
       Map.values(&2, Ask, ak)
 
 # Links between threads
@@ -456,12 +466,12 @@ def State.enqueue.k(r: Map<&2, String> & String, +th: String, +text: String) -> 
   Map.set(&2, String, m, th, Queue.join(cur, text))
 
 def State.enqueue(s: State, +th: String, +text: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, es, n, tk, sg, State.enqueue.k(Map.get(String, "", qu, th), th, text), ak}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, n, tk, sg, State.enqueue.k(Map.get(String, "", qu, th), th, text), ak, dv}
 
 def State.take(s: State, +th: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak} = s
-  State{ps, ts, es, n, tk, sg, Map.set(&2, String, qu, th, ""), ak}
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, n, tk, sg, Map.set(&2, String, qu, th, ""), ak, dv}
 
 # a setting's value, or d when unset
 def State.get.k(r: Map<&2, String> & String) -> String:
@@ -471,13 +481,40 @@ def State.get.k(r: Map<&2, String> & String) -> String:
 # what waits to be sent in a thread ("" for nothing)
 def Queue.of(s: State, +th: String) -> String:
   match s:
-    case State{_, _, _, _, _, _, qu, ak}:
+    case State{_, _, _, _, _, _, qu, ak, _}:
       State.get.k(Map.get(String, "", qu, th))
 
 def Setting.get(s: State, +k: String, d: String) -> String:
   match s:
-    case State{_, _, _, _, _, sg, qu, ak}:
+    case State{_, _, _, _, _, sg, qu, ak, _}:
       State.get.k(Map.get(String, d, sg, k))
+
+# Devices
+# -------
+# Push registrations, keyed by token: registering a token again replaces
+# it (law device_register_once). An empty token is not a device: that is
+# what clients fold, since the server sends them device events without it.
+
+def State.register.k(empty: Bool, s: State, +tok: String, p: String, k: String, th: String, e: String, b: String, at: Nat) -> State:
+  match empty:
+    case True{}:
+      s
+    case False{}:
+      State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+      State{ps, ts, es, n, tk, sg, qu, ak, Map.set(&2, Device, dv, tok, Device{tok, p, k, th, e, b, at})}
+
+def State.register(s: State, +tok: String, p: String, k: String, th: String, e: String, b: String, at: Nat) -> State:
+  State.register.k(String.is_empty(tok), s, tok, p, k, th, e, b, at)
+
+def State.unregister(s: State, tok: String) -> State:
+  State{ps, ts, es, n, tk, sg, qu, ak, dv} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, Map.del(&2, Device, dv, tok)}
+
+# every registered device
+def State.devices(s: State) -> Map<&2, Device>:
+  match s:
+    case State{_, _, _, _, _, _, _, _, dv}:
+      dv
 
 def State.apply.go(s: State, e: Change) -> State:
   match e:
@@ -529,6 +566,10 @@ def State.apply.go(s: State, e: Change) -> State:
       State.ask(s, Ask{id, th, k, tool, d, o, True{}, ""})
     case AskClosed{+id, a, _}:
       State.ask.close(s, id, a)
+    case DeviceRegistered{+tok, p, k, th, e, b, at}:
+      State.register(s, tok, p, k, th, e, b, at)
+    case DeviceDropped{tok, _}:
+      State.unregister(s, tok)
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:
@@ -613,5 +654,5 @@ def Thread.filter_project(ts: List<&2, Thread>, +pid: String) -> List<&2, Thread
 # how many changes have been folded in
 def State.seq(s: State) -> Nat:
   match s:
-    case State{_, _, _, n, _, _, _, ak}:
+    case State{_, _, _, n, _, _, _, ak, _}:
       n

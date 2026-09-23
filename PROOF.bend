@@ -7,6 +7,8 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
 import ./src/mobile/notify.bend as Nt
+import ./src/core/codec.bend as C
+import ./src/core/json.bend as J
 
 # Lemmas
 # ------
@@ -433,4 +435,40 @@ def Laws.alert_never_running(b):
     case True{}:
       {==}
     case False{}:
+      {==}
+
+# a string compares equal to itself, handing both copies back
+law string_cmp_refl:
+  for +s: String
+  {String.cmp(s, s) == ((s, s), EQ{}) : (String & String) & Cmp}
+
+def string_cmp_refl(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+h, +t}:
+      match h:
+        case Chr{+x}:
+          %Equal.sym(Cmp, U32.cmp(x, x), EQ{}, u32_cmp_refl(x)) : {String.cmp.fin(t, t, ((Chr{x}, Chr{x}), _)) == ((SCon{Chr{x}, t}, SCon{Chr{x}, t}), EQ{}) : (String & String) & Cmp}
+          %Equal.sym((String & String) & Cmp, String.cmp(t, t), ((t, t), EQ{}), string_cmp_refl(t)) : {String.cmp.rec(Chr{x}, Chr{x}, _) == ((SCon{Chr{x}, t}, SCon{Chr{x}, t}), EQ{}) : (String & String) & Cmp}
+          {==}
+
+def Laws.device_token_never_sent(tok, p, k, th, e, b, at):
+  {==}
+
+def Laws.device_drop_never_sent(tok, at):
+  {==}
+
+def Laws.device_blank_ignored(s, p, k, th, e, b, at):
+  match s:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv}:
+      {==}
+
+def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, at2):
+  match tok:
+    case SNil{}:
+      Empty.absurd({Map.size(&2, M.Device, M.State.devices(M.State.apply(M.State.apply(M.State.empty(), M.DeviceRegistered{SNil{}, p, k, th, e, b, at}), M.DeviceRegistered{SNil{}, p2, k2, th2, e2, b2, at2}))) == 1n : Nat},
+        false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case SCon{+c, +t}:
+      %Equal.sym((String & String) & Cmp, String.cmp(SCon{c, t}, SCon{c, t}), ((SCon{c, t}, SCon{c, t}), EQ{}), string_cmp_refl(SCon{c, t})) : {Map.size(&2, M.Device, Map.set.fin.go(&2, M.Device, MLeaf{SCon{c, t}, M.Device{SCon{c, t}, p, k, th, e, b, at}}, SCon{c, t}, M.Device{SCon{c, t}, p2, k2, th2, e2, b2, at2}, _)) == 1n : Nat}
       {==}

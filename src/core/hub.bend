@@ -60,7 +60,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, n, _, _, _, _}:
+    case M.State{_, _, _, n, _, _, _, _, _}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -72,7 +72,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -81,7 +81,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -182,7 +182,7 @@ def Hub.has_msg(es: List<&2, M.Entry>, +id: String) -> Bool:
 
 def Hub.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _}:
       es
 
 def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
@@ -278,11 +278,52 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
       Hub.term(s, client, id, "resize", p)
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
+# Phones
+# ------
+
+# a push token or bundle id: letters, digits and . _ : - only (APNs tokens
+# are hex, FCM tokens base64url with a colon), so neither can bend a URL
+# or a header
+def Device.char(+c: U32) -> Bool:
+  Bool.or(Bool.or(Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)), Bool.and(U32.is_ge(c, 65), U32.is_le(c, 90))),
+    Bool.or(Bool.and(U32.is_ge(c, 97), U32.is_le(c, 122)), Bool.or(Bool.or(U32.is_eq(c, 46), U32.is_eq(c, 95)), Bool.or(U32.is_eq(c, 58), U32.is_eq(c, 45)))))
+
+def Device.chars(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{Chr{+c}, t}:
+      Bool.and(Device.char(c), Device.chars(t))
+
+def Device.safe(+s: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(s)), Bool.and(Nat.is_le(String.length(s), 512n), Device.chars(s)))
+
+def Device.one_of(+names: List<&2, String>, +s: String) -> Bool:
+  Nat.is_lt(C.Codec.pos(names, s), List.length(&2, String, names))
+
+def Device.ok(+p: J.Json) -> Bool:
+  Bool.and(Bool.and(Device.safe(J.Json.get_str(p, "token", "")), Device.safe(J.Json.get_str(p, "bundle", ""))),
+    Bool.and(Bool.and(Device.one_of(["ios", "android"], J.Json.get_str(p, "platform", "")), Device.one_of(["alert", "activity", "start"], J.Json.get_str(p, "kind", ""))),
+      Device.one_of(["sandbox", "production"], J.Json.get_str(p, "env", "production"))))
+
+def Device.register.k(ok: Bool, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  match ok:
+    case True{}:
+      Step.reply(client, id, [M.DeviceRegistered{J.Json.get_str(p, "token", ""), J.Json.get_str(p, "platform", ""), J.Json.get_str(p, "kind", ""),
+        J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "env", "production"), J.Json.get_str(p, "bundle", ""), now}])
+    case False{}:
+      Step.outs([Reply.err(client, id, "bad device")])
+
+# a phone registers a push token (never echoed: clients get the event
+# without it)
+def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  Device.register.k(Device.ok(p), now, client, id, p)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
-   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install", "ask.answer"]
+   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
+   "ask.answer", "device.register", "device.drop"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -489,6 +530,10 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
       Step.outs([Reply.ok(client, id), KiCadInstall{}])
     case 18n:
       Hub.answer(s, now, client, id, J.Json.get_str(p, "id", ""), J.Json.get_str(p, "answer", ""))
+    case 19n:
+      Device.register(now, client, id, p)
+    case 20n:
+      Step.reply(client, id, [M.DeviceDropped{J.Json.get_str(p, "token", ""), now}])
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p)
 
@@ -539,7 +584,7 @@ def Hub.settle.window(+s: M.State) -> Nat:
 # every thread that should settle now, settled
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _}:
       Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, Hub.settle.window(s)), Nil{}}
 
 # Codex (codex exec --json)
@@ -673,7 +718,7 @@ def Task.of_child.k(+ts: List<&2, M.Task>, +child: String) -> Maybe<&2, M.Task>:
 # the task a child thread is working on, if any
 def Task.of_child(s: M.State, +child: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _}:
       Task.of_child.k(Map.values(&2, M.Task, tk), child)
 
 def Task.depth.k(m: Maybe<&2, M.Task>) -> Nat:
@@ -713,7 +758,7 @@ def Task.last.go(es: List<&2, M.Entry>, hit: Bool, +th: String) -> String:
 
 def Task.last(s: M.State, +th: String) -> String:
   match s:
-    case M.State{_, _, +es, _, _, _, _, _}:
+    case M.State{_, _, +es, _, _, _, _, _, _}:
       Task.last.go(es, Task.last.hit(es, th), th)
 
 # the turn outcome a step reports for a thread, if it ended one

@@ -1,10 +1,449 @@
 import Base
 import ../core/model.bend as M
+import ../core/json.bend as J
+import ../core/hub.bend as B
+import ../core/sha1.bend as S
+import ../core/utf8.bend as U
+import ./host.bend as H
+import ./proc.bend as P
 
 # Phone notifications (APNs alerts and Live Activity updates). The hub
 # calls Push.turn_ended once for every turn that completes or fails, off
 # its own thread (the server spawns it), with the state as it was when the
-# turn ended. `state` is "completed" or "failed". Owned by the mobile work;
-# keep the signature, fill in the body.
-def Push.turn_ended(+home: String, st: M.State, +thread: String, +state: String) -> IO(Unit):
+# turn ended. `state` is "completed" or "failed".
+#
+# Nothing happens until the settings push.apns.key (the path of the .p8
+# key; the key itself is never stored), push.apns.keyid and push.apns.team
+# are set and the key file exists. Each push signs an ES256 token with
+# `openssl` and sends it with `curl`, both host tools. Device tokens and
+# the signed token go to curl in a config file (-K), never on its command
+# line, and never into a log.
+
+# Files
+# -----
+
+def Push.read.done(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(List<&2, U32>):
+  (f, res) = r
+  do IO<List<&2, U32>>:
+    File.close(f)
+    return Result.default(&1, &1, U32 & String, List<&2, U32>, res, Nil{})
+
+def Push.read.sized(r: File & Result<&1, &1, U32 & String, U32>) -> IO(List<&2, U32>):
+  (f, res) = r
+  IO.bind(File & Result<&1, &1, U32 & String, List<&2, U32>>, List<&2, U32>,
+    File.read_bytes(f, U32.max(Result.default(&1, &1, U32 & String, U32, res, 0), 1)), Push.read.done)
+
+def Push.read.opened(r: Result<&1, &1, U32 & String, File>) -> IO(List<&2, U32>):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, U32>, List<&2, U32>, File.size(f), Push.read.sized)
+    case Fail{_}:
+      IO.pure(List<&2, U32>, Nil{})
+
+# a whole file's bytes, or [] when it cannot be read
+def Push.read(path: String) -> IO(List<&2, U32>):
+  IO.bind(Result<&1, &1, U32 & String, File>, List<&2, U32>, File.open(path, "r"), Push.read.opened)
+
+def Push.write.done(r: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+  (f, _) = r
+  File.close(f)
+
+def Push.write.opened(r: Result<&1, &1, U32 & String, File>, bs: List<&2, U32>) -> IO(Unit):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, Unit>, Unit, File.write_bytes(f, bs), Push.write.done)
+    case Fail{_}:
+      IO.pure(Unit, Unit{})
+
+# a file (mode 0600) holding text as UTF-8
+def Push.write(+path: String, text: String) -> IO(Unit):
+  do IO<Unit>:
+    r : Result<&1, &1, U32 & String, File> <- File.open(path, "w")
+    m : Result<&1, &1, U32 & String, Unit> <- H.FS.chmod(path, 384)
+    Push.write.opened(r, U.Utf8.encode(text))
+
+def Push.rm(path: String) -> IO(Unit):
+  do IO<Unit>:
+    r : Result<&1, &1, U32 & String, Unit> <- H.FS.remove(path)
+    return Unit{}
+
+def Push.exists.k(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> Bool:
+  match r:
+    case Done{_}:
+      True{}
+    case Fail{_}:
+      False{}
+
+def Push.exists(path: String) -> IO(Bool):
+  do IO<Bool>:
+    r : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
+    return Push.exists.k(r)
+
+def Push.env.k(r: Result<&1, &1, U32 & String, String>) -> String:
+  match r:
+    case Done{v}:
+      v
+    case Fail{_}:
+      ""
+
+def Push.env(name: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
+    return Push.env.k(r)
+
+# JWT (ES256)
+# -----------
+
+def B64u.chr(plus: Bool, slash: Bool, pad: Bool, +c: U32, rest: String) -> String:
+  match plus slash pad:
+    case True{} _ _:
+      SCon{Chr{45}, rest}
+    case False{} True{} _:
+      SCon{Chr{95}, rest}
+    case False{} False{} True{}:
+      rest
+    case False{} False{} False{}:
+      SCon{Chr{c}, rest}
+
+def B64u.fix(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{+c}, t}:
+      B64u.chr(U32.is_eq(c, 43), U32.is_eq(c, 47), U32.is_eq(c, 61), c, B64u.fix(t))
+
+# base64url without padding (RFC 7515)
+def B64u.encode(bs: List<&2, U32>) -> String:
+  B64u.fix(S.B64.encode(bs))
+
+# a DER INTEGER's bytes as exactly 32: leading zeros stripped or added
+def Der.pad(+xs: List<&2, U32>) -> List<&2, U32>:
+  List.append(&2, U32, List.replicate(U32, Nat.sub(32n, List.length(&2, U32, xs)), 0),
+    List.drop(&2, U32, xs, Nat.sub(List.length(&2, U32, xs), 32n)))
+
+def Der.two(r: List<&2, U32>, rest: List<&2, U32>) -> List<&2, U32>:
+  match rest:
+    case _ <> +sl <> t:
+      List.append(&2, U32, Der.pad(r), Der.pad(List.take(&2, U32, t, U32.to_nat(sl))))
+    case _:
+      Nil{}
+
+def Der.one(+rn: Nat, +rest: List<&2, U32>) -> List<&2, U32>:
+  Der.two(List.take(&2, U32, rest, rn), List.drop(&2, U32, rest, rn))
+
+# openssl's DER signature, SEQUENCE { INTEGER r, INTEGER s }, as the raw
+# r || s (64 bytes) that JWS wants; [] when it is not one. A P-256
+# signature is at most 72 bytes, so every length is one byte.
+def Der.raw(bs: List<&2, U32>) -> List<&2, U32>:
+  match bs:
+    case _ <> _ <> _ <> +rl <> rest:
+      Der.one(U32.to_nat(rl), rest)
+    case _:
+      Nil{}
+
+def Jwt.part(+text: String) -> String:
+  B64u.encode(U.Utf8.encode(text))
+
+# header.claims, the part the signature covers
+def Jwt.input(+kid: String, +team: String, +now: Nat) -> String:
+  Jwt.part(J.Json.show(J.Json.obj([J.KV{"alg", J.Str{"ES256"}}, J.KV{"kid", J.Str{kid}}]))) ++ "."
+    ++ Jwt.part(J.Json.show(J.Json.obj([J.KV{"iss", J.Str{team}}, J.KV{"iat", J.Num{Nat.show(now)}}])))
+
+def Jwt.done(+input: String, +raw: List<&2, U32>) -> String:
+  Bool.pick(String, Nat.is_eq(List.length(&2, U32, raw), 64n), input ++ "." ++ B64u.encode(raw), "")
+
+# the provider token, or "" when openssl could not sign
+def Jwt.sign(+key: String, +dir: String, +name: String, +input: String) -> IO(String):
+  do IO<String>:
+    +inp : String = dir ++ "/" ++ name ++ ".jwt"
+    +sig : String = dir ++ "/" ++ name ++ ".sig"
+    Push.write(inp, input)
+    r : P.Ran <- P.Proc.run("openssl", ["dgst", "-sha256", "-sign", key, "-out", sig, inp], dir)
+    bs : List<&2, U32> <- Push.read(sig)
+    Push.rm(inp)
+    Push.rm(sig)
+    return Jwt.done(input, Der.raw(bs))
+
+# Payloads
+# --------
+
+def Push.title(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Bool.pick(String, String.is_empty(title), "Backplane", title)
+
+# the first line of the last reply, at most 180 characters
+def Push.first(+text: String) -> String:
+  String.take(String.trim(Maybe.default(&2, String, List.head(&2, String, String.lines(String.trim(text))), "")), 180n)
+
+def Push.body(failed: Bool, +line: String) -> String:
+  match failed:
+    case True{}:
+      "Failed"
+    case False{}:
+      Bool.pick(String, String.is_empty(line), "Finished", line)
+
+def Push.alert(+thread: String, title: String, body: String) -> String:
+  J.Json.show(J.Json.obj([
+    J.KV{"aps", J.Json.obj([
+      J.KV{"alert", J.Json.obj([J.KV{"title", J.Str{title}}, J.KV{"body", J.Str{body}}])},
+      J.KV{"sound", J.Str{"default"}},
+      J.KV{"thread-id", J.Str{thread}}])},
+    J.KV{"thread", J.Str{thread}}]))
+
+# the island: every thread still running once this one has ended
+def Island.keep(+thread: String, t: M.Thread) -> Bool:
+  match t:
+    case M.Thread{+id, _, _, _, _, M.Running{}, _, ar, _, _, _, _, _, _, _, _, _, _, _, _, de}:
+      Bool.and(Bool.not(String.eq(id, thread)), Bool.not(Bool.or(ar, de)))
+    case _:
+      False{}
+
+def Island.pick(keep: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
+  match keep:
+    case True{}:
+      t <> rest
+    case False{}:
+      rest
+
+def Island.running(ts: List<&2, M.Thread>, +thread: String) -> List<&2, M.Thread>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      Island.pick(Island.keep(thread, t), t, Island.running(rest, thread))
+
+def Island.others(s: M.State, +thread: String) -> List<&2, M.Thread>:
+  match s:
+    case M.State{_, ts, _, _, _, _, _, _, _}:
+      Island.running(Map.values(&2, M.Thread, ts), thread)
+
+def Island.line(t: M.Thread) -> J.Json:
+  match t:
+    case M.Thread{id, _, title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      J.Json.obj([J.KV{"thread", J.Str{id}}, J.KV{"title", J.Str{title}}, J.KV{"doing", J.Str{"Working"}}])
+
+def Island.lines(ts: List<&2, M.Thread>) -> List<&2, J.Json>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case t <> rest:
+      Island.line(t) <> Island.lines(rest)
+
+def Island.first(ts: List<&2, M.Thread>) -> String:
+  match ts:
+    case t <> _:
+      Push.title(t)
+    case Nil{}:
+      ""
+
+def Island.headline(n: Nat, +title: String) -> String:
+  match n:
+    case 0n:
+      "All agents idle"
+    case 1n:
+      title
+    case 1n+1n+p:
+      Nat.show(2n+p) ++ " agents working"
+
+# ActivityAttributes.ContentState: {running, headline, lines}
+def Island.state(+ts: List<&2, M.Thread>) -> J.Json:
+  J.Json.obj([J.KV{"running", J.Num{Nat.show(List.length(&2, M.Thread, ts))}},
+    J.KV{"headline", J.Str{Island.headline(List.length(&2, M.Thread, ts), Island.first(ts))}},
+    J.KV{"lines", J.Json.arr(Island.lines(ts))}])
+
+def Island.end(ends: Bool, +now: Nat) -> List<&2, J.KV>:
+  match ends:
+    case True{}:
+      [J.KV{"event", J.Str{"end"}}, J.KV{"dismissal-date", J.Num{Nat.show(Nat.add(now, 900n))}}]
+    case False{}:
+      [J.KV{"event", J.Str{"update"}}]
+
+def Island.payload(ends: Bool, +now: Nat, cs: J.Json) -> String:
+  J.Json.show(J.Json.obj([J.KV{"aps", J.Json.obj(List.concat(&2, J.KV, [
+    [J.KV{"timestamp", J.Num{Nat.show(now)}}],
+    Island.end(ends, now),
+    [J.KV{"content-state", cs}]]))}]))
+
+# Sending
+# -------
+
+# everything one turn's pushes share
+type Job is Data:
+  Job{dir: String, base: String, jwt: String, now: Nat, thread: String, alert: String, island: J.Json, idle: Bool}
+
+# a value for a curl config file: quoted, \ and " escaped, controls dropped
+def Curl.q.k(ctl: Bool, esc: Bool, +c: U32, rest: String) -> String:
+  match ctl esc:
+    case True{} _:
+      rest
+    case False{} True{}:
+      SCon{Chr{92}, SCon{Chr{c}, rest}}
+    case False{} False{}:
+      SCon{Chr{c}, rest}
+
+def Curl.q.go(s: String) -> String:
+  match s:
+    case SNil{}:
+      "\""
+    case SCon{Chr{+c}, t}:
+      Curl.q.k(U32.is_lt(c, 32), Bool.or(U32.is_eq(c, 34), U32.is_eq(c, 92)), c, Curl.q.go(t))
+
+def Curl.q(s: String) -> String:
+  "\"" ++ Curl.q.go(s)
+
+def Curl.headers(hs: List<&2, String>) -> String:
+  match hs:
+    case Nil{}:
+      ""
+    case h <> t:
+      "header = " ++ Curl.q(h) ++ "\n" ++ Curl.headers(t)
+
+def Curl.config(+url: String, hs: List<&2, String>, +body: String, +out: String) -> String:
+  "url = " ++ Curl.q(url) ++ "\n" ++ Curl.headers(hs) ++ "data-binary = " ++ Curl.q("@" ++ body) ++ "\n"
+    ++ "output = " ++ Curl.q(out) ++ "\n" ++ "write-out = \"%{http_code}\"\n"
+
+# the status curl wrote last (its errors come first, on the same stream)
+def Curl.code(+out: String) -> String:
+  String.drop(String.trim(out), Nat.sub(String.length(String.trim(out)), 3n))
+
+# APNs says the token is gone: 410, or 400 BadDeviceToken
+def Push.dead(+code: String, +reason: String) -> Bool:
+  Bool.or(String.eq(code, "410"), Bool.and(String.eq(code, "400"), Bool.or(String.eq(reason, "BadDeviceToken"), String.eq(reason, "Unregistered"))))
+
+def Push.reason(bs: List<&2, U32>) -> String:
+  J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(U.Utf8.decode(bs)), J.Null{}), "reason", "")
+
+def Push.ran(r: P.Ran) -> String:
+  match r:
+    case P.Ran{_, out}:
+      out
+
+# one request to APNs; True when the token is dead
+def Push.post(+dir: String, +name: String, +url: String, hs: List<&2, String>, +payload: String, +what: String) -> IO(Bool):
+  do IO<Bool>:
+    +body : String = dir ++ "/" ++ name ++ ".json"
+    +out : String = dir ++ "/" ++ name ++ ".out"
+    +cfg : String = dir ++ "/" ++ name ++ ".curl"
+    Push.write(body, payload)
+    Push.write(cfg, Curl.config(url, hs, body, out))
+    r : P.Ran <- P.Proc.run("curl", ["--http2", "-sS", "--max-time", "15", "-K", cfg], dir)
+    +code : String = Curl.code(Push.ran(r))
+    resp : List<&2, U32> <- Push.read(out)
+    Push.rm(cfg)
+    Push.rm(body)
+    Push.rm(out)
+    +reason : String = Push.reason(resp)
+    IO.print_err("backplane: push " ++ what ++ " -> " ++ code ++ Bool.pick(String, String.is_empty(reason), "", " " ++ reason))
+    return Push.dead(code, reason)
+
+def Push.url(+base: String, +env: String, +token: String) -> String:
+  Bool.pick(String, String.is_empty(base),
+    Bool.pick(String, String.eq(env, "sandbox"), "https://api.sandbox.push.apple.com", "https://api.push.apple.com"), base)
+    ++ "/3/device/" ++ token
+
+def Push.kind(+platform: String, +kind: String) -> Nat:
+  Bool.pick(Nat, String.eq(platform, "ios"), Bool.pick(Nat, String.eq(kind, "alert"), 1n, Bool.pick(Nat, String.eq(kind, "activity"), 2n, 0n)), 0n)
+
+def Push.one.k(i: Nat, j: Job, +name: String, +token: String, +dthread: String, +env: String, +bundle: String) -> IO(Bool):
+  match i j:
+    case 1n Job{+dir, +base, +jwt, _, +thread, +alert, _, _}:
+      Push.post(dir, name, Push.url(base, env, token),
+        ["authorization: bearer " ++ jwt, "apns-topic: " ++ bundle, "apns-push-type: alert", "apns-priority: 10", "apns-collapse-id: turn-" ++ thread],
+        alert, "alert")
+    case 2n Job{+dir, +base, +jwt, +now, +thread, _, +island, +idle}:
+      Push.post(dir, name, Push.url(base, env, token),
+        ["authorization: bearer " ++ jwt, "apns-topic: " ++ bundle ++ ".push-type.liveactivity", "apns-push-type: liveactivity", "apns-priority: 10"],
+        Island.payload(Bool.or(idle, String.eq(dthread, thread)), now, island), "activity")
+    case _ _:
+      IO.pure(Bool, False{})
+
+def Push.one(d: M.Device, +j: Job, +name: String) -> IO(Bool):
+  match d:
+    case M.Device{+token, +platform, +kind, +dthread, +env, +bundle, _}:
+      Push.one.k(Push.kind(platform, kind), j, name, token, dthread, env, bundle)
+
+def Push.keep(dead: Bool, +token: String, rest: List<&2, String>) -> List<&2, String>:
+  match dead:
+    case True{}:
+      token <> rest
+    case False{}:
+      rest
+
+def Device.token(d: M.Device) -> String:
+  match d:
+    case M.Device{t, _, _, _, _, _, _}:
+      t
+
+def Push.all.k(dead: Bool, +token: String, rest: IO(List<&2, String>)) -> IO(List<&2, String>):
+  IO.bind(List<&2, String>, List<&2, String>, rest, r => IO.pure(List<&2, String>, Push.keep(dead, token, r)))
+
+# every device, one after another; answers the dead tokens
+def Push.all(ds: List<&2, M.Device>, +j: Job, +prefix: String, +i: Nat) -> IO(List<&2, String>):
+  match ds:
+    case Nil{}:
+      IO.pure(List<&2, String>, Nil{})
+    case +d <> t:
+      IO.bind(Bool, List<&2, String>, Push.one(d, j, prefix ++ "-" ++ Nat.show(i)),
+        dead => Push.all.k(dead, Device.token(d), Push.all(t, j, prefix, 1n+i)))
+
+def Push.devices(s: M.State) -> List<&2, M.Device>:
+  Map.values(&2, M.Device, M.State.devices(s))
+
+def Push.gate(no: Bool, ds: List<&2, M.Device>, +j: Job, +prefix: String) -> IO(List<&2, String>):
+  match no:
+    case True{}:
+      do IO<List<&2, String>>:
+        IO.print_err("backplane: push: could not sign with push.apns.key")
+        return Nil{}
+    case False{}:
+      Push.all(ds, j, prefix, 0n)
+
+def Push.send(+home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
+  do IO<List<&2, String>>:
+    +dir : String = home ++ "/tmp"
+    mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
+    m : Result<&1, &1, U32 & String, Unit> <- H.FS.chmod(dir, 448)
+    t : U32 <- H.Clock.epoch()
+    +now : Nat = U32.to_nat(t)
+    +prefix : String = "push-" ++ Nat.show(now) ++ "-" ++ thread
+    +jwt : String <- Jwt.sign(key, dir, prefix, Jwt.input(kid, team, now))
+    base : String <- Push.env("BACKPLANE_APNS_URL")
+    +others : List<&2, M.Thread> = Island.others(st, thread)
+    +job : Job = Job{dir, base, jwt, now, thread,
+      Push.alert(thread, Push.title(B.Hub.thread(st, thread)), Push.body(String.eq(state, "failed"), Push.first(B.Task.last(st, thread)))),
+      Island.state(others), List.is_empty(&2, M.Thread, others)}
+    Push.gate(String.is_empty(jwt), Push.devices(st), job, prefix)
+
+def Push.ready(ok: Bool, +home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
+  match ok:
+    case True{}:
+      Push.send(home, st, thread, state, key, kid, team)
+    case False{}:
+      IO.pure(List<&2, String>, Nil{})
+
+def Push.any(ds: List<&2, M.Device>) -> Bool:
+  Bool.not(List.is_empty(&2, M.Device, ds))
+
+def Push.start(+home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
+  do IO<List<&2, String>>:
+    has : Bool <- Push.exists(key)
+    Push.ready(Bool.and(has, Bool.and(Push.any(Push.devices(st)), Bool.not(Bool.or(String.is_empty(key), Bool.or(String.is_empty(kid), String.is_empty(team)))))),
+      home, st, thread, state, key, kid, team)
+
+# every push for a turn that ended; answers the tokens APNs reported dead
+def Push.turn_ended.dead(+home: String, +st: M.State, +thread: String, +state: String) -> IO(List<&2, String>):
+  Push.start(home, st, thread, state, M.Setting.get(st, "push.apns.key", ""), M.Setting.get(st, "push.apns.keyid", ""), M.Setting.get(st, "push.apns.team", ""))
+
+# the request that forgets a dead token (for the hub's inbox, as a client
+# request would; the reply goes to no one)
+def Push.drop_request(token: String) -> String:
+  J.Json.show(J.Json.obj([J.KV{"id", J.Num{"0"}}, J.KV{"m", J.Str{"device.drop"}}, J.KV{"p", J.Json.obj([J.KV{"token", J.Str{token}}])}]))
+
+def Push.turn_ended.done(dead: List<&2, String>) -> IO(Unit):
   IO.pure(Unit, Unit{})
+
+# Dead tokens are found but not yet dropped: that needs a way back into
+# the hub (see Push.drop_request).
+def Push.turn_ended(+home: String, st: M.State, +thread: String, +state: String) -> IO(Unit):
+  IO.bind(List<&2, String>, Unit, Push.turn_ended.dead(home, st, thread, state), Push.turn_ended.done)

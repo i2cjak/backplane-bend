@@ -137,6 +137,21 @@ def Store.keep.k(m: Maybe<&2, J.Json>, +l: String, rest: List<&2, String>) -> Li
     case None{}:
       rest
 
+def Store.wire.k(m: Maybe<&2, J.Json>, +l: String) -> String:
+  match m:
+    case Some{+o}:
+      C.Change.wire_line(o, l)
+    case None{}:
+      l
+
+# the log as clients may see it: device tokens left out
+def Store.wire(ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> t:
+      Store.wire.k(J.Json.parse(l), l) <> Store.wire(t)
+
 def Store.keep(ls: List<&2, String>, acc: List<&2, String>) -> List<&2, String>:
   match ls:
     case Nil{}:
@@ -673,11 +688,12 @@ def Hub.commit.wrote(r: File & Result<&1, &1, U32 & String, Unit>, st: M.State, 
   (f, _) = r
   k(Hub{st, f, line <> ls, cl, as, inbox, cfg, note}, line <> fresh)
 
-def Hub.commit.one(h: Hub, +line: String, c: M.Change, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
+# the full line goes to disk; `wire`, its copy for clients, to the log
+def Hub.commit.one(h: Hub, line: String, +wire: String, c: M.Change, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
   match h:
     case Hub{st, f, ls, cl, as, +inbox, cfg, note}:
       IO.bind(File & Result<&1, &1, U32 & String, Unit>, Hub & List<&2, String>, File.write(f, line ++ "\n"),
-        r => Hub.commit.wrote(r, M.State.apply(st, c), line, ls, cl, as, inbox, cfg, note, fresh, k))
+        r => Hub.commit.wrote(r, M.State.apply(st, c), wire, ls, cl, as, inbox, cfg, note, fresh, k))
 
 def Hub.announce(r: Hub & List<&2, String>) -> IO(Hub):
   (h, fresh) = r
@@ -695,7 +711,7 @@ def Hub.commit(cs: List<&2, M.Change>, h: Hub, fresh: List<&2, String>) -> IO(Hu
     case Nil{}:
       IO.pure(Hub & List<&2, String>, (h, fresh))
     case +c <> t:
-      Hub.commit.one(h, J.Json.show(C.Change.encode(c)), c, fresh,
+      Hub.commit.one(h, J.Json.show(C.Change.encode(c)), J.Json.show(C.Change.wire(c)), c, fresh,
         h2 => fr2 => Hub.commit(t, h2, fr2))
 
 def Hub.spawned.fail(e: U32 & String, h: Hub, +thread: String) -> IO(Hub):
@@ -2005,8 +2021,9 @@ def Main.boot(cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
       do IO<Unit>:
         mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(home)
         bs : List<&2, U32> <- Files.read(Store.path(home))
-        +ls : List<&2, String> = Store.keep(Store.lines(bs), Nil{})
-        +st : M.State = M.State.replay(Store.decode(List.reverse(&2, String, ls)), M.State.empty())
+        +full : List<&2, String> = Store.keep(Store.lines(bs), Nil{})
+        +st : M.State = M.State.replay(Store.decode(List.reverse(&2, String, full)), M.State.empty())
+        +ls : List<&2, String> = Store.wire(full)
         Log.info("replayed " ++ Nat.show(List.length(&2, String, ls)) ++ " changes from " ++ Store.path(home))
         f : Result<&1, &1, U32 & String, File> <- File.open(Store.path(home), "a")
         tok : String <- Token.load(home)

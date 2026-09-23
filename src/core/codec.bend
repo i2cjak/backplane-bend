@@ -218,9 +218,13 @@ def Change.encode(c: M.Change) -> J.Json:
       Change.obj("AskOpened", [J.KV{"id", J.Str{id}}, J.KV{"thread", J.Str{thread}}, J.KV{"kind", J.Str{kind}}, J.KV{"tool", J.Str{tool}}, J.KV{"detail", J.Str{detail}}, J.KV{"options", J.Str{options}}, J.KV{"at", Codec.nat(at)}])
     case M.AskClosed{id, answer, at}:
       Change.obj("AskClosed", [J.KV{"id", J.Str{id}}, J.KV{"answer", J.Str{answer}}, J.KV{"at", Codec.nat(at)}])
+    case M.DeviceRegistered{token, platform, kind, thread, env, bundle, at}:
+      Change.obj("DeviceRegistered", [J.KV{"token", J.Str{token}}, J.KV{"platform", J.Str{platform}}, J.KV{"kind", J.Str{kind}}, J.KV{"thread", J.Str{thread}}, J.KV{"env", J.Str{env}}, J.KV{"bundle", J.Str{bundle}}, J.KV{"at", Codec.nat(at)}])
+    case M.DeviceDropped{token, at}:
+      Change.obj("DeviceDropped", [J.KV{"token", J.Str{token}}, J.KV{"at", Codec.nat(at)}])
 
 def Change.tags() -> List<&2, String>:
-  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed"]
+  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed", "DeviceRegistered", "DeviceDropped"]
 
 def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
   match i:
@@ -272,9 +276,90 @@ def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
       Some{M.AskOpened{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "tool", ""), J.Json.get_str(o, "detail", ""), J.Json.get_str(o, "options", ""), J.Json.get_nat(o, "at", 0n)}}
     case 23n:
       Some{M.AskClosed{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "answer", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 24n:
+      Some{M.DeviceRegistered{J.Json.get_str(o, "token", ""), J.Json.get_str(o, "platform", ""), J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "env", ""), J.Json.get_str(o, "bundle", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 25n:
+      Some{M.DeviceDropped{J.Json.get_str(o, "token", ""), J.Json.get_nat(o, "at", 0n)}}
     case _:
       None{}
 
 # a Change from its JSON, or None for an unknown tag
 def Change.decode(+o: J.Json) -> Maybe<&2, M.Change>:
   Change.decode.k(Codec.pos(Change.tags(), J.Json.get_str(o, "$", "")), o)
+
+# What clients see
+# ----------------
+# The log on disk keeps every field; the copy sent to clients (the "log" and
+# "changes" messages) carries device events with only their tag and time.
+# A push token is a secret, and clients fold an empty token as no device,
+# so their sequence numbers still match the server's (law
+# device_token_never_sent).
+
+def Change.wire(c: M.Change) -> J.Json:
+  match c:
+    case M.DeviceRegistered{_, _, _, _, _, _, at}:
+      Change.obj("DeviceRegistered", [J.KV{"at", Codec.nat(at)}])
+    case M.DeviceDropped{_, at}:
+      Change.obj("DeviceDropped", [J.KV{"at", Codec.nat(at)}])
+    case M.ProjectCreated{id, title, root, at}:
+      Change.encode(M.ProjectCreated{id, title, root, at})
+    case M.ProjectRemoved{id, at}:
+      Change.encode(M.ProjectRemoved{id, at})
+    case M.ThreadCreated{id, project, title, env, branch, worktree, provider, model, at}:
+      Change.encode(M.ThreadCreated{id, project, title, env, branch, worktree, provider, model, at})
+    case M.ThreadRenamed{id, title, at}:
+      Change.encode(M.ThreadRenamed{id, title, at})
+    case M.MessagePosted{thread, msg, role, text, at}:
+      Change.encode(M.MessagePosted{thread, msg, role, text, at})
+    case M.TurnChanged{thread, state, at}:
+      Change.encode(M.TurnChanged{thread, state, at})
+    case M.PendingChanged{thread, count, at}:
+      Change.encode(M.PendingChanged{thread, count, at})
+    case M.ActivityLogged{thread, act, tone, kind, summary, at}:
+      Change.encode(M.ActivityLogged{thread, act, tone, kind, summary, at})
+    case M.ThreadSettled{id, manual, at}:
+      Change.encode(M.ThreadSettled{id, manual, at})
+    case M.ThreadUnsettled{id, at}:
+      Change.encode(M.ThreadUnsettled{id, at})
+    case M.ThreadArchived{id, archived, at}:
+      Change.encode(M.ThreadArchived{id, archived, at})
+    case M.ThreadPinned{id, pinned, at}:
+      Change.encode(M.ThreadPinned{id, pinned, at})
+    case M.ThreadDeleted{id, at}:
+      Change.encode(M.ThreadDeleted{id, at})
+    case M.WorktreeSet{id, branch, worktree, at}:
+      Change.encode(M.WorktreeSet{id, branch, worktree, at})
+    case M.SessionSet{id, session, at}:
+      Change.encode(M.SessionSet{id, session, at})
+    case M.ModesSet{id, runtime, interaction, model, at}:
+      Change.encode(M.ModesSet{id, runtime, interaction, model, at})
+    case M.TaskDelegated{task, parent, child, depth, provider, model, at}:
+      Change.encode(M.TaskDelegated{task, parent, child, depth, provider, model, at})
+    case M.TaskStateSet{task, state, summary, at}:
+      Change.encode(M.TaskStateSet{task, state, summary, at})
+    case M.TaskDelivered{task, at}:
+      Change.encode(M.TaskDelivered{task, at})
+    case M.SettingSet{key, value, at}:
+      Change.encode(M.SettingSet{key, value, at})
+    case M.TurnQueued{thread, msg, text, at}:
+      Change.encode(M.TurnQueued{thread, msg, text, at})
+    case M.QueueTaken{thread, at}:
+      Change.encode(M.QueueTaken{thread, at})
+    case M.AskOpened{id, thread, kind, tool, detail, options, at}:
+      Change.encode(M.AskOpened{id, thread, kind, tool, detail, options, at})
+    case M.AskClosed{id, answer, at}:
+      Change.encode(M.AskClosed{id, answer, at})
+
+def Change.private(+tag: String) -> Bool:
+  Bool.or(String.eq(tag, "DeviceRegistered"), String.eq(tag, "DeviceDropped"))
+
+def Change.wire_line.k(private: Bool, +o: J.Json, l: String) -> String:
+  match private:
+    case True{}:
+      J.Json.show(Change.obj(J.Json.get_str(o, "$", ""), [J.KV{"at", Codec.nat(J.Json.get_nat(o, "at", 0n))}]))
+    case False{}:
+      l
+
+# a stored line (parsed as o) as clients may see it
+def Change.wire_line(+o: J.Json, l: String) -> String:
+  Change.wire_line.k(Change.private(J.Json.get_str(o, "$", "")), o, l)

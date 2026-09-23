@@ -22,7 +22,8 @@ def Cbor.keys() -> List<&2, String>:
 # String values sent as tag 6 over their index. APPEND-ONLY FOREVER, like
 # Cbor.keys(). The first 24 cost two bytes, so the busiest words lead.
 def Cbor.words() -> List<&2, String>:
-  ["MessagePosted", "TurnChanged", "ActivityLogged", "changes", "delta", "reply", "user", "assistant", "running", "completed", "idle", "info", "tool", "error", "log", "update", "view", "hello", "system", "interrupted", "failed", "PendingChanged", "ThreadSettled", "ThreadUnsettled", "ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "local", "worktree", "approval-required", "auto-accept-edits", "auto", "full-access", "default", "plan", "queued", "done", "cancelled"]
+  ["MessagePosted", "TurnChanged", "ActivityLogged", "changes", "delta", "reply", "user", "assistant", "running", "completed", "idle", "info", "tool", "error", "log", "update", "view", "hello", "system", "interrupted", "failed", "PendingChanged", "ThreadSettled", "ThreadUnsettled", "ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "local", "worktree", "approval-required", "auto-accept-edits", "auto", "full-access", "default", "plan", "queued", "done", "cancelled",
+   "AskOpened", "AskClosed", "device.register", "device.drop", "DeviceRegistered", "DeviceDropped", "ios", "android", "alert", "activity", "sandbox", "production"]
 
 def Cbor.hit(names: List<&2, String>, +s: String) -> Bool:
   match names:
