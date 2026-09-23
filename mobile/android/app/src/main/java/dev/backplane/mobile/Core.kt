@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Bundle
+import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -78,7 +79,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         hub = Hub(scope,
             url = { Pairing.resume(base, engine.resume()) },
             onOpen = { scope.launch { apply(engine.online(true)) } },
-            onMessage = { t -> scope.launch { apply(engine.recv(t)) } },
+            onMessage = { b -> scope.launch { apply(engine.recv(Base64.encodeToString(b, Base64.NO_WRAP))) } },
             onClose = { scope.launch { apply(engine.online(false)) } },
         ).also { it.start() }
     }
@@ -106,7 +107,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             LiveService.sync(app, next.island, foreground)
         }
         for (c in out.cmds) when (c.type) {
-            "send" -> hub?.send(c.text)
+            "send" -> hub?.send(Base64.decode(c.data, Base64.DEFAULT))
             "copy" -> {
                 val cm = app.getSystemService(ClipboardManager::class.java)
                 cm.setPrimaryClip(ClipData.newPlainText("Backplane", c.text))

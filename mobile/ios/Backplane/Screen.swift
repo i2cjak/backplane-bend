@@ -77,6 +77,8 @@ struct Screen: Decodable {
 struct Cmd: Decodable {
     let type: String
     let text: String?
+    // send: the CBOR frame, as base64
+    let data: String?
     // notify
     let thread, title, kind, body: String?
 }

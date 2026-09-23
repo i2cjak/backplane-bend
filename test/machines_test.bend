@@ -6,6 +6,14 @@ import ../src/core/tailnet.bend as TN
 import ../src/core/http.bend as W
 import ../src/core/utf8.bend as UT
 
+# bytes as od -An -tu1 writes them (then tr squeezes the spaces)
+def od(bs: List<&2, U32>, acc: String) -> String:
+  match bs:
+    case Nil{}:
+      acc
+    case b <> t:
+      od(t, acc ++ " " ++ U32.show(b))
+
 def rows(rs: List<&2, U.MRow>) -> String:
   match rs:
     case Nil{}:
@@ -71,6 +79,10 @@ def main() -> IO(Unit):
     C.Check.str("other owner", Bool.pick(String, TN.Tailnet.trusts("h@x", "e@x"), "yes", "no"), "no")
     C.Check.str("tagged", Bool.pick(String, TN.Tailnet.trusts("tagged-devices", "tagged-devices"), "yes", "no"), "no")
     C.Check.str("whois login", TN.Tailnet.login("{\"UserProfile\":{\"LoginName\":\"h@x\"}}"), "h@x")
+    C.Check.str("hello cbor", TN.Hello.version(TN.Hello.bytes(od(TN.Hello.answer("1.2.3"), ""))), "1.2.3")
+    C.Check.str("hello json from an older hub", TN.Hello.version(UT.Utf8.encode("{\"backplane\":\"0.9.0\"}")), "0.9.0")
+    C.Check.str("hello garbage", TN.Hello.version(TN.Hello.bytes(" 1 2 3 ")), "")
+    C.Check.str("hello nothing", TN.Hello.version(TN.Hello.bytes("")), "")
     C.Check.str("masked frame round trip", payload(W.Ws.decode(W.Ws.client_text("hello"))), "1:hello")
     C.Check.str("long masked frame", payload(W.Ws.decode(W.Ws.client_text(String.repeat("ab", 100n)))), "1:" ++ String.repeat("ab", 100n))
     C.Check.str("need short", need(W.Ws.need(W.Ws.text("hi"))), "4")

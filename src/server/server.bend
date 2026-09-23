@@ -341,19 +341,15 @@ def Conn.finish(s: Socket, bs: List<&2, U32>) -> IO(Unit):
     s2 : Socket <- Conn.send(s, bs)
     Socket.close(s2)
 
-# a message as a frame: JSON text, or, for a client that asked for it
-# (enc=cbor), one binary CBOR frame (about 40% fewer bytes on the air)
-def Conn.frame.out(cbor: Bool, t: String) -> List<&2, U32>:
-  match cbor:
-    case True{}:
-      W.Ws.encode(2, CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(t), J.Null{})))
-    case False{}:
-      W.Ws.text(t)
+# a message as a frame: always one binary CBOR frame (about 40% fewer
+# bytes on the air than JSON text; every client speaks it)
+def Conn.frame.out(t: String) -> List<&2, U32>:
+  W.Ws.cbor(t)
 
-def Conn.write(m: Maybe<&1, Wire>, s: Socket, +cbor: Bool, k: Socket -> IO(Unit)) -> IO(Unit):
+def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{WText{t}}:
-      IO.bind(Socket, Unit, Conn.send(s, Conn.frame.out(cbor, t)), k)
+      IO.bind(Socket, Unit, Conn.send(s, Conn.frame.out(t)), k)
     case Some{WPong{p}}:
       IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(10, p)), k)
     case Some{WClose{}}:
@@ -362,12 +358,12 @@ def Conn.write(m: Maybe<&1, Wire>, s: Socket, +cbor: Bool, k: Socket -> IO(Unit)
       Socket.close(s)
 
 # frames from the hub, until it closes our channel
-def Conn.writer(fuel: Nat, s: Socket, +out: Chan(Wire), +cbor: Bool) -> IO(Unit):
+def Conn.writer(fuel: Nat, s: Socket, +out: Chan(Wire)) -> IO(Unit):
   match fuel:
     case 0n:
       Socket.close(s)
     case 1n+f:
-      IO.bind(Maybe<&1, Wire>, Unit, Chan.recv(Wire, out), m => Conn.write(m, s, cbor, s2 => Conn.writer(f, s2, out, cbor)))
+      IO.bind(Maybe<&1, Wire>, Unit, Chan.recv(Wire, out), m => Conn.write(m, s, s2 => Conn.writer(f, s2, out)))
 
 def Conn.leave(s: Socket, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
@@ -375,11 +371,19 @@ def Conn.leave(s: Socket, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
     ok : Bool <- Chan.send(Msg, inbox, Leave{id})
     return Unit{}
 
-def Conn.frame.k(text: Bool, close: Bool, ping: Bool, p: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +out: Chan(Wire)) -> IO(Bool):
-  match text close ping:
+# a request's CBOR as the JSON text the hub reads
+def Conn.cbor.json(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case Some{j}:
+      J.Json.show(j)
+    case None{}:
+      ""
+
+def Conn.frame.k(bin: Bool, close: Bool, ping: Bool, p: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +out: Chan(Wire)) -> IO(Bool):
+  match bin close ping:
     case True{} _ _:
       do IO<Bool>:
-        ok : Bool <- Chan.send(Msg, inbox, Rpc{id, U.Utf8.decode(p)})
+        ok : Bool <- Chan.send(Msg, inbox, Rpc{id, Conn.cbor.json(CB.Cbor.decode(p))})
         return True{}
     case False{} True{} _:
       IO.pure(Bool, False{})
@@ -390,26 +394,12 @@ def Conn.frame.k(text: Bool, close: Bool, ping: Bool, p: List<&2, U32>, +id: U32
     case False{} False{} False{}:
       IO.pure(Bool, True{})
 
-def Conn.cbor.json(m: Maybe<&2, J.Json>) -> String:
-  match m:
-    case Some{j}:
-      J.Json.show(j)
-    case None{}:
-      ""
-
-# a frame from the browser: text is a request; close ends; ping pongs
-# an incoming request as JSON text: a binary frame is CBOR
-def Conn.frame.text(bin: Bool, p: List<&2, U32>) -> List<&2, U32>:
-  match bin:
-    case True{}:
-      U.Utf8.encode(Conn.cbor.json(CB.Cbor.decode(p)))
-    case False{}:
-      p
-
+# a frame from a client: a binary frame is a request (CBOR, read here as
+# JSON text for the hub); close ends; ping pongs; text frames are ignored
 def Conn.frame(fr: W.Frame, +id: U32, +inbox: Chan(Msg), +out: Chan(Wire)) -> IO(Bool):
   match fr:
     case W.Frame{_, +op, p}:
-      Conn.frame.k(Bool.or(U32.is_eq(op, 1), U32.is_eq(op, 2)), U32.is_eq(op, 8), U32.is_eq(op, 9), Conn.frame.text(U32.is_eq(op, 2), p), id, inbox, out)
+      Conn.frame.k(U32.is_eq(op, 2), U32.is_eq(op, 8), U32.is_eq(op, 9), p, id, inbox, out)
 
 def Conn.more(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, buf: List<&2, U32>, +id: U32, +inbox: Chan(Msg),
     k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
@@ -447,23 +437,23 @@ def Conn.reader(fuel: Nat, s: Socket, +buf: List<&2, U32>, +id: U32, +inbox: Cha
       Conn.decoded(W.Ws.decode(buf), s, buf, id, inbox, out,
         s2 => b2 => Conn.reader(f, s2, b2, id, inbox, out))
 
-def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
+def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   (rd, res) = r
   match res:
     case Done{wr}:
       do IO<Unit>:
         +out : Chan(Wire) <- Chan.new(Wire, 1024)
-        IO.spawn(Unit, Conn.writer(Fuel.forever(), wr, out, cbor))
+        IO.spawn(Unit, Conn.writer(Fuel.forever(), wr, out))
         ok : Bool <- Chan.send(Msg, inbox, Join{id, out, since, origin})
         Conn.reader(Fuel.forever(), rd, rest, id, inbox, out)
     case Fail{_}:
       Socket.close(rd)
 
-def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
+def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   do IO<Unit>:
     s2 : Socket <- Conn.send(s, W.Ws.accept(key))
     r : Socket & Result<&1, &1, U32 & String, Socket> <- H.Sock.dup(s2)
-    Conn.ws.dup(r, rest, id, inbox, since, origin, cbor)
+    Conn.ws.dup(r, rest, id, inbox, since, origin)
 
 def Conn.safe(+p: String) -> Bool:
   Bool.and(Bool.not(String.contains(p, "..")), String.starts_with(p, "/"))
@@ -483,10 +473,10 @@ def Conn.allowed(+trusted: Bool, +hs: List<&2, W.Header>, +path: String, +token:
   Bool.or(Bool.and(trusted, String.is_empty(W.Http.header_of(hs, "tailscale-user-login"))),
     Bool.and(Bool.not(String.is_empty(token)), Bool.or(String.contains(path, "token=" ++ token), String.contains(W.Http.header_of(hs, "cookie"), "bp_token=" ++ token))))
 
-def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
+def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   match ok:
     case True{}:
-      Conn.ws(s, key, rest, id, inbox, since, origin, cbor)
+      Conn.ws(s, key, rest, id, inbox, since, origin)
     case False{}:
       Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
 
@@ -2239,9 +2229,10 @@ def Machines.urls(cs: List<&2, Cand>) -> List<&2, String>:
     case Cand{_, u} <> t:
       ("'" ++ u ++ "'") <> Machines.urls(t)
 
-# ask every hub at once; each answer is "<url> <json>"
+# ask every hub at once; each answer is "<url> <byte> <byte> ...": /hello
+# answers CBOR, so od writes its bytes out as decimal numbers
 def Machines.probe.sh(+urls: List<&2, String>) -> String:
-  "for u in " ++ String.join(urls, " ") ++ "; do (r=$(curl -s -m 3 \"$u/hello\") && echo \"$u $r\") & done; wait"
+  "for u in " ++ String.join(urls, " ") ++ "; do (r=$(curl -s -m 3 \"$u/hello\" | od -An -tu1 -v | tr -s ' \\n' '  '); [ -n \"${r# }\" ] && echo \"$u $r\") & done; wait"
 
 def Machines.answer(ls: List<&2, String>, +url: String) -> String:
   match ls:
@@ -2257,7 +2248,7 @@ def Machines.keep(+v: String, +n: String, +url: String, +rest: List<&2, J.Json>)
 def Machines.one(+c: Cand, +ls: List<&2, String>, rest: List<&2, J.Json>) -> List<&2, J.Json>:
   match c:
     case Cand{+n, +u}:
-      Machines.keep(J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(Machines.answer(ls, u)), J.Null{}), "backplane", ""), n, u, rest)
+      Machines.keep(TN.Hello.version(TN.Hello.bytes(Machines.answer(ls, u))), n, u, rest)
 
 def Machines.list(cs: List<&2, Cand>, +ls: List<&2, String>) -> List<&2, J.Json>:
   match cs:
@@ -2524,7 +2515,7 @@ def Img.serve(allowed: Bool, s: Socket, +path: String) -> IO(Unit):
 def Conn.get(hello: Bool, s: Socket, +web: String, +path: String, gz: Bool) -> IO(Unit):
   match hello:
     case True{}:
-      Conn.finish(s, W.Http.response("200 OK", "application/json", U.Utf8.encode("{\"backplane\":" ++ J.Json.show(J.Str{Main.version()}) ++ "}"), ""))
+      Conn.finish(s, W.Http.response("200 OK", "application/cbor", TN.Hello.answer(Main.version()), ""))
     case False{}:
       Conn.static(s, web, path, gz)
 
@@ -2541,7 +2532,7 @@ def Conn.route.k(ws: Bool, s: Socket, req: W.Request, rest: List<&2, U32>, +web:
   match ws req:
     case True{} W.Request{_, +p, +hs}:
       Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox,
-        Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"), String.eq(W.Http.param(p, "enc"), "cbor"))
+        Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"))
     case False{} W.Request{_, +p, +hs}:
       Conn.get.k(Conn.pos(["/hello", "/img"], W.Http.route(p), 0n), s, web, p, String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"), Conn.allowed(trusted, hs, p, token))
 

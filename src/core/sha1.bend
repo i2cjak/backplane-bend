@@ -127,14 +127,19 @@ def B64.enc3(+a: U32, +b: U32, +c: U32, rest: String) -> String:
       SCon{B64.chr(U32.or(U32.shln(U32.and(b, 15), 2n), U32.shrn(c, 6n))),
         SCon{B64.chr(U32.and(c, 63)), rest}}}}
 
-# standard alphabet with = padding
-def B64.encode(bs: List<&2, U32>) -> String:
+# the text so far reversed in acc, so each group of three is a tail call
+# (an image or a long message is megabytes)
+def B64.encode.go(bs: List<&2, U32>, acc: String) -> String:
   match bs:
     case Nil{}:
-      ""
+      String.reverse(acc)
     case +a <> Nil{}:
-      String.take(B64.enc3(a, 0, 0, ""), 2n) ++ "=="
+      String.reverse.go(acc, String.take(B64.enc3(a, 0, 0, ""), 2n) ++ "==")
     case +a <> +b <> Nil{}:
-      String.take(B64.enc3(a, b, 0, ""), 3n) ++ "="
+      String.reverse.go(acc, String.take(B64.enc3(a, b, 0, ""), 3n) ++ "=")
     case +a <> +b <> +c <> rest:
-      B64.enc3(a, b, c, B64.encode(rest))
+      B64.encode.go(rest, String.reverse.go(B64.enc3(a, b, c, ""), acc))
+
+# standard alphabet with = padding
+def B64.encode(bs: List<&2, U32>) -> String:
+  B64.encode.go(bs, "")

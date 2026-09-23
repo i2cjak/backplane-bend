@@ -570,7 +570,7 @@ function connect() {
   if (token) q.set("token", token);
   q.set("since", App.seq(ui));
   q.set("origin", App.origin(ui));
-  q.set("enc", "cbor");
+  q.set("enc", "cbor"); // a hub before CBOR-only still needs asking
   const s = new WebSocket(`${proto}//${location.host}/ws?${q}`);
   s.binaryType = "arraybuffer";
   s.onopen = () => {
@@ -580,8 +580,9 @@ function connect() {
     later();
   };
   s.onmessage = (e) => {
-    // CBOR frames (text frames still parse, for an older server)
-    const j = typeof e.data === "string" ? toJson(JSON.parse(e.data)) : App.wire_in(toList(new Uint8Array(e.data)));
+    // the hub sends only binary CBOR frames
+    if (typeof e.data === "string") return;
+    const j = App.wire_in(toList(new Uint8Array(e.data)));
     keep(JSON.parse(App.show(j)));
     const r = App.recv(ui, j);
     ui = r.ui;

@@ -3,11 +3,14 @@ import ../server/server.bend as S
 import ../server/host.bend as H
 import ../core/http.bend as W
 import ../core/utf8.bend as U
+import ../core/json.bend as J
+import ../core/cbor.bend as CB
 
 # A link to another machine's hub, in the shape of a hub: the window sends
 # it S.Msg (Join once, then Rpc for each request, Leave to hang up) and
 # reads S.Wire from the channel it joined with, just as with its own hub.
-# Underneath is a WebSocket client (JSON text frames). When the connection
+# Underneath is a WebSocket client (binary CBOR frames; the window's own
+# messages stay JSON text in this process). When the connection
 # drops, `out` closes; the window decides whether to try again.
 
 def Link.fuel() -> Nat:
@@ -36,8 +39,8 @@ def Link.down(+out: Chan(S.Wire), +why: String) -> IO(Unit):
     Link.say(out, "{\"t\":\"update\",\"state\":" ++ "\"" ++ why ++ "\"}")
     Chan.close(S.Wire, out)
 
-# Writing: requests from the window become masked text frames
-# -----------------------------------------------------------
+# Writing: requests from the window become masked binary CBOR frames
+# ------------------------------------------------------------------
 
 def Link.wrote(r: Socket & Result<&1, &1, U32 & String, Unit>, k: Socket -> IO(Unit)) -> IO(Unit):
   (s, _) = r
@@ -46,7 +49,7 @@ def Link.wrote(r: Socket & Result<&1, &1, U32 & String, Unit>, k: Socket -> IO(U
 def Link.write.one(m: Maybe<&1, S.Msg>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{S.Rpc{_, text}}:
-      IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, Unit, H.Sock.send_bytes(s, W.Ws.client_text(text)), r => Link.wrote(r, k))
+      IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, Unit, H.Sock.send_bytes(s, W.Ws.client_cbor(text)), r => Link.wrote(r, k))
     case Some{S.Leave{_}}:
       IO.bind(Socket, Unit, H.Sock.shutdown(s), s2 => Socket.close(s2))
     case Some{_}:
@@ -97,10 +100,18 @@ def Link.flat(back: List<&2, List<&2, U32>>, acc: List<&2, U32>) -> List<&2, U32
 def Link.grow(+front: List<&2, U32>, back: List<&2, List<&2, U32>>) -> List<&2, U32>:
   List.append(&2, U32, front, Link.flat(back, Nil{}))
 
-def Link.frame.op(text: Bool, close: Bool, p: List<&2, U32>, rest: List<&2, U32>, s: Socket, +out: Chan(S.Wire), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
-  match text close:
+# a binary frame's CBOR as the JSON text the window reads
+def Link.json(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case Some{j}:
+      J.Json.show(j)
+    case None{}:
+      ""
+
+def Link.frame.op(bin: Bool, close: Bool, p: List<&2, U32>, rest: List<&2, U32>, s: Socket, +out: Chan(S.Wire), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+  match bin close:
     case True{} _:
-      IO.bind(Unit, Unit, Link.say(out, U.Utf8.decode(p)), u => k(s, rest))
+      IO.bind(Unit, Unit, Link.say(out, Link.json(CB.Cbor.decode(p))), u => k(s, rest))
     case False{} True{}:
       do IO<Unit>:
         Socket.close(s)
@@ -111,7 +122,7 @@ def Link.frame.op(text: Bool, close: Bool, p: List<&2, U32>, rest: List<&2, U32>
 def Link.frame(g: Maybe<&2, W.Got>, s: Socket, +out: Chan(S.Wire), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
   match g:
     case Some{W.Got{W.Frame{_, +op, p}, rest}}:
-      Link.frame.op(Bool.or(U32.is_eq(op, 1), U32.is_eq(op, 2)), U32.is_eq(op, 8), p, rest, s, out, k)
+      Link.frame.op(U32.is_eq(op, 2), U32.is_eq(op, 8), p, rest, s, out, k)
     case None{}:
       k(s, Nil{})
 
@@ -219,7 +230,7 @@ def Link.sent(r: Socket & Result<&1, &1, U32 & String, Unit>, +inbox: Chan(S.Msg
 def Link.connected(r: Result<&1, &1, U32 & String, Socket>, +url: String, +inbox: Chan(S.Msg), +out: Chan(S.Wire)) -> IO(Unit):
   match r:
     case Done{s}:
-      IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, Unit, H.Sock.send_text(s, W.Ws.request(Link.host(url), Link.port(url), "/ws?since=0&origin=&enc=json")),
+      IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, Unit, H.Sock.send_text(s, W.Ws.request(Link.host(url), Link.port(url), "/ws?since=0&origin=&enc=cbor")),
         r2 => Link.sent(r2, inbox, out))
     case Fail{_}:
       do IO<Unit>:

@@ -2372,3 +2372,6 @@ def Laws.fold_user_shut(live):
 
 def Laws.fold_default_live(live):
   {==}
+
+def Laws.hub_frames_cbor(t):
+  {==}

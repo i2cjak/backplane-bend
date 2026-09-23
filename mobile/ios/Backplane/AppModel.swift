@@ -99,7 +99,7 @@ final class AppModel {
                 return Pairing.socket(l, since: r?.since ?? "0", origin: r?.origin ?? "")
             },
             onOpen: { [weak self] in self?.run { await $0.online(true) } },
-            onMessage: { [weak self] t in self?.run { await $0.recv(t) } },
+            onMessage: { [weak self] d in self?.run { await $0.recv(d.base64EncodedString()) } },
             onClose: { [weak self] in self?.run { await $0.online(false) } })
         hub = h
         h.start()
@@ -165,7 +165,7 @@ final class AppModel {
         }
         for c in o.cmds {
             switch c.type {
-            case "send": hub?.send(c.text ?? "")
+            case "send": if let d = Data(base64Encoded: c.data ?? "") { hub?.send(d) }
             case "copy": UIPasteboard.general.string = c.text ?? ""
             case "scroll": scrolls += 1
             // while asleep the hub's push carries the alert instead

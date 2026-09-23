@@ -1,6 +1,8 @@
 import Base
 import ./utf8.bend as U
 import ./sha1.bend as S
+import ./json.bend as J
+import ./cbor.bend as CB
 
 # HTTP/1.1 requests and WebSocket (RFC 6455) frames over byte lists. Pure:
 # the server feeds bytes in and gets requests, frames, and bytes out.
@@ -242,6 +244,15 @@ def Ws.encode(+op: U32, payload: List<&2, U32>) -> List<&2, U32>:
 def Ws.text(s: String) -> List<&2, U32>:
   Ws.encode(1, U.Utf8.encode(s))
 
+# a message's JSON text as the CBOR the network carries
+def Ws.cbor.bytes(t: String) -> List<&2, U32>:
+  CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(t), J.Null{}))
+
+# a message as one binary CBOR frame: every frame the hub sends (law
+# hub_frames_cbor)
+def Ws.cbor(t: String) -> List<&2, U32>:
+  Ws.encode(2, Ws.cbor.bytes(t))
+
 # Client side (a hub talking to another machine's hub)
 # ----------------------------------------------------
 
@@ -265,6 +276,10 @@ def Ws.encode_masked(+op: U32, payload: List<&2, U32>) -> List<&2, U32>:
 
 def Ws.client_text(s: String) -> List<&2, U32>:
   Ws.encode_masked(1, U.Utf8.encode(s))
+
+# a message as one masked binary CBOR frame (a client's request)
+def Ws.client_cbor(t: String) -> List<&2, U32>:
+  Ws.encode_masked(2, Ws.cbor.bytes(t))
 
 # the upgrade request for path on host:port
 def Ws.request(+host: String, +port: U32, +path: String) -> String:

@@ -1,5 +1,7 @@
 import Base
 import ./json.bend as J
+import ./cbor.bend as CB
+import ./utf8.bend as U
 
 # Machines on the tailnet. Every machine the same person owns may run a
 # Backplane hub; each hub finds the others (`tailscale status --json`,
@@ -77,3 +79,33 @@ def Tailnet.self.of(+p: J.Json) -> Machine:
 # this node itself (its name and first address)
 def Tailnet.self(+status: String) -> Machine:
   Tailnet.self.of(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Self"))
+
+# Another hub's GET /hello
+# ------------------------
+
+# what this hub answers: its version, as CBOR
+def Hello.answer(v: String) -> List<&2, U32>:
+  CB.Cbor.encode(J.Json.obj([J.KV{"backplane", J.Str{v}}]))
+
+def Hello.byte(+w: String, +rest: List<&2, U32>) -> List<&2, U32>:
+  Bool.pick(List<&2, U32>, String.is_empty(w), rest, U32.from_nat(Maybe.default(&2, Nat, Nat.read(w), 0n)) <> rest)
+
+def Hello.bytes.go(ws: List<&2, String>, acc: List<&2, U32>) -> List<&2, U32>:
+  match ws:
+    case Nil{}:
+      acc
+    case +w <> t:
+      Hello.bytes.go(t, Hello.byte(w, acc))
+
+# the bytes of an answer ("163 105 ...")
+def Hello.bytes(+text: String) -> List<&2, U32>:
+  List.reverse(&2, U32, Hello.bytes.go(String.split(String.trim(text), ' '), Nil{}))
+
+# the version a /hello answer names: CBOR, or JSON from a hub that has
+# not been updated yet (it only reads that; it never sends JSON)
+def Hello.version.k(+cbor: String, +bs: List<&2, U32>) -> String:
+  Bool.pick(String, String.is_empty(cbor),
+    J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(U.Utf8.decode(bs)), J.Null{}), "backplane", ""), cbor)
+
+def Hello.version(+bs: List<&2, U32>) -> String:
+  Hello.version.k(J.Json.get_str(Maybe.default(&2, J.Json, CB.Cbor.decode(bs), J.Null{}), "backplane", ""), bs)

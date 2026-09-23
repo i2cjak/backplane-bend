@@ -10,6 +10,8 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
+import okio.ByteString.Companion.toByteString
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -36,6 +38,8 @@ object Pairing {
         return Uri.parse(socket).buildUpon()
             .appendQueryParameter("since", r.optString("since", "0"))
             .appendQueryParameter("origin", r.optString("origin", ""))
+            // a hub from before CBOR-only still needs asking
+            .appendQueryParameter("enc", "cbor")
             .build().toString()
     }
 }
@@ -47,7 +51,7 @@ class Hub(
     private val scope: CoroutineScope,
     private val url: suspend () -> String?,
     private val onOpen: () -> Unit,
-    private val onMessage: (String) -> Unit,
+    private val onMessage: (ByteArray) -> Unit,
     private val onClose: () -> Unit,
 ) {
     private val client = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
@@ -67,8 +71,8 @@ class Hub(
         socket = null
     }
 
-    fun send(text: String) {
-        socket?.send(text)
+    fun send(bytes: ByteArray) {
+        socket?.send(bytes.toByteString())
     }
 
     private fun connect() {
@@ -93,8 +97,10 @@ class Hub(
                 }
             }
 
-            override fun onMessage(ws: WebSocket, text: String) {
-                main.post { if (!stopped && socket === ws) onMessage(text) }
+            // every frame is binary CBOR, both ways
+            override fun onMessage(ws: WebSocket, bytes: ByteString) {
+                val b = bytes.toByteArray()
+                main.post { if (!stopped && socket === ws) onMessage(b) }
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) = lost(ws)

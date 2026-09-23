@@ -49,7 +49,8 @@ class Engine(private val source: String, private val cid: String) {
 
     suspend fun resume() = call("Backplane.resume()")
     suspend fun screen() = out("Backplane.screen()")
-    suspend fun recv(text: String) = out("Backplane.recv(${q(text)})")
+    // a binary frame from the hub, as base64
+    suspend fun recv(data: String) = out("Backplane.recv(${q(data)})")
     suspend fun act(action: String, value: String) = out("Backplane.act(${q(action)}, ${q(value)})")
     suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
     suspend fun online(b: Boolean) = out("Backplane.online($b)")

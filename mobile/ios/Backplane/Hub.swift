@@ -6,7 +6,9 @@ enum Pairing {
     // the socket address, resuming from since/origin
     static func socket(_ link: String, since: String, origin: String) -> URL? {
         guard let u = socket(link), var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
-        c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "since", value: since), URLQueryItem(name: "origin", value: origin)]
+        // enc=cbor: a hub from before CBOR-only still needs asking
+        c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "since", value: since), URLQueryItem(name: "origin", value: origin),
+                                               URLQueryItem(name: "enc", value: "cbor")]
         return c.url
     }
 
@@ -38,14 +40,14 @@ final class Hub {
     // hub sends only what this app has not seen
     private let url: () async -> URL?
     private let onOpen: () -> Void
-    private let onMessage: (String) -> Void
+    private let onMessage: (Data) -> Void
     private let onClose: () -> Void
     private var task: URLSessionWebSocketTask?
     private var backoff: Double = 0.25
     private var stopped = false
     private var generation = 0
 
-    init(url: @escaping () async -> URL?, onOpen: @escaping () -> Void, onMessage: @escaping (String) -> Void, onClose: @escaping () -> Void) {
+    init(url: @escaping () async -> URL?, onOpen: @escaping () -> Void, onMessage: @escaping (Data) -> Void, onClose: @escaping () -> Void) {
         self.url = url
         self.onOpen = onOpen
         self.onMessage = onMessage
@@ -64,8 +66,9 @@ final class Hub {
         task = nil
     }
 
-    func send(_ text: String) {
-        task?.send(.string(text)) { _ in }
+    // every frame is binary CBOR, both ways
+    func send(_ data: Data) {
+        task?.send(.data(data)) { _ in }
     }
 
     private func connect() {
@@ -92,8 +95,7 @@ final class Hub {
                         self.backoff = 0.25
                         self.onOpen()
                     }
-                    if case .string(let s) = m { self.onMessage(s) }
-                    if case .data(let d) = m, let s = String(data: d, encoding: .utf8) { self.onMessage(s) }
+                    if case .data(let d) = m { self.onMessage(d) }
                     self.read(t, gen, first: false)
                 case .failure:
                     self.lost()

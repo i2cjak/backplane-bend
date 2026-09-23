@@ -56,6 +56,8 @@ data class Screen(
 
 data class Cmd(
     val type: String, val text: String,
+    // a "send": the CBOR frame, as base64
+    val data: String = "",
     // a "notify": the thread whose turn ended, its title, "done"/"fail", and what to say
     val thread: String = "", val title: String = "", val kind: String = "", val body: String = "",
 )
@@ -117,6 +119,6 @@ fun parseScreen(o: JSONObject) = Screen(
 
 fun parseCmds(o: JSONObject): List<Cmd> =
     o.optJSONArray("cmds").map {
-        Cmd(it.optString("type"), it.optString("text"),
+        Cmd(it.optString("type"), it.optString("text"), it.optString("data"),
             it.optString("thread"), it.optString("title"), it.optString("kind"), it.optString("body"))
     }

@@ -22,6 +22,7 @@ import ./src/core/links.bend as LK
 import ./src/core/client.bend as U
 import ./src/gfx/text.bend as X
 import ./src/core/fold.bend as FO
+import ./src/core/http.bend as WS
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -912,3 +913,8 @@ law fold_user_shut:
 law fold_default_live:
   for +live: Bool
   {FO.Fold.open("", live) == live : Bool}
+
+# every frame the hub sends is binary (opcode 2, final): CBOR, never text
+law hub_frames_cbor:
+  for +t: String
+  {List.head(&2, U32, WS.Ws.cbor(t)) == Some{130} : Maybe<&2, U32>}

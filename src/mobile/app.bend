@@ -4,9 +4,13 @@ import ../core/model.bend as M
 import ../core/client.bend as U
 import ./screen.bend as S
 import ./notify.bend as N
+import ../core/cbor.bend as CB
+import ../core/attach.bend as AT
+import ../core/sha1.bend as SH
 
 # What bridge.js calls. The phone apps see only strings: server messages
-# in; the screen, commands and alerts out.
+# in (binary CBOR frames, carried as base64); the screen, commands and
+# alerts out, and what to send (CBOR again, as base64).
 
 def init(now: Nat, cid: String) -> U.Ui:
   U.Ui.set_cid(U.Ui.init(now), cid)
@@ -20,8 +24,17 @@ def recv.k(+seen: List<&2, N.Seen>, a: U.Act) -> Recv:
     case U.Act{+u, cmds}:
       Recv{U.Act{u, cmds}, J.Json.show(J.Json.arr(N.Note.alerts(U.Ui.threads(S.Mob.st(u)), seen, U.Ui.entries(S.Mob.st(u)))))}
 
-def recv(+u: U.Ui, +o: J.Json) -> Recv:
+def recv.j(+u: U.Ui, +o: J.Json) -> Recv:
   recv.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), U.Ui.recv_act(u, o))
+
+# a frame from the hub: its bytes as base64, then CBOR
+def recv(+u: U.Ui, b64: String) -> Recv:
+  recv.j(u, Maybe.default(&2, J.Json, CB.Cbor.decode(AT.Att.b64(b64)), J.Null{}))
+
+# a message for the hub (a Send command's JSON text) as the base64 of the
+# CBOR frame the app sends
+def wire(text: String) -> String:
+  SH.B64.encode(CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
 
 def act(u: U.Ui, action: String, value: String) -> U.Act:
   U.Ui.act(u, action, value)
