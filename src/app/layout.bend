@@ -12,6 +12,7 @@ import ./viewer.bend as V
 import ../core/glb.bend as G
 import ../gfx/bitmap.bend as BM
 import ../core/diff.bend as DF
+import ../core/vt.bend as VT
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -783,15 +784,41 @@ def Lay.skip_y(ls: List<&2, TLine>, +y: U32, +top: U32) -> U32:
 
 # the timeline sits between top and the composer, pinned to the bottom;
 # sc scrolls up into history
+# the lines from the first one still (partly) below `off` pixels, and how
+# many pixels the skipped lines took
+def TL.drop.more(ls: List<&2, TLine>, +acc: U32, +off: U32) -> Bool:
+  match ls:
+    case TLine{_, _, +k, _, _} <> _:
+      U32.is_le((acc + TL.h(k) : U32), off)
+    case Nil{}:
+      False{}
+
+def TL.drop(ls: List<&2, TLine>, more: Bool, +acc: U32, +off: U32) -> List<&2, TLine>:
+  match ls more:
+    case TLine{_, _, +k, _, _} <> +rest True{}:
+      TL.drop(rest, TL.drop.more(rest, (acc + TL.h(k) : U32), off), (acc + TL.h(k) : U32), off)
+    case _ _:
+      ls
+
+def TL.drop.acc(ls: List<&2, TLine>, more: Bool, +acc: U32, +off: U32) -> U32:
+  match ls more:
+    case TLine{_, _, +k, _, _} <> +rest True{}:
+      TL.drop.acc(rest, TL.drop.more(rest, (acc + TL.h(k) : U32), off), (acc + TL.h(k) : U32), off)
+    case _ _:
+      acc
+
+# the timeline sits between top and the composer, pinned to the bottom;
+# sc scrolls up into history. `off` is how many pixels of it are hidden
+# above the view (never negative: all arithmetic stays unsigned-safe)
 def Lay.timeline(+ty: Ty, +ls: List<&2, TLine>, +x0: U32, +x1: U32, +top: U32, +h: U32, +sc: U32, chrome: Out) -> Out:
   +bot = {(h - 132 : U32) : U32}
-  +view = {(bot - top - 16 : U32) : U32}
+  +view = {U32.dim(bot, (top + 16 : U32)) : U32}
   +total = TL.height(ls, 0)
-  +over = {Bool.pick(U32, U32.is_gt(total, view), (total - view : U32), 0) : U32}
-  +s = {U32.min(sc, over) : U32}
-  +y0 = {Bool.pick(U32, U32.is_gt(total, view), (top + 16 + view + s - total : U32), (top + 16 : U32)) : U32}
-  +rest = Lay.skip(ls, TL.above(ls, y0, top), y0, top)
-  +ry = Lay.skip_y(ls, y0, top)
+  +over = {U32.dim(total, view) : U32}
+  +off = {U32.dim(over, U32.min(sc, over)) : U32}
+  +rest = TL.drop(ls, TL.drop.more(ls, 0, off), 0, off)
+  +acc = TL.drop.acc(ls, TL.drop.more(ls, 0, off), 0, off)
+  +ry = {((top + 16 + acc : U32) - off : U32) : U32}
   Out.cat(TL.draw_all(ty, rest, TL.more(rest, ry, bot), D.Clip{x0, top, x1, bot}, x0, x1, ry, bot), chrome)
 
 # Subagents
@@ -962,7 +989,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
 
 def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
       Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, String.eq(focus, "composer"), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel))
 
@@ -1061,9 +1088,49 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
 
 def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
       Bool.pick(Out, U.Flag.get(op, "settings"), Lay.settings(ty, st, nf, v, note, x0, x1, h),
         Bool.pick(Out, String.is_empty(sel), Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(ty, n, x0, x1)))
+
+# Terminal
+# --------
+
+def Term.runs(+ty: Ty, rs: List<&2, VT.VRun>, +cw: U32, +c: D.Clip, +x: U32, +y: U32) -> List<&2, R.Op>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case VT.VRun{+t, +fg, +bg, +bold, _} <> rest:
+      +w = {(U32.from_nat(String.length(t)) * cw : U32) : U32}
+      List.concat(&2, R.Op, [
+        Bool.pick(List<&2, R.Op>, U32.is_eq(bg, VT.Vt.bg()), Nil{}, [D.Draw.rect(c, x, y, w, 18, bg, 255)]),
+        Ty.text(ty, Bool.pick(Nat, bold, 1n, 4n), t, c, x, y, 18, fg),
+        Term.runs(ty, rest, cw, c, (x + w : U32), y)])
+
+def Term.lines(+ty: Ty, ls: List<&2, VT.VLine>, +cw: U32, +c: D.Clip, +x: U32, +y: U32) -> List<&2, R.Op>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case VT.VLine{rs} <> t:
+      List.append(&2, R.Op, Term.runs(ty, rs, cw, c, x, y), Term.lines(ty, t, cw, c, x, (y + 18 : U32)))
+
+def Term.cursor(cur: VT.VCur, +focused: Bool, +cw: U32, +c: D.Clip, +x: U32, +y: U32) -> List<&2, R.Op>:
+  match cur:
+    case VT.VCur{+cx, +cy, True{}}:
+      [D.Draw.rect(c, (x + cx * cw : U32), (y + cy * 18 : U32), Bool.pick(U32, focused, cw, 2), 18, T.Th.accent(), Bool.pick(U32, focused, 150, 255))]
+    case VT.VCur{_, _, False{}}:
+      Nil{}
+
+# the thread's terminal (ctrl+j), a shell in the thread's directory
+def Lay.term(+ty: Ty, +v: VT.Vt, +x0: U32, +x1: U32, +y0: U32, +h: U32, +focused: Bool) -> Out:
+  +cw = {U32.max(Ty.width(ty, 4n, "0"), 1) : U32}
+  +c = {D.Clip{x0, (y0 + 28 : U32), x1, h} : D.Clip}
+  Out.all([
+    Out.ops([D.Draw.rect(D.Clip.all(), x0, y0, (x1 - x0 : U32), (h - y0 : U32), VT.Vt.bg(), 255),
+      D.Draw.rect(D.Clip.all(), x0, y0, (x1 - x0 : U32), 1, Bool.pick(U32, focused, T.Th.focus(), T.Th.line()), 255)]),
+    Out.ops(Ty.text(ty, 2n, "Terminal" ++ Bool.pick(String, String.is_empty(VT.Vt.title(v)), "", "  ·  " ++ VT.Vt.title(v)), D.Clip.all(), (x0 + 16 : U32), y0, 28, T.Th.faint())),
+    Out.ops(Ty.text(ty, 2n, "ctrl+j", D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, "ctrl+j") : U32), y0, 28, T.Th.faint())),
+    Out{List.append(&2, R.Op, Term.lines(ty, VT.Vt.lines(v, 0n), cw, c, (x0 + 12 : U32), (y0 + 30 : U32)), Term.cursor(VT.Vt.cursor(v), focused, cw, c, (x0 + 12 : U32), (y0 + 30 : U32))),
+      [Lay.hit(x0, y0, (x1 - x0 : U32), (h - y0 : U32), "focus", "terminal")]}])
 
 # Viewer chrome
 # -------------
@@ -1266,16 +1333,33 @@ def Lay.note(+ty: Ty, +note: String, +v: String) -> Out:
 
 def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
+    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Out.cat(Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h, U.Flag.get(open, "settings")), Lay.note(ty, note, v))
+
+def Lay.term_on(+n: S.Nui) -> Bool:
+  Bool.and(U.Ui.flag(S.Nui.ui(n), "term"), Bool.not(String.is_empty(U.Ui.sel(S.Nui.ui(n)))))
+
+# the terminal's height (0 when closed)
+def Lay.term_h(+n: S.Nui) -> U32:
+  Bool.pick(U32, Lay.term_on(n), (S.Nui.height(n) * 2 / 5 : U32), 0)
+
+def Lay.term.of(+ty: Ty, +n: S.Nui, +x1: U32, +h: U32) -> Out:
+  Out.when(Lay.term_on(n), Lay.term(ty, U.Ui.term(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), 264, x1, (h - Lay.term_h(n) : U32), h, String.eq(S.Nui.focus_of(n), "terminal")))
+
+# the window as the main area sees it with the terminal below
+def Lay.shrink(n: S.Nui, +dh: U32) -> S.Nui:
+  match n:
+    case S.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      S.Nui{u, w, (h - dh : U32), mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
 # the whole window, topmost first
 def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
   match n:
-    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _, _, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
         Out.when(pa, Out.ops([D.Draw.rect(D.Clip.all(), 264, 0, U32.shr((w - 264 : U32)), h, T.Th.bg(), 255)])),
-        Lay.main(ty, n, 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
+        Lay.main(ty, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
         Bool.pick(Out, pa, Lay.viewer(ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
+        Lay.term.of(ty, n, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w), h),
         Lay.sidebar(ty, n, h),
         Lay.toast(ty, err, w, h)]))

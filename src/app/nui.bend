@@ -7,6 +7,7 @@ import ../core/board.bend as B
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
 import ../gfx/bitmap.bend as BM
+import ../core/vt.bend as VT
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -240,10 +241,6 @@ def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +text: String) -> Step:
     case _ _ _:
       Step{n, Nil{}, False{}}
 
-# pasted text lands in the focused field at the caret
-def Nui.paste(+n: Nui, text: String) -> Step:
-  Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), String.eq(Nui.focus_of(n), "project-path"), n, text)
-
 # Pointer
 # -------
 
@@ -334,12 +331,23 @@ def Nui.ui(n: Nui) -> U.Ui:
     case Nui{u, _, _, _, _, _, _, _, _, _, _, _, vw}:
       u
 
+# pasted text lands in the focused field at the caret
+def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
+  match term:
+    case True{}:
+      Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.paste(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), text)), n)
+    case False{}:
+      Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), String.eq(Nui.focus_of(n), "project-path"), n, text)
+
+def Nui.paste(+n: Nui, text: String) -> Step:
+  Nui.paste.t(String.eq(Nui.focus_of(n), "terminal"), n, text)
+
 # The board viewer
 # ----------------
 
 def Nui.panel(n: Nui) -> Bool:
   match n:
-    case Nui{U.Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, _, _}, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case Nui{U.Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, _, _, _}, _, _, _, _, _, _, _, _, _, _, _, _}:
       pa
 
 def Nui.vx0.k(open: Bool, +w: U32) -> U32:
@@ -488,8 +496,88 @@ def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U3
       Nui.key.free(String.is_empty(Nui.focus_of(n)), U32.is_eq(code, 102), n, code, text, mods)
 
 # a key press (releases do nothing)
-def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  Nui.key.k(Bool.and(U32.is_ne(U32.and(mods, 2), 0), U32.is_eq(code, 118)), U32.is_eq(code, Key.escape()), n, code, text, mods)
+# Shortcuts (T3Code's, ctrl for mod)
+# ---------------------------------
+
+def Keys.ctrl(+mods: U32) -> Bool:
+  U32.is_ne(U32.and(mods, 2), 0)
+
+def Keys.shift(+mods: U32) -> Bool:
+  U32.is_ne(U32.and(mods, 1), 0)
+
+def Keys.name.k(ctrl: Bool, shift: Bool, term: Bool, +c: U32) -> String:
+  match ctrl shift term:
+    case True{} False{} False{}:
+      Bool.pick(String, U32.is_eq(c, 106), "term", Bool.pick(String, U32.is_eq(c, 100), "diff", Bool.pick(String, U32.is_eq(c, 110), "new", "")))
+    case True{} False{} True{}:
+      Bool.pick(String, U32.is_eq(c, 106), "term", "")
+    case True{} True{} _:
+      Bool.pick(String, U32.is_eq(c, 123), "prev", Bool.pick(String, U32.is_eq(c, 125), "next", Bool.pick(String, U32.is_eq(c, 91), "prev",
+        Bool.pick(String, U32.is_eq(c, 93), "next", Bool.pick(String, U32.is_eq(c, 115), "settle", Bool.pick(String, U32.is_eq(c, 112), "pin",
+          Bool.pick(String, U32.is_eq(c, 118), "paste", "")))))))
+    case _ _ _:
+      ""
+
+# the shortcut a key is ("" for none). In the terminal only ctrl+j and
+# ctrl+shift keys are shortcuts; the rest belong to the shell
+def Keys.name(+code: U32, +mods: U32, +term: Bool) -> String:
+  Keys.name.k(Keys.ctrl(mods), Keys.shift(mods), term, U32.or(code, 32))
+
+def Keys.threads.k(keep: Bool, +v: String, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      v <> rest
+    case False{}:
+      rest
+
+# the threads in sidebar order (the last frame's select regions)
+def Keys.threads(hs: List<&2, Hit>) -> List<&2, String>:
+  match hs:
+    case Nil{}:
+      Nil{}
+    case Hit{_, _, _, _, +a, +v} <> t:
+      Keys.threads.k(Bool.and(String.eq(a, "select"), Bool.not(String.is_empty(v))), v, Keys.threads(t))
+
+def Keys.after(ts: List<&2, String>, +cur: String) -> String:
+  match ts:
+    case +a <> +b <> t:
+      Bool.pick(String, String.eq(a, cur), b, Keys.after(b <> t, cur))
+    case _:
+      ""
+
+def Keys.neighbour.k(+ts: List<&2, String>, +cur: String, next: Bool) -> String:
+  Bool.pick(String, next, Keys.after(ts, cur), Keys.after(List.reverse(&2, String, ts), cur))
+
+# the thread next to the selected one (dedup: the sidebar's rows come
+# before other select regions in the frame)
+def Keys.neighbour(+hs: List<&2, Hit>, +cur: String, +next: Bool) -> String:
+  Keys.neighbour.k(Keys.threads(hs), cur, next)
+
+# the terminal panel's size in cells, from the window's size
+def Term.cols(+n: Nui) -> U32:
+  ((Nui.vx0(n) - 264 - 24 : U32) / 8 : U32)
+
+def Step.nui(s: Step) -> Nui:
+  match s:
+    case Step{n, _, _}:
+      n
+
+def Nui.focus.step(s: Step, +fo: String) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step.merge(Step{n, cs, d}, Nui.focus(n, fo))
+
+# window modifiers (1 shift, 2 ctrl, 4 alt) as xterm's (1 shift, 4 ctrl, 8 alt)
+def Keys.vt(+m: U32) -> U32:
+  U32.or(U32.or(U32.and(m, 1), (U32.and(m, 2) * 2 : U32)), (U32.and(m, 4) * 2 : U32))
+
+# keys in the terminal go to the shell (as xterm would send them)
+def Nui.key.term(term: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match term:
+    case True{}:
+      Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.key(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), code, text, Keys.vt(mods))), n)
+    case False{}:
+      Nui.key.k(Bool.and(Keys.ctrl(mods), U32.is_eq(code, 118)), U32.is_eq(code, Key.escape()), n, code, text, mods)
 
 def Vw.stale(v: V.Vw) -> V.Vw:
   match v:
@@ -600,6 +688,48 @@ def Nui.height(n: Nui) -> U32:
   match n:
     case Nui{_, _, h, _, _, _, _, _, _, _, _, _, _}:
       h
+
+def Term.rows(+n: Nui) -> U32:
+  (((Nui.height(n) * 2 / 5 : U32) - 34 : U32) / 18 : U32)
+
+def Nui.term.toggle(open: Bool, +n: Nui) -> Step:
+  match open:
+    case True{}:
+      Nui.focus.step(Nui.act(n, "flag", "term"), "composer")
+    case False{}:
+      Nui.focus.step(Nui.act.k(U.Ui.term_open(U.Ui.flag_on(Nui.ui(n), "term"), Term.cols(n), Term.rows(n)), n), "terminal")
+
+def Nui.shortcut.k(i: Nat, +n: Nui) -> Step:
+  match i:
+    case 0n:
+      Nui.term.toggle(U.Ui.flag(Nui.ui(n), "term"), n)
+    case 1n:
+      Nui.act(n, "diff", "")
+    case 2n:
+      Nui.act(n, "new-thread", U.Ui.thread_project(U.Ui.thread(U.Ui.state(Nui.ui(n)), U.Ui.sel(Nui.ui(n)))))
+    case 3n:
+      Nui.act(n, "select", Keys.neighbour(Nui.hits(n), U.Ui.sel(Nui.ui(n)), False{}))
+    case 4n:
+      Nui.act(n, "select", Keys.neighbour(Nui.hits(n), U.Ui.sel(Nui.ui(n)), True{}))
+    case 5n:
+      Nui.act(n, "settle", "")
+    case 6n:
+      Nui.act(n, "pin", "")
+    case _:
+      Step{n, [NPaste{}], False{}}
+
+def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match none:
+    case False{}:
+      Nui.shortcut.k(U.Keys.pos(["term", "diff", "new", "prev", "next", "settle", "pin", "paste"], name), n)
+    case True{}:
+      Nui.key.term(String.eq(Nui.focus_of(n), "terminal"), n, code, text, mods)
+
+def Nui.key.go(+name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Nui.key.go.k(String.is_empty(name), name, n, code, text, mods)
+
+def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
 
 def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
   match open:

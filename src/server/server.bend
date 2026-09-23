@@ -18,6 +18,7 @@ import ../core/cbor.bend as CB
 import ./push.bend as PU
 import ./park.bend as PK
 import ./git.bend as GT
+import ./term.bend as TM
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -40,11 +41,12 @@ type Msg is Data:
   AgentGone{thread: String, code: U32, pid: U32}
   Tick{}
   Push{client: U32, text: String}
+  TermOut{thread: String, data: List<&2, U32>}
 
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -657,7 +659,7 @@ def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
 
 def Info.net(n: Net) -> List<&2, J.KV>:
   match n:
-    case Net{tn, hs, _, ms, _, rt, brx, pkx}:
+    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx}:
       List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
 
 # what this machine runs, for the settings screen and the model picker
@@ -1248,7 +1250,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _, _, _, brx, pkx}:
+    case Net{_, _, t, _, _, _, brx, pkx, tmx}:
       t
 
 # Effects
@@ -1261,12 +1263,12 @@ def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
 
 def Cfg.mtext(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx}}:
       mt
 
 def Cfg.rt(c: Cfg) -> K.Rt:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx}}:
       rt
 
 def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
@@ -1381,13 +1383,13 @@ def Tailnet.https(on: Bool, +port: U32, +token: String) -> IO(Unit):
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token, _, _, _, brx, pkx}:
+    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _, _, _, brx, pkx}:
+    case Net{False{}, _, _, _, _, _, brx, pkx, tmx}:
       IO.pure(Unit, Unit{})
 
 def Token.digit(+d: U32) -> Char:
@@ -1444,8 +1446,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx}}
 
 # Startup
 # -------
@@ -1513,12 +1515,12 @@ def Agent.pid_is(m: Maybe<&2, Agent>, +pid: U32) -> Bool:
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx}}:
       ms
 
 def Cfg.pk(c: Cfg) -> Maybe<&2, Chan(PK.PMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx}}:
       pk
 
 def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
@@ -1529,6 +1531,62 @@ def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
         return Unit{}
     case None{}:
       IO.pure(Unit, Unit{})
+
+# the reply now, or (for a request that waits on the user) parked until
+# the ask it opened is answered
+def Hub.mcp.send(later: Bool, +park: String, +body: String, +text: String, +reply: Chan(String), +cfg: Cfg) -> IO(Unit):
+  match later:
+    case True{}:
+      Park.put(Cfg.pk(cfg), PK.PPark{park, body, reply})
+    case False{}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(String, reply, text)
+        return Unit{}
+
+def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
+  match n:
+    case Net{a, b, c, d, e, f, _, g, i}:
+      Net{a, b, c, d, e, f, Some{q}, g, i}
+
+def Net.with_tm(n: Net, q: Chan(TM.TMsg)) -> Net:
+  match n:
+    case Net{a, b, c, d, e, f, g, h, _}:
+      Net{a, b, c, d, e, f, g, h, Some{q}}
+
+def Cfg.tm(c: Cfg) -> Maybe<&2, Chan(TM.TMsg)>:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm}}:
+      tm
+
+# a shell's output, to the hub (which sends it to every client)
+def Term.fwd.got(m: Maybe<&1, TM.TOut>, +inbox: Chan(Msg), k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{TM.TOut{th, bs}}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, TermOut{th, bs})
+        k(Unit{})
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Term.fwd(fuel: Nat, +out: Chan(TM.TOut), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      IO.bind(Maybe<&1, TM.TOut>, Unit, Chan.recv(TM.TOut, out), m => Term.fwd.got(m, inbox, u => Term.fwd(f, out, inbox)))
+
+def Term.put(m: Maybe<&2, Chan(TM.TMsg)>, +msg: TM.TMsg) -> IO(Unit):
+  match m:
+    case Some{q}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(TM.TMsg, q, msg)
+        return Unit{}
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Term.msg(+op: String, +thread: String, +cwd: String, data: List<&2, U32>, +cols: U32, +rows: U32) -> TM.TMsg:
+  Bool.pick(TM.TMsg, String.eq(op, "open"), TM.TOpen{thread, cwd, cols, rows},
+    Bool.pick(TM.TMsg, String.eq(op, "resize"), TM.TSize{thread, cols, rows}, TM.TIn{thread, data}))
 
 def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
   match h o:
@@ -1569,6 +1627,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
         IO.spawn(Unit, PU.Push.turn_ended(Cfg.home(cfg), st, thread, state))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.TermOp{+op, +thread, +cwd, data, +cols, +rows}:
+      do IO<Hub>:
+        Term.put(Cfg.tm(cfg), Term.msg(op, thread, cwd, data, cols, rows))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
       do IO<Hub>:
@@ -1631,17 +1693,6 @@ def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
       Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.tick(st, now))
 
-# the reply now, or (for a request that waits on the user) parked until
-# the ask it opened is answered
-def Hub.mcp.send(later: Bool, +park: String, +body: String, +text: String, +reply: Chan(String), +cfg: Cfg) -> IO(Unit):
-  match later:
-    case True{}:
-      Park.put(Cfg.pk(cfg), PK.PPark{park, body, reply})
-    case False{}:
-      do IO<Unit>:
-        ok : Bool <- Chan.send(String, reply, text)
-        return Unit{}
-
 def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String), +body: String) -> IO(Hub):
   match o h:
     case MC.McpOut{+text, st, +park} Hub{hs, f, ls, cl, as, inbox, +cfg, note}:
@@ -1649,15 +1700,20 @@ def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String), +body: String) -> IO(H
         Hub.mcp.send(Bool.not(String.is_empty(park)), park, body, text, reply, cfg)
         Hub.step(Hub{hs, f, ls, cl, as, inbox, cfg, note}, st)
 
-def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
-  match n:
-    case Net{a, b, c, d, e, f, _, g}:
-      Net{a, b, c, d, e, f, Some{q}, g}
+def Term.nums(bs: List<&2, U32>) -> List<&2, String>:
+  match bs:
+    case Nil{}:
+      Nil{}
+    case b <> t:
+      U32.show(b) <> Term.nums(t)
+
+def Term.json(+thread: String, bs: List<&2, U32>) -> String:
+  "{\"t\":\"term\",\"thread\":" ++ J.Json.show(J.Str{thread}) ++ ",\"b\":[" ++ String.join(Term.nums(bs), ",") ++ "]}"
 
 def Net.with_pk(n: Net, q: Chan(PK.PMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, _}:
-      Net{a, b, c, d, e, f, g, Some{q}}
+    case Net{a, b, c, d, e, f, g, _, i}:
+      Net{a, b, c, d, e, f, g, Some{q}, i}
 
 def Browser.exe() -> IO(String):
   do IO<String>:
@@ -1667,7 +1723,7 @@ def Browser.exe() -> IO(String):
 
 def Cfg.br(c: Cfg) -> Maybe<&2, Chan(BR.BMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx}}:
       br
 
 def Preview.shot(+o: J.Json) -> List<&2, J.Json>:
@@ -1757,6 +1813,14 @@ def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +
 def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)
 
+# a shell's output goes to every client (each keeps its own screen)
+def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Wire.all(cl, Term.json(thread, data))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
     case Mcp{thread, body, reply}:
@@ -1777,6 +1841,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.tick(h, now)
     case Push{client, text}:
       Hub.push(h, client, text)
+    case TermOut{thread, data}:
+      Hub.term_out(h, thread, data)
 
 def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
   match m:
@@ -1858,10 +1924,10 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -1920,7 +1986,12 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
         IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, BR.Br.new(bexe, home ++ "/browser.rgb")))
         +pq : Chan(PK.PMsg) <- Chan.new(PK.PMsg, 256)
         IO.spawn(Unit, PK.Park.loop(Fuel.forever(), pq, Nil{}))
-        +nt : Net = Net.with_pk(Net.with_br(nt0, bq), pq)
+        +tq : Chan(TM.TMsg) <- Chan.new(TM.TMsg, 1024)
+        +to : Chan(TM.TOut) <- Chan.new(TM.TOut, 4096)
+        shell : String <- Env.get("SHELL", "/bin/bash")
+        IO.spawn(Unit, TM.Term.loop(Fuel.forever(), tq, Nil{}, shell, to))
+        IO.spawn(Unit, Term.fwd(Fuel.forever(), to, inbox))
+        +nt : Net = Net.with_tm(Net.with_pk(Net.with_br(nt0, bq), pq), tq)
         l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(host, port)
         Main.listened(l, Hub{st, f, ls, Nil{}, Nil{}, inbox, Cfg{home, web, host, port, pr, ds, v, nt}, ""}, web, inbox, host ++ ":" ++ U32.show(port), need, Cfg{home, web, host, port, pr, ds, v, nt}, front)
     case Fail{e} _:
@@ -2047,7 +2118,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3773,
-    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt, None{}, None{}}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt, None{}, None{}, None{}}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()

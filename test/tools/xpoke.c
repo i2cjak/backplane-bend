@@ -2,6 +2,7 @@
 //   xpoke click X Y        left click
 //   xpoke type TEXT        type characters (ASCII)
 //   xpoke key NAME         press a named key (Return, BackSpace, Escape...)
+//   xpoke ctrl KEY         ctrl+key (an upper-case letter adds shift)
 //   xpoke wheel X Y up|down
 // Build: cc -I<x11 include> test/tools/xpoke.c -o build/xpoke -lX11
 #include <X11/Xlib.h>
@@ -65,6 +66,11 @@ int main(int argc, char** argv) {
     }
   } else if (!strcmp(argv[1], "key") && argc == 3) {
     key(d, w, XStringToKeysym(argv[2]), 0);
+  } else if (!strcmp(argv[1], "ctrl") && argc == 3) {
+    // xpoke ctrl j / xpoke ctrl S (upper case adds shift)
+    const char* k = argv[2];
+    unsigned st = ControlMask | ((k[0] >= 'A' && k[0] <= 'Z' && !k[1]) ? ShiftMask : 0);
+    key(d, w, XStringToKeysym(k), st);
   } else {
     return 2;
   }

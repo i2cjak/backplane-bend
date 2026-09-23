@@ -28,6 +28,7 @@ type Out is Data:
   TurnEnded{thread: String, state: String}
   AskAnswered{id: String, answer: String}
   Git{client: U32, id: String, job: String, thread: String, cwd: String, a: String, b: String}
+  TermOp{op: String, thread: String, cwd: String, data: List<&2, U32>, cols: U32, rows: U32}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -231,16 +232,28 @@ def Hub.impl.state(+s: M.State, +th: String, +now: Nat) -> M.State:
 # back: thread.worktree and thread.note come from the server itself.
 
 # a commit made from a thread says what the thread was about
-def Hub.title_of(t: M.Thread) -> String:
+def Hub.thread_title(t: M.Thread) -> String:
   match t:
     case M.Thread{_, _, ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       ti
 
 def Hub.methods.git() -> List<&2, String>:
-  ["git.diff", "git.revert", "git.act", "git.status", "thread.worktree", "thread.note"]
+  ["git.diff", "git.revert", "git.act", "git.status", "thread.worktree", "thread.note", "term.open", "term.input", "term.resize"]
 
 def Hub.git(+s: M.State, +client: U32, +id: String, +job: String, +thread: String, +a: String, +b: String) -> Step:
   Step.outs([Git{client, id, job, thread, Hub.cwd(s, Hub.thread(s, thread)), a, b}])
+
+def Term.bytes(xs: List<&2, J.Json>) -> List<&2, U32>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      U32.from_nat(Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(Some{x}, "0")), 0n)) <> Term.bytes(t)
+
+# a thread's terminal: open (in the thread's directory), keys in, resize
+def Hub.term(+s: M.State, +client: U32, +id: String, +op: String, +p: J.Json) -> Step:
+  Step.outs([Reply.ok(client, id), TermOp{op, J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))),
+    Term.bytes(J.Json.elems(J.Json.get_obj(p, "b"))), J.Json.get_u32(p, "cols", 80), J.Json.get_u32(p, "rows", 24)}])
 
 def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   match i:
@@ -249,7 +262,7 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case 1n:
       Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
     case 2n:
-      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.title_of(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
+      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
     case 3n:
       Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
     case 4n:
@@ -257,6 +270,12 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case 5n:
       Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
         J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
+    case 6n:
+      Hub.term(s, client, id, "open", p)
+    case 7n:
+      Hub.term(s, client, id, "input", p)
+    case 8n:
+      Hub.term(s, client, id, "resize", p)
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 
