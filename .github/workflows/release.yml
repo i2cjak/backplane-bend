@@ -49,6 +49,16 @@ jobs:
           ref: ${{ inputs.tag || github.ref }}
       - uses: ./.github/actions/setup-bend
       - uses: oven-sh/setup-bun@v2
+      - name: Swap for the compile
+        # clang takes about 20 GB to compile the app's C (one large file);
+        # the Linux runners have 16, so without swap the compile can be killed
+        if: runner.os == 'Linux'
+        run: |
+          sudo fallocate -l 16G /swap-build
+          sudo chmod 600 /swap-build
+          sudo mkswap /swap-build
+          sudo swapon /swap-build
+          free -h
       - name: Install clang 19 and X11 headers
         if: runner.os == 'Linux'
         run: |
