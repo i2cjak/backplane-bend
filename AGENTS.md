@@ -56,6 +56,10 @@ Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/sn
 - IO loops: a looping def passes a continuation lambda that calls itself with less fuel (`r => Helper(r, x2 => Loop(f, x2))`). The helper must never name the loop, or the two become mutually recursive.
 - Put the shrinking argument first even in IO loops (`Hub.commit(cs, h, …)`, not `(h, cs, …)`).
 - `where` is a keyword.
+- A let (`+x = …`) may not come before a `match` on a parameter. Put the lets inside the case, or compute them in a wrapper def and pass them in.
+- `++` joins Strings only. Lists join with `List.append(&2, T, a, b)`; for many, a small concat over a list of lists.
+- A float literal bound by a let needs a type: `+d = {0.635 : F32}`.
+- `IO.args()` gives a `List<&1, String>`; copy it into a `List<&2, String>` with a small recursion to use it more than once.
 - Constructor ids of module types are path-qualified in C (`CID__HOME_..._WKEY`), so an effect cannot build them. Effects return Base types (lists of U32, strings, tuples) and Bend decodes them (`Win.decode`).
 - Names Base already uses (`Event`, `App`, `Kind`) cannot be redeclared.
 - `Tools`: `scripts/bend-order.py FILE` fixes def order (and reports mutual-recursion cycles); `scripts/bend-reuse.sh FILE` marks binders reported as consumed twice.
