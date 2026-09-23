@@ -1,10 +1,43 @@
 import Foundation
 import JavaScriptCore
 
-// The Bend client (bridge.js) in JavaScriptCore, on one queue of its own.
+// One thread with a deep stack: the hub's log arrives as one message and
+// Bend walks it recursively. A dispatch queue's 512 KB overflows on a real
+// log, the call throws, and the app keeps its empty first screen.
+private final class Worker: Thread, @unchecked Sendable {
+    private let cond = NSCondition()
+    private var jobs: [() -> Void] = []
+
+    override init() {
+        super.init()
+        name = "bend"
+        stackSize = 64 << 20
+        qualityOfService = .userInitiated
+        start()
+    }
+
+    func async(_ f: @escaping () -> Void) {
+        cond.lock()
+        jobs.append(f)
+        cond.signal()
+        cond.unlock()
+    }
+
+    override func main() {
+        while true {
+            cond.lock()
+            while jobs.isEmpty { cond.wait() }
+            let f = jobs.removeFirst()
+            cond.unlock()
+            f()
+        }
+    }
+}
+
+// The Bend client (bridge.js) in JavaScriptCore, on one thread of its own.
 // Every call answers {"screen": ..., "cmds": [...]} as a string.
 final class Engine: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "bend", qos: .userInitiated)
+    private let queue = Worker()
     private var ctx: JSContext?
 
     private func context() -> JSContext {
