@@ -20,6 +20,7 @@ import ./src/core/icons.bend as ICO
 import ./src/core/lightbox.bend as LBX
 import ./src/core/links.bend as LK
 import ./src/core/client.bend as U
+import ./src/core/gh.bend as GH
 import ./src/gfx/text.bend as X
 import ./src/core/fold.bend as FO
 import ./src/core/http.bend as WS
@@ -500,6 +501,43 @@ law merge_needs_branch:
   for sh: M.Shelf
   for +merged: String
   {M.Merge.due.k(sh, "", merged) == False{} : Bool}
+
+# GitHub accounts
+# ---------------
+
+# the account a repository worked with before is tried first
+law gh_pick_saved:
+  for owner_in: Bool
+  for +saved: String
+  for +owner: String
+  for +active: String
+  {GH.Gh.pick(True{}, saved, owner_in, owner, active) == saved : String}
+
+# else the account named like the remote's owner
+law gh_pick_owner:
+  for +saved: String
+  for +owner: String
+  for +active: String
+  {GH.Gh.pick(False{}, saved, True{}, owner, active) == owner : String}
+
+# else gh's active account: Backplane never switches it
+law gh_pick_active:
+  for +saved: String
+  for +owner: String
+  for +active: String
+  {GH.Gh.pick(False{}, saved, False{}, owner, active) == active : String}
+
+# the first choice is tried first
+law gh_order_first:
+  for +first: String
+  for us: List<&2, String>
+  {List.head(&2, String, GH.Gh.order.k(first, us)) == Some{first} : Maybe<&2, String>}
+
+# and never again: the rest leaves it out
+law gh_without_drops:
+  for us: List<&2, String>
+  for +u: String
+  {GH.Gh.has(GH.Gh.without(us, u), u) == False{} : Bool}
 
 # Phone alerts
 # ------------

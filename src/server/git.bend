@@ -1,5 +1,6 @@
 import Base
 import ./proc.bend as P
+import ./gh.bend as GH
 import ../core/sha1.bend as S
 import ../core/utf8.bend as U
 import ../core/diff.bend as D
@@ -590,9 +591,9 @@ def Git.step.commit(+cwd: String, msg: String) -> IO(String):
 def Git.push.go(has_up: Bool, +cwd: String, +b: String) -> IO(String):
   match has_up:
     case True{}:
-      Git.seq(Git.run(cwd, ["push"]), _ => Git.done("push: " ++ b))
+      Git.seq(GH.GhRun.push(cwd, ["push"]), _ => Git.done("push: " ++ b))
     case False{}:
-      Git.seq(Git.run(cwd, ["push", "-u", "origin", b]), _ => Git.done("push: " ++ b ++ " -> origin/" ++ b))
+      Git.seq(GH.GhRun.push(cwd, ["push", "-u", "origin", b]), _ => Git.done("push: " ++ b ++ " -> origin/" ++ b))
 
 def Git.push.k(+cwd: String, +b: String, up: P.Ran) -> IO(String):
   match up:
@@ -626,7 +627,7 @@ def Git.pr.args(+b: String, +title: String, body: String) -> List<&2, String>:
 def Git.step.pr(+cwd: String, title: String, body: String) -> IO(String):
   Git.label("pr", IO.bind(String, String, Git.branch(cwd), b =>
     Git.need_branch(b, b2 =>
-      Git.seq(P.Proc.run("gh", Git.pr.args(b2, title, body), cwd), out => Git.done("pr: " ++ Git.last_line(out))))))
+      Git.seq(GH.GhRun.gh(cwd, Git.pr.args(b2, title, body)), out => Git.done("pr: " ++ Git.last_line(out))))))
 
 def Git.act.step(s: AStep, +cwd: String, +message: String, +title: String, +body: String) -> IO(String):
   match s:

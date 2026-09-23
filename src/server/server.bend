@@ -18,6 +18,7 @@ import ../core/cbor.bend as CB
 import ./push.bend as PU
 import ./park.bend as PK
 import ./git.bend as GT
+import ./gh.bend as GH
 import ./term.bend as TM
 import ../core/agent.bend as AG
 import ../core/tailnet.bend as TN
@@ -1047,7 +1048,7 @@ def MergeJob.got(r: P.Ran, +inbox: Chan(Msg), +lines: String) -> IO(Unit):
       IO.pure(Unit, Unit{})
 
 def MergeJob.run(+inbox: Chan(Msg), +root: String, +lines: String) -> IO(Unit):
-  IO.bind(P.Ran, Unit, P.Proc.run("env", ["GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "timeout", "30", "gh", "pr", "list", "--state", "merged", "--limit", "100", "--json", "headRefName,url"], root),
+  IO.bind(P.Ran, Unit, GH.GhRun.run(root, "timeout", ["30", "gh", "pr", "list", "--state", "merged", "--limit", "100", "--json", "headRefName,url"], ["30", "gh", "pr", "list", "--state", "merged", "--limit", "100", "--json", "headRefName,url"]),
     r => MergeJob.got(r, inbox, lines))
 
 def GitJob.text.k(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +what: String, +r: String) -> IO(Unit):

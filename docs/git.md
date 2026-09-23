@@ -88,6 +88,17 @@ Removal (`M.Worktree.drop`, laws `worktree_kept_*`, `worktree_dropped_*`):
 - First a checkpoint of the worktree is taken, then `git worktree remove --force`; the branch stays (`WorktreeRemoved`).
 - A message to such a thread makes the worktree again from its branch, restores that last checkpoint, and then runs (law `worktree_revives`).
 
+## GitHub accounts (`src/core/gh.bend`, `src/server/gh.bend`)
+
+gh may be logged in to several accounts per host (`gh auth login` more than once). Backplane runs every gh call (listing merged pull requests, `gh pr create`) as the repository's account, and never switches gh's active account.
+- The first account tried: the one in the repository's git config `backplane.ghuser` (set it by hand to choose), else the one named like the remote's owner (`origin`, else the first remote), else gh's active one. The other logged-in accounts on that host follow (laws `gh_pick_*`, `gh_order_first`, `gh_without_drops`).
+- The next account is tried only when GitHub refuses the call (401/403/404, "Could not resolve to a Repository", "Resource not accessible", ...). Any other failure, such as a pull request that already exists, is the answer. An account that worked after another was refused is saved as `backplane.ghuser`.
+- With one account, or none, or a token already in the environment, gh runs as it is. The same goes for a remote that is not on a GitHub host.
+- A token never goes on a command line, where any user on the machine could read it. `sh` fetches it with `gh auth token --hostname H --user U` and exports it as `GH_TOKEN` (`GH_ENTERPRISE_TOKEN` for GitHub Enterprise hosts) for that one command. Nothing prompts: `GH_PROMPT_DISABLED`, `GIT_TERMINAL_PROMPT=0`.
+- Pushes run as your git is set up. Only when an https push is refused, it runs again through gh's credential helper (`-c credential.helper=!gh auth git-credential`) with each account in turn. SSH remotes are left to your keys.
+- Accounts come from the gh config of the user the server runs as (`GH_CONFIG_DIR` is honoured).
+- Test: `test/gh_test.bend`, and `test/native/gh_test.bend` (a fake gh with three accounts, or the real one, read-only).
+
 ## Merges
 
 - Each minute, a project with threads on the active or pinned shelf that have a branch asks `gh pr list --state merged --json headRefName,url` (one call per project, 30 s timeout). A thread whose branch shows up settles (`ThreadMerged`, kept as the setting `merged.<id>`), with a note linking the pull request.

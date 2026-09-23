@@ -20,6 +20,7 @@ import ./src/gfx/raster.bend as R
 import ./src/gfx/font.bend as F
 import ./src/app/layout.bend as L
 import ./src/core/eq.bend as Q
+import ./src/core/gh.bend as GH
 import ./src/core/fold.bend as FO
 
 # Lemmas
@@ -678,6 +679,44 @@ def Laws.merge_needs_branch(sh, merged):
       {==}
     case M.Snoozed{}:
       {==}
+
+def Laws.gh_pick_saved(owner_in, saved, owner, active):
+  {==}
+
+def Laws.gh_pick_owner(saved, owner, active):
+  {==}
+
+def Laws.gh_pick_active(saved, owner, active):
+  {==}
+
+def Laws.gh_order_first(first, us):
+  {==}
+
+law gh_without_step:
+  for b: Bool
+  for +h: String
+  for +t: List<&2, String>
+  for +u: String
+  for +e: {String.eq(h, u) == b : Bool}
+  for ih: {GH.Gh.has(GH.Gh.without(t, u), u) == False{} : Bool}
+  {GH.Gh.has(Bool.pick(List<&2, String>, String.eq(h, u), GH.Gh.without(t, u), h <> GH.Gh.without(t, u)), u) == False{} : Bool}
+
+def gh_without_step(b, h, t, u, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, String.eq(h, u), True{}, e) : {GH.Gh.has(Bool.pick(List<&2, String>, _, GH.Gh.without(t, u), h <> GH.Gh.without(t, u)), u) == False{} : Bool}
+      ih
+    case False{}:
+      %Equal.sym(Bool, String.eq(h, u), False{}, e) : {GH.Gh.has(Bool.pick(List<&2, String>, _, GH.Gh.without(t, u), h <> GH.Gh.without(t, u)), u) == False{} : Bool}
+      %Equal.sym(Bool, String.eq(h, u), False{}, e) : {Bool.or(_, GH.Gh.has(GH.Gh.without(t, u), u)) == False{} : Bool}
+      ih
+
+def Laws.gh_without_drops(us, u):
+  match us:
+    case Nil{}:
+      {==}
+    case +h <> +t:
+      gh_without_step(String.eq(h, u), h, t, u, {==}, Laws.gh_without_drops(t, u))
 
 def Laws.alert_needs_running(t):
   {==}
