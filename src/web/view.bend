@@ -240,13 +240,36 @@ def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
     case +m <> t:
       D.Dom.button(Bool.pick(String, String.eq(m, cur), "on", ""), "model", m, "Use " ++ m, m) <> View.models(t, cur)
 
-def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String) -> D.Node:
+# reasoning effort chips, the provider's default first
+def View.efforts(es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      D.Dom.button(Bool.pick(String, String.eq(e, cur), "on", ""), "effort", e, "Reasoning effort: " ++ U.Effort.name(e), U.Effort.name(e)) <> View.efforts(t, cur)
+
+def View.effort_row(+es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, es), Nil{}, [D.El{"div", "", [D.At{"class", "efforts"}], View.efforts(es, cur)}])
+
+# the skills a `$` being typed may complete to (Tab or Enter takes the first)
+def View.skills.go(rs: List<&2, U.SkillRow>) -> List<&2, D.Node>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case U.SkillRow{+n, d} <> t:
+      D.El{"button", "", [D.At{"class", "skill"}, D.At{"data-value", n}, D.On{"click", "skill"}], [D.Dom.span("name", "$" ++ n), D.Dom.span("desc", d)]} <> View.skills.go(t)
+
+def View.skills(+rs: List<&2, U.SkillRow>) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, U.SkillRow, rs), Nil{}, [D.El{"div", "", [D.At{"class", "skills"}], View.skills.go(rs)}])
+
+def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
-    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], View.models(ms, model)}), [
-    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}], Nil{}},
+    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], D.Dom.cat(View.effort_row(es, effort), View.models(ms, model))}), D.Dom.cat(View.skills(rs), [
+    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
+      D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
-      D.Dom.button("model-chip", "flag", "models", "Choose the model", label ++ " ▾"),
-      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])}
+      D.Dom.button("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort) ++ " ▾"),
+      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}]))}
 
 # Subagents
 # ---------
@@ -328,7 +351,8 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
-        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo)]}
+        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo,
+          U.Effort.chips(pr), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf))]}
 
 # Settings
 # --------
