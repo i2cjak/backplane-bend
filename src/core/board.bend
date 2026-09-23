@@ -21,7 +21,7 @@ type Prim is Data:
 
 # layer is an index into Layer.names
 type Item is Data:
-  Item{key: String, sig: U32, layer: U32, prim: Prim}
+  Item{key: String, sig: U32, layer: U32, prim: Prim, info: String}
 
 # a footprint's placement: origin and rotation (radians)
 type Place is Data:
@@ -174,18 +174,56 @@ def Board.rect(a: Pt, b: Pt, +pl: Place) -> List<&2, Pt>:
     case Pt{+ax, +ay} Pt{+bx, +by}:
       [Geo.place(pl, Pt{ax, ay}), Geo.place(pl, Pt{bx, ay}), Geo.place(pl, Pt{bx, by}), Geo.place(pl, Pt{ax, by})]
 
-def Board.graphic.k(i: Nat, +x: S.Sx, +key: String, +sig: U32, +layer: U32, +pl: Place) -> List<&2, Item>:
+def Info.net.k(+name: String, +num: String) -> String:
+  Bool.pick(String, String.is_empty(name), num, name)
+
+# What an item is, for the viewer's inspector: "kind;key=value;..."
+
+def Info.net(+x: S.Sx) -> String:
+  Info.net.k(S.Sx.arg(S.Sx.get(x, "net"), 1n), S.Sx.arg(S.Sx.get(x, "net"), 0n))
+
+def Info.kv(+k: String, +v: String) -> String:
+  Bool.pick(String, String.is_empty(v), "", ";" ++ k ++ "=" ++ v)
+
+def Info.graphic(+name: String, +x: S.Sx, +ctx: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(name, "segment"), String.eq(name, "arc")), "track", name)
+    ++ Info.kv("net", Info.net(x)) ++ Info.kv("layer", S.Sx.attr(x, "layer")) ++ Info.kv("width", F32.show(Board.width(x))) ++ ctx
+
+# a footprint property ("Reference", "Value"), newest format first
+def Info.prop.hit(xs: List<&2, S.Sx>, +k: String) -> Bool:
+  match xs:
+    case +x <> _:
+      Bool.and(String.eq(S.Sx.name(x), "property"), String.eq(S.Sx.arg(x, 0n), k))
+    case Nil{}:
+      False{}
+
+def Info.prop.go(xs: List<&2, S.Sx>, hit: Bool, +k: String) -> String:
+  match xs hit:
+    case +x <> _ True{}:
+      S.Sx.arg(x, 1n)
+    case _ <> +t False{}:
+      Info.prop.go(t, Info.prop.hit(t, k), k)
+    case Nil{} _:
+      ""
+
+def Info.prop(+x: S.Sx, +k: String) -> String:
+  Info.prop.go(S.Sx.args(x), Info.prop.hit(S.Sx.args(x), k), k)
+
+def Info.footprint(+x: S.Sx) -> String:
+  Info.kv("ref", Info.prop(x, "Reference")) ++ Info.kv("value", Info.prop(x, "Value")) ++ Info.kv("footprint", S.Sx.arg(x, 0n))
+
+def Board.graphic.k(i: Nat, +x: S.Sx, +key: String, +sig: U32, +layer: U32, +pl: Place, +info: String) -> List<&2, Item>:
   match i:
     case 0n:
-      [Item{key, sig, layer, PSeg{Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "end")), Board.width(x)}}]
+      [Item{key, sig, layer, PSeg{Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "end")), Board.width(x)}, info}]
     case 1n:
-      [Item{key, sig, layer, PLine{Arc.points(Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "mid")), Geo.place(pl, Geo.at(x, "end"))), Board.width(x)}}]
+      [Item{key, sig, layer, PLine{Arc.points(Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "mid")), Geo.place(pl, Geo.at(x, "end"))), Board.width(x)}, info}]
     case 2n:
-      [Item{key, sig, layer, PCirc{Geo.place(pl, Geo.at(x, "center")), Board.dist(Geo.at(x, "center"), Geo.at(x, "end")), Board.width(x), Board.filled(x)}}]
+      [Item{key, sig, layer, PCirc{Geo.place(pl, Geo.at(x, "center")), Board.dist(Geo.at(x, "center"), Geo.at(x, "end")), Board.width(x), Board.filled(x)}, info}]
     case 3n:
-      [Item{key, sig, layer, PPoly{Board.rect(Geo.at(x, "start"), Geo.at(x, "end"), pl), Board.width(x), Board.filled(x)}}]
+      [Item{key, sig, layer, PPoly{Board.rect(Geo.at(x, "start"), Geo.at(x, "end"), pl), Board.width(x), Board.filled(x)}, info}]
     case 4n:
-      [Item{key, sig, layer, PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), pl), Board.width(x), Board.filled(x)}}]
+      [Item{key, sig, layer, PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), pl), Board.width(x), Board.filled(x)}, info}]
     case _:
       Nil{}
 
@@ -228,16 +266,17 @@ def Board.kind.k(gr: Bool, fp: Bool, seg: Bool, arc: Bool, +name: String) -> Nat
 def Board.kind(+name: String) -> Nat:
   Board.kind.k(String.starts_with(name, "gr_"), String.starts_with(name, "fp_"), String.eq(name, "segment"), String.eq(name, "arc"), name)
 
-def Board.graphic(+x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
-  Board.graphic.k(Board.kind(S.Sx.name(x)), x, key, sig, Layer.id(S.Sx.attr(x, "layer")), pl)
+def Board.graphic(+x: S.Sx, +key: String, +sig: U32, +pl: Place, +ctx: String) -> List<&2, Item>:
+  Board.graphic.k(Board.kind(S.Sx.name(x)), x, key, sig, Layer.id(S.Sx.attr(x, "layer")), pl, Info.graphic(S.Sx.name(x), x, ctx))
 
 # Vias and pads
 # -------------
 
 def Board.via(+x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
   +c = Geo.at(x, "at")
-  [Item{key, sig, 23, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "size"), 0n), 2.0), 0.0, True{}}},
-   Item{key ++ "/h", sig, 24, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "drill"), 0n), 2.0), 0.0, True{}}}]
+  +info = "via" ++ Info.kv("net", Info.net(x)) ++ Info.kv("size", S.Sx.arg(S.Sx.get(x, "size"), 0n)) ++ Info.kv("drill", S.Sx.arg(S.Sx.get(x, "drill"), 0n))
+  [Item{key, sig, 23, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "size"), 0n), 2.0), 0.0, True{}}, info},
+   Item{key ++ "/h", sig, 24, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "drill"), 0n), 2.0), 0.0, True{}}, info}]
 
 def Pad.frame(c: Pt, +a: F32) -> Place:
   match c:
@@ -266,86 +305,70 @@ def Pad.shape.k(circle: Bool, oval: Bool, +c: Pt, +w: F32, +h: F32, +a: F32) -> 
     case False{} False{}:
       PPoly{Pad.corners(c, w, h, a), 0.0, True{}}
 
-def Pad.hole.k(has: Bool, +key: String, +sig: U32, +c: Pt, +d: F32) -> List<&2, Item>:
+def Pad.hole.k(has: Bool, +key: String, +sig: U32, +c: Pt, +d: F32, +info: String) -> List<&2, Item>:
   match has:
     case True{}:
-      [Item{key ++ "/h", sig, 24, PCirc{c, F32.div(d, 2.0), 0.0, True{}}}]
+      [Item{key ++ "/h", sig, 24, PCirc{c, F32.div(d, 2.0), 0.0, True{}}, info}]
     case False{}:
       Nil{}
 
 # a pad on its first listed layer ("*.Cu" draws on both sides), plus its hole
-def Board.pad(+x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
+def Board.pad(+x: S.Sx, +key: String, +sig: U32, +pl: Place, +ctx: String) -> List<&2, Item>:
+  +info = "pad " ++ S.Sx.arg(x, 0n) ++ Info.kv("net", Info.net(x)) ++ Info.kv("shape", S.Sx.arg(x, 1n)) ++ ctx
   +at = S.Sx.get(x, "at")
   +c = Geo.place(pl, Geo.pt(at))
   +size = S.Sx.get(x, "size")
   +shape = S.Sx.arg(x, 1n)
   +drill = S.Sx.f(S.Sx.get(x, "drill"), 0n)
   Item{key, sig, Layer.id(S.Sx.arg(S.Sx.get(x, "layers"), 0n)), Pad.shape.k(String.eq(shape, "circle"), String.eq(shape, "oval"), c,
-    S.Sx.f(size, 0n), S.Sx.f(size, 1n), Geo.rad(F32.neg(S.Sx.f(at, 2n))))}
-  <> Pad.hole.k(F32.is_gt(drill, 0.0), key, sig, c, drill)
+    S.Sx.f(size, 0n), S.Sx.f(size, 1n), Geo.rad(F32.neg(S.Sx.f(at, 2n)))), info}
+  <> Pad.hole.k(F32.is_gt(drill, 0.0), key, sig, c, drill, info)
 
 # Footprints
 # ----------
 
-def Fp.child.k(pad: Bool, +x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
+def Fp.child.k(pad: Bool, +x: S.Sx, +key: String, +sig: U32, +pl: Place, +ctx: String) -> List<&2, Item>:
   match pad:
     case True{}:
-      Board.pad(x, key, sig, pl)
+      Board.pad(x, key, sig, pl, ctx)
     case False{}:
-      Board.graphic(x, key, sig, pl)
+      Board.graphic(x, key, sig, pl, ctx)
 
-def Fp.children(xs: List<&2, S.Sx>, +fp: String, +sig: U32, +pl: Place, +i: Nat) -> List<&2, Item>:
+def Fp.children(xs: List<&2, S.Sx>, +fp: String, +sig: U32, +pl: Place, +i: Nat, +ctx: String) -> List<&2, Item>:
   match xs:
     case Nil{}:
       Nil{}
     case +x <> t:
       List.append(&2, Item,
-        Fp.child.k(String.eq(S.Sx.name(x), "pad"), x, fp ++ "/" ++ Board.key(x, Nat.show(i)), sig, pl),
-        Fp.children(t, fp, sig, pl, 1n+i))
+        Fp.child.k(String.eq(S.Sx.name(x), "pad"), x, fp ++ "/" ++ Board.key(x, Nat.show(i)), sig, pl, ctx),
+        Fp.children(t, fp, sig, pl, 1n+i, ctx))
 
 def Board.footprint(+x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
   +at = S.Sx.get(x, "at")
-  Fp.children(S.Sx.args(x), key, sig, Place{S.Sx.f(at, 0n), S.Sx.f(at, 1n), Geo.rad(S.Sx.f(at, 2n))}, 0n)
+  Fp.children(S.Sx.args(x), key, sig, Place{S.Sx.f(at, 0n), S.Sx.f(at, 1n), Geo.rad(S.Sx.f(at, 2n))}, 0n, Info.footprint(x))
 
 # Zones
 # -----
 
-def Zone.fill.k(hit: Bool, +x: S.Sx, +key: String, +sig: U32, +i: Nat, rest: List<&2, Item>) -> List<&2, Item>:
+def Zone.fill.k(hit: Bool, +x: S.Sx, +key: String, +sig: U32, +i: Nat, +info: String, rest: List<&2, Item>) -> List<&2, Item>:
   match hit:
     case True{}:
-      Item{key ++ "/f" ++ Nat.show(i), sig, Layer.id(S.Sx.attr(x, "layer")), PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), Board.home()), 0.0, True{}}} <> rest
+      Item{key ++ "/f" ++ Nat.show(i), sig, Layer.id(S.Sx.attr(x, "layer")), PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), Board.home()), 0.0, True{}}, info ++ Info.kv("layer", S.Sx.attr(x, "layer"))} <> rest
     case False{}:
       rest
 
-def Zone.fills(xs: List<&2, S.Sx>, +key: String, +sig: U32, +i: Nat) -> List<&2, Item>:
+def Zone.fills(xs: List<&2, S.Sx>, +key: String, +sig: U32, +i: Nat, +info: String) -> List<&2, Item>:
   match xs:
     case Nil{}:
       Nil{}
     case +x <> t:
-      Zone.fill.k(String.eq(S.Sx.name(x), "filled_polygon"), x, key, sig, i, Zone.fills(t, key, sig, 1n+i))
+      Zone.fill.k(String.eq(S.Sx.name(x), "filled_polygon"), x, key, sig, i, info, Zone.fills(t, key, sig, 1n+i, info))
 
 # Forms
 # -----
 
 def Board.forms() -> List<&2, String>:
   ["segment", "arc", "via", "footprint", "zone", "gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly"]
-
-def Board.form.k(i: Nat, +x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
-  match i:
-    case 2n:
-      Board.via(x, key, sig)
-    case 3n:
-      Board.footprint(x, key, sig)
-    case 4n:
-      Zone.fills(S.Sx.args(x), key, sig, 0n)
-    case 9n:
-      Nil{}
-    case _:
-      Board.graphic(x, key, sig, Board.home())
-
-# the items one top-level form draws; unknown forms draw nothing
-def Board.form(+x: S.Sx, +i: Nat, +sig: U32) -> List<&2, Item>:
-  Board.form.k(Board.index(Board.forms(), S.Sx.name(x)), x, Board.key(x, "n" ++ Nat.show(i)), sig)
 
 # FNV-1a over the form's bytes: its signature
 def Board.hash(bs: List<&2, U32>, +h: U32) -> U32:
@@ -354,9 +377,6 @@ def Board.hash(bs: List<&2, U32>, +h: U32) -> U32:
       h
     case b <> t:
       Board.hash(t, (U32.xor(h, b) * 16777619 : U32))
-
-def Board.one(+bs: List<&2, U32>, +i: Nat) -> List<&2, Item>:
-  Board.form(S.Sx.parse(bs), i, Board.hash(bs, 2166136261))
 
 # Parallel conversion
 # -------------------
@@ -386,13 +406,6 @@ def Board.deal(fs: List<&2, Form>, h: Hand) -> Hand:
     case f <> t Hand{a, b}:
       Board.deal(t, Hand{b, f <> a})
 
-def Board.seq(fs: List<&2, Form>) -> List<&2, Item>:
-  match fs:
-    case Nil{}:
-      Nil{}
-    case Form{+i, bs} <> t:
-      List.append(&2, Item, Board.one(bs, i), Board.seq(t))
-
 # deal fs into two hands and hand them to k
 def Board.split.k(h: Hand, k: List<&2, Form> -> List<&2, Form> -> List<&2, Item>) -> List<&2, Item>:
   match h:
@@ -401,6 +414,36 @@ def Board.split.k(h: Hand, k: List<&2, Form> -> List<&2, Form> -> List<&2, Item>
 
 def Board.split(fs: List<&2, Form>, k: List<&2, Form> -> List<&2, Form> -> List<&2, Item>) -> List<&2, Item>:
   Board.split.k(Board.deal(fs, Hand{Nil{}, Nil{}}), k)
+
+def Info.kv.k(+a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, a)
+
+def Board.form.k(i: Nat, +x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
+  match i:
+    case 2n:
+      Board.via(x, key, sig)
+    case 3n:
+      Board.footprint(x, key, sig)
+    case 4n:
+      Zone.fills(S.Sx.args(x), key, sig, 0n, "zone" ++ Info.kv("net", Info.kv.k(S.Sx.attr(x, "net_name"), Info.net(x))))
+    case 9n:
+      Nil{}
+    case _:
+      Board.graphic(x, key, sig, Board.home(), "")
+
+# the items one top-level form draws; unknown forms draw nothing
+def Board.form(+x: S.Sx, +i: Nat, +sig: U32) -> List<&2, Item>:
+  Board.form.k(Board.index(Board.forms(), S.Sx.name(x)), x, Board.key(x, "n" ++ Nat.show(i)), sig)
+
+def Board.one(+bs: List<&2, U32>, +i: Nat) -> List<&2, Item>:
+  Board.form(S.Sx.parse(bs), i, Board.hash(bs, 2166136261))
+
+def Board.seq(fs: List<&2, Form>) -> List<&2, Item>:
+  match fs:
+    case Nil{}:
+      Nil{}
+    case Form{+i, bs} <> t:
+      List.append(&2, Item, Board.one(bs, i), Board.seq(t))
 
 # convert both hands at once, d levels deep
 def Board.par(d: Nat, fs: List<&2, Form>) -> List<&2, Item>:

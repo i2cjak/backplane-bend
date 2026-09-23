@@ -17,12 +17,12 @@ type Seen is Data:
 
 def Key.of(i: B.Item) -> String:
   match i:
-    case B.Item{k, _, _, _}:
+    case B.Item{k, _, _, _, _}:
       k
 
 def Key.sig(i: B.Item) -> U32:
   match i:
-    case B.Item{_, s, _, _}:
+    case B.Item{_, s, _, _, _}:
       s
 
 def Key.cmp.fin(r: (String & String) & Cmp) -> Cmp:
@@ -232,7 +232,7 @@ def View.box(ss: List<&2, Seen>, b: D.Box) -> D.Box:
   match ss:
     case Nil{}:
       b
-    case Seen{B.Item{_, _, _, p}, _} <> t:
+    case Seen{B.Item{_, _, _, p, _}, _} <> t:
       View.box(t, View.box.prim(p, b))
 
 def View.fit.z(+z: F32, +cx: F32, +cy: F32, +x0: F32, +y0: F32, +w: F32, +h: F32) -> View:
@@ -351,7 +351,7 @@ def Ops.layer(ss: List<&2, Seen>, +layer: U32, +v: View, +c: D.Clip, +now: Nat, 
   match ss:
     case Nil{}:
       Nil{}
-    case Seen{B.Item{_, _, +l, p}, +b} <> t:
+    case Seen{B.Item{_, _, +l, p, _}, +b} <> t:
       Ops.pick(Bool.not(Bool.xor(base, Vw.settled(b, cut))), U32.is_eq(l, layer), p, layer, v, c, Fade.alpha(now, b),
         Ops.layer(t, layer, v, c, now, cut, base))
 

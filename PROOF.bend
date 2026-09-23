@@ -290,12 +290,12 @@ def Laws.scene_merge_self(ss, now):
   match ss:
     case Nil{}:
       {==}
-    case V.Seen{B.Item{+k, +s, +l, +p}, +b} <> +t:
+    case V.Seen{B.Item{+k, +s, +l, +p, +i}, +b} <> +t:
       %Equal.sym(Cmp, V.Key.cmp(k, k), EQ{}, key_cmp_refl(k))
-        : {V.Scene.merge(V.Seen{B.Item{k, s, l, p}, b} <> t, B.Item{k, s, l, p} <> V.Scene.items(t), _, now) == V.Seen{B.Item{k, s, l, p}, b} <> t : List<&2, V.Seen>}
+        : {V.Scene.merge(V.Seen{B.Item{k, s, l, p, i}, b} <> t, B.Item{k, s, l, p, i} <> V.Scene.items(t), _, now) == V.Seen{B.Item{k, s, l, p, i}, b} <> t : List<&2, V.Seen>}
       %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s))
-        : {V.Scene.keep(_, B.Item{k, s, l, p}, b, now) <> V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now) == V.Seen{B.Item{k, s, l, p}, b} <> t : List<&2, V.Seen>}
-      Equal.cong(List<&2, V.Seen>, List<&2, V.Seen>, xs => V.Seen{B.Item{k, s, l, p}, b} <> xs,
+        : {V.Scene.keep(_, B.Item{k, s, l, p, i}, b, now) <> V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now) == V.Seen{B.Item{k, s, l, p, i}, b} <> t : List<&2, V.Seen>}
+      Equal.cong(List<&2, V.Seen>, List<&2, V.Seen>, xs => V.Seen{B.Item{k, s, l, p, i}, b} <> xs,
         V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now), t, Laws.scene_merge_self(t, now))
 
 # Update lemmas and laws
