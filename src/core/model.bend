@@ -72,12 +72,11 @@ type Thread is Data:
     deleted: Bool
   }
 
-type Message is Data:
-  Message{id: String, thread: String, role: Role, text: String, at: Nat}
-
-# one tool call, approval, or error in a thread's timeline
-type Activity is Data:
-  Activity{id: String, thread: String, tone: String, kind: String, summary: String, at: Nat}
+# one item of a thread's timeline: a message, or a tool call / approval /
+# error. Entries keep log order, so a timeline never needs re-sorting.
+type Entry is Data:
+  Msg{id: String, thread: String, role: Role, text: String, at: Nat}
+  Act{id: String, thread: String, tone: String, kind: String, summary: String, at: Nat}
 
 # Events
 # ------
@@ -172,13 +171,12 @@ type State is Data:
   State{
     projects: Map<&2, Project>,
     threads: Map<&2, Thread>,
-    messages: List<&2, Message>,
-    activities: List<&2, Activity>,
+    entries: List<&2, Entry>,
     seq: Nat
   }
 
 def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, Nil{}, 0n}
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n}
 
 def Thread.blank(id: String) -> Thread:
   Thread{id, "", "", 0n, 0n, Idle{}, 0n, True{}, NoOverride{}, 0n, 0n, False{}, Local{}, "", "", "", "", FullAccess{}, DefaultMode{}, "", True{}}
@@ -187,13 +185,13 @@ def Project.blank(id: String) -> Project:
   Project{id, "", "", 0n, True{}}
 
 # apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, ms: List<&2, Message>, as: List<&2, Activity>, n: Nat, id: String, r: Map<&2, Thread> & Thread) -> State:
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, id: String, r: Map<&2, Thread> & Thread) -> State:
   (ts, t) = r
-  State{ps, Map.set(&2, Thread, ts, id, f(t)), ms, as, n}
+  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n}
 
 def State.thread(f: Thread -> Thread, s: State, +id: String) -> State:
-  State{ps, ts, ms, as, n} = s
-  State.thread.fin(f, ps, ms, as, n, id, Map.get(Thread, Thread.blank(id), ts, id))
+  State{ps, ts, es, n} = s
+  State.thread.fin(f, ps, es, n, id, Map.get(Thread, Thread.blank(id), ts, id))
 
 def Thread.renamed(+title: String, t: Thread) -> Thread:
   Thread{id, p, _, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
@@ -254,42 +252,38 @@ def Thread.modes_set(r: RuntimeMode, i: InteractionMode, m: String, t: Thread) -
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, m, r, i, se, de}
 
 def State.put_thread(s: State, t: Thread) -> State:
-  State{ps, ts, ms, as, n} = s
+  State{ps, ts, es, n} = s
   Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), ms, as, n}
+  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n}
 
 def State.put_project(s: State, p: Project) -> State:
-  State{ps, ts, ms, as, n} = s
+  State{ps, ts, es, n} = s
   Project{+id, ti, r, c, rm} = p
-  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, ms, as, n}
+  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, ms: List<&2, Message>, as: List<&2, Activity>, n: Nat, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
-  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, ms, as, n}
+  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n}
 
 def State.remove_project(s: State, +id: String) -> State:
-  State{ps, ts, ms, as, n} = s
-  State.remove_project.fin(ts, ms, as, n, id, Map.get(Project, Project.blank(id), ps, id))
+  State{ps, ts, es, n} = s
+  State.remove_project.fin(ts, es, n, id, Map.get(Project, Project.blank(id), ps, id))
 
-def State.post(s: State, m: Message) -> State:
-  State{ps, ts, ms, as, n} = s
-  State{ps, ts, m <> ms, as, n}
-
-def State.log_activity(s: State, a: Activity) -> State:
-  State{ps, ts, ms, as, n} = s
-  State{ps, ts, ms, a <> as, n}
+def State.post(s: State, e: Entry) -> State:
+  State{ps, ts, es, n} = s
+  State{ps, ts, e <> es, n}
 
 def State.tick(s: State) -> State:
-  State{ps, ts, ms, as, n} = s
-  State{ps, ts, ms, as, 1n+n}
+  State{ps, ts, es, n} = s
+  State{ps, ts, es, 1n+n}
 
 def State.message(s: State, +thread: String, msg: String, role: Role, text: String, +at: Nat) -> State:
   match role:
     case User{}:
-      State.post(State.thread((t => Thread.touched(at, t)), s, thread), Message{msg, thread, User{}, text, at})
+      State.post(State.thread((t => Thread.touched(at, t)), s, thread), Msg{msg, thread, User{}, text, at})
     case _:
-      State.post(s, Message{msg, thread, role, text, at})
+      State.post(s, Msg{msg, thread, role, text, at})
 
 def State.apply.go(s: State, e: Change) -> State:
   match e:
@@ -308,7 +302,7 @@ def State.apply.go(s: State, e: Change) -> State:
     case PendingChanged{+thread, count, _}:
       State.thread((t => Thread.pending_set(count, t)), s, thread)
     case ActivityLogged{thread, act, tone, kind, summary, at}:
-      State.log_activity(s, Activity{act, thread, tone, kind, summary, at})
+      State.post(s, Act{act, thread, tone, kind, summary, at})
     case ThreadSettled{+id, manual, +at}:
       State.thread((t => Thread.settled(manual, at, t)), s, id)
     case ThreadUnsettled{+id, +at}:

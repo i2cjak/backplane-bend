@@ -50,7 +50,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, _, n}:
+    case M.State{_, _, _, n}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -62,7 +62,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _}:
+    case M.State{_, ts, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -71,7 +71,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _}:
+    case M.State{ps, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -106,15 +106,35 @@ def Claude.interrupt(+id: String) -> String:
     J.KV{"request_id", J.Str{id}},
     J.KV{"request", J.Json.obj([J.KV{"subtype", J.Str{"interrupt"}}])}]))
 
+def Hub.title.cut(long: Bool, +line: String) -> String:
+  match long:
+    case True{}:
+      String.take(line, 57n) ++ "..."
+    case False{}:
+      line
+
+def Hub.title.of(+text: String) -> String:
+  +line = String.trim(Maybe.default(&2, String, List.head(&2, String, String.lines(text)), ""))
+  Hub.title.cut(Nat.is_gt(String.length(line), 60n), line)
+
 # Requests
 # --------
 
+# a thread still called "New thread" takes its first message as its title
+def Hub.title.k(fresh: Bool, +thread: String, +text: String, +now: Nat, rest: List<&2, M.Change>) -> List<&2, M.Change>:
+  match fresh:
+    case True{}:
+      M.ThreadRenamed{thread, Hub.title.of(text), now} <> rest
+    case False{}:
+      rest
+
 def Hub.turn.k(t: M.Thread, cwd: String, +seq: Nat, +now: Nat, +client: U32, +id: String, +thread: String, +text: String) -> Step:
   match t:
-    case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, provider, model, runtime, interaction, session, _}:
+    case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, provider, model, runtime, interaction, session, _}:
       Step{
+        Hub.title.k(String.eq(title, "New thread"), thread, text, now,
         [M.MessagePosted{thread, Hub.id("m", now, seq), M.User{}, text, now},
-         M.TurnChanged{thread, M.Running{}, now}],
+         M.TurnChanged{thread, M.Running{}, now}]),
         [Reply.ok(client, id),
          AgentStart{thread, cwd, provider, model, session, runtime, interaction},
          AgentSend{thread, Claude.user(text)}]}
@@ -329,5 +349,5 @@ def Hub.settle.go(ts: List<&2, M.Thread>, +now: Nat, +w: Nat) -> List<&2, M.Chan
 # every thread that should settle now, settled
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{_, ts, _, _, _}:
+    case M.State{_, ts, _, _}:
       Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, M.Settle.window()), Nil{}}
