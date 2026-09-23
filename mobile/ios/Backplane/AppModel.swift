@@ -105,7 +105,7 @@ final class AppModel {
         h.start()
     }
 
-    private func run(_ f: @escaping (Engine) async -> String) {
+    private func run(_ f: @escaping (Engine) async -> Out?) {
         let e = engine
         Task { apply(await f(e)) }
     }
@@ -146,8 +146,8 @@ final class AppModel {
         if yes, let s = screen { island?.show(s.island, foreground: true) }
     }
 
-    private func apply(_ out: String) {
-        guard let o = try? JSONDecoder().decode(Out.self, from: Data(out.utf8)) else { return }
+    private func apply(_ out: Out?) {
+        guard let o = out else { return }
         if let s = o.screen {
             if typing == 0 { composer = s.thread?.draft ?? "" }
             screen = s

@@ -97,17 +97,15 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         }
     }
 
-    private fun apply(out: String) {
-        val o = JSONObject(out)
-        o.optJSONObject("screen")?.let { s ->
-            val next = parseScreen(s)
+    private fun apply(out: Reply) {
+        out.screen?.let { next ->
             if (typing == 0) composer = next.thread?.draft ?: ""
             val was = screen?.sel
             screen = next
             if (foreground && next.sel.isNotEmpty() && next.sel != was) Notes.clear(app, next.sel)
             LiveService.sync(app, next.island, foreground)
         }
-        for (c in parseCmds(o)) when (c.type) {
+        for (c in out.cmds) when (c.type) {
             "send" -> hub?.send(c.text)
             "copy" -> {
                 val cm = app.getSystemService(ClipboardManager::class.java)

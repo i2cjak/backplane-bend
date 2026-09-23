@@ -60,6 +60,10 @@ data class Cmd(
     val thread: String = "", val title: String = "", val kind: String = "", val body: String = "",
 )
 
+// an answer from the engine: its screen (none from a quiet call, or when a
+// newer one follows) and its commands
+data class Reply(val screen: Screen?, val cmds: List<Cmd>)
+
 private fun <T> JSONArray?.map(f: (JSONObject) -> T): List<T> =
     if (this == null) emptyList() else (0 until length()).map { f(getJSONObject(it)) }
 

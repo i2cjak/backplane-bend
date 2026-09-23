@@ -50,24 +50,38 @@ final class Engine: @unchecked Sendable {
         return c
     }
 
-    private func call(_ name: String, _ args: [Any]) async -> String {
+    // calls queued whose answer carries a screen: while one is, the screen
+    // before it is out of date before it could be drawn, so it is skipped
+    private let lock = NSLock()
+    private var ahead = 0
+
+    private func call<T>(_ name: String, _ args: [Any], _ finish: @escaping (String) -> T) async -> T {
         await withCheckedContinuation { k in
             queue.async {
                 let b = self.context().objectForKeyedSubscript("Backplane")!
-                k.resume(returning: b.invokeMethod(name, withArguments: args)?.toString() ?? "{}")
+                k.resume(returning: finish(b.invokeMethod(name, withArguments: args)?.toString() ?? "{}"))
             }
         }
     }
 
-    func start(_ cid: String) async -> String { await call("start", [cid]) }
-    func resume() async -> String { await call("resume", []) }
-    func register(_ kind: String, _ token: String, env: String, bundle: String) async -> String {
-        await call("register", ["ios", token, kind, "", env, bundle])
+    // decoded here, off the main thread: a thread's screen is large
+    private func out(_ name: String, _ args: [Any], screen: Bool = true) async -> Out? {
+        if screen { lock.withLock { ahead += 1 } }
+        return await call(name, args) { text in
+            let stale = screen && self.lock.withLock { self.ahead -= 1; return self.ahead > 0 }
+            return Out.decode(text, screen: !stale)
+        }
     }
-    func screen() async -> String { await call("screen", []) }
-    func recv(_ text: String) async -> String { await call("recv", [text]) }
-    func act(_ action: String, _ value: String) async -> String { await call("act", [action, value]) }
-    func quiet(_ action: String, _ value: String) async -> String { await call("quiet", [action, value]) }
-    func online(_ b: Bool) async -> String { await call("online", [b]) }
-    func tick(_ now: Int) async -> String { await call("tick", [now]) }
+
+    func start(_ cid: String) async -> Out? { await out("start", [cid]) }
+    func resume() async -> String { await call("resume", []) { $0 } }
+    func register(_ kind: String, _ token: String, env: String, bundle: String) async -> Out? {
+        await out("register", ["ios", token, kind, "", env, bundle], screen: false)
+    }
+    func screen() async -> Out? { await out("screen", []) }
+    func recv(_ text: String) async -> Out? { await out("recv", [text]) }
+    func act(_ action: String, _ value: String) async -> Out? { await out("act", [action, value]) }
+    func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
+    func online(_ b: Bool) async -> Out? { await out("online", [b]) }
+    func tick(_ now: Int) async -> Out? { await out("tick", [now]) }
 }

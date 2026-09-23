@@ -6,6 +6,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 
 // The Bend client (bridge.js) in QuickJS, on one thread of its own.
 // Every call answers {"screen": ..., "cmds": [...]} as a string, except
@@ -27,16 +28,30 @@ class Engine(private val source: String, private val cid: String) {
             }
         }
 
+    // calls queued whose answer carries a screen: while one is, the screen
+    // before it is out of date before it could be drawn, so it is skipped
+    private val ahead = AtomicInteger(0)
+
     private suspend fun call(expr: String): String =
         withContext(dispatcher) { context().evaluate(expr) as String }
+
+    // parsed here, off the main thread: a thread's screen is large
+    private suspend fun out(expr: String, screen: Boolean = true): Reply {
+        if (screen) ahead.incrementAndGet()
+        return withContext(dispatcher) {
+            val o = JSONObject(context().evaluate(expr) as String)
+            val stale = screen && ahead.decrementAndGet() > 0
+            Reply(if (stale) null else o.optJSONObject("screen")?.let(::parseScreen), parseCmds(o))
+        }
+    }
 
     private fun q(s: String) = JSONObject.quote(s)
 
     suspend fun resume() = call("Backplane.resume()")
-    suspend fun screen() = call("Backplane.screen()")
-    suspend fun recv(text: String) = call("Backplane.recv(${q(text)})")
-    suspend fun act(action: String, value: String) = call("Backplane.act(${q(action)}, ${q(value)})")
-    suspend fun quiet(action: String, value: String) = call("Backplane.quiet(${q(action)}, ${q(value)})")
-    suspend fun online(b: Boolean) = call("Backplane.online($b)")
-    suspend fun tick(now: Long) = call("Backplane.tick($now)")
+    suspend fun screen() = out("Backplane.screen()")
+    suspend fun recv(text: String) = out("Backplane.recv(${q(text)})")
+    suspend fun act(action: String, value: String) = out("Backplane.act(${q(action)}, ${q(value)})")
+    suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
+    suspend fun online(b: Boolean) = out("Backplane.online($b)")
+    suspend fun tick(now: Long) = out("Backplane.tick($now)")
 }
