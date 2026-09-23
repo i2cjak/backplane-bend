@@ -82,6 +82,33 @@ def Ty.fit(+ty: Ty, +k: Nat, +s: String, +px: U32) -> String:
 def Ty.wrap(+ty: Ty, +k: Nat, s: String, +px: U32) -> List<&2, String>:
   X.Text.wrap(Ty.cache(ty), Ty.face(ty, k), s, px)
 
+# Backplane's type: Berkeley Mono where installed, else the system's
+# monospace; FreeType via fontconfig, the Spleen bitmap without them
+def Ty.fonts.ui() -> List<&2, String>:
+  ["Berkeley Mono", "monospace"]
+
+def Ty.fonts.bold() -> List<&2, String>:
+  ["Berkeley Mono:weight=bold", "monospace:weight=bold"]
+
+def Ty.fonts.code() -> List<&2, String>:
+  ["Berkeley Mono", "SF Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"]
+
+def Ty.fonts.warm(fs: List<&2, X.Face>, c: Map<&2, X.TG>) -> IO(Map<&2, X.TG>):
+  match fs:
+    case Nil{}:
+      IO.pure(Map<&2, X.TG>, c)
+    case +f <> t:
+      IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.warm(c, f), c2 => IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.ensure(c2, f, "▾▸←−×"), c3 => Ty.fonts.warm(t, c3)))
+
+def Ty.load() -> IO(Ty):
+  do IO<Ty>:
+    +ui : X.Face <- X.Text.face(Ty.fonts.ui(), 14)
+    +bold : X.Face <- X.Text.face(Ty.fonts.bold(), 14)
+    +meta : X.Face <- X.Text.face(Ty.fonts.ui(), 12)
+    +code : X.Face <- X.Text.face(Ty.fonts.code(), 13)
+    c : Map<&2, X.TG> <- Ty.fonts.warm([ui, bold, meta, code], Map.new(&2, X.TG))
+    return Ty{c, ui, bold, meta, ui, code}
+
 # Shapes
 # ------
 

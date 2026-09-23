@@ -424,32 +424,6 @@ def Shell.loop(fuel: Nat, a: Shell) -> IO(Unit):
 # Start
 # -----
 
-# Backplane's type: Berkeley Mono where installed, else the system's
-# monospace; FreeType via fontconfig, the Spleen bitmap without them
-def Fonts.ui() -> List<&2, String>:
-  ["Berkeley Mono", "monospace"]
-
-def Fonts.bold() -> List<&2, String>:
-  ["Berkeley Mono:weight=bold", "monospace:weight=bold"]
-
-def Fonts.code() -> List<&2, String>:
-  ["Berkeley Mono", "SF Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"]
-
-def Fonts.warm(fs: List<&2, X.Face>, c: Map<&2, X.TG>) -> IO(Map<&2, X.TG>):
-  match fs:
-    case Nil{}:
-      IO.pure(Map<&2, X.TG>, c)
-    case +f <> t:
-      IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.warm(c, f), c2 => IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.ensure(c2, f, "▾▸←−×"), c3 => Fonts.warm(t, c3)))
-
-def Fonts.load() -> IO(L.Ty):
-  do IO<L.Ty>:
-    +ui : X.Face <- X.Text.face(Fonts.ui(), 14)
-    +bold : X.Face <- X.Text.face(Fonts.bold(), 14)
-    +meta : X.Face <- X.Text.face(Fonts.ui(), 12)
-    +code : X.Face <- X.Text.face(Fonts.code(), 13)
-    c : Map<&2, X.TG> <- Fonts.warm([ui, bold, meta, code], Map.new(&2, X.TG))
-    return L.Ty{c, ui, bold, meta, ui, code}
 
 def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
   (ev, pw) = r
@@ -460,7 +434,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q))
-    ty : L.Ty <- Fonts.load()
+    ty : L.Ty <- L.Ty.load()
     a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty}})
     Shell.loop(S.Fuel.forever(), a)
 
