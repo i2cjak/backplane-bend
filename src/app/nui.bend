@@ -375,36 +375,6 @@ def Nui.vw(n: Nui) -> V.Vw:
     case Nui{_, _, _, _, _, _, _, _, _, _, _, _, vw}:
       vw
 
-def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
-  match i:
-    case 0n:
-      Step{Nui.with_vw(n, Vw.kind_set(Nui.vw(n), Maybe.default(&2, U32, U32.read(value), 0), "")), Nil{}, True{}}
-    case 1n:
-      Step{Nui.with_vw(n, Vw.pick_set(Nui.vw(n), "")), Nil{}, True{}}
-    case _:
-      Step{n, Nil{}, False{}}
-
-# the viewer's own actions (they never reach the client state)
-def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
-  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick"], action, 0n), n, value)
-
-def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
-  match focus:
-    case True{}:
-      Nui.focus(n, value)
-    case False{}:
-      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.act(n, action, value))
-
-def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
-  match m:
-    case Some{Hit{_, _, _, _, +action, +value}}:
-      Nui.click.act(String.eq(action, "focus"), n, action, value)
-    case None{}:
-      Step{n, Nil{}, False{}}
-
-def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
-  Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
-
 def Vw.drag(v: V.Vw, on: Bool, +x: U32, +y: U32) -> V.Vw:
   match v:
     case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, vx}:
@@ -496,6 +466,28 @@ def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U3
       Nui.key.free(String.is_empty(Nui.focus_of(n)), U32.is_eq(code, 102), n, code, text, mods)
 
 # a key press (releases do nothing)
+# The command palette
+# -------------------
+
+def Nui.with_ui(n: Nui, u: U.Ui) -> Nui:
+  match n:
+    case Nui{_, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
+
+def Pal.open(+n: Nui) -> Step:
+  Nui.focus(Nui.with_ui(n, U.Palette.set(U.Ui.flag_on(Nui.ui(n), "palette"), "", 0n)), "palette")
+
+def Pal.close(+n: Nui) -> Step:
+  Nui.focus(Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "palette")), "composer")
+
+def Pal.moved(+n: Nui, +i: Nat) -> Step:
+  Step{Nui.with_ui(n, U.Palette.set(Nui.ui(n), U.Palette.query(Nui.ui(n)), Nat.min(i, Nat.sub(List.length(&2, U.PItem, U.Palette.items(Nui.ui(n))), 1n)))), Nil{}, True{}}
+
+def Pal.typed(e: Ed, +n: Nui) -> Step:
+  match e:
+    case Ed{+t, _, _, _}:
+      Step{Nui.with_ui(n, U.Palette.set(Nui.ui(n), t, 0n)), Nil{}, True{}}
+
 # Shortcuts (T3Code's, ctrl for mod)
 # ---------------------------------
 
@@ -508,7 +500,7 @@ def Keys.shift(+mods: U32) -> Bool:
 def Keys.name.k(ctrl: Bool, shift: Bool, term: Bool, +c: U32) -> String:
   match ctrl shift term:
     case True{} False{} False{}:
-      Bool.pick(String, U32.is_eq(c, 106), "term", Bool.pick(String, U32.is_eq(c, 100), "diff", Bool.pick(String, U32.is_eq(c, 110), "new", "")))
+      Bool.pick(String, U32.is_eq(c, 106), "term", Bool.pick(String, U32.is_eq(c, 100), "diff", Bool.pick(String, U32.is_eq(c, 110), "new", Bool.pick(String, U32.is_eq(c, 107), "palette", ""))))
     case True{} False{} True{}:
       Bool.pick(String, U32.is_eq(c, 106), "term", "")
     case True{} True{} _:
@@ -571,8 +563,7 @@ def Nui.focus.step(s: Step, +fo: String) -> Step:
 def Keys.vt(+m: U32) -> U32:
   U32.or(U32.or(U32.and(m, 1), (U32.and(m, 2) * 2 : U32)), (U32.and(m, 4) * 2 : U32))
 
-# keys in the terminal go to the shell (as xterm would send them)
-def Nui.key.term(term: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+def Nui.key.term.go(term: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match term:
     case True{}:
       Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.key(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), code, text, Keys.vt(mods))), n)
@@ -718,10 +709,87 @@ def Nui.shortcut.k(i: Nat, +n: Nui) -> Step:
     case _:
       Step{n, [NPaste{}], False{}}
 
+def Pal.run.k(key: Bool, +n: Nui, +a: String, +v: String) -> Step:
+  match key:
+    case True{}:
+      Nui.shortcut.k(U.Keys.pos(["term"], String.drop(a, 4n)), n)
+    case False{}:
+      Nui.act(n, a, v)
+
+def Pal.run(it: U.PItem, +n: Nui) -> Step:
+  match it:
+    case U.PItem{_, +a, +v}:
+      Step.merge(Pal.close(n), Pal.run.k(String.starts_with(a, "key:"), Step.nui(Pal.close(n)), a, v))
+
+def Pal.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match esc enter up down:
+    case True{} _ _ _:
+      Pal.close(n)
+    case _ True{} _ _:
+      Pal.run(U.Palette.at(U.Palette.items(Nui.ui(n)), U.Palette.index(Nui.ui(n))), n)
+    case _ _ True{} _:
+      Pal.moved(n, Nat.sub(U.Palette.index(Nui.ui(n)), 1n))
+    case _ _ _ True{}:
+      Pal.moved(n, 1n+U.Palette.index(Nui.ui(n)))
+    case _ _ _ _:
+      Pal.typed(Ed.key(code, text, mods, U.Palette.query(Nui.ui(n)), String.length(U.Palette.query(Nui.ui(n)))), n)
+
+def Pal.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Pal.key.k(U32.is_eq(code, Key.escape()), Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, 65362), U32.is_eq(code, 65364), n, code, text, mods)
+
+# a click on a palette row runs it
+def Pal.click(+n: Nui, +v: String) -> Step:
+  Pal.run(U.Palette.at(U.Palette.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
+
+def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
+  match i:
+    case 0n:
+      Step{Nui.with_vw(n, Vw.kind_set(Nui.vw(n), Maybe.default(&2, U32, U32.read(value), 0), "")), Nil{}, True{}}
+    case 1n:
+      Step{Nui.with_vw(n, Vw.pick_set(Nui.vw(n), "")), Nil{}, True{}}
+    case 2n:
+      Pal.click(n, value)
+    case 3n:
+      Pal.close(n)
+    case _:
+      Step{n, Nil{}, False{}}
+
+# the viewer's own actions (they never reach the client state)
+def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx"], action, 0n), n, value)
+
+def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
+  match focus:
+    case True{}:
+      Nui.focus(n, value)
+    case False{}:
+      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.act(n, action, value))
+
+def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +action, +value}}:
+      Nui.click.act(String.eq(action, "focus"), n, action, value)
+    case None{}:
+      Step{n, Nil{}, False{}}
+
+def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
+  Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
+
+def Nui.key.term.k(term: Bool, pal: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match term pal:
+    case False{} True{}:
+      Pal.key(n, code, text, mods)
+    case _ _:
+      Nui.key.term.go(term, n, code, text, mods)
+
+# keys in the terminal go to the shell (as xterm would send them)
+def Nui.key.term(term: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Nui.key.term.k(term, String.eq(Nui.focus_of(n), "palette"), n, code, text, mods)
+
 def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match none:
     case False{}:
-      Nui.shortcut.k(U.Keys.pos(["term", "diff", "new", "prev", "next", "settle", "pin", "paste"], name), n)
+      Nui.shortcut.k(U.Keys.pos(["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette"], name), n)
     case True{}:
       Nui.key.term(String.eq(Nui.focus_of(n), "terminal"), n, code, text, mods)
 

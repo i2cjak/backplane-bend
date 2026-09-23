@@ -255,29 +255,6 @@ def Hub.term(+s: M.State, +client: U32, +id: String, +op: String, +p: J.Json) ->
   Step.outs([Reply.ok(client, id), TermOp{op, J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))),
     Term.bytes(J.Json.elems(J.Json.get_obj(p, "b"))), J.Json.get_u32(p, "cols", 80), J.Json.get_u32(p, "rows", 24)}])
 
-def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
-  match i:
-    case 0n:
-      Hub.git(s, client, id, "diff", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "from"), "0"), J.Json.as_raw(J.Json.get(p, "to"), "-1"))
-    case 1n:
-      Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
-    case 2n:
-      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
-    case 3n:
-      Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
-    case 4n:
-      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), J.Json.get_str(p, "path", ""), now}])
-    case 5n:
-      Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
-        J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
-    case 6n:
-      Hub.term(s, client, id, "open", p)
-    case 7n:
-      Hub.term(s, client, id, "input", p)
-    case 8n:
-      Hub.term(s, client, id, "resize", p)
-    case _:
-      Step.outs([Reply.err(client, id, "unknown method")])
 # Phones
 # ------
 
@@ -318,6 +295,60 @@ def Device.register.k(ok: Bool, +now: Nat, +client: U32, +id: String, +p: J.Json
 # without it)
 def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   Device.register.k(Device.ok(p), now, client, id, p)
+
+# Method groups (each appended to only by its own feature area)
+# ------------------------------------------------------------
+
+# sidebar and navigation
+def Hub.methods.nav() -> List<&2, String>:
+  []
+
+# agent features (skills, effort, naming)
+def Hub.methods.agent() -> List<&2, String>:
+  []
+
+# attachments, files and the web client's panes
+def Hub.methods.media() -> List<&2, String>:
+  []
+
+def Hub.media(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case _:
+      Step.outs([Reply.err(client, id, "unknown method")])
+
+def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case _:
+      Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
+
+def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case _:
+      Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
+
+def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Hub.git(s, client, id, "diff", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "from"), "0"), J.Json.as_raw(J.Json.get(p, "to"), "-1"))
+    case 1n:
+      Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
+    case 2n:
+      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
+    case 3n:
+      Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
+    case 4n:
+      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), J.Json.get_str(p, "path", ""), now}])
+    case 5n:
+      Step.reply(client, id, [M.ActivityLogged{J.Json.get_str(p, "thread", ""), Hub.id("g", now, Hub.seq(s)), J.Json.get_str(p, "tone", "info"),
+        J.Json.get_str(p, "kind", "git"), J.Json.get_str(p, "summary", ""), now}])
+    case 6n:
+      Hub.term(s, client, id, "open", p)
+    case 7n:
+      Hub.term(s, client, id, "input", p)
+    case 8n:
+      Hub.term(s, client, id, "resize", p)
+    case _:
+      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
@@ -535,7 +566,7 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 20n:
       Step.reply(client, id, [M.DeviceDropped{J.Json.get_str(p, "token", ""), now}])
     case _:
-      Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p)
+      Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 
 # one client request {"id": n, "m": method, "p": params}
 def Hub.request(+s: M.State, +now: Nat, +client: U32, +o: J.Json) -> Step:

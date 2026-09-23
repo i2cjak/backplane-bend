@@ -1336,6 +1336,35 @@ def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
     case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Out.cat(Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h, U.Flag.get(open, "settings")), Lay.note(ty, note, v))
 
+# Command palette (ctrl+k)
+# ------------------------
+
+def Pal.rows(+ty: Ty, ps: List<&2, U.PItem>, +i: Nat, +sel: Nat, +x: U32, +y: U32, +w: U32, left: Nat) -> Out:
+  match ps left:
+    case U.PItem{+l, +a, _} <> t 1n+m:
+      Out.cat(Out{List.concat(&2, R.Op, [
+          Bool.pick(List<&2, R.Op>, Nat.is_eq(i, sel), [D.Draw.rect(D.Clip.all(), (x + 4 : U32), y, (w - 8 : U32), 30, T.Th.sel(), 255)], Nil{}),
+          Ty.text(ty, 0n, Ty.fit(ty, 0n, l, (w - 140 : U32)), D.Clip.all(), (x + 16 : U32), y, 30, Bool.pick(U32, Nat.is_eq(i, sel), T.Th.text(), T.Th.soft())),
+          Ty.text(ty, 2n, Bool.pick(String, String.eq(a, "select"), "thread", "action"), D.Clip.all(), (x + w - 16 - Ty.width(ty, 2n, Bool.pick(String, String.eq(a, "select"), "thread", "action")) : U32), y, 30, T.Th.faint())]),
+          [Lay.hit(x, y, w, 30, "vw-pal", Nat.show(i))]},
+        Pal.rows(ty, t, 1n+i, sel, x, (y + 30 : U32), w, m))
+    case _ _:
+      Out.none()
+
+def Lay.palette(+ty: Ty, +u: U.Ui, +ww: U32, +hh: U32) -> Out:
+  +w = {U32.min(600, (ww - 40 : U32)) : U32}
+  +x = {U32.shr((ww - w : U32)) : U32}
+  +ps = U.Palette.items(u)
+  +n = {U32.from_nat(Nat.min(List.length(&2, U.PItem, ps), 12n)) : U32}
+  +q = U.Palette.query(u)
+  Out.all([
+    Out{[D.Draw.rect(D.Clip.all(), 0, 0, ww, hh, 0, 140)], [Lay.hit(0, 0, ww, hh, "vw-palx", "")]},
+    Out{Lay.box(D.Clip.all(), x, 80, w, (n * 30 + 58 : U32), 0, T.Th.panel(), T.Th.line()), [Lay.hit(x, 80, w, (n * 30 + 58 : U32), "", "")]},
+    Out.ops(Ty.text(ty, 0n, Bool.pick(String, String.is_empty(q), "Type a command or a thread", q), D.Clip.all(), (x + 16 : U32), 86, 36, Bool.pick(U32, String.is_empty(q), T.Th.faint(), T.Th.text()))),
+    Out.ops([D.Draw.rect(D.Clip.all(), (x + 16 + Bool.pick(U32, String.is_empty(q), 0, Ty.width(ty, 0n, q)) : U32), 95, 1, 18, T.Th.accent(), 255),
+      D.Draw.rect(D.Clip.all(), x, 126, w, 1, T.Th.line(), 255)]),
+    Pal.rows(ty, ps, 0n, U.Palette.index(u), x, 132, w, 12n)])
+
 def Lay.term_on(+n: S.Nui) -> Bool:
   Bool.and(U.Ui.flag(S.Nui.ui(n), "term"), Bool.not(String.is_empty(U.Ui.sel(S.Nui.ui(n)))))
 
@@ -1362,4 +1391,5 @@ def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
         Bool.pick(Out, pa, Lay.viewer(ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
         Lay.term.of(ty, n, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w), h),
         Lay.sidebar(ty, n, h),
-        Lay.toast(ty, err, w, h)]))
+        Lay.toast(ty, err, w, h),
+        Out.when(U.Ui.flag(S.Nui.ui(n), "palette"), Lay.palette(ty, S.Nui.ui(n), w, h))]))

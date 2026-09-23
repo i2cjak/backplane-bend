@@ -808,3 +808,83 @@ def Ui.flag_on(u: Ui, +k: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, +op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, dr, live, Map.set(&2, Bool, op, k, True{}), on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
+# Command palette
+# ---------------
+# ctrl+k: threads and actions, filtered by what was typed. Its query and
+# selection live in the drafts map under keys no thread id can take.
+
+type PItem is Data:
+  PItem{label: String, action: String, value: String}
+
+def Palette.query(u: Ui) -> String:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(dr, "@palette")
+
+def Palette.index(u: Ui) -> Nat:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Maybe.default(&2, Nat, Nat.read(Str.get(dr, "@palette.i")), 0n)
+
+def Palette.set(u: Ui, +q: String, +i: Nat) -> Ui:
+  match u:
+    case Ui{st, sel, +dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, "@palette", q), "@palette.i", Nat.show(i)), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
+def Palette.threads(ts: List<&2, M.Thread>) -> List<&2, PItem>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case M.Thread{id, _, ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
+      PItem{ti, "select", id} <> Palette.threads(t)
+
+def Palette.actions(+pid: String) -> List<&2, PItem>:
+  [PItem{"New thread", "new-thread", pid}, PItem{"Diff: what this thread changed", "diff", ""}, PItem{"Terminal", "key:term", ""},
+   PItem{"Commit & push", "git", "commit_push"}, PItem{"Open pull request", "git", "commit_push_pr"}, PItem{"Revert thread", "revert", "0"},
+   PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""},
+   PItem{"Viewer", "panel", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
+
+def Palette.words(ws: List<&2, String>, +l: String) -> Bool:
+  match ws:
+    case Nil{}:
+      True{}
+    case +w <> t:
+      Bool.and(Bool.or(String.is_empty(w), String.contains(l, w)), Palette.words(t, l))
+
+# does every word of the query appear in the label (any case)?
+def Palette.hit(+q: String, +label: String) -> Bool:
+  Palette.words(String.split(String.to_lower(q), ' '), String.to_lower(label))
+
+def Palette.filter.k(keep: Bool, p: PItem, rest: List<&2, PItem>) -> List<&2, PItem>:
+  match keep:
+    case True{}:
+      p <> rest
+    case False{}:
+      rest
+
+def Palette.filter(ps: List<&2, PItem>, +q: String) -> List<&2, PItem>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case PItem{+l, a, v} <> t:
+      Palette.filter.k(Palette.hit(q, l), PItem{l, a, v}, Palette.filter(t, q))
+
+# what the palette offers for this query, actions first
+def Palette.items(+u: Ui) -> List<&2, PItem>:
+  Palette.filter(List.append(&2, PItem, Palette.actions(Ui.thread_project(Ui.thread(Ui.state(u), Ui.sel(u)))),
+    Palette.threads(Kids.keep(Ui.threads(Ui.state(u)), Kids.set(Ui.state(u))))), Palette.query(u))
+
+def Palette.at(ps: List<&2, PItem>, i: Nat) -> PItem:
+  match ps i:
+    case p <> _ 0n:
+      p
+    case _ <> t 1n+j:
+      Palette.at(t, j)
+    case Nil{} _:
+      PItem{"", "", ""}
+
+def Ui.flag_off(u: Ui, +k: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, +op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, Map.set(&2, Bool, op, k, False{}), on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
