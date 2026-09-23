@@ -11,6 +11,7 @@
 //   2 move (x, y)   3 wheel (x, y, dir)   4 size (w, h)   5 expose
 //   6 quit   7 paste (text via Win.pasted)
 //   8 drag over (x, y)   9 drag left   10 drop (text/uri-list via Win.dropped)
+//   11 focus lost
 // mods: 1 shift, 2 ctrl, 4 alt, 8 super.
 
 #if defined(__linux__)
@@ -291,6 +292,9 @@ static void win_pump(AppWin* a) {
         win_push(a, 2, ev.xmotion.x < 0 ? 0 : (u32)ev.xmotion.x,
           ev.xmotion.y < 0 ? 0 : (u32)ev.xmotion.y, 0, 0);
         break;
+      case FocusOut:
+        win_push(a, 11, 0, 0, 0, 0);
+        break;
       case ConfigureNotify:
         if ((u32)ev.xconfigure.width != a->w || (u32)ev.xconfigure.height != a->h) {
           a->w = (u32)ev.xconfigure.width;
@@ -407,7 +411,8 @@ Term win_open_run(Env e, Term* f, IoWork* w) {
       (unsigned char*)&xdnd_version, 1);
     x_XStoreName(dpy, a->win, title);
     x_XSelectInput(dpy, a->win, KeyPressMask | KeyReleaseMask | ButtonPressMask
-      | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | ExposureMask);
+      | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | ExposureMask
+      | FocusChangeMask);
     x_XMapRaised(dpy, a->win);
     x_XFlush(dpy);
   }

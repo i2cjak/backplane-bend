@@ -18,6 +18,8 @@ type WinEv is Data:
   WDragOver{x: U32, y: U32}
   WDragLeave{}
   WDrop{text: String}
+  # the window lost the keyboard (keys held then are let go unseen)
+  WBlur{}
 
 def Win.open(title: String, w: U32, h: U32) -> IO(Result<&1, &1, U32 & String, Window>):
   import "./effects/win.c"
@@ -87,6 +89,8 @@ def Win.ev.k(k: Nat, +a: U32, +b: U32, +c: U32, +d: U32) -> WinEv:
       WDragLeave{}
     case 10n:
       WDrop{""}
+    case 11n:
+      WBlur{}
     case _:
       WQuit{}
 

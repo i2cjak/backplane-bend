@@ -97,11 +97,24 @@ def Fwd.loop(fuel: Nat, +out: Chan(S.Wire), +q: Chan(ShellMsg), +tag: String) ->
     case 1n+f:
       IO.bind(Maybe<&1, S.Wire>, Unit, Chan.recv(S.Wire, out), m => Fwd.got(m, q, tag, u => Fwd.loop(f, out, q, tag)))
 
-def Timer.once(+q: Chan(ShellMsg)) -> IO(Unit):
+# the next frame after wait ms (0: at once, behind what is queued)
+def Timer.once(+q: Chan(ShellMsg), +wait: Nat) -> IO(Unit):
   do IO<Unit>:
-    IO.sleep(12)
+    IO.sleep(U32.from_nat(wait))
     ok : Bool <- Chan.send(ShellMsg, q, Frame{})
     return Unit{}
+
+def Frame.gap() -> Nat:
+  12n
+
+# frames keep Frame.gap() apart: a change after a quiet spell draws at once
+# (a key shows in the next frame, not 12 ms later); changes that come
+# faster are drawn together once the gap has passed
+def Frame.wait(+last: Nat, +now: Nat) -> Nat:
+  Nat.sub(Frame.gap(), Nat.sub(now, last))
+
+def Frame.soon(+q: Chan(ShellMsg), +wait: Nat) -> IO(Unit):
+  Bool.pick(IO(Unit), Nat.is_eq(wait, 0n), IO.bind(Bool, Unit, Chan.send(ShellMsg, q, Frame{}), _ => IO.pure(Unit, Unit{})), IO.spawn(Unit, Timer.once(q, wait)))
 
 # the caret's next toggle
 def Timer.blink(+q: Chan(ShellMsg), wait: Nat) -> IO(Unit):
@@ -117,9 +130,10 @@ def Shell.later(a: Shell) -> IO(Shell):
   match a:
     case Shell{n, w, _, True{}, +q, i, wa}:
       IO.pure(Shell, Shell{n, w, True{}, True{}, q, i, wa})
-    case Shell{n, w, _, False{}, +q, i, wa}:
+    case Shell{+n, w, _, False{}, +q, i, wa}:
       do IO<Shell>:
-        IO.spawn(Unit, Timer.once(q))
+        now : Nat <- IO.now()
+        Frame.soon(q, Frame.wait(N.Nui.ms_of(n), now))
         return Shell{n, w, True{}, True{}, q, i, wa}
 
 def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Nui:

@@ -16,7 +16,7 @@ const done = new Promise<void>((resolve) => {
     const o = JSON.parse(e.data);
     for (const c of o.items ?? []) seen.push(c);
     const proj = seen.find((c) => c.$ === "ProjectCreated");
-    if (o.t === "log") send("project.add", { path: "/tmp/smoke-project" });
+    if (o.t === "log") send("project.add", { path: home });
     if (o.t === "changes" && proj && !seen.some((c) => c.$ === "ThreadCreated")) send("thread.create", { project: proj.id, title: "Smoke" });
     if (seen.some((c) => c.$ === "ThreadCreated")) resolve();
   };

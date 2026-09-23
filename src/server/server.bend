@@ -834,11 +834,24 @@ def Codex.fed(r: U.Lines & List<&2, String>, s: Socket, +ended: Bool, +thread: S
 # ------------------------------
 # The path is always an argument ($1), never part of a script.
 
-def FsJob.list.sh() -> String:
-  "exec 2>&1; set -e; d=\"$1\"; case \"$d\" in ''|'~') d=\"$HOME\";; '~/'*) d=\"$HOME/${d#~/}\";; esac; d=$(realpath -e -- \"$d\"); [ -d \"$d\" ] || { echo \"not a folder: $d\"; exit 2; }; echo \"$d\"; find \"$d\" -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | LC_ALL=C sort | head -n 5000"
+# $d from $1: "" and ~ are home, ~/x and relative paths are under home
+def FsJob.path.sh() -> String:
+  "d=\"$1\"; case \"$d\" in ''|'~') d=\"$HOME\";; '~/'*) d=\"$HOME/${d#??}\";; /*) ;; *) d=\"$HOME/$d\";; esac; "
 
+# a folder that exists and can be opened, printed resolved (symlinks too)
+def FsJob.dir.sh() -> String:
+  "[ -e \"$d\" ] || { echo \"no such folder: $d\"; exit 2; }; d=$(realpath -e -- \"$d\"); [ -d \"$d\" ] || { echo \"not a folder: $d\"; exit 2; }; [ -r \"$d\" ] && [ -x \"$d\" ] || { echo \"cannot open: $d\"; exit 2; }; "
+
+def FsJob.list.sh() -> String:
+  "exec 2>&1; set -e; " ++ FsJob.path.sh() ++ FsJob.dir.sh() ++ "echo \"$d\"; find \"$d\" -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | LC_ALL=C sort | head -n 5000"
+
+# a new folder (and any missing parents); an existing one is refused
 def FsJob.mkdir.sh() -> String:
-  "exec 2>&1; set -e; d=\"$1\"; case \"$d\" in '~/'*) d=\"$HOME/${d#~/}\";; esac; if [ -e \"$d\" ]; then echo \"already exists: $d\"; exit 3; fi; mkdir -- \"$d\"; d=$(realpath -e -- \"$d\"); echo \"$d\""
+  "exec 2>&1; set -e; " ++ FsJob.path.sh() ++ "if [ -e \"$d\" ] || [ -L \"$d\" ]; then echo \"already exists: $d\"; exit 3; fi; mkdir -p -- \"$d\"; " ++ FsJob.dir.sh() ++ "echo \"$d\""
+
+# the folder a project would have
+def FsJob.resolve.sh() -> String:
+  "exec 2>&1; set -e; " ++ FsJob.path.sh() ++ FsJob.dir.sh() ++ "echo \"$d\""
 
 def FsJob.strs(ls: List<&2, String>) -> List<&2, J.Json>:
   match ls:
@@ -888,17 +901,46 @@ def FsJob.answer(+inbox: Chan(Msg), +client: U32, +id: String, +r: J.Json) -> IO
 def FsJob.list(+inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
   IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", FsJob.list.sh(), "sh", path], "/"), r => FsJob.answer(inbox, client, id, FsJob.listed(r)))
 
+def FsJob.last(ls: List<&2, String>) -> String:
+  Maybe.default(&2, String, List.last(&2, String, ls), "")
+
 def FsJob.made(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String) -> IO(Unit):
   match r:
     case P.Ran{0, out}:
-      FsJob.list(inbox, client, id, String.trim(out))
+      FsJob.list(inbox, client, id, FsJob.last(String.lines(String.trim(out))))
     case P.Ran{_, out}:
       FsJob.answer(inbox, client, id, J.Json.obj([J.KV{"error", J.Str{String.trim(out)}}]))
 
+# a resolved folder becomes a project: the hub gets project.create as if
+# the asking client sent it, so the answer (or "already a project") is its
+def FsJob.create(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, out}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, Rpc{client, J.Json.show(J.Json.obj([J.KV{"id", J.Num{id}}, J.KV{"m", J.Str{"project.create"}},
+          J.KV{"p", J.Json.obj([J.KV{"path", J.Str{FsJob.last(String.lines(String.trim(out)))}}])}]))})
+        return Unit{}
+    case P.Ran{_, out}:
+      FsJob.answer(inbox, client, id, J.Json.obj([J.KV{"error", J.Str{String.trim(out)}}]))
+
+def FsJob.sh(+sh: String, +path: String) -> IO(P.Ran):
+  P.Proc.run("sh", ["-c", sh, "sh", path], "/")
+
+# list, mkdir (then list it), add (resolve, then create), new (mkdir,
+# then create)
+def FsJob.run.k(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
+  match i:
+    case 1n:
+      IO.bind(P.Ran, Unit, FsJob.sh(FsJob.mkdir.sh(), path), r => FsJob.made(r, inbox, client, id))
+    case 2n:
+      IO.bind(P.Ran, Unit, FsJob.sh(FsJob.resolve.sh(), path), r => FsJob.create(r, inbox, client, id))
+    case 3n:
+      IO.bind(P.Ran, Unit, FsJob.sh(FsJob.mkdir.sh(), path), r => FsJob.create(r, inbox, client, id))
+    case _:
+      FsJob.list(inbox, client, id, path)
+
 def FsJob.run(+op: String, +inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
-  Bool.pick(IO(Unit), String.eq(op, "mkdir"),
-    IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", FsJob.mkdir.sh(), "sh", path], "/"), r => FsJob.made(r, inbox, client, id)),
-    FsJob.list(inbox, client, id, path))
+  FsJob.run.k(C.Codec.pos(["list", "mkdir", "add", "new"], op), inbox, client, id, path)
 
 def GitJob.nonblank(ls: List<&2, String>, +n: Nat) -> Nat:
   match ls:

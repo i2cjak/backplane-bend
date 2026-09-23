@@ -45,6 +45,11 @@ type Cmd is Data:
 type Act is Data:
   Act{ui: Ui, cmds: List<&2, Cmd>}
 
+def Act.cmds(a: Act) -> List<&2, Cmd>:
+  match a:
+    case Act{_, cs}:
+      cs
+
 def Ui.init(now: Nat) -> Ui:
   Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, VT.Vt)}
 
@@ -265,7 +270,7 @@ def Ui.delta(u: Ui, +thread: String, text: String) -> Ui:
 
 # a failed request shows its error, or the text of a failed git step
 def Ui.reply.err(+o: J.Json) -> String:
-  Bool.pick(String, J.Json.get_bool(o, "ok", True{}), "", J.Json.get_str(o, "error", String.take(J.Json.get_str(J.Json.get_obj(o, "result"), "text", "failed"), 200n)))
+  Bool.pick(String, J.Json.get_bool(o, "ok", True{}), "", J.Json.get_str(o, "error", J.Json.get_str(J.Json.get_obj(o, "result"), "error", String.take(J.Json.get_str(J.Json.get_obj(o, "result"), "text", "failed"), 200n))))
 
 # an answer: its request leaves the outbox
 def Ui.reply.k(u: Ui, +o: J.Json) -> Ui:
@@ -432,7 +437,7 @@ def Ui.on_thread(u: Ui, m: String) -> Act:
 def Ui.select(u: Ui, +id: String) -> Act:
   match u:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Act{Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
+      Act{Ui{st, id, Map.set(&2, String, dr, "@del", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
 
 def Ui.draft.set(u: Ui, text: String) -> Act:
   match u:
@@ -532,7 +537,7 @@ def Ui.actions() -> List<&2, String>:
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
-   "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
+   "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine"]
 
 # Reading the client state
@@ -811,6 +816,83 @@ def Side.strs(xs: List<&2, String>) -> List<&2, J.Json>:
       Nil{}
     case x <> t:
       J.Str{x} <> Side.strs(t)
+
+def Side.open(u: Ui) -> Map<&2, Bool>:
+  match u:
+    case Ui{_, _, _, _, op, _, _, _, _, _, _, _, _, _, _, _, _}:
+      op
+
+# Hotkeys: alt+1..9 goes to the Nth project the sidebar shows, ctrl+1..9 to
+# the Nth thread the sidebar shows in the selected thread's project.
+
+def Side.pids(rs: List<&2, SRow>) -> List<&2, String>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case SRow{_, M.Project{id, _, _, _, _}, _} <> t:
+      id <> Side.pids(t)
+
+# the sidebar's projects, top to bottom
+def Side.projects(u: Ui) -> List<&2, String>:
+  match u:
+    case Ui{+st, _, _, _, _, _, +now, _, _, _, _, _, _, _, _, _, _}:
+      Side.pids(Side.rows(st, now))
+
+def Side.only.k(keep: Bool, r: SRow, rest: List<&2, SRow>) -> List<&2, SRow>:
+  match keep:
+    case True{}:
+      r <> rest
+    case False{}:
+      rest
+
+def Side.only(rs: List<&2, SRow>, +pid: String) -> List<&2, SRow>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case SRow{r, M.Project{+id, ti, ro, c, rm}, sh} <> t:
+      Side.only.k(String.eq(id, pid), SRow{r, M.Project{id, ti, ro, c, rm}, sh}, Side.only(t, pid))
+
+# the selected thread's project ("" with nothing selected)
+def Side.cur(u: Ui) -> String:
+  match u:
+    case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Bool.pick(String, String.is_empty(sel), "", Ui.thread_project(Ui.thread(st, sel)))
+
+# the threads the sidebar shows in project pid, top to bottom
+def Side.of(+u: Ui, +pid: String) -> List<&2, String>:
+  Side.visible.go(Side.only(Side.rows(Side.st(u), Side.now(u)), pid), Side.open(u))
+
+# the threads ctrl+1..9 count in
+def Side.here(+u: Ui) -> List<&2, String>:
+  Side.of(u, Side.cur(u))
+
+def Side.live.go(rs: List<&2, SRow>) -> List<&2, String>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case SRow{_, _, M.Shelves{p, a, st, _, sn}} <> t:
+      List.concat(&2, String, [Side.ids(p), Side.ids(a), Side.ids(sn), Side.ids(st), Side.live.go(t)])
+
+# where alt+N lands in project pid: the selected thread when it is already
+# there, else the project's top thread, collapsed shelves included (""
+# when it has none, so the caller starts one)
+def Side.home.k(here: Bool, +u: Ui, +pid: String) -> String:
+  match here:
+    case True{}:
+      Ui.sel(u)
+    case False{}:
+      Side.first(Side.live.go(Side.only(Side.rows(Side.st(u), Side.now(u)), pid)))
+
+def Side.home(+u: Ui, +pid: String) -> String:
+  Side.home.k(Bool.and(Bool.not(String.is_empty(pid)), String.eq(Side.cur(u), pid)), u, pid)
+
+# x's place in xs counting from 1, 0 when absent (the number a hint shows)
+def Side.num(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      0n
+    case +h <> t:
+      Bool.pick(Nat, String.eq(h, x), 1n+i, Side.num(t, x, 1n+i))
 
 def Ui.reorder.k(ok: Bool, +u: Ui, s: Sect, +id: String, +to: Nat) -> Act:
   match ok s:
@@ -1157,7 +1239,7 @@ def Palette.threads(ts: List<&2, M.Thread>) -> List<&2, PItem>:
 def Palette.actions(+pid: String) -> List<&2, PItem>:
   [PItem{"New thread", "new-thread", pid}, PItem{"Diff: what this thread changed", "diff", ""}, PItem{"Terminal", "key:term", ""},
    PItem{"Attach a file", "key:attach", ""}, PItem{"Commit & push", "git", "commit_push"}, PItem{"Open pull request", "git", "commit_push_pr"}, PItem{"Revert thread", "revert", "0"},
-   PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""},
+   PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""}, PItem{"Delete thread", "delete", ""},
    PItem{"Snooze 1 hour", "snooze", "1h"}, PItem{"Snooze until tomorrow 9:00", "snooze", "tomorrow"}, PItem{"Snooze 1 week", "snooze", "1w"}, PItem{"Unsnooze", "snooze", "off"},
    PItem{"Search threads", "key:search", ""}, PItem{"Find file", "key:files", ""},
    PItem{"Viewer", "panel", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
@@ -1440,6 +1522,24 @@ def Proj.reset(u: Ui, +q: String) -> Ui:
 def Proj.dir(u: Ui) -> String:
   Ui.info(u, "proj.dir")
 
+def Ui.rid(u: Ui) -> Nat:
+  match u:
+    case Ui{_, _, _, _, _, _, _, _, _, _, rid, _, _, _, _, _, _}:
+      rid
+
+def Ui.error_put(u: Ui, e: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, e, note, nf, ob, tr}
+
+# a request of the picker's: only the answer to the newest one counts (a
+# listing that arrives after the user has moved on is dropped)
+def Proj.rpc(+u: Ui, m: String, p: List<&2, J.KV>) -> Act:
+  Ui.rpc(Ui.scratch_set(u, "@proj.rid", Nat.show(Ui.rid(u))), m, p)
+
+def Proj.mine(+u: Ui, +o: J.Json) -> Bool:
+  Bool.and(Bool.not(String.is_empty(Ui.scratch(u, "@proj.rid"))), String.eq(J.Json.as_raw(J.Json.get(o, "id"), ""), Ui.scratch(u, "@proj.rid")))
+
 def Proj.focus(a: Act) -> Act:
   match a:
     case Act{u, cs}:
@@ -1447,7 +1547,7 @@ def Proj.focus(a: Act) -> Act:
 
 # opens where it was last (home the first time)
 def Proj.open(+u: Ui) -> Act:
-  Proj.focus(Ui.rpc(Proj.reset(Ui.flag_on(u, "proj"), ""), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}]))
+  Proj.focus(Proj.rpc(Proj.reset(Ui.flag_on(u, "proj"), ""), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}]))
 
 def Proj.names(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
@@ -1481,14 +1581,43 @@ def Proj.nonempty(xs: List<&2, String>) -> List<&2, String>:
 def Proj.entries(u: Ui) -> List<&2, String>:
   Proj.nonempty(String.split(Ui.info(u, "proj.entries"), Proj.sep()))
 
-# a listing (or its error) arrived
-def Proj.reply(has: Bool, u: Ui, +o: J.Json) -> Ui:
-  match has:
+# what an answer is to the picker: 0 not its newest request's, 1 a
+# listing, 2 a project added, 3 an error
+def Proj.which(mine: Bool, ok: Bool, dir: Bool) -> Nat:
+  match mine ok dir:
+    case False{} _ _:
+      0n
+    case True{} True{} True{}:
+      1n
+    case True{} True{} False{}:
+      2n
+    case True{} False{} _:
+      3n
+
+# an error shows in the picker while it is open (not also as a toast)
+def Proj.failed(open: Bool, u: Ui, +e: String) -> Ui:
+  match open:
     case True{}:
-      Ui.info_set(Ui.info_set(Ui.info_set(u, "proj.dir", J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")), "proj.entries",
-        String.join(Proj.names(J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), SCon{Proj.sep(), SNil{}})), "proj.err", "")
+      Ui.info_set(Ui.error_put(u, ""), "proj.err", e)
     case False{}:
-      Ui.info_set(u, "proj.err", J.Json.get_str(J.Json.get_obj(o, "result"), "error", ""))
+      u
+
+def Proj.reply.k(i: Nat, +u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 1n:
+      Ui.info_set(Ui.info_set(Ui.info_set(Ui.scratch_set(u, "@proj.rid", ""), "proj.dir", J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")), "proj.entries",
+        String.join(Proj.names(J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), SCon{Proj.sep(), SNil{}})), "proj.err", "")
+    case 2n:
+      Ui.info_set(Ui.flag_off(Ui.scratch_set(u, "@proj.rid", ""), "proj"), "proj.err", "")
+    case 3n:
+      Proj.failed(Ui.flag(u, "proj"), Ui.scratch_set(u, "@proj.rid", ""), Ui.reply.err(o))
+    case _:
+      u
+
+# an answer to the picker: a listing replaces the one shown, an added
+# project closes it, an error shows in it
+def Proj.reply(+o: J.Json, +u: Ui) -> Ui:
+  Proj.reply.k(Proj.which(Proj.mine(u, o), J.Json.get_bool(o, "ok", True{}), Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")))), u, o)
 
 def Proj.join(+dir: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
@@ -1499,9 +1628,20 @@ def Proj.parent.k(+ps: List<&2, String>) -> String:
 def Proj.parent(+dir: String) -> String:
   Proj.parent.k(String.split(dir, '/'))
 
-# a name a new folder may take: no slash, not "." or "..", not blank
+def Proj.plain(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{Chr{+c}, t}:
+      Bool.and(Bool.and(U32.is_ge(c, 32), U32.is_ne(c, 127)), Proj.plain(t))
+
+def Proj.name_ok.t(+q: String) -> Bool:
+  Bool.and(Bool.and(Bool.not(String.is_empty(q)), Bool.and(Bool.not(String.contains(q, "/")), Proj.plain(q))), Bool.and(Bool.not(String.eq(q, ".")), Bool.not(String.eq(q, ".."))))
+
+# a name a new folder may take (trimmed): not blank, no slash or control
+# characters, not "." or ".."
 def Proj.name_ok(+q: String) -> Bool:
-  Bool.and(Bool.and(Bool.not(String.is_empty(String.trim(q))), Bool.not(String.contains(q, "/"))), Bool.and(Bool.not(String.eq(q, ".")), Bool.not(String.eq(q, ".."))))
+  Proj.name_ok.t(String.trim(q))
 
 def Proj.exact(ns: List<&2, String>, +q: String) -> Bool:
   match ns:
@@ -1555,13 +1695,14 @@ def Proj.items.q(empty: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, St
         Proj.rows(Proj.scored(ns, q), dir)])
     case False{}:
       List.concat(&2, PItem, [Proj.rows(List.sort(~Scored, ~Scored.before, Proj.scored(ns, q)), dir),
-        Bool.pick(List<&2, PItem>, Bool.and(Proj.name_ok(q), Bool.not(Proj.exact(ns, q))), [PItem{"Create folder '" ++ q ++ "' here", "proj-mkdir", Proj.join(dir, q)}], Nil{}),
+        Bool.pick(List<&2, PItem>, Bool.and(Proj.name_ok(q), Bool.not(Proj.exact(ns, String.trim(q)))),
+          [PItem{"Create project '" ++ String.trim(q) ++ "' here", "proj-new", Proj.join(dir, String.trim(q))}, PItem{"Create folder '" ++ String.trim(q) ++ "' here", "proj-mkdir", Proj.join(dir, String.trim(q))}], Nil{}),
         Proj.add(u, dir)])
 
 def Proj.items.k(path: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, String>) -> List<&2, PItem>:
   match path:
     case True{}:
-      [PItem{"Go to " ++ q, "proj-cd", q}]
+      [PItem{"Go to " ++ q, "proj-cd", q}, PItem{"Add " ++ q ++ " as a project", "proj-add", q}, PItem{"Create project " ++ q, "proj-new", q}]
     case False{}:
       Proj.items.q(String.is_empty(q), u, q, dir, ns)
 
@@ -1576,11 +1717,13 @@ def Proj.items(+u: Ui) -> List<&2, PItem>:
 def Proj.run.k(i: Nat, u: Ui, +v: String) -> Act:
   match i:
     case 0n:
-      Ui.rpc(Ui.flag_off(u, "proj"), "project.add", [J.KV{"path", J.Str{v}}])
+      Proj.rpc(Ui.info_set(u, "proj.err", ""), "project.add", [J.KV{"path", J.Str{v}}])
     case 1n:
-      Ui.rpc(Proj.reset(u, ""), "fs.list", [J.KV{"path", J.Str{v}}])
+      Proj.rpc(Proj.reset(u, ""), "fs.list", [J.KV{"path", J.Str{v}}])
     case 2n:
-      Ui.rpc(Proj.reset(u, ""), "fs.mkdir", [J.KV{"path", J.Str{v}}])
+      Proj.rpc(Proj.reset(u, ""), "fs.mkdir", [J.KV{"path", J.Str{v}}])
+    case 3n:
+      Proj.rpc(Ui.info_set(u, "proj.err", ""), "project.new", [J.KV{"path", J.Str{v}}])
     case _:
       Act{u, Nil{}}
 
@@ -1594,7 +1737,7 @@ def Proj.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
 def Proj.run(it: PItem, u: Ui) -> Act:
   match it:
     case PItem{_, +a, +v}:
-      Proj.run.k(Proj.pos(["proj-add", "proj-cd", "proj-mkdir"], a, 0n), u, v)
+      Proj.run.k(Proj.pos(["proj-add", "proj-cd", "proj-mkdir", "proj-new"], a, 0n), u, v)
 
 # Enter runs the selected row
 def Proj.enter(+u: Ui) -> Act:
@@ -1687,7 +1830,7 @@ def Ui.reply.skills(u: Ui, +o: J.Json) -> Ui:
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Proj.reply(Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", ""))), Ui.reply.skills(u, o), o)
+  Proj.reply(o, Ui.reply.skills(u, o))
 
 def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
   match i:
@@ -1876,6 +2019,31 @@ def Ui.key.p(ps: List<&2, String>, +u: Ui) -> Act:
 def Ui.key(+u: Ui, v: String) -> Act:
   Ui.key.p(String.split(v, '\t'), u)
 
+# Deleting a thread
+# -----------------
+# Deleting asks first: "delete" arms it (the header asks to confirm),
+# "delete" again deletes the thread and goes back to the start, and
+# "delete-no" disarms it. Only the selected thread can be armed, so
+# choosing another one disarms it too.
+
+def Ui.deleting(+u: Ui) -> Bool:
+  Bool.and(Bool.not(String.is_empty(Ui.sel(u))), String.eq(Ui.scratch(u, "@del"), Ui.sel(u)))
+
+def Ui.unselect(a: Act) -> Act:
+  match a:
+    case Act{Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, cs}:
+      Act{Ui{st, "", dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, cs}
+
+def Ui.delete.k(armed: Bool, +u: Ui) -> Act:
+  match armed:
+    case True{}:
+      Ui.unselect(Ui.on_thread(Ui.scratch_set(u, "@del", ""), "thread.delete"))
+    case False{}:
+      Act{Ui.scratch_set(u, "@del", Ui.sel(u)), Nil{}}
+
+def Ui.delete(+u: Ui) -> Act:
+  Ui.delete.k(Ui.deleting(u), u)
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -1911,7 +2079,7 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 15n:
       Ui.dismiss(u)
     case 16n:
-      Ui.on_thread(u, "thread.delete")
+      Ui.delete(u)
     case 17n:
       Ui.rpc(u, "app.update", Nil{})
     case 18n:
@@ -1960,6 +2128,10 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.mention(u, value)
     case 40n:
       Ui.on_thread(u, "files.list")
+    case 41n:
+      Act{Ui.scratch_set(u, "@del", ""), Nil{}}
+    case 42n:
+      Proj.run.k(3n, u, value)
     case 49n:
       Act{Ui.drop_hover(u, value), Nil{}}
     case 50n:

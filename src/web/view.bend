@@ -243,7 +243,15 @@ def View.snooze(snoozed: Bool, picking: Bool) -> List<&2, D.Node>:
       [D.Dom.button("", "snooze", "1h", "Snooze for an hour", "1 hour"), D.Dom.button("", "snooze", "tomorrow", "Snooze until 9:00 tomorrow", "Tomorrow"),
        D.Dom.button("", "snooze", "1w", "Snooze for a week", "1 week"), D.Dom.button("on", "flag", "snooze", "Cancel", "Snooze")]
 
-def View.header(t: M.Thread, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool) -> D.Node:
+# Delete asks first: once armed it reads "Delete thread" beside Cancel
+def View.del(on: Bool) -> List<&2, D.Node>:
+  match on:
+    case True{}:
+      [D.Dom.button("danger", "delete", "", "Delete this thread for good", "Delete thread"), D.Dom.button("", "delete-no", "", "Keep it", "Cancel")]
+    case False{}:
+      [D.Dom.button("", "delete", "", "Delete thread", "Delete")]
+
+def View.header(t: M.Thread, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> D.Node:
   match t:
     case M.Thread{_, _, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
       D.El{"header", "", [D.At{"class", "thread-head"}], [
@@ -251,7 +259,7 @@ def View.header(t: M.Thread, +panel: Bool, snoozed: Bool, picking: Bool, term: B
         D.Dom.span("title", title),
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
         D.El{"div", "", [D.At{"class", "tools"}], List.concat(&2, D.Node, [D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
-          [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua))], View.snooze(snoozed, picking), [View.archive(archived),
+          [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua))], View.snooze(snoozed, picking), [View.archive(archived)], View.del(del), [
            D.Dom.button(Bool.pick(String, term, "on", ""), "term-toggle", "@term-size", "Terminal (ctrl+j)", "Terminal"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")]])}]}
@@ -624,7 +632,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
         D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat([
-        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff")),
+        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff"), String.eq(U.Str.get(drafts, "@del"), id)),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id), D.Dom.cat(View.sending(pend),

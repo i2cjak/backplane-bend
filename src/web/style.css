@@ -247,3 +247,4 @@ button.icon { display: inline-flex; align-items: center; justify-content: center
 .lightbox .lb-img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; -webkit-user-drag: none; }
 .lightbox .lb-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; }
 .lightbox .lb-close:hover { border-color: var(--accent); }
+.tools button.danger { border-color: var(--bad); color: var(--bad); }

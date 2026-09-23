@@ -19,6 +19,8 @@ import ./src/core/svg.bend as SVG
 import ./src/core/icons.bend as ICO
 import ./src/core/lightbox.bend as LBX
 import ./src/core/links.bend as LK
+import ./src/core/client.bend as U
+import ./src/gfx/text.bend as X
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -664,3 +666,67 @@ law icons_used_exist:
 # every path of every icon parses and begins with a moveto
 law icons_all_draw:
   {ICO.Icon.bad(ICO.Icon.all()) == Nil{} : List<&2, String>}
+
+# Hotkeys
+# -------
+
+# alt+1..9 picks a project everywhere, the terminal included
+law hotkey_alt_digit:
+  {N.Keys.name(49, 4, True{}) == "project" : String}
+
+# ctrl+1..9 picks a thread of this project
+law hotkey_ctrl_digit:
+  {N.Keys.name(57, 2, False{}) == "jump" : String}
+
+# pressing alt shows the project numbers, whatever was shown before
+law hint_alt_starts:
+  for +h: String
+  for +mods: U32
+  {N.Hint.down(h, 65513, mods) == "alt" : String}
+
+# a key pressed with the hint's modifier up ends the hint (its release was
+# missed), so numbers never stick
+law hint_missed_release_ends:
+  {N.Hint.down("ctrl", 97, 0) == "" : String}
+
+# Editing and threads
+# -------------------
+
+# a space typed at the end of the composer stays on its line, so the caret
+# moves past it at once (not only once the next character comes)
+law wrap_keeps_last_space:
+  {X.Text.wrap(Map.new(&2, X.TG), X.Text.bitmap(), "hello ", 400) == ["hello "] : List<&2, String>}
+
+# ctrl+a selects the whole text: the caret at its end, the other end at 0
+law edit_select_all:
+  {N.Ed.key(97, 0, 2, "abc", 1n, 1n) == N.Ed{"abc", 3n, 0n, False{}, False{}, "", 0n} : N.Ed}
+
+# typing over a selection replaces it
+law edit_type_replaces:
+  {N.Ed.key(120, 120, 0, "hello world", 6n, 11n) == N.Ed{"hello x", 7n, 7n, False{}, True{}, "", 1n} : N.Ed}
+
+# a first Delete only asks: nothing reaches the hub until it is confirmed
+law delete_asks_first:
+  for u: U.Ui
+  {U.Act.cmds(U.Ui.delete.k(False{}, u)) == Nil{} : List<&2, U.Cmd>}
+
+# an answer to anything but the project picker's newest request leaves the
+# client as it was (a late listing never replaces a newer one)
+law picker_drops_stale:
+  for u: U.Ui
+  for +o: J.Json
+  {U.Proj.reply.k(0n, u, o) == u : U.Ui}
+
+# the timeline a frame draws, from the memo the window brings up to date
+# before it (Lay.memo), is the timeline drawn from scratch
+law tl_frame_exact:
+  for +ty: L.Ty
+  for +es: List<&2, M.Entry>
+  for +old: List<&2, M.Entry>
+  for +px0: U32
+  for +sel0: String
+  for +st: M.State
+  for +sel: String
+  for +px: U32
+  for +pics: Map<&2, String>
+  {L.TL.memo.shown(ty, L.TL.memo.of(ty, es, px, sel, L.TLMemo{px0, sel0, L.TL.memo.make(ty, old, px0, sel0)}), st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}

@@ -175,9 +175,10 @@ def Tiles.image(t: Tiles) -> Image:
 # Frames
 # ------
 
-# tiles are 2^5 = 32 pixels wide
+# tiles are 2^6 = 64 pixels wide (32 cut a 1400 x 900 frame into so many
+# that comparing them cost more than the redraws they saved)
 def Frame.tile() -> Nat:
-  5n
+  6n
 
 # a frame's tiles and the size they cover (none yet: an empty cache)
 type Frames is Data:

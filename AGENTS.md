@@ -20,11 +20,12 @@ When using Bend:
 - `src/server/`: the Bend program that owns IO: HTTP/WebSocket, the event store, agent processes, git, file watching, and updates. Custom effects (`*.c` + `*.js` twins) are in `src/server/effects/`.
 - `src/app/`: the native app (the default `backplane`). A Bend window client in the same process as the hub: `nui.bend` (input → state, pure), `layout.bend` (state → draw ops + hit regions), `main.bend` (event loop), `effects/win.c` (X11 window, dlopen'd libX11).
 - `src/gfx/`: the rasterizer. Draw ops become Base's `Image` quadtree in parallel (`raster.bend`); `draw.bend` builds ops; `font.bend` is generated from Spleen 8x16. `text.bend` is system-font text (fontconfig + FreeType via `effects/font.c`, dlopen'd): faces, a glyph cache in Bend state, measure/wrap/draw; `patches/raster-bitmap-shape.patch` adds the `SMask` coverage shape it draws with.
-- `src/gfx/tiles.bend`: frames kept as 32 px tiles; the next frame redraws only tiles whose ops or base changed (laws `tiles_again_exact`, `frame_again_exact`, `tile_keep`). The timeline keeps each entry's laid-out lines the same way (`TL.memo` in `layout.bend`, laws `tl_*`). Both compare with `src/core/eq.bend`/`Eq.*`, exact equalities whose soundness is proven, so nothing stale is reused.
+- `src/gfx/tiles.bend`: frames kept as 64 px tiles; the next frame redraws only tiles whose ops or base changed (laws `tiles_again_exact`, `frame_again_exact`, `tile_keep`). The timeline keeps each entry's laid-out lines the same way (`TL.memo` in `layout.bend`, laws `tl_*`). Both compare with `src/core/eq.bend`/`Eq.*`, exact equalities whose soundness is proven, so nothing stale is reused.
 - `src/gfx/bitmap.bend`: raw RGB frames (the browser helper's frame file) as an `Image` quadtree, composited into a frame at a place and size.
 - `src/core/svg.bend` (pure: SVG path data parsed, written, flattened; laws `svg_*`) and `src/core/icons.bend` (the icon set, Lucide paths, ISC; laws `icons_*`). The window rasterizes them once into `SMask` bitmaps in the glyph cache (`src/gfx/icon.bend`, `Lay.icon`/`Lay.ibutton`); the web writes them as inline `<svg>` (`src/web/icon.bend`). Test: `test/svg_test.bend`.
 - `tools/browser/`: `backplane-browser`, a Bun + playwright-core headless Chromium driven by NDJSON on stdin/stdout; raw frames go to a file. Protocol in its README. Built by `scripts/build-browser.sh`.
 - `src/core/client.bend`: the client state and actions both UIs share.
+- `src/core/edit.bend`: text editing for the window's fields (word and line motions, ranges, undo history); `nui.bend`'s `Ed` maps keys onto it. Test: `test/edit_test.bend`. Thread text selection is `TSel` in `layout.bend` and `Sel.*` in `nui.bend` (test `test/select_test.bend`).
 - `src/core/tailnet.bend` (pure: owner trust from `tailscale whois`, the owner's machines from `tailscale status`) and `src/app/link.bend` (a WebSocket client shaped like a hub, so the native window can switch to another machine's hub). Each hub finds the owner's other hubs (GET /hello) and lists them in the sidebar; `BACKPLANE_PEERS` names hubs off the tailnet.
 - `src/core/diff.bend` (pure: unified diff → files, hunks, numbered lines; stats) and `src/server/git.bend` (IO: repo info, porcelain status, worktrees, hidden-ref checkpoints, stacked commit/push/PR). See `docs/git.md`. Native test: `bend test/native/git_test.bend -o build/git_test && build/git_test`.
 - `src/core/lightbox.bend`: the image lightbox (pure: zoom clamped and eased, cursor-anchored, drag pan, what closes it; laws `lightbox_*`). The web keeps its `Lb` in host.js and calls app.bend's `lb_*`; the window keeps it as text in the Ui scratch (`@lb`, `@lb.v`, nui.bend's `Lbx`) and main.bend's `Lbv` draws it with `Bitmap.view`.
@@ -49,6 +50,8 @@ dist/backplane        # run it (opens http://127.0.0.1:3787)
 Native builds go through `scripts/build-app.sh`: bend emits the C, `scripts/cc-split.py` splits it into units, and clang compiles them at nice 19 on cores 0-3 (`BACKPLANE_JOBS`, `BACKPLANE_CPUS`), one build at a time machine-wide (`/tmp/bp-wt-build.lock`). About 2 minutes instead of 4+, and far less memory than one 30 MB file. Never run a bare `bend src/app/main.bend -o ...` on a machine someone is using.
 
 Native builds need clang 19+ and X11 headers (`libx11-dev`). Without root, `~/.local/bin/clang` may be a `zig cc` shim, and `BACKPLANE_X11=~/.local/x11` points the build at headers extracted from the .deb.
+
+Typing speed: `scripts/build-app.sh test/native/type_bench.bend build/type_bench && build/type_bench` replays keys through the event, memo, layout and tiles with no window and prints ms per key.
 
 Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/snap.ppm build/backplane --home /tmp/bp-x`, drive it with `build/xpoke` (`test/tools/xpoke.c`: click/type/key/wheel), and view frames with `scripts/ppm-to-png.py`.
 
@@ -87,6 +90,11 @@ Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/sn
 - Only tail calls are free: a walk that builds its result outside the recursive call (`String.repeat`, `Utf8.encode_onto`, `Json.items`) overflows the stack around a few hundred thousand steps. For big inputs, push onto a reversed accumulator and reverse once (`Enc.go` in cbor.bend).
 - In `win.c`, an Xlib call outside the pump (XPutImage, XFlush...) can pull input into Xlib's queue while the pump sleeps on the socket; call `win_nudge(a)` after it or keys show one keystroke late.
 - Effect C must not contain the word `undefined`, even in a comment: bend reads it as a missing name and stops with "an unbound name in the emitted C" (vendored code included, e.g. stb_image in `src/app/effects/img.c`).
+- `Bool.and`/`Bool.or` are strict: both sides are always computed. An `Eq.*` over a list compares all of it.
+- `U32.shr(x)` shifts by one; `U32.shrn(x, n)`/`U32.shln(x, n)` take a Nat count.
+- A `+n: Nat` parameter makes the `1n+k` predecessor reusable too; with a plain `n`, `k` may be used once.
+- In dash (`/bin/sh`), `${d#~/}` expands the `~` first and strips nothing; use `${d#??}`.
+- The glyph cache's string-keyed `Map` is slow per glyph; `Text.get` reads ASCII from the face's `GTab` (filled by `Face.tabled` once warmed).
 - CPU forks are dealt out once, not stolen: fork over one flat balanced tree of work items (all primitives of all nodes) rather than nesting forks per group; nested forks inside a heavy group barely spread.
 
 ## House rules

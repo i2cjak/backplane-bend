@@ -205,12 +205,38 @@ def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
     Reply.ok(client, id) <> Bool.pick(List<&2, Out>, String.eq(env, "worktree"),
       [Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, project)), Hub.base(Hub.project.root(Hub.project(s, project))), ""}], Nil{})}
 
+def Hub.root.norm.fin(+r: String) -> String:
+  Bool.pick(String, String.is_empty(r), "/", r)
+
+def Hub.root.slashes.k(slash: Bool, rest: Nat) -> Nat:
+  match slash:
+    case True{}:
+      1n+rest
+    case False{}:
+      0n
+
+def Hub.root.slashes(s: String) -> Nat:
+  match s:
+    case SNil{}:
+      0n
+    case SCon{Chr{+c}, t}:
+      Hub.root.slashes.k(U32.is_eq(c, 47), Hub.root.slashes(t))
+
+def Hub.root.norm.go(+rev: String) -> String:
+  Hub.root.norm.fin(String.reverse(String.drop(rev, Hub.root.slashes(rev))))
+
+# a root without trailing slashes ("/" stays)
+def Hub.root.norm(+r: String) -> String:
+  Bool.pick(String, Bool.and(String.ends_with(r, "/"), Nat.is_gt(String.length(r), 1n)),
+    Hub.root.norm.go(String.reverse(r)), r)
+
+# whether a live project has this root (trailing slashes aside)
 def Hub.has_root(ps: List<&2, M.Project>, +root: String) -> Bool:
   match ps:
     case Nil{}:
       False{}
     case M.Project{_, _, r, _, rm} <> t:
-      Bool.or(Bool.and(String.eq(r, root), Bool.not(rm)), Hub.has_root(t, root))
+      Bool.or(Bool.and(String.eq(Hub.root.norm(r), Hub.root.norm(root)), Bool.not(rm)), Hub.has_root(t, root))
 
 def Hub.projects(s: M.State) -> List<&2, M.Project>:
   match s:
@@ -222,11 +248,17 @@ def Hub.project_add.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: Stri
     case True{}:
       Step.outs([Reply.err(client, id, "already a project: " ++ root)])
     case False{}:
-      Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
+      Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), Hub.root.norm(root), now}])
 
-# a folder becomes a project once (the same root twice is refused)
+# a folder becomes a project once (the same root twice is refused). The
+# server resolves project.add's path first (~, relative, symlinks; it must
+# be a folder it can open) and sends it back here as project.create
+def Hub.project_add.p(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:
+  Bool.pick(Step, String.is_empty(String.trim(root)), Step.outs([Reply.err(client, id, "no folder given")]),
+    Hub.project_add.k(Hub.has_root(Hub.projects(s), root), s, now, client, id, p, root))
+
 def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
-  Hub.project_add.k(Hub.has_root(Hub.projects(s), J.Json.get_str(p, "path", "")), s, now, client, id, p, J.Json.get_str(p, "path", ""))
+  Hub.project_add.p(s, now, client, id, p, J.Json.get_str(p, "path", ""))
 
 # change a thread's modes; what the request leaves out stays as it is
 def Hub.modes(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, t: M.Thread) -> Step:
@@ -327,9 +359,11 @@ def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
 # Method groups (each appended to only by its own feature area)
 # ------------------------------------------------------------
 
-# folders for the project picker (listing, creating); the server answers
+# folders for the project picker (listing, creating, creating as a
+# project); the server answers. project.create is the server's own, with
+# a path it has resolved
 def Hub.methods.fs() -> List<&2, String>:
-  ["fs.list", "fs.mkdir"]
+  ["fs.list", "fs.mkdir", "project.new", "project.create"]
 
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
@@ -484,6 +518,10 @@ def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json
       Step.outs([Fs{client, id, "list", J.Json.get_str(p, "path", "")}])
     case 1n:
       Step.outs([Fs{client, id, "mkdir", J.Json.get_str(p, "path", "")}])
+    case 2n:
+      Step.outs([Fs{client, id, "new", J.Json.get_str(p, "path", "")}])
+    case 3n:
+      Hub.project_add(s, now, client, id, p)
     case _:
       Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
 
@@ -685,7 +723,7 @@ def Hub.turn(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String,
 def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
     case 0n:
-      Hub.project_add(s, now, client, id, p)
+      Step.outs([Fs{client, id, "add", J.Json.get_str(p, "path", "")}])
     case 1n:
       Step.reply(client, id, [M.ProjectRemoved{J.Json.get_str(p, "project", ""), now}])
     case 2n:

@@ -11,6 +11,7 @@ import ../core/vt.bend as VT
 import ../core/attach.bend as AT
 import ../core/links.bend as LK
 import ../core/lightbox.bend as LB
+import ../core/edit.bend as ED
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -83,6 +84,12 @@ def Key.right() -> U32:
 def Key.end() -> U32:
   65367
 
+def Key.up() -> U32:
+  65362
+
+def Key.down() -> U32:
+  65364
+
 def Key.kp_enter() -> U32:
   65421
 
@@ -133,59 +140,144 @@ def Nui.act(n: Nui, +action: String, +value: String) -> Step:
 # Server messages
 # ---------------
 
-def Nui.recv(n: Nui, +o: J.Json) -> Nui:
+def Nui.recv.k(n: Nui, +o: J.Json) -> Nui:
   match n:
     case Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Nui{U.Ui.recv(u, o), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
+def Nui.with_focus(n: Nui, fo: String) -> Nui:
+  match n:
+    case Nui{u, w, h, mx, my, sd, sc, ca, _, pa, hi, ms, vw}:
+      Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
+
 # Editing a text field
 # --------------------
+# Normal editor keys: arrows (ctrl: by word), Home/End (the line; ctrl: the
+# text), Up/Down between lines, shift with any of them selects, ctrl+a
+# selects all, ctrl+c/ctrl+x copy and cut, ctrl+backspace/ctrl+delete
+# delete a word, ctrl+z undoes and ctrl+shift+z (or ctrl+y) redoes. Typing
+# or pasting replaces the selection. The motions are core/edit.bend's.
 
+# the text, the caret and the selection's other end (the caret when none)
+# after a key; whether it submits, whether the text changed, what it
+# copies ("" nothing) and its kind: 0 a move, 1 typing, 2 deleting, 3
+# another change, 4 undo, 5 redo
 type Ed is Data:
-  Ed{text: String, caret: Nat, submit: Bool, changed: Bool}
+  Ed{text: String, caret: Nat, mark: Nat, submit: Bool, changed: Bool, clip: String, kind: Nat}
 
-def Ed.insert(+s: String, +i: Nat, +x: String) -> Ed:
-  Ed{String.take(s, i) ++ x ++ String.drop(s, i), Nat.add(i, String.length(x)), False{}, True{}}
+def Ed.at(+s: String, +c: Nat, +m: Nat) -> Ed:
+  Ed{s, c, m, False{}, False{}, "", 0n}
 
-def Ed.back(+s: String, +i: Nat) -> Ed:
-  Bool.pick(Ed, Nat.is_eq(i, 0n), Ed{s, i, False{}, False{}},
-    Ed{String.take(s, Nat.sub(i, 1n)) ++ String.drop(s, i), Nat.sub(i, 1n), False{}, True{}})
+# a move; with shift the selection's other end stays
+def Ed.go(+shift: Bool, +s: String, +c: Nat, +m: Nat) -> Ed:
+  Ed.at(s, c, Bool.pick(Nat, shift, m, c))
 
-def Ed.del(+s: String, +i: Nat) -> Ed:
-  Ed{String.take(s, i) ++ String.drop(s, 1n+i), i, False{}, True{}}
+# the text between a and b becomes x, the caret after it
+def Ed.put(+s: String, +a: Nat, +b: Nat, +x: String, +k: Nat) -> Ed:
+  Ed{ED.Edit.splice(s, a, b, x), Nat.add(ED.Edit.lo(a, b), String.length(x)), Nat.add(ED.Edit.lo(a, b), String.length(x)), False{}, True{}, "", k}
 
-def Ed.move(+s: String, +i: Nat) -> Ed:
-  Ed{s, Bool.pick(Nat, Nat.is_gt(i, String.length(s)), String.length(s), i), False{}, False{}}
+def Ed.insert(+s: String, +i: Nat, +m: Nat, +x: String) -> Ed:
+  Ed.put(s, i, m, x, 3n)
 
-def Ed.key.k(enter: Bool, back: Bool, del: Bool, left: Bool, right: Bool, home: Bool, end: Bool, typed: Bool,
-    +shift: Bool, +s: String, +i: Nat, +text: U32) -> Ed:
-  match enter back del left right home end typed:
-    case True{} _ _ _ _ _ _ _:
-      Bool.pick(Ed, shift, Ed.insert(s, i, "\n"), Ed{s, i, True{}, False{}})
-    case _ True{} _ _ _ _ _ _:
-      Ed.back(s, i)
-    case _ _ True{} _ _ _ _ _:
-      Ed.del(s, i)
-    case _ _ _ True{} _ _ _ _:
-      Ed.move(s, Nat.sub(i, 1n))
-    case _ _ _ _ True{} _ _ _:
-      Ed.move(s, 1n+i)
-    case _ _ _ _ _ True{} _ _:
-      Ed.move(s, 0n)
-    case _ _ _ _ _ _ True{} _:
-      Ed.move(s, String.length(s))
-    case _ _ _ _ _ _ _ True{}:
-      Ed.insert(s, i, SCon{Chr{text}, SNil{}})
-    case _ _ _ _ _ _ _ _:
-      Ed{s, i, False{}, False{}}
+def Ed.cut(sel: Bool, +s: String, +i: Nat, +m: Nat) -> Ed:
+  match sel:
+    case True{}:
+      Ed{ED.Edit.splice(s, i, m, ""), ED.Edit.lo(i, m), ED.Edit.lo(i, m), False{}, True{}, ED.Edit.slice(s, i, m), 3n}
+    case False{}:
+      Ed.at(s, i, m)
 
-# one key on a field holding s with the caret at i
-def Ed.key(+code: U32, +text: U32, +mods: U32, +s: String, +i: Nat) -> Ed:
-  Ed.key.k(Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, Key.backspace()),
+def Ed.back(sel: Bool, +ctrl: Bool, +s: String, +i: Nat, +m: Nat) -> Ed:
+  match sel:
+    case True{}:
+      Ed.put(s, i, m, "", 2n)
+    case False{}:
+      Bool.pick(Ed, Nat.is_eq(i, 0n), Ed.at(s, i, i), Ed.put(s, Bool.pick(Nat, ctrl, ED.Edit.word_left(s, i), Nat.sub(i, 1n)), i, "", 2n))
+
+def Ed.del(sel: Bool, +ctrl: Bool, +s: String, +i: Nat, +m: Nat) -> Ed:
+  match sel:
+    case True{}:
+      Ed.put(s, i, m, "", 2n)
+    case False{}:
+      Bool.pick(Ed, Nat.is_ge(i, String.length(s)), Ed.at(s, i, i), Ed.put(s, i, Bool.pick(Nat, ctrl, ED.Edit.word_right(s, i), 1n+i), "", 2n))
+
+# left/right without shift first close a selection at its near end
+def Ed.side(close: Bool, +shift: Bool, +s: String, +end: Nat, +c: Nat, +m: Nat) -> Ed:
+  match close:
+    case True{}:
+      Ed.at(s, end, end)
+    case False{}:
+      Ed.go(shift, s, c, m)
+
+def Ed.do.k(op: Nat, +shift: Bool, +ctrl: Bool, +sel: Bool, +s: String, +i: Nat, +m: Nat, +n: Nat, +text: U32) -> Ed:
+  match op:
+    case 1n:
+      Bool.pick(Ed, shift, Ed.put(s, i, m, "\n", 3n), Ed{s, i, m, True{}, False{}, "", 0n})
+    case 2n:
+      Ed.back(sel, ctrl, s, i, m)
+    case 3n:
+      Ed.del(sel, ctrl, s, i, m)
+    case 4n:
+      Ed.side(Bool.and(sel, Bool.not(shift)), shift, s, ED.Edit.lo(i, m), Bool.pick(Nat, ctrl, ED.Edit.word_left(s, i), Nat.sub(i, 1n)), m)
+    case 5n:
+      Ed.side(Bool.and(sel, Bool.not(shift)), shift, s, ED.Edit.hi(i, m), Bool.pick(Nat, ctrl, ED.Edit.word_right(s, i), Nat.min(1n+i, n)), m)
+    case 6n:
+      Ed.go(shift, s, Bool.pick(Nat, ctrl, 0n, ED.Edit.line_start(s, i)), m)
+    case 7n:
+      Ed.go(shift, s, Bool.pick(Nat, ctrl, n, ED.Edit.line_end(s, i)), m)
+    case 8n:
+      Ed.go(shift, s, ED.Edit.up(s, i), m)
+    case 9n:
+      Ed.go(shift, s, ED.Edit.down(s, i), m)
+    case 10n:
+      Ed.put(s, i, m, SCon{Chr{text}, SNil{}}, Bool.pick(Nat, Nat.is_eq(ED.Edit.kind(text), 0n), 3n, 1n))
+    case 11n:
+      Ed.at(s, n, 0n)
+    case 12n:
+      Ed{s, i, m, False{}, False{}, ED.Edit.slice(s, i, m), 0n}
+    case 13n:
+      Ed.cut(sel, s, i, m)
+    case 14n:
+      Ed{s, i, m, False{}, False{}, "", 4n}
+    case 15n:
+      Ed{s, i, m, False{}, False{}, "", 5n}
+    case _:
+      Ed.at(s, i, m)
+
+def Ed.do(op: Nat, +shift: Bool, +ctrl: Bool, +s: String, +i: Nat, +m: Nat, +text: U32) -> Ed:
+  +sel = Bool.not(Nat.is_eq(i, m))
+  +n = String.length(s)
+  +i1 = Nat.min(i, n)
+  +m1 = Nat.min(m, n)
+  Ed.do.k(op, shift, ctrl, sel, s, i1, m1, n, text)
+
+# the index of the first True (0 for none), counting from i
+def Ed.first(bs: List<&2, Bool>, +i: Nat) -> Nat:
+  match bs:
+    case Nil{}:
+      0n
+    case True{} <> _:
+      i
+    case False{} <> t:
+      Ed.first(t, 1n+i)
+
+# ctrl with the letter c (either case)
+def Ed.ctrl(+code: U32, +mods: U32, +c: U32) -> Bool:
+  Bool.and(U32.is_ne(U32.and(mods, 2), 0), U32.is_eq(U32.or(code, 32), c))
+
+# which edit a key is (see Ed.do)
+def Ed.op(+code: U32, +text: U32, +mods: U32) -> Nat:
+  +shift = U32.is_ne(U32.and(mods, 1), 0)
+  Ed.first([Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, Key.backspace()),
     U32.is_eq(code, Key.delete()), U32.is_eq(code, Key.left()), U32.is_eq(code, Key.right()),
-    U32.is_eq(code, Key.home()), U32.is_eq(code, Key.end()),
+    U32.is_eq(code, Key.home()), U32.is_eq(code, Key.end()), U32.is_eq(code, Key.up()), U32.is_eq(code, Key.down()),
     Bool.and(U32.is_ne(text, 0), U32.is_eq(U32.and(mods, 6), 0)),
-    U32.is_ne(U32.and(mods, 1), 0), s, i, text)
+    Ed.ctrl(code, mods, 97), Ed.ctrl(code, mods, 99), Ed.ctrl(code, mods, 120),
+    Bool.and(Ed.ctrl(code, mods, 122), Bool.not(shift)), Bool.or(Ed.ctrl(code, mods, 121), Bool.and(Ed.ctrl(code, mods, 122), shift))], 1n)
+
+# one key on a field holding s with the caret at i and the selection's
+# other end at m
+def Ed.key(+code: U32, +text: U32, +mods: U32, +s: String, +i: Nat, +m: Nat) -> Ed:
+  Ed.do(Ed.op(code, text, mods), U32.is_ne(U32.and(mods, 1), 0), U32.is_ne(U32.and(mods, 2), 0), s, i, m, text)
 
 # Keys
 # ----
@@ -205,14 +297,19 @@ def Step.caret(s: Step, +c: Nat) -> Step:
     case Step{n, cs, d}:
       Step{Nui.with_caret(n, c), cs, d}
 
-def Nui.composer.k(e: Ed, n: Nui) -> Step:
-  match e:
-    case Ed{_, _, True{}, _}:
-      Step.caret(Nui.act(n, "send", ""), 0n)
-    case Ed{+t, +c, False{}, True{}}:
-      Step.caret(Nui.act(n, "draft", t), c)
-    case Ed{_, +c, False{}, False{}}:
-      Step{Nui.with_caret(n, c), Nil{}, True{}}
+def Mark.of(+r: String, +sig: String, +c: Nat) -> Nat:
+  Bool.pick(Nat, String.starts_with(r, sig), Maybe.default(&2, Nat, Nat.read(String.drop(r, String.length(sig))), c), c)
+
+def Clip.also.k(none: Bool, s: Step, +cl: String) -> Step:
+  match none s:
+    case True{} _:
+      s
+    case False{} Step{n, cs, d}:
+      Step{n, List.append(&2, NCmd, cs, [NCopy{cl}]), d}
+
+# a copy or cut puts its text on the clipboard
+def Clip.also(s: Step, +cl: String) -> Step:
+  Clip.also.k(String.is_empty(cl), s, cl)
 
 # completing a `$skill` puts the caret after it
 def Nui.skill.k(s: Step) -> Step:
@@ -225,23 +322,8 @@ def Nui.skill(n: Nui) -> Step:
 
 def Ed.submit(e: Ed) -> Bool:
   match e:
-    case Ed{_, _, s, _}:
+    case Ed{_, _, _, s, _, _, _}:
       s
-
-def Nui.composer.sk(complete: Bool, e: Ed, n: Nui) -> Step:
-  match complete:
-    case True{}:
-      Nui.skill(n)
-    case False{}:
-      Nui.composer.k(e, n)
-
-# while skills are offered, Tab and Enter complete the first
-def Nui.composer.s(has: Bool, +code: U32, +e: Ed, n: Nui) -> Step:
-  match has:
-    case True{}:
-      Nui.composer.sk(Bool.or(U32.is_eq(code, Key.tab()), Ed.submit(e)), e, n)
-    case False{}:
-      Nui.composer.k(e, n)
 
 def Nui.skills_on(+u: U.Ui) -> Bool:
   Bool.not(List.is_empty(&2, U.SkillRow, U.Ui.skills(u)))
@@ -341,8 +423,8 @@ def Hover.ms() -> Nat:
 
 def Hover.key(m: Maybe<&2, Hit>) -> String:
   match m:
-    case Some{Hit{x0, y0, x1, y1, _, _}}:
-      U32.show(x0) ++ "," ++ U32.show(y0) ++ "," ++ U32.show(x1) ++ "," ++ U32.show(y1)
+    case Some{Hit{x0, y0, x1, y1, +a, _}}:
+      Bool.pick(String, String.eq(a, "tl-line"), "", U32.show(x0) ++ "," ++ U32.show(y0) ++ "," ++ U32.show(x1) ++ "," ++ U32.show(y1))
     case None{}:
       ""
 
@@ -363,6 +445,20 @@ def Nui.ui(n: Nui) -> U.Ui:
   match n:
     case Nui{u, _, _, _, _, _, _, _, _, _, _, _, vw}:
       u
+
+# the picker closes itself once its project is added: the keys go back
+# to the composer
+def Nui.unpick(+n: Nui) -> Nui:
+  Bool.pick(Nui, Bool.and(String.eq(Nui.focus_of(n), "proj"), Bool.not(U.Ui.flag(Nui.ui(n), "proj"))), Nui.with_focus(n, "composer"), n)
+
+def Nui.recv(n: Nui, +o: J.Json) -> Nui:
+  Nui.unpick(Nui.recv.k(n, o))
+
+def Undo.key(+n: Nui, +w: String) -> String:
+  "@" ++ w ++ ":" ++ U.Ui.sel(Nui.ui(n))
+
+def Undo.get(+n: Nui, +w: String) -> String:
+  U.Ui.scratch(Nui.ui(n), Undo.key(n, w))
 
 # how far the hover has faded in (0..255)
 def Hover.alpha(+n: Nui, +ms: Nat) -> U32:
@@ -489,6 +585,12 @@ def Nui.with_ui(n: Nui, u: U.Ui) -> Nui:
     case Nui{_, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
+def Undo.put(+n: Nui, +w: String, v: String) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), Undo.key(n, w), v))
+
+def Undo.clear(+n: Nui) -> Nui:
+  Undo.put(Undo.put(Undo.put(n, "undo", ""), "redo", ""), "ekind", "")
+
 # open the palette in a mode ("" commands, "search", "files") with a query
 def Pal.open(+n: Nui, +mode: String, +q: String) -> Step:
   Nui.focus(Nui.with_ui(n, U.Palette.set(U.Palette.open(Nui.ui(n), mode), q, 0n)), "palette")
@@ -526,6 +628,90 @@ def Nui.caret_of(n: Nui) -> Nat:
     case Nui{_, _, _, _, _, _, _, ca, _, _, _, _, vw}:
       ca
 
+# The selection and undo
+# ----------------------
+# Kept in the scratch map (local, never sent). The selection's other end
+# ("@mark") holds only while the field, thread and caret it was set with
+# do, so anything else that moves the caret drops it. Each thread's draft
+# has its own undo and redo history (core/edit.bend's Edit.push).
+
+def Mark.sig(+n: Nui) -> String:
+  Nui.focus_of(n) ++ ":" ++ U.Ui.sel(Nui.ui(n)) ++ ":" ++ Nat.show(Nui.caret_of(n)) ++ "|"
+
+def Mark.save(+n: Nui, +m: Nat) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@mark", Mark.sig(n) ++ Nat.show(m)))
+
+def Mark.set(s: Step, +m: Nat) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Mark.save(n, m), cs, d}
+
+# the selection's other end in the focused field (the caret when nothing
+# is selected)
+def Nui.mark(+n: Nui) -> Nat:
+  Mark.of(U.Ui.scratch(Nui.ui(n), "@mark"), Mark.sig(n), Nui.caret_of(n))
+
+def Undo.here(+n: Nui, +h: String) -> String:
+  ED.Edit.push(h, Nui.caret_of(n), U.Ui.draft_text(Nui.ui(n)))
+
+def Undo.note.k(fresh: Bool, +n: Nui) -> Nui:
+  match fresh:
+    case True{}:
+      Undo.put(n, "undo", Undo.here(n, Undo.get(n, "undo")))
+    case False{}:
+      n
+
+# before a change of kind k the draft as it is becomes an undo step, unless
+# it continues a run of typing; a change forgets what was undone
+def Undo.note(+n: Nui, +k: Nat) -> Nui:
+  Undo.put(Undo.put(Undo.note.k(Bool.or(Bool.not(Nat.is_eq(k, 1n)), Bool.not(String.eq(Undo.get(n, "ekind"), "1"))), n), "redo", ""), "ekind", Nat.show(k))
+
+# undo (from "undo" to "redo") or redo (the other way): the newest step of
+# `from` becomes the draft, the draft goes on `to`
+def Undo.go(has: Bool, +n: Nui, +from: String, +to: String) -> Step:
+  match has:
+    case True{}:
+      Step.caret(Nui.act(Undo.put(Undo.put(Undo.put(n, from, ED.Edit.pop(Undo.get(n, from))), to, Undo.here(n, Undo.get(n, to))), "ekind", ""), "draft",
+        ED.Edit.top.text(Undo.get(n, from))), ED.Edit.top.caret(Undo.get(n, from)))
+    case False{}:
+      Step{n, Nil{}, False{}}
+
+def Undo.run(+n: Nui, +from: String, +to: String) -> Step:
+  Undo.go(Bool.not(String.is_empty(Undo.get(n, from))), n, from, to)
+
+def Nui.composer.m(k: Nat, +n: Nui, +c: Nat, +m: Nat, +cl: String) -> Step:
+  match k:
+    case 4n:
+      Undo.run(n, "undo", "redo")
+    case 5n:
+      Undo.run(n, "redo", "undo")
+    case _:
+      Mark.set(Clip.also(Step{Nui.with_caret(n, c), Nil{}, True{}}, cl), m)
+
+def Nui.composer.k(e: Ed, n: Nui) -> Step:
+  match e:
+    case Ed{_, _, _, True{}, _, _, _}:
+      Step.caret(Nui.act(Undo.clear(n), "send", ""), 0n)
+    case Ed{+t, +c, +m, False{}, True{}, +cl, +k}:
+      Mark.set(Clip.also(Step.caret(Nui.act(Undo.note(n, k), "draft", t), c), cl), m)
+    case Ed{_, +c, +m, False{}, False{}, +cl, +k}:
+      Nui.composer.m(k, n, c, m, cl)
+
+def Nui.composer.sk(complete: Bool, e: Ed, n: Nui) -> Step:
+  match complete:
+    case True{}:
+      Nui.skill(n)
+    case False{}:
+      Nui.composer.k(e, n)
+
+# while skills are offered, Tab and Enter complete the first
+def Nui.composer.s(has: Bool, +code: U32, +e: Ed, n: Nui) -> Step:
+  match has:
+    case True{}:
+      Nui.composer.sk(Bool.or(U32.is_eq(code, Key.tab()), Ed.submit(e)), e, n)
+    case False{}:
+      Nui.composer.k(e, n)
+
 def Blink.sig(+n: Nui) -> String:
   Nui.focus_of(n) ++ ":" ++ Nat.show(Nui.caret_of(n)) ++ ":" ++ U.Palette.query(Nui.ui(n)) ++ ":" ++ U.Proj.query(Nui.ui(n))
 
@@ -560,7 +746,7 @@ def Pal.moved(+n: Nui, +i: Nat) -> Step:
 
 def Pal.typed(e: Ed, +n: Nui) -> Step:
   match e:
-    case Ed{+t, _, _, _}:
+    case Ed{+t, _, _, _, _, _, _}:
       Step{Nui.with_ui(n, U.Palette.set(Nui.ui(n), t, 0n)), Nil{}, True{}}
 
 # Shortcuts (T3Code's, ctrl for mod)
@@ -588,8 +774,16 @@ def Keys.name.k(ctrl: Bool, shift: Bool, term: Bool, +c: U32) -> String:
 
 # the shortcut a key is ("" for none). In the terminal only ctrl+j and
 # ctrl+shift keys are shortcuts; the rest belong to the shell
+def Keys.name.alt(alt: Bool, +code: U32, +mods: U32, +term: Bool) -> String:
+  match alt:
+    case True{}:
+      "project"
+    case False{}:
+      Keys.name.k(Keys.ctrl(mods), Keys.shift(mods), term, U32.or(code, 32))
+
+# alt+1..9 (alt alone) picks a project, even in the terminal
 def Keys.name(+code: U32, +mods: U32, +term: Bool) -> String:
-  Keys.name.k(Keys.ctrl(mods), Keys.shift(mods), term, U32.or(code, 32))
+  Keys.name.alt(Bool.and(U32.is_eq(U32.and(mods, 7), 4), Bool.and(U32.is_ge(code, 49), U32.is_le(code, 57))), code, mods, term)
 
 def Keys.threads.k(keep: Bool, +v: String, rest: List<&2, String>) -> List<&2, String>:
   match keep:
@@ -763,12 +957,24 @@ def Nui.term.toggle(open: Bool, +n: Nui) -> Step:
 def Pal.files(+n: Nui) -> Step:
   Nui.focus.step(Nui.act.k(U.Ui.act(U.Palette.open(Nui.ui(n), "files"), "files", ""), n), "palette")
 
-# ctrl+1..9: the Nth thread the sidebar shows
+# ctrl+1..9: the Nth thread the sidebar shows in this project
 def Nui.jump(+n: Nui, +id: String) -> Step:
   Bool.pick(Step, String.is_empty(id), Step{n, Nil{}, False{}}, Nui.act(n, "select", id))
 
+def Nui.goto.k(none: Bool, +n: Nui, +pid: String, +id: String) -> Step:
+  match none:
+    case True{}:
+      Nui.act(n, "new-thread", pid)
+    case False{}:
+      Nui.act(n, "select", id)
+
+# alt+1..9: the Nth project the sidebar shows (a thread there, or a new
+# one when it has none)
+def Nui.goto(+n: Nui, +pid: String) -> Step:
+  Bool.pick(Step, String.is_empty(pid), Step{n, Nil{}, False{}}, Nui.goto.k(String.is_empty(U.Side.home(Nui.ui(n), pid)), n, pid, U.Side.home(Nui.ui(n), pid)))
+
 def Keys.list() -> List<&2, String>:
-  ["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette", "jump", "search", "files"]
+  ["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette", "jump", "search", "files", "project"]
 
 def Nui.shortcut.k(i: Nat, +n: Nui, +code: U32) -> Step:
   match i:
@@ -789,11 +995,13 @@ def Nui.shortcut.k(i: Nat, +n: Nui, +code: U32) -> Step:
     case 8n:
       Pal.open(n, "", "")
     case 9n:
-      Nui.jump(n, U.Side.nth(U.Side.visible(Nui.ui(n)), U32.to_nat((U32.or(code, 32) - 49 : U32))))
+      Nui.jump(n, U.Side.nth(U.Side.here(Nui.ui(n)), U32.to_nat((U32.or(code, 32) - 49 : U32))))
     case 10n:
       Pal.open(n, "search", "")
     case 11n:
       Pal.files(n)
+    case 12n:
+      Nui.goto(n, U.Side.nth(U.Side.projects(Nui.ui(n)), U32.to_nat((code - 49 : U32))))
     case _:
       Step{n, [NPaste{}], False{}}
 
@@ -826,25 +1034,27 @@ def Pick.moved(+n: Nui, +i: Nat) -> Step:
 
 def Pick.typed(e: Ed, +n: Nui) -> Step:
   match e:
-    case Ed{+t, _, _, _}:
+    case Ed{+t, _, _, _, _, _, _}:
       Step{Nui.with_ui(n, U.Proj.set(Nui.ui(n), t, 0n)), Nil{}, True{}}
 
 # adding closes the picker; browsing and creating keep it open
 def Pick.run.k(i: Nat, +n: Nui, +v: String) -> Step:
   match i:
     case 0n:
-      Nui.focus.step(Nui.act(n, "proj-add", v), "composer")
+      Nui.act(n, "proj-add", v)
     case 1n:
       Nui.act(n, "proj-cd", v)
     case 2n:
       Nui.act(n, "proj-mkdir", v)
+    case 3n:
+      Nui.act(n, "proj-new", v)
     case _:
       Step{n, Nil{}, False{}}
 
 def Pick.run(it: U.PItem, +n: Nui) -> Step:
   match it:
     case U.PItem{_, +a, +v}:
-      Pick.run.k(Nui.pos(["proj-add", "proj-cd", "proj-mkdir"], a, 0n), n, v)
+      Pick.run.k(Nui.pos(["proj-add", "proj-cd", "proj-mkdir", "proj-new"], a, 0n), n, v)
 
 def Pick.at(+n: Nui) -> U.PItem:
   U.Palette.at(U.Proj.items(Nui.ui(n)), U.Proj.index(Nui.ui(n)))
@@ -870,7 +1080,7 @@ def Pick.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, tab: Bool, up_dir: 
     case _ _ _ _ _ True{}:
       Nui.act(n, "proj-cd", U.Proj.parent(U.Proj.dir(Nui.ui(n))))
     case _ _ _ _ _ _:
-      Pick.typed(Ed.key(code, text, mods, U.Proj.query(Nui.ui(n)), String.length(U.Proj.query(Nui.ui(n)))), n)
+      Pick.typed(Ed.key(code, text, mods, U.Proj.query(Nui.ui(n)), String.length(U.Proj.query(Nui.ui(n))), String.length(U.Proj.query(Nui.ui(n)))), n)
 
 def Pick.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Pick.key.k(U32.is_eq(code, Key.escape()), Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, 65362), U32.is_eq(code, 65364),
@@ -1057,7 +1267,7 @@ def Row.move(on: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
     case False{}:
       Nui.moved(n, x, y)
 
-def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+def Nui.move.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   match drag:
     case True{}:
       Nui.view_move(n, x, y)
@@ -1104,10 +1314,10 @@ def Nui.drop(+n: Nui, text: String) -> Step:
 
 # a paste into the composer: files (file:// URIs, image paths) attach,
 # anything else is text at the caret
-def Nui.paste.comp(ps: List<&2, String>, n: Nui, +text: String) -> Step:
+def Nui.paste.comp(ps: List<&2, String>, n: Nui, +m: Nat, +text: String) -> Step:
   match ps n:
     case Nil{} Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, m, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case +p <> +t _:
       Nui.attach.all(p <> t, n)
 
@@ -1122,26 +1332,26 @@ def Nui.path.done(attach: Bool, +n: Nui, +t: String) -> Step:
 
 def Nui.path.k(e: Ed, +n: Nui) -> Step:
   match e:
-    case Ed{+t, _, True{}, _}:
+    case Ed{+t, _, _, True{}, _, _, _}:
       Nui.path.done(String.eq(Nui.focus_of(n), "attach-path"), n, t)
-    case Ed{t, +c, False{}, _}:
-      Step{Nui.with_path(n, t, c), Nil{}, True{}}
+    case Ed{t, +c, +m, False{}, _, +cl, _}:
+      Mark.set(Clip.also(Step{Nui.with_path(n, t, c), Nil{}, True{}}, cl), m)
 
-def Nui.field.k(comp: Bool, path: Bool, n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+def Nui.field.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
   match comp path n:
     case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
-      Nui.path.k(Ed.key(code, text, mods, pa, ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.path.k(Ed.key(code, text, mods, pa, ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case _ _ _:
       Step{n, Nil{}, False{}}
 
-def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +text: String) -> Step:
+def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +text: String) -> Step:
   match comp path n:
     case True{} _ _:
-      Nui.paste.comp(AT.Att.pasted(text), n, text)
+      Nui.paste.comp(AT.Att.pasted(text), n, m, text)
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
-      Nui.path.k(Ed.insert(pa, ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.path.k(Ed.insert(pa, ca, m, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case _ _ _:
       Step{n, Nil{}, False{}}
 
@@ -1151,7 +1361,7 @@ def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
     case True{}:
       Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.paste(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), text)), n)
     case False{}:
-      Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, text)
+      Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, Nui.mark(n), text)
 
 def Nui.paste(+n: Nui, text: String) -> Step:
   Nui.paste.t(String.eq(Nui.focus_of(n), "terminal"), n, text)
@@ -1161,7 +1371,7 @@ def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mod
     case True{} True{}:
       Step{Nui.with_vw(n, Vw.refit(Nui.vw(n))), Nil{}, True{}}
     case _ _:
-      Nui.field.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, code, text, mods)
+      Nui.field.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, Nui.mark(n), code, text, mods)
 
 def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match paste esc:
@@ -1227,7 +1437,7 @@ def Pal.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, +n: Nui, +code: U32,
     case _ _ _ True{}:
       Pal.moved(n, 1n+U.Palette.index(Nui.ui(n)))
     case _ _ _ _:
-      Pal.typed(Ed.key(code, text, mods, U.Palette.query(Nui.ui(n)), String.length(U.Palette.query(Nui.ui(n)))), n)
+      Pal.typed(Ed.key(code, text, mods, U.Palette.query(Nui.ui(n)), String.length(U.Palette.query(Nui.ui(n))), String.length(U.Palette.query(Nui.ui(n)))), n)
 
 def Pal.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Pal.key.k(U32.is_eq(code, Key.escape()), Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, 65362), U32.is_eq(code, 65364), n, code, text, mods)
@@ -1317,15 +1527,109 @@ def Nui.key.menu(menu: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Ste
     case False{}:
       Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
 
-def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+def Nui.key.m(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), Bool.or(U.Ui.flag(Nui.ui(n), "models"), U.Ui.flag(Nui.ui(n), "machines"))), n, code, text, mods)
+
+# Selecting thread text
+# ---------------------
+# A press on a timeline line starts a selection there ("@ts" is
+# thread|line,x|line,x; layout.bend's TSel turns it into characters), a
+# drag moves its far end while "@ts.on" is set, and a press anywhere else
+# not on a control drops it. Ctrl+c copies it (the frame carries its text
+# as the "tl-sel" region) unless the composer has a selection of its own.
+
+def Sel.put(+n: Nui, +v: String, +on: String) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@ts", v), "@ts.on", on))
+
+def Sel.start(+n: Nui, +line: String, +x: U32) -> Step:
+  +p = line ++ "," ++ U32.show(x)
+  Step{Sel.put(n, U.Ui.sel(Nui.ui(n)) ++ "|" ++ p ++ "|" ++ p, "1"), Nil{}, True{}}
+
+def Sel.from(+n: Nui) -> String:
+  String.join(List.take(&2, String, String.split(U.Ui.scratch(Nui.ui(n), "@ts"), '|'), 2n), "|")
+
+def Sel.to(m: Maybe<&2, Hit>, +n: Nui, +x: U32) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +a, +v}}:
+      Bool.pick(Step, String.eq(a, "tl-line"), Step{Sel.put(n, Sel.from(n) ++ "|" ++ v ++ "," ++ U32.show(x), "1"), Nil{}, True{}}, Step{n, Nil{}, False{}})
+    case None{}:
+      Step{n, Nil{}, False{}}
+
+def Sel.line.k(hit: Bool, h: Hit, rest: Maybe<&2, Hit>) -> Maybe<&2, Hit>:
+  match hit:
+    case True{}:
+      Some{h}
+    case False{}:
+      rest
+
+def Hit.is(h: Hit, +a: String) -> Bool:
+  match h:
+    case Hit{_, _, _, _, +b, _}:
+      String.eq(a, b)
+
+# the timeline line at (x, y), under whatever else is there
+def Sel.line(hs: List<&2, Hit>, +x: U32, +y: U32) -> Maybe<&2, Hit>:
+  match hs:
+    case Nil{}:
+      None{}
+    case +h <> t:
+      Sel.line.k(Bool.and(Hit.inside(h, x, y), Hit.is(h, "tl-line")), h, Sel.line(t, x, y))
+
+def Sel.on(+n: Nui) -> Bool:
+  String.eq(U.Ui.scratch(Nui.ui(n), "@ts.on"), "1")
+
+def Nui.move.s(sel: Bool, drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match sel:
+    case True{}:
+      Sel.to(Sel.line(Nui.hits(n), x, y), n, x)
+    case False{}:
+      Nui.move.k(drag, n, x, y)
+
+def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  Nui.move.s(Sel.on(n), drag, n, x, y)
+
+def Sel.end(s: Step) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@ts.on", "")), cs, d}
+
+def Sel.text.go(hs: List<&2, Hit>) -> String:
+  match hs:
+    case Nil{}:
+      ""
+    case Hit{_, _, _, _, +a, +v} <> t:
+      Bool.pick(String, String.eq(a, "tl-sel"), v, Sel.text.go(t))
+
+# the selected thread text the last frame showed ("" for none)
+def Sel.text(+n: Nui) -> String:
+  Sel.text.go(Nui.hits(n))
+
+# ctrl+c with thread text selected copies it, unless the keys belong to
+# the terminal or the composer has a selection of its own
+def Nui.key.copy(copy: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match copy:
+    case True{}:
+      Step{n, [NCopy{Sel.text(n)}], False{}}
+    case False{}:
+      Nui.key.m(n, code, text, mods)
+
+def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Nui.key.copy(Bool.and(Bool.and(Ed.ctrl(code, mods, 99), Bool.not(String.is_empty(Sel.text(n)))),
+    Bool.and(Bool.not(String.eq(Nui.focus_of(n), "terminal")), Nat.is_eq(Nui.mark(n), Nui.caret_of(n)))), n, code, text, mods)
+
+def Row.press.a(line: Bool, +n: Nui, +action: String, +value: String, +x: U32, +y: U32) -> Step:
+  match line:
+    case True{}:
+      Sel.start(n, value, x)
+    case False{}:
+      Row.press.k(Bool.and(String.eq(action, "select"), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value), value, y)
 
 def Row.press(m: Maybe<&2, Hit>, +n: Nui, +x: U32, +y: U32) -> Step:
   match m:
     case Some{Hit{_, _, _, _, +action, +value}}:
-      Row.press.k(Bool.and(String.eq(action, "select"), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value), value, y)
+      Row.press.a(String.eq(action, "tl-line"), n, action, value, x, y)
     case None{}:
-      Step{n, Nil{}, False{}}
+      Step{Sel.put(n, "", ""), Nil{}, True{}}
 
 def Nui.press.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   match drag:
@@ -1338,17 +1642,61 @@ def Nui.press.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
 def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   Nui.press.k(Bool.and(viewer, Nui.nohit(Hit.find(Nui.hits(n), x, y))), n, x, y)
 
+# Hotkey hints
+# ------------
+# While alt is held the sidebar numbers its projects (alt+1..9), while
+# ctrl is held the threads of this project (ctrl+1..9). "@hint" is "alt",
+# "ctrl" or "".
+
+def Hint.of(+code: U32) -> String:
+  Bool.pick(String, Bool.or(U32.is_eq(code, 65513), U32.is_eq(code, 65514)), "alt",
+    Bool.pick(String, Bool.or(U32.is_eq(code, 65507), U32.is_eq(code, 65508)), "ctrl", ""))
+
+def Hint.get(+n: Nui) -> String:
+  U.Ui.scratch(Nui.ui(n), "@hint")
+
+def Hint.set(+n: Nui, +h: String) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@hint", h))
+
+# the hint's modifier is still down
+def Hint.held(+h: String, +mods: U32) -> Bool:
+  Bool.or(Bool.and(String.eq(h, "alt"), U32.is_ne(U32.and(mods, 4), 0)), Bool.and(String.eq(h, "ctrl"), U32.is_ne(U32.and(mods, 2), 0)))
+
+# the hint after a key goes down: alt or ctrl starts one; a key pressed
+# without its modifier ends it (a release we never saw)
+def Hint.down(+h: String, +code: U32, +mods: U32) -> String:
+  Bool.pick(String, String.is_empty(Hint.of(code)), Bool.pick(String, Hint.held(h, mods), h, ""), Hint.of(code))
+
+def Hint.dirty(s: Step, d: Bool) -> Step:
+  match s:
+    case Step{n, cs, dd}:
+      Step{n, cs, Bool.or(dd, d)}
+
+def Hint.key(+h: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Hint.dirty(Nui.key(Hint.set(n, h), code, text, mods), Bool.not(String.eq(h, Hint.get(n))))
+
+# releasing the hint's modifier ends it
+def Hint.up(+code: U32, +n: Nui) -> Step:
+  Bool.pick(Step, Bool.and(String.eq(Hint.of(code), Hint.get(n)), Bool.not(String.is_empty(Hint.get(n)))),
+    Step{Hint.set(n, ""), Nil{}, True{}}, Step{n, Nil{}, False{}})
+
+# the window lost focus: whatever was held is let go
+def Hint.blur(+n: Nui) -> Step:
+  Step{Hint.set(n, ""), Nil{}, Bool.not(String.is_empty(Hint.get(n)))}
+
 # one window event
 def Nui.event(+n: Nui, e: W.WinEv) -> Step:
   match e:
-    case W.WKey{code, text, mods, True{}}:
-      Nui.key(n, code, text, mods)
-    case W.WKey{_, _, _, False{}}:
-      Step{n, Nil{}, False{}}
+    case W.WKey{+code, text, +mods, True{}}:
+      Hint.key(Hint.down(Hint.get(n), code, mods), n, code, text, mods)
+    case W.WKey{+code, _, _, False{}}:
+      Hint.up(code, n)
+    case W.WBlur{}:
+      Hint.blur(n)
     case W.WButton{+x, +y, 1, True{}}:
       Nui.press(Nui.in_viewer(n, x), n, x, y)
     case W.WButton{+x, +y, 1, False{}}:
-      Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y)
+      Sel.end(Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y))
     case W.WButton{_, _, _, _}:
       Step{n, Nil{}, False{}}
     case W.WMove{+x, +y}:

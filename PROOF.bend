@@ -2068,3 +2068,36 @@ def Laws.icons_used_exist():
 
 def Laws.icons_all_draw():
   {==}
+
+def Laws.hotkey_alt_digit():
+  {==}
+
+def Laws.hotkey_ctrl_digit():
+  {==}
+
+def Laws.hint_alt_starts(h, mods):
+  {==}
+
+def Laws.hint_missed_release_ends():
+  {==}
+
+def Laws.wrap_keeps_last_space():
+  {==}
+
+def Laws.edit_select_all():
+  {==}
+
+def Laws.edit_type_replaces():
+  {==}
+
+def Laws.delete_asks_first(u):
+  {==}
+
+def Laws.picker_drops_stale(u, o):
+  {==}
+
+def Laws.tl_frame_exact(ty, es, old, px0, sel0, st, sel, px, pics):
+  %Equal.sym(L.TLMemo, L.TL.memo.of(ty, es, px, sel, L.TLMemo{px0, sel0, L.TL.memo.make(ty, old, px0, sel0)}), L.TLMemo{px, sel, L.TL.memo.make(ty, es, px, sel)},
+    Laws.tl_memo_exact(ty, es, old, px0, sel0, px, sel))
+    : {L.TL.memo.shown(ty, _, st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}
+  tl_entries_memo(ty, es, st, sel, px, pics)

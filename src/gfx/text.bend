@@ -14,25 +14,26 @@ import ./fontfx.bend as FX
 # Measuring, wrapping and drawing are pure and read the cache; a glyph
 # still missing measures as half an em and draws nothing.
 
-# A face: `ft` says FreeType (else the bitmap font); asc / desc / lh are
-# the font's own pixel metrics; miss is the advance (26.6) of a glyph not
-# in the cache; name is the family fontconfig chose.
-type Face is Data:
-  Face{id: U32, ft: Bool, px: U32, asc: U32, desc: U32, lh: U32, miss: U32, name: String}
-
 # a cached glyph: advance (26.6), bitmap left / top (+ 32768), size, and
 # its coverage as a tree of 2^d words
 type TG is Data:
   TG{adv: U32, left: U32, top: U32, w: U32, h: U32, d: Nat, m: R.Mask}
 
+# the face's ASCII glyphs (code points 0-127) as a tree of 2^7 leaves, so
+# the glyphs text draws most are found without the cache's string keys; a
+# leaf not filled (ok False) is looked up in the cache
+type GTab is Data:
+  GLeaf{ok: Bool, g: TG}
+  GNode{lo: GTab, hi: GTab}
+
+# A face: `ft` says FreeType (else the bitmap font); asc / desc / lh are
+# the font's own pixel metrics; miss is the advance (26.6) of a glyph not
+# in the cache; name is the family fontconfig chose.
+type Face is Data:
+  Face{id: U32, ft: Bool, px: U32, asc: U32, desc: U32, lh: U32, miss: U32, name: String, tab: GTab}
+
 type FileIx is Data:
   FileIx{family: String, file: String, index: U32}
-
-# Faces
-# -----
-
-def Text.bitmap() -> Face:
-  Face{0, False{}, 16, 12, 4, 16, 512, "Spleen 8x16"}
 
 def Text.px(+v: U32) -> U32:
   ((v + 32 : U32) / 64 : U32)
@@ -85,32 +86,6 @@ def Text.pick(stack: List<&2, String>) -> IO(Maybe<&2, FileIx>):
       IO.bind(Result<&1, &1, U32 & String, String & String & U32>, Maybe<&2, FileIx>, FX.Font.find(pat),
         r => Text.pick.k(Text.hit(pat, r), Text.pick(t)))
 
-def Text.face.m(+id: U32, +px: U32, ms: List<&2, U32>, +name: String) -> Face:
-  match ms:
-    case +a <> +d <> +h <> _:
-      Face{id, True{}, px, Text.px(a), Text.px(d), Text.px(h), (px * 32 : U32), name}
-    case _:
-      Text.bitmap()
-
-def Text.face.o(r: Result<&1, &1, U32 & String, U32>, +px: U32, +name: String) -> IO(Face):
-  match r:
-    case Done{+id}:
-      IO.bind(List<&2, U32>, Face, FX.Font.metrics(id), ms => IO.pure(Face, Text.face.m(id, px, ms, name)))
-    case Fail{_}:
-      IO.pure(Face, Text.bitmap())
-
-def Text.face.f(m: Maybe<&2, FileIx>, +px: U32) -> IO(Face):
-  match m:
-    case Some{FileIx{+fam, +file, +index}}:
-      IO.bind(Result<&1, &1, U32 & String, U32>, Face, FX.Font.open(file, index, px), r => Text.face.o(r, px, fam))
-    case None{}:
-      IO.pure(Face, Text.bitmap())
-
-# a face for the first available family of the stack at px pixels per em;
-# the bitmap font when none loads (no fontconfig / FreeType)
-def Text.face(stack: List<&2, String>, +px: U32) -> IO(Face):
-  IO.bind(Maybe<&2, FileIx>, Face, Text.pick(stack), m => Text.face.f(m, px))
-
 # Glyphs
 # ------
 
@@ -154,10 +129,113 @@ def Text.got(r: Map<&2, TG> & TG) -> TG:
   (_, g) = r
   g
 
+def Text.get.map(+cache: Map<&2, TG>, +id: U32, +cp: U32, +miss: U32) -> TG:
+  Text.got(Map.get(TG, TG.blank(miss), cache, Text.key(id, cp)))
+
+def GTab.leaf(g: GTab, +cache: Map<&2, TG>, +id: U32, +cp: U32, +miss: U32) -> TG:
+  match g:
+    case GLeaf{True{}, g}:
+      g
+    case _:
+      Text.get.map(cache, id, cp, miss)
+
+def GTab.half(hi: Bool, lo: GTab, h: GTab) -> GTab:
+  match hi:
+    case True{}:
+      h
+    case False{}:
+      lo
+
+# the leaf for cp, d levels down (bit d-1 picks the half)
+def GTab.at(+d: Nat, t: GTab, +cp: U32, +bit: U32) -> GTab:
+  match d t:
+    case 1n+k GNode{lo, hi}:
+      GTab.at(k, GTab.half(U32.is_ne(U32.and(cp, bit), 0), lo, hi), cp, U32.shr(bit))
+    case _ _:
+      t
+
+def Text.get.k(ascii: Bool, +cache: Map<&2, TG>, +id: U32, +cp: U32, +miss: U32, +tab: GTab) -> TG:
+  match ascii:
+    case True{}:
+      GTab.leaf(GTab.at(7n, tab, cp, 64), cache, id, cp, miss)
+    case False{}:
+      Text.get.map(cache, id, cp, miss)
+
+# an empty table, d levels deep
+def GTab.none(+d: Nat) -> GTab:
+  match d:
+    case 0n:
+      GLeaf{False{}, TG.blank(0)}
+    case 1n+k:
+      GNode{GTab.none(k), GTab.none(k)}
+
+# Faces
+# -----
+
+def Text.bitmap() -> Face:
+  Face{0, False{}, 16, 12, 4, 16, 512, "Spleen 8x16", GTab.none(7n)}
+
+def Text.face.m(+id: U32, +px: U32, ms: List<&2, U32>, +name: String) -> Face:
+  match ms:
+    case +a <> +d <> +h <> _:
+      Face{id, True{}, px, Text.px(a), Text.px(d), Text.px(h), (px * 32 : U32), name, GTab.none(7n)}
+    case _:
+      Text.bitmap()
+
+def Text.face.o(r: Result<&1, &1, U32 & String, U32>, +px: U32, +name: String) -> IO(Face):
+  match r:
+    case Done{+id}:
+      IO.bind(List<&2, U32>, Face, FX.Font.metrics(id), ms => IO.pure(Face, Text.face.m(id, px, ms, name)))
+    case Fail{_}:
+      IO.pure(Face, Text.bitmap())
+
+def Text.face.f(m: Maybe<&2, FileIx>, +px: U32) -> IO(Face):
+  match m:
+    case Some{FileIx{+fam, +file, +index}}:
+      IO.bind(Result<&1, &1, U32 & String, U32>, Face, FX.Font.open(file, index, px), r => Text.face.o(r, px, fam))
+    case None{}:
+      IO.pure(Face, Text.bitmap())
+
+# a face for the first available family of the stack at px pixels per em;
+# the bitmap font when none loads (no fontconfig / FreeType)
+def Text.face(stack: List<&2, String>, +px: U32) -> IO(Face):
+  IO.bind(Maybe<&2, FileIx>, Face, Text.pick(stack), m => Text.face.f(m, px))
+
+def GTab.one(m: Maybe<&2, TG>) -> GTab:
+  match m:
+    case Some{g}:
+      GLeaf{True{}, g}
+    case None{}:
+      GLeaf{False{}, TG.blank(0)}
+
+def Text.cached.k(r: Map<&2, TG> & Bool, +id: U32, +cp: U32) -> Maybe<&2, TG>:
+  match r:
+    case (+c, True{}):
+      Some{Text.got(Map.get(TG, TG.blank(0), c, Text.key(id, cp)))}
+    case (_, False{}):
+      None{}
+
+def Text.cached(+cache: Map<&2, TG>, +id: U32, +cp: U32) -> Maybe<&2, TG>:
+  Text.cached.k(Map.has(&2, TG, cache, Text.key(id, cp)), id, cp)
+
+# the table of the cache's glyphs for face id, code points from cp, 2^d of them
+def GTab.of(+d: Nat, +cache: Map<&2, TG>, +id: U32, +cp: U32) -> GTab:
+  match d:
+    case 0n:
+      GTab.one(Text.cached(cache, id, cp))
+    case 1n+k:
+      GNode{GTab.of(k, cache, id, cp), GTab.of(k, cache, id, (cp + U32.shln(1, k) : U32))}
+
+# the face with its ASCII table filled from the cache (once warmed)
+def Face.tabled(f: Face, +cache: Map<&2, TG>) -> Face:
+  match f:
+    case Face{+id, ft, px, asc, desc, lh, miss, name, _}:
+      Face{id, ft, px, asc, desc, lh, miss, name, GTab.of(7n, cache, id, 0)}
+
 def Text.get(+cache: Map<&2, TG>, +f: Face, +cp: U32) -> TG:
   match f:
-    case Face{+id, _, _, _, _, _, +miss, _}:
-      Text.got(Map.get(TG, TG.blank(miss), cache, Text.key(id, cp)))
+    case Face{+id, _, _, _, _, _, +miss, _, +tab}:
+      Text.get.k(U32.is_lt(cp, 128), cache, id, cp, miss, tab)
 
 def Text.fetch(+cache: Map<&2, TG>, +id: U32, +cp: U32, +miss: U32) -> IO(Map<&2, TG>):
   IO.bind(List<&2, U32>, Map<&2, TG>, FX.Font.glyph(id, cp), ws => IO.pure(Map<&2, TG>, Map.set(&2, TG, cache, Text.key(id, cp), TG.decode(ws, miss))))
@@ -183,9 +261,9 @@ def Text.ensure.go(s: String, cache: Map<&2, TG>, +id: U32, +miss: U32) -> IO(Ma
 # the missing ones; the bitmap face needs none)
 def Text.ensure(cache: Map<&2, TG>, f: Face, s: String) -> IO(Map<&2, TG>):
   match f:
-    case Face{+id, True{}, _, _, _, _, +miss, _}:
+    case Face{+id, True{}, _, _, _, _, +miss, _, _}:
       Text.ensure.go(s, cache, id, miss)
-    case Face{_, False{}, _, _, _, _, _, _}:
+    case Face{_, False{}, _, _, _, _, _, _, _}:
       IO.pure(Map<&2, TG>, cache)
 
 def Text.ascii.go(n: Nat, acc: String) -> String:
@@ -229,22 +307,22 @@ def Text.width.k(ft: Bool, +cache: Map<&2, TG>, +f: Face, s: String) -> U32:
 
 def Face.ft(f: Face) -> Bool:
   match f:
-    case Face{_, ft, _, _, _, _, _, _}:
+    case Face{_, ft, _, _, _, _, _, _, _}:
       ft
 
 def Face.asc(f: Face) -> U32:
   match f:
-    case Face{_, _, _, asc, _, _, _, _}:
+    case Face{_, _, _, asc, _, _, _, _, _}:
       asc
 
 def Face.lh(f: Face) -> U32:
   match f:
-    case Face{_, _, _, _, _, lh, _, _}:
+    case Face{_, _, _, _, _, lh, _, _, _}:
       lh
 
 def Face.name(f: Face) -> String:
   match f:
-    case Face{_, _, _, _, _, _, _, name}:
+    case Face{_, _, _, _, _, _, _, name, _}:
       name
 
 # the width of s in pixels
@@ -254,7 +332,7 @@ def Text.width(+cache: Map<&2, TG>, +f: Face, s: String) -> U32:
 # the baseline of a line box of height lh whose top is y (CSS half-leading)
 def Text.baseline(+f: Face, +y: U32, +lh: U32) -> U32:
   match f:
-    case Face{_, _, _, +asc, +desc, _, _, _}:
+    case Face{_, _, _, +asc, +desc, _, _, _, _}:
       (y + ((lh - (asc + desc : U32) : U32) / 2 : U32) + asc : U32)
 
 # Wrapping (proportional)
@@ -310,12 +388,22 @@ def PWrap.pieces(ps: List<&2, String>, a: PAcc, +cache: Map<&2, TG>, +f: Face, +
     case +p <> t:
       PWrap.pieces(t, PWrap.put(a, p, Text.adv(p, cache, f, 0), sp, max), cache, f, sp, max)
 
+# a word's pieces; an empty word (between two spaces, or after a last
+# one) is kept, so every space the text has is on a line (the caret after
+# a typed space moves at once, runs of spaces show)
+def PWrap.chunks(empty: Bool, +w: String, +cache: Map<&2, TG>, +f: Face, +max: U32) -> List<&2, String>:
+  match empty:
+    case True{}:
+      [""]
+    case False{}:
+      Fit.chunk(1n+String.length(w), False{}, w, cache, f, max)
+
 def PWrap.words(ws: List<&2, String>, a: PAcc, +cache: Map<&2, TG>, +f: Face, +sp: U32, +max: U32) -> PAcc:
   match ws:
     case Nil{}:
       a
     case +w <> t:
-      PWrap.words(t, PWrap.pieces(Fit.chunk(1n+String.length(w), String.is_empty(w), w, cache, f, max), a, cache, f, sp, max), cache, f, sp, max)
+      PWrap.words(t, PWrap.pieces(PWrap.chunks(String.is_empty(w), w, cache, f, max), a, cache, f, sp, max), cache, f, sp, max)
 
 def PWrap.fin(a: PAcc) -> List<&2, String>:
   match a:
