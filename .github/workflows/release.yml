@@ -54,11 +54,21 @@ jobs:
         # clang takes about 20 GB to compile the app's C (one large file);
         # the Linux runners have 16, so without swap the compile can be killed
         if: runner.os == 'Linux'
+        # the swap file goes on /mnt when the runner has it, and never takes
+        # more than the free space less 8 GB (a full disk kills the runner)
         run: |
-          sudo fallocate -l 16G /swap-build
-          sudo chmod 600 /swap-build
-          sudo mkswap /swap-build
-          sudo swapon /swap-build
+          dir=/; [ -d /mnt ] && dir=/mnt
+          df -h / /mnt || true
+          free_gb=$(df -BG --output=avail "$dir" | tail -1 | tr -dc 0-9)
+          size=$(( free_gb - 8 )); [ "$size" -gt 16 ] && size=16
+          if [ "$size" -ge 2 ]; then
+            sudo fallocate -l "${size}G" "$dir/swap-build"
+            sudo chmod 600 "$dir/swap-build"
+            sudo mkswap "$dir/swap-build"
+            sudo swapon "$dir/swap-build"
+          else
+            echo "only ${free_gb} GB free on $dir: no swap"
+          fi
           free -h
       - name: Install clang 19 and X11 headers
         if: runner.os == 'Linux'
