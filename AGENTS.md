@@ -23,6 +23,7 @@ When using Bend:
 - `src/gfx/bitmap.bend`: raw RGB frames (the browser helper's frame file) as an `Image` quadtree, composited into a frame at a place and size.
 - `tools/browser/`: `backplane-browser`, a Bun + playwright-core headless Chromium driven by NDJSON on stdin/stdout; raw frames go to a file. Protocol in its README. Built by `scripts/build-browser.sh`.
 - `src/core/client.bend`: the client state and actions both UIs share.
+- `src/core/vt.bend`: the terminal emulator (VT100/xterm: bytes in, styled rows, cursor, replies, key and paste bytes out); `src/server/pty.bend` + `effects/pty.c` run a shell on a pty whose master is a `Socket`. See `docs/terminal.md`.
 - `src/web/`: the web client for other devices (Tailscale, phone). View logic is Bend; `host.js` only touches the DOM, canvas and socket, and holds no product logic.
 - `test/`: Bend test programs (`bend test/x.bend`), run by `scripts/test.sh`.
 - `tools/step2glb/`: the one non-Bend helper, a host tool like git or curl. It converts STEP to GLB (OpenCascade WASM via Bun; LGPL-2.1, run as a subprocess, never linked). `scripts/build-step2glb.sh` builds `dist/backplane-step2glb`. The STEP viewer reads its GLB; all viewer logic stays in Bend. See its README.
