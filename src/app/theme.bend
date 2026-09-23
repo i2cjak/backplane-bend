@@ -35,6 +35,18 @@ def Th.warn() -> U32:
 def Th.bad() -> U32:
   15755882
 
+# body text (the web's text at 80% over the background)
+def Th.soft() -> U32:
+  11579834
+
+# a selected chip or menu row
+def Th.sel() -> U32:
+  1847880
+
+# a focused field's border
+def Th.focus() -> U32:
+  4160432
+
 def Th.code() -> U32:
   1052174
 

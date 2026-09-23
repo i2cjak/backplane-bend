@@ -13,6 +13,7 @@ import ./viewer.bend as V
 import ../core/board.bend as B
 import ../gfx/draw.bend as D
 import ../server/kicad.bend as K
+import ../gfx/text.bend as X
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -25,8 +26,12 @@ type ShellMsg is Data:
   Gone{}
   Board{root: String, items: List<&2, B.Item>}
 
+# the boards being watched and the fonts
+type Aux is Data:
+  Aux{watched: List<&2, String>, ty: L.Ty}
+
 type Shell is Type:
-  Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg), watched: List<&2, String>}
+  Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg), aux: Aux}
 
 def Pump.got(r: Window & List<&2, U32>, +q: Chan(ShellMsg), k: Window -> IO(Unit)) -> IO(Unit):
   (w, ws) = r
@@ -96,7 +101,7 @@ def Shell.again(anim: Bool, a: Shell) -> IO(Shell):
     case False{}:
       IO.pure(Shell, a)
 
-def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, anim: Bool) -> IO(Shell):
+def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool) -> IO(Shell):
   (w, img) = r
   do IO<Shell>:
     Unit <- IO.pure(Unit, Image.drop!(img))
@@ -104,8 +109,8 @@ def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg)
 
 # the viewer's settled board, drawn once per scene/view (the frame's base)
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat) -> Image:
-  R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 40, (ww - x0 : U32), hh, 526603, 255)
-    <> V.Ops.scene(ss, v, D.Clip{x0, 40, ww, hh}, now, now, True{})), T.Th.bg())
+  R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
+    <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{})), T.Th.bg())
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
   match redraw vw:
@@ -123,7 +128,7 @@ def Shell.vw(+vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
 def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut}:
-      R.Frame.over(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op, V.Ops.scene(ss, v, D.Clip{x0, 40, ww, hh}, now, cut, False{}))), b)
+      R.Frame.over(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}))), b)
 
 # the frame: UI ops over the fading items over the base
 def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
@@ -138,14 +143,11 @@ def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
     case V.Vw{ss, _, _, _, _, _, _, _, _, _}:
       V.Fade.busy(ss, now)
 
-def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
     case L.Out{+ops, hs}:
       IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms)),
         r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms))))
-
-def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(L.Lay.frame(n), n, w, q, i, wa, epoch, ms)
 
 def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat) -> V.Vw:
   match open:
@@ -153,26 +155,6 @@ def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat) -
       Shell.vw(vw, ww, hh, x0, ms)
     case False{}:
       vw
-
-def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  match n0:
-    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, _, vw0}:
-      Shell.paint.go(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
-        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
-
-def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.k(N.Nui.prepare(n), w, q, i, wa, epoch, ms)
-
-# draw now if anything changed since the last frame
-def Shell.frame(a: Shell) -> IO(Shell):
-  match a:
-    case Shell{+n, w, True{}, _, q, i, wa}:
-      do IO<Shell>:
-        t : U32 <- H.Clock.epoch()
-        ms : Nat <- IO.now()
-        Shell.paint(n, w, q, i, wa, U32.to_nat(t), ms)
-    case Shell{n, w, False{}, _, q, i, wa}:
-      IO.pure(Shell, Shell{n, w, False{}, False{}, q, i, wa})
 
 # Commands
 # --------
@@ -217,7 +199,7 @@ def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
 # Events
 # ------
 
-def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>) -> IO(Shell):
+def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux) -> IO(Shell):
   (w, text) = r
   Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.paste(n, text))
 
@@ -344,19 +326,57 @@ def Shell.has(ws: List<&2, String>, +r: String) -> Bool:
     case w <> t:
       Bool.or(String.eq(w, r), Shell.has(t, r))
 
+def Aux.ty(a: Aux) -> L.Ty:
+  match a:
+    case Aux{_, t}:
+      t
+
+def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(L.Lay.frame(Aux.ty(wa), n), n, w, q, i, wa, epoch, ms)
+
+def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  match n0:
+    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, _, vw0}:
+      Shell.paint.go(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
+        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
+
+def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.k(N.Nui.prepare(n), w, q, i, wa, epoch, ms)
+
+# draw now if anything changed since the last frame
+def Shell.frame(a: Shell) -> IO(Shell):
+  match a:
+    case Shell{+n, w, True{}, _, q, i, wa}:
+      do IO<Shell>:
+        t : U32 <- H.Clock.epoch()
+        ms : Nat <- IO.now()
+        Shell.paint(n, w, q, i, wa, U32.to_nat(t), ms)
+    case Shell{n, w, False{}, _, q, i, wa}:
+      IO.pure(Shell, Shell{n, w, False{}, False{}, q, i, wa})
+
+def Aux.watched(a: Aux) -> List<&2, String>:
+  match a:
+    case Aux{ws, _}:
+      ws
+
+def Aux.add(a: Aux, r: String) -> Aux:
+  match a:
+    case Aux{ws, t}:
+      Aux{r <> ws, t}
+
 def Shell.watch.go(start: Bool, +root: String, a: Shell) -> IO(Shell):
   match start a:
     case True{} Shell{n, w, d, qd, +q, i, wa}:
       do IO<Shell>:
         IO.spawn(Unit, Watch.start(root, q))
-        return Shell{n, w, d, qd, q, i, root <> wa}
+        return Shell{n, w, d, qd, q, i, Aux.add(wa, root)}
     case False{} _:
       IO.pure(Shell, a)
 
 def Shell.watch.k(open: Bool, +root: String, a: Shell) -> IO(Shell):
   match open a:
     case True{} Shell{n, w, d, qd, q, i, +wa}:
-      Shell.watch.go(Bool.and(Bool.not(String.is_empty(root)), Bool.not(Shell.has(wa, root))), root, Shell{n, w, d, qd, q, i, wa})
+      Shell.watch.go(Bool.and(Bool.not(String.is_empty(root)), Bool.not(Shell.has(Aux.watched(wa), root))), root, Shell{n, w, d, qd, q, i, wa})
     case False{} _:
       IO.pure(Shell, a)
 
@@ -404,6 +424,33 @@ def Shell.loop(fuel: Nat, a: Shell) -> IO(Unit):
 # Start
 # -----
 
+# Backplane's type: Berkeley Mono where installed, else the system's
+# monospace; FreeType via fontconfig, the Spleen bitmap without them
+def Fonts.ui() -> List<&2, String>:
+  ["Berkeley Mono", "monospace"]
+
+def Fonts.bold() -> List<&2, String>:
+  ["Berkeley Mono:weight=bold", "monospace:weight=bold"]
+
+def Fonts.code() -> List<&2, String>:
+  ["Berkeley Mono", "SF Mono", "SFMono-Regular", "Menlo", "Consolas", "Liberation Mono", "monospace"]
+
+def Fonts.warm(fs: List<&2, X.Face>, c: Map<&2, X.TG>) -> IO(Map<&2, X.TG>):
+  match fs:
+    case Nil{}:
+      IO.pure(Map<&2, X.TG>, c)
+    case +f <> t:
+      IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.warm(c, f), c2 => IO.bind(Map<&2, X.TG>, Map<&2, X.TG>, X.Text.ensure(c2, f, "▾▸←−×"), c3 => Fonts.warm(t, c3)))
+
+def Fonts.load() -> IO(L.Ty):
+  do IO<L.Ty>:
+    +ui : X.Face <- X.Text.face(Fonts.ui(), 14)
+    +bold : X.Face <- X.Text.face(Fonts.bold(), 14)
+    +meta : X.Face <- X.Text.face(Fonts.ui(), 12)
+    +code : X.Face <- X.Text.face(Fonts.code(), 13)
+    c : Map<&2, X.TG> <- Fonts.warm([ui, bold, meta, code], Map.new(&2, X.TG))
+    return L.Ty{c, ui, bold, meta, ui, code}
+
 def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
   (ev, pw) = r
   do IO<Unit>:
@@ -413,7 +460,8 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q))
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Nil{}})
+    ty : L.Ty <- Fonts.load()
+    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty}})
     Shell.loop(S.Fuel.forever(), a)
 
 # no display: keep serving the web UI

@@ -46,7 +46,9 @@ static void button(Display* d, Window w, int x, int y, unsigned b) {
 int main(int argc, char** argv) {
   Display* d = XOpenDisplay(NULL);
   if (!d || argc < 2) return 1;
-  Window w = find(d, DefaultRootWindow(d), "Backplane");
+  // XPOKE_WIN=<id> picks one window when several Backplanes share a display
+  const char* pick = getenv("XPOKE_WIN");
+  Window w = pick && *pick ? (Window)strtoul(pick, NULL, 0) : find(d, DefaultRootWindow(d), "Backplane");
   if (!w) { fprintf(stderr, "no Backplane window\n"); return 1; }
   if (!strcmp(argv[1], "click") && argc == 4) {
     button(d, w, atoi(argv[2]), atoi(argv[3]), 1);

@@ -431,7 +431,7 @@ def Nui.board(+n: Nui, +root: String, +items: List<&2, B.Item>, +now: Nat) -> Nu
 def Vw.fit(v: V.Vw, +x0: U32, +h: U32, +w: U32) -> V.Vw:
   match v:
     case V.Vw{+s, vi, False{}, r, d, lx, ly, b, _, cu}:
-      V.Vw{s, V.View.fit(s, U32.to_f32(x0), 40.0, U32.to_f32((w - x0 : U32)), U32.to_f32((h - 40 : U32))), Bool.not(List.is_empty(&2, V.Seen, s)), r, d, lx, ly, b, False{}, cu}
+      V.Vw{s, V.View.fit(s, U32.to_f32(x0), 52.0, U32.to_f32((w - x0 : U32)), U32.to_f32((h - 52 : U32))), Bool.not(List.is_empty(&2, V.Seen, s)), r, d, lx, ly, b, False{}, cu}
     case _:
       v
 
