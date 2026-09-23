@@ -1145,12 +1145,19 @@ def Files.cmd(repo: Bool) -> String:
     case False{}:
       "find . -maxdepth 8 -type f -not -path '*/.*' -not -path '*/node_modules/*' 2>/dev/null | head -n " ++ Files.limit() ++ " | sed 's|^\\./||'"
 
+def Files.str(blank: Bool, l: String, rest: List<&2, J.Json>) -> List<&2, J.Json>:
+  match blank:
+    case True{}:
+      rest
+    case False{}:
+      J.Str{l} <> rest
+
 def Files.strs(ls: List<&2, String>) -> List<&2, J.Json>:
   match ls:
     case Nil{}:
       Nil{}
-    case +l <> +t:
-      Bool.pick(List<&2, J.Json>, String.is_empty(String.trim(l)), Files.strs(t), J.Str{l} <> Files.strs(t))
+    case +l <> t:
+      Files.str(String.is_empty(String.trim(l)), l, Files.strs(t))
 
 def Files.sent(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String) -> IO(Unit):
   match r:
