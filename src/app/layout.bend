@@ -730,16 +730,52 @@ def Picker.rows(+ty: Ty, ms: List<&2, String>, +cur: String, +x: U32, +y: U32, +
           [Lay.hit(x, y, w, 28, "model", m)]},
         Picker.rows(ty, t, cur, x, (y + 28 : U32), w))
 
-# the model menu, opening upward from the composer's footer
-def Lay.picker(+ty: Ty, open: Bool, +ms: List<&2, String>, +cur: String, +x: U32, +bottom: U32) -> Out:
+# reasoning effort chips, left to right
+def Picker.efforts(+ty: Ty, es: List<&2, String>, +cur: String, +x: U32, +y: U32) -> Out:
+  match es:
+    case Nil{}:
+      Out.none()
+    case +e <> t:
+      Out.cat(Lay.chip(ty, x, y, U.Effort.name(e), String.eq(e, cur), "effort", e),
+        Picker.efforts(ty, t, cur, (x + Lay.button.w(ty, U.Effort.name(e)) + 4 : U32), y))
+
+# the model menu, opening upward from the composer's footer: the effort
+# chips on top (where the provider has them), then the models
+def Lay.picker(+ty: Ty, open: Bool, +ms: List<&2, String>, +cur: String, +x: U32, +bottom: U32, +es: List<&2, String>, +effort: String) -> Out:
   +n = {U32.from_nat(List.length(&2, String, ms)) : U32}
+  +eh = {Bool.pick(U32, List.is_empty(&2, String, es), 0, 36) : U32}
+  +h = {(n * 28 + 8 + eh : U32) : U32}
+  Out.when(Bool.and(open, U32.is_gt((n + eh : U32), 0)),
+    Out.all([Out.ops(Lay.box(D.Clip.all(), x, (bottom - h : U32), 300, h, 8, T.Th.panel(), T.Th.line())),
+      Picker.efforts(ty, es, effort, (x + 4 : U32), (bottom - h + 4 : U32)),
+      Picker.rows(ty, ms, cur, x, (bottom - h + 4 + eh : U32), 300)]))
+
+def Skills.row(+ty: Ty, +n: String, +d: String, +x: U32, +y: U32, +w: U32, first: Bool) -> Out:
+  +nw = Ty.width(ty, 2n, "$" ++ n)
+  Out{List.concat(&2, R.Op, [Bool.pick(List<&2, R.Op>, first, Lay.round(D.Clip.all(), (x + 4 : U32), y, (w - 8 : U32), 28, 5, T.Th.sel()), Nil{}),
+      Ty.text(ty, 2n, "$" ++ n, D.Clip.all(), (x + 14 : U32), y, 28, T.Th.text()),
+      Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, d, U32.dim(w, (nw + 48 : U32))), D.Clip.all(), (x + 30 + nw : U32), y, 28, T.Th.dim())]),
+    [Lay.hit(x, y, w, 28, "skill", n)]}
+
+def Skills.rows(+ty: Ty, rs: List<&2, U.SkillRow>, +x: U32, +y: U32, +w: U32, first: Bool) -> Out:
+  match rs:
+    case Nil{}:
+      Out.none()
+    case U.SkillRow{+n, +d} <> t:
+      Out.cat(Skills.row(ty, n, d, x, y, w, first), Skills.rows(ty, t, x, (y + 28 : U32), w, False{}))
+
+# the skills a `$` being typed may complete to, above the composer (Tab
+# or Enter takes the first, highlighted)
+def Lay.skills(+ty: Ty, +rs: List<&2, U.SkillRow>, +x0: U32, +x1: U32, +bottom: U32) -> Out:
+  +n = {U32.from_nat(List.length(&2, U.SkillRow, rs)) : U32}
   +h = {(n * 28 + 8 : U32) : U32}
-  Out.when(Bool.and(open, U32.is_gt(n, 0)),
-    Out.cat(Out.ops(Lay.box(D.Clip.all(), x, (bottom - h : U32), 220, h, 8, T.Th.panel(), T.Th.line())),
-      Picker.rows(ty, ms, cur, x, (bottom - h + 4 : U32), 220)))
+  Out.when(U32.is_gt(n, 0),
+    Out.cat(Out.ops(Lay.box(D.Clip.all(), x0, (bottom - h : U32), (x1 - x0 : U32), h, 8, T.Th.panel(), T.Th.line())),
+      Skills.rows(ty, rs, x0, (bottom - h + 4 : U32), (x1 - x0 : U32), True{})))
 
 # the draft's last lines and where the caret sits among them
-def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +focused: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String) -> Out:
+def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +focused: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String,
+    +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>) -> Out:
   +tw = {(x1 - x0 - 40 : U32) : U32}
   +ls = Ty.wrap(ty, 3n, draft, tw)
   +shown = List.drop(&2, String, ls, Nat.sub(List.length(&2, String, ls), 2n))
@@ -751,13 +787,14 @@ def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +focused: Bool, +x0: U32,
   Out.all([
     Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 100, 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
     Bool.pick(Out, String.is_empty(draft),
-      Out.ops(Ty.text(ty, 3n, "Ask anything, @tag files, or describe the change", D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
+      Out.ops(Ty.text(ty, 3n, "Ask anything, @tag files, $skill, or describe the change", D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
       Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
     Bool.pick(Out, focused, Out.ops([D.Draw.rect(D.Clip.all(), (x0 + 16 + cx : U32), (y + 14 + (U32.from_nat(row) * 23 : U32) : U32), 1, 16, T.Th.accent(), 255)]), Out.none()),
     Out{Nil{}, [Lay.hit(x0, y, (x1 - x0 : U32), 64, "focus", "composer")]},
     Out{Ty.text(ty, 2n, models ++ "  ▾", D.Clip.all(), (x0 + 16 : U32), (y + 64 : U32), 28, T.Th.dim()), [Lay.hit((x0 + 8 : U32), (y + 64 : U32), (Ty.width(ty, 2n, models) + 36 : U32), 28, "flag", "models")]},
     Lay.button(ty, D.Clip.all(), (x1 - 12 - Lay.button.w(ty, send) : U32), (y + 64 : U32), send, T.Th.accent(), "send", ""),
-    Lay.picker(ty, picking, ms, model, (x0 + 8 : U32), (y + 64 : U32))])
+    Lay.picker(ty, picking, ms, model, (x0 + 8 : U32), (y + 64 : U32), es, effort),
+    Lay.skills(ty, rs, x0, x1, (y - 4 : U32))])
 
 # whether the head line ends above top (it is out of view)
 def TL.above(ls: List<&2, TLine>, +y: U32, +top: U32) -> Bool:
@@ -964,7 +1001,7 @@ def Lay.queued(+ty: Ty, +q: String, +x0: U32, +x1: U32, +h: U32) -> Out:
       Ty.text(ty, 2n, label, D.Clip.all(), (x0 + 12 : U32), (h - 150 : U32), 26, T.Th.dim()))))
 
 def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focused: Bool,
-    +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>) -> Out:
+    +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
@@ -983,7 +1020,8 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
-          Lay.composer(ty, draft, caret, focused, cx0, cx1, h, Lay.running(turn), U.Models.label(pr, mo), picking, U.Models.list(info, pr), mo),
+          Lay.composer(ty, draft, caret, focused, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo,
+            U.Effort.chips(pr), U.Effort.of(st, sel), rs),
           Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
 
@@ -991,7 +1029,7 @@ def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
       Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, String.eq(focus, "composer"), x0, x1, h, sc, pa,
-        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel))
+        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)))
 
 def Lay.empty(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
   +msg = Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")

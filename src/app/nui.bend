@@ -206,6 +206,38 @@ def Nui.composer.k(e: Ed, n: Nui) -> Step:
     case Ed{_, +c, False{}, False{}}:
       Step{Nui.with_caret(n, c), Nil{}, True{}}
 
+# completing a `$skill` puts the caret after it
+def Nui.skill.k(s: Step) -> Step:
+  match s:
+    case Step{Nui{+u, w, h, mx, my, sd, sc, _, fo, pa, hi, ms, vw}, cs, d}:
+      Step{Nui{u, w, h, mx, my, sd, sc, String.length(U.Ui.draft_text(u)), fo, pa, hi, ms, vw}, cs, d}
+
+def Nui.skill(n: Nui) -> Step:
+  Nui.skill.k(Nui.act(n, "skill", ""))
+
+def Ed.submit(e: Ed) -> Bool:
+  match e:
+    case Ed{_, _, s, _}:
+      s
+
+def Nui.composer.sk(complete: Bool, e: Ed, n: Nui) -> Step:
+  match complete:
+    case True{}:
+      Nui.skill(n)
+    case False{}:
+      Nui.composer.k(e, n)
+
+# while skills are offered, Tab and Enter complete the first
+def Nui.composer.s(has: Bool, +code: U32, +e: Ed, n: Nui) -> Step:
+  match has:
+    case True{}:
+      Nui.composer.sk(Bool.or(U32.is_eq(code, Key.tab()), Ed.submit(e)), e, n)
+    case False{}:
+      Nui.composer.k(e, n)
+
+def Nui.skills_on(+u: U.Ui) -> Bool:
+  Bool.not(List.is_empty(&2, U.SkillRow, U.Ui.skills(u)))
+
 def Nui.path.k(e: Ed, n: Nui) -> Step:
   match e:
     case Ed{+t, _, True{}, _}:
@@ -216,7 +248,7 @@ def Nui.path.k(e: Ed, n: Nui) -> Step:
 def Nui.field.k(comp: Bool, path: Bool, n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match comp path n:
     case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.k(Ed.key(code, text, mods, U.Ui.draft_text(u), ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
       Nui.path.k(Ed.key(code, text, mods, pa, ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case _ _ _:

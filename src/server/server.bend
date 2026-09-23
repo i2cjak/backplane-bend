@@ -19,6 +19,7 @@ import ./push.bend as PU
 import ./park.bend as PK
 import ./git.bend as GT
 import ./term.bend as TM
+import ../core/agent.bend as AG
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -968,6 +969,76 @@ def GitJob.diff(+cwd: String, +thread: String, +a: String, +b: String) -> IO(Str
   Bool.pick(IO(String), String.eq(b, "-1"), GT.Git.checkpoint.diff_worktree(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n)),
     GT.Git.checkpoint.diff(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n), Maybe.default(&2, Nat, Nat.read(b), 0n)))
 
+# One-shot writing (branch names, commit messages)
+# -------------------------------------------------
+# `claude -p` with a small model (AG.OneShot.args), under timeout(1): the
+# system prompt is an argument, the text goes on stdin. "" when claude is
+# missing, fails, or takes longer than a minute; callers fall back.
+
+def OneShot.out(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, out}:
+      AG.OneShot.result(out)
+    case _:
+      ""
+
+def OneShot.done(r: Socket & Result<&1, &1, U32 & String, Unit>, +pid: U32) -> IO(String):
+  (s, _) = r
+  do IO<String>:
+    s2 : Socket <- H.Sock.shutdown(s)
+    d : Socket & List<&2, U32> <- P.Proc.drain(1000000n, s2, P.Chunks{Nil{}})
+    ran : P.Ran <- P.Proc.finish(pid, d)
+    return OneShot.out(ran)
+
+def OneShot.started(started: U32 & Socket, +input: String) -> IO(String):
+  (+pid, s) = started
+  IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, String, H.Sock.send_text(s, input), r => OneShot.done(r, pid))
+
+def OneShot.spawned(r: Result<&1, &1, U32 & String, U32 & Socket>, +input: String) -> IO(String):
+  match r:
+    case Done{started}:
+      OneShot.started(started, input)
+    case Fail{_}:
+      IO.pure(String, "")
+
+def OneShot.run(+system: String, +input: String) -> IO(String):
+  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, String, H.Proc.spawn("timeout", AG.OneShot.args(system), "/tmp", 0), r => OneShot.spawned(r, input))
+
+def AgentJob.named(+r: String, +inbox: Chan(Msg), +thread: String) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.failed(r), GitJob.note(inbox, thread, "error", "branch name: " ++ r),
+    GitJob.say(inbox, "thread.branch", [J.KV{"thread", J.Str{thread}}, J.KV{"branch", J.Str{r}}]))
+
+# a name another branch has already gets the temporary one's hex
+def AgentJob.renamed(+r: String, +cwd: String, +old: String, +frag: String, +inbox: Chan(Msg), +thread: String) -> IO(Unit):
+  Bool.pick(IO(Unit), GT.Git.failed(r),
+    IO.bind(String, Unit, GT.Git.branch.rename(cwd, old, AG.Name.branch(frag) ++ "-" ++ String.drop(old, 10n)), r2 => AgentJob.named(r2, inbox, thread)),
+    AgentJob.named(r, inbox, thread))
+
+def AgentJob.rename(+frag: String, +cwd: String, +old: String, +inbox: Chan(Msg), +thread: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(frag), IO.pure(Unit, Unit{}),
+    IO.bind(String, Unit, GT.Git.branch.rename(cwd, old, AG.Name.branch(frag)), r => AgentJob.renamed(r, cwd, old, frag, inbox, thread)))
+
+# a worktree thread's first message names its branch; without an answer
+# the temporary name stays
+def AgentJob.name(+inbox: Chan(Msg), +thread: String, +cwd: String, +old: String, +text: String) -> IO(Unit):
+  IO.bind(String, Unit, OneShot.run(AG.Name.system(), String.take(text, 4000n)), a => AgentJob.rename(AG.Name.fragment(a), cwd, old, inbox, thread))
+
+def AgentJob.write(+d: String, +title: String) -> IO(String):
+  Bool.pick(IO(String), Bool.or(String.is_empty(String.trim(d)), GT.Git.failed(d)), IO.pure(String, title),
+    IO.bind(String, String, OneShot.run(AG.Commit.system(), AG.Commit.input(title, d)), a => IO.pure(String, AG.Commit.message(a, title))))
+
+def AgentJob.commit(+msg: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +action: String) -> IO(Unit):
+  IO.bind(String, Unit, GT.Git.act(cwd, action, msg, "", ""), r => GitJob.text.k(inbox, client, id, thread, action, r))
+
+# Commit & push / Open PR with a message written from the thread's diff
+# (checkpoint 0 against the work tree); the thread's title when there is
+# no diff or no answer
+def AgentJob.act(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +action: String, +title: String) -> IO(Unit):
+  do IO<Unit>:
+    d : String <- GT.Git.checkpoint.diff_worktree(cwd, thread, 0n)
+    msg : String <- AgentJob.write(d, Bool.pick(String, String.is_empty(title), "Backplane: changes from this thread", title))
+    AgentJob.commit(msg, inbox, client, id, thread, cwd, action)
+
 def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
   match i:
     case 0n:
@@ -984,13 +1055,17 @@ def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: Str
       IO.bind(String, Unit, GT.Git.act(cwd, a, Bool.pick(String, String.is_empty(b), "Backplane: changes from this thread", b), "", ""), r => GitJob.text.k(inbox, client, id, thread, a, r))
     case 6n:
       IO.bind(String, Unit, GT.Git.status(cwd), r => GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"status", J.Str{r}}, J.KV{"thread", J.Str{thread}}])))
+    case 7n:
+      AgentJob.name(inbox, thread, cwd, a, b)
+    case 8n:
+      AgentJob.act(inbox, client, id, thread, cwd, a, b)
     case _:
       IO.pure(Unit, Unit{})
 
 def GitJob.repo(ok: Bool, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
   match ok:
     case True{}:
-      GitJob.go(C.Codec.pos(["worktree", "checkpoint0", "checkpoint", "diff", "revert", "act", "status"], job), inbox, client, id, thread, cwd, a, b, home, seed)
+      GitJob.go(C.Codec.pos(["worktree", "checkpoint0", "checkpoint", "diff", "revert", "act", "status", "name", "act_gen"], job), inbox, client, id, thread, cwd, a, b, home, seed)
     case False{}:
       Bool.pick(IO(Unit), String.is_empty(id), IO.pure(Unit, Unit{}), GitJob.reply(inbox, client, id, False{}, J.Json.obj([J.KV{"text", J.Str{"not a git repository: " ++ cwd}}])))
 
@@ -1018,8 +1093,16 @@ def Grok.perm(r: M.RuntimeMode) -> List<&2, String>:
     case M.FullAccess{}:
       ["agent", "--always-approve"]
 
-def Grok.args(r: M.RuntimeMode, +model: String) -> List<&2, String>:
-  List.concat(&2, String, [Grok.perm(r), Codex.opt("-m", model), ["stdio"]])
+def Grok.args(r: M.RuntimeMode, +model: String, +effort: String) -> List<&2, String>:
+  List.concat(&2, String, [Grok.perm(r), Codex.opt("-m", model), AG.Effort.args("grok", effort), ["stdio"]])
+
+# whether Grok's tool requests go to the user (all modes but full access)
+def Grok.asks(r: M.RuntimeMode) -> Bool:
+  match r:
+    case M.FullAccess{}:
+      False{}
+    case _:
+      True{}
 
 def Grok.report(ls: List<&2, String>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   match ls:
@@ -1041,7 +1124,7 @@ def Grok.write(ls: List<&2, String>, +input: Chan(String)) -> IO(Unit):
 
 def Grok.acp(o: AC.AcpOut) -> AC.Acp:
   match o:
-    case AC.AcpOut{a, _, _}:
+    case AC.AcpOut{a, _, _, _}:
       a
 
 def Grok.done(a: AC.Acp) -> Bool:
@@ -1049,12 +1132,39 @@ def Grok.done(a: AC.Acp) -> Bool:
     case AC.Acp{_, _, d}:
       d
 
+def Grok.answered(m: Maybe<&1, String>, +input: Chan(String)) -> IO(Unit):
+  match m:
+    case Some{+line}:
+      Bool.pick(IO(Unit), String.is_empty(line), IO.pure(Unit, Unit{}), Grok.write([line], input))
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+# a permission request waits off the reader: the hub allows a tool already
+# allowed for the session, or opens an approval and parks the request;
+# the ACP answer then goes to grok
+def Grok.ask.one(+line: String, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +reply : Chan(String) <- Chan.new(String, 1)
+    ok : Bool <- Chan.send(Msg, inbox, Mcp{thread, line, reply})
+    m : Maybe<&1, String> <- Chan.recv(String, reply)
+    Grok.answered(m, input)
+
+def Grok.ask(ls: List<&2, String>, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  match ls:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case l <> t:
+      do IO<Unit>:
+        IO.spawn(Unit, Grok.ask.one(l, thread, input, inbox))
+        Grok.ask(t, thread, input, inbox)
+
 def Grok.out(o: AC.AcpOut, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(AC.Acp):
   match o:
-    case AC.AcpOut{a, send, emit}:
+    case AC.AcpOut{a, send, emit, asks}:
       do IO<AC.Acp>:
         Grok.write(send, input)
         Grok.report(emit, thread, inbox)
+        Grok.ask(asks, thread, input, inbox)
         return a
 
 # every line of a chunk, in order, through the ACP state
@@ -1305,16 +1415,16 @@ def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Fil
     Hub.prompt.files(cwd, fs),
     Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n")
 
-def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String) -> List<&2, String>:
+def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String, +effort: String) -> List<&2, String>:
   match cfg:
     case Cfg{_, _, _, _, _, dirs, _, _}:
-      List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, dirs),
-        ["--mcp-config", "{\"mcpServers\":{\"backplane\":{\"type\":\"http\",\"url\":\"" ++ Hub.mcp_url(cfg, thread) ++ "\"}}}"])
+      List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, dirs), List.append(&2, String, AG.Effort.args("claude", effort),
+        ["--mcp-config", "{\"mcpServers\":{\"backplane\":{\"type\":\"http\",\"url\":\"" ++ Hub.mcp_url(cfg, thread) ++ "\"}}}"]))
 
 # what a Claude process was started with; a turn asking for something else
-# (another model or mode) restarts it
-def Agent.key(+model: String, r: M.RuntimeMode, i: M.InteractionMode) -> String:
-  model ++ "|" ++ C.Runtime.name(r) ++ "|" ++ C.Interaction.name(i)
+# (another model, mode or effort) restarts it
+def Agent.key(+model: String, r: M.RuntimeMode, i: M.InteractionMode, +effort: String) -> String:
+  model ++ "|" ++ C.Runtime.name(r) ++ "|" ++ C.Interaction.name(i) ++ "|" ++ AG.Effort.of("claude", effort)
 
 def Agent.same(m: Maybe<&2, Agent>, +key: String) -> Bool:
   match m:
@@ -1323,7 +1433,7 @@ def Agent.same(m: Maybe<&2, Agent>, +key: String) -> Bool:
     case None{}:
       False{}
 
-def Hub.start.go(same: Bool, m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode) -> IO(Hub):
+def Hub.start.go(same: Bool, m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, +effort: String) -> IO(Hub):
   match same h:
     case True{} _:
       IO.pure(Hub, h)
@@ -1331,16 +1441,16 @@ def Hub.start.go(same: Bool, m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd:
       do IO<Hub>:
         Hub.agent_stop(m)
         fs : K.Files <- K.Files.read(cwd)
-        res : Result<&1, &1, U32 & String, U32 & Socket> <- H.Proc.spawn("env", "MCP_TOOL_TIMEOUT=86400000" <> "claude" <> Hub.agent_args(cfg, thread, model, session, r, i, Hub.prompt(cfg, st, thread, cwd, fs)), cwd, 0)
-        Hub.spawned(res, Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}, thread, Agent.key(model, r, i))
+        res : Result<&1, &1, U32 & String, U32 & Socket> <- H.Proc.spawn("env", "MCP_TOOL_TIMEOUT=86400000" <> "claude" <> Hub.agent_args(cfg, thread, model, session, r, i, Hub.prompt(cfg, st, thread, cwd, fs), effort), cwd, 0)
+        Hub.spawned(res, Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}, thread, Agent.key(model, r, i, effort))
 
-def Hub.start.k(+m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode) -> IO(Hub):
-  Hub.start.go(Agent.same(m, Agent.key(model, r, i)), m, h, thread, cwd, model, session, r, i)
+def Hub.start.k(+m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, +effort: String) -> IO(Hub):
+  Hub.start.go(Agent.same(m, Agent.key(model, r, i, effort)), m, h, thread, cwd, model, session, r, i, effort)
 
 # `codex exec` for one turn, with this thread's MCP endpoint and the
 # Backplane instructions (the same runtime block Claude gets)
-def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, prompt: String) -> List<&2, String>:
-  List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model),
+def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, prompt: String, +effort: String) -> List<&2, String>:
+  List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model), AG.Effort.args("codex", effort),
     ["-c", "mcp_servers.backplane.url=\"" ++ Hub.mcp_url(cfg, thread) ++ "\"",
      "-c", "developer_instructions=" ++ J.Json.show(J.Str{prompt}), text]])
 
@@ -1615,6 +1725,94 @@ def Term.msg(+op: String, +thread: String, +cwd: String, data: List<&2, U32>, +c
   Bool.pick(TM.TMsg, String.eq(op, "open"), TM.TOpen{thread, cwd, cols, rows},
     Bool.pick(TM.TMsg, String.eq(op, "resize"), TM.TSize{thread, cols, rows}, TM.TIn{thread, data}))
 
+# User and project skills
+# -----------------------
+
+def Skills.ukeep(empty: Bool, s: AG.USkill, rest: List<&2, AG.USkill>) -> List<&2, AG.USkill>:
+  match empty:
+    case True{}:
+      rest
+    case False{}:
+      s <> rest
+
+def Skills.uread(ds: List<&2, String>, +root: String) -> IO(List<&2, AG.USkill>):
+  match ds:
+    case Nil{}:
+      IO.pure(List<&2, AG.USkill>, Nil{})
+    case +d <> t:
+      do IO<List<&2, AG.USkill>>:
+        +path : String = root ++ "/" ++ d ++ "/SKILL.md"
+        +text : String <- Files.text(path)
+        rest : List<&2, AG.USkill> <- Skills.uread(t, root)
+        return Skills.ukeep(String.is_empty(text), AG.USkill.parse(text, d, path), rest)
+
+def Skills.names(r: Result<&1, &1, U32 & String, List<String>>) -> List<&2, String>:
+  match r:
+    case Done{xs}:
+      Names.copy(xs)
+    case Fail{_}:
+      Nil{}
+
+def Skills.dir(+root: String) -> IO(List<&2, AG.USkill>):
+  IO.bind(Result<&1, &1, U32 & String, List<String>>, List<&2, AG.USkill>, H.FS.list(root), r => Skills.uread(Skills.names(r), root))
+
+def Skills.scan.k(+home: String, +cwd: String) -> IO(List<&2, AG.USkill>):
+  do IO<List<&2, AG.USkill>>:
+    us : List<&2, AG.USkill> <- Skills.dir(home ++ "/.claude/skills")
+    ps : List<&2, AG.USkill> <- Skills.dir(cwd ++ "/.claude/skills")
+    return AG.USkill.merge(us, ps)
+
+# ~/.claude/skills, then <cwd>/.claude/skills (the user's win a clash)
+def Skills.scan(+cwd: String) -> IO(List<&2, AG.USkill>):
+  IO.bind(String, List<&2, AG.USkill>, Env.get("HOME", "/nonexistent"), home => Skills.scan.k(home, cwd))
+
+def AgentJob.skills(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String) -> IO(Unit):
+  IO.bind(List<&2, AG.USkill>, Unit, Skills.scan(cwd), ss =>
+    GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"skills", AG.USkill.json(ss)}, J.KV{"thread", J.Str{thread}}])))
+
+# a job for the hub's Git effect: the skills a composer offers (anywhere),
+# or a git job (in a repository)
+def Jobs.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(job, "skills"), AgentJob.skills(inbox, client, id, thread, cwd), GitJob.run(job, inbox, client, id, thread, cwd, a, b, home))
+
+# a thread's reasoning effort setting ("" for the provider's default)
+def Hub.effort_of(+st: M.State, +thread: String) -> String:
+  M.Setting.get(st, AG.Effort.key(thread), "")
+
+def Mention.user_text(+o: J.Json) -> String:
+  J.Json.get_str(Maybe.default(&2, J.Json, List.head(&2, J.Json, J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "message"), "content"))), J.Null{}), "text", "")
+
+def Mention.line.k(m: Maybe<&2, J.Json>, +line: String, +ss: List<&2, AG.USkill>) -> String:
+  match m:
+    case Some{+o}:
+      Bool.pick(String, String.eq(J.Json.get_str(o, "type", ""), "user"), B.Claude.user(AG.Mention.expand("claude", Mention.user_text(o), ss)), line)
+    case None{}:
+      line
+
+# a Claude stream-json user line with its `$skill` mentions as `/skill`
+def Mention.line(+line: String, +ss: List<&2, AG.USkill>) -> String:
+  Mention.line.k(J.Json.parse(line), line, ss)
+
+def Hub.agent_send.k(has: Bool, m: Maybe<&2, Agent>, +line: String, +cwd: String) -> IO(Unit):
+  match has:
+    case True{}:
+      IO.bind(List<&2, AG.USkill>, Unit, Skills.scan(cwd), ss => Hub.agent_send(m, Mention.line(line, ss)))
+    case False{}:
+      Hub.agent_send(m, line)
+
+# one Codex turn: the thread's skills join its instructions and its
+# `$skill` mentions become instructions to read them
+def Codex.go(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, fs: K.Files, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +ss : List<&2, AG.USkill> <- Skills.scan(cwd)
+    Codex.run(Codex.args(cfg, thread, model, session, r, AG.Mention.expand("codex", text, ss), Hub.prompt(cfg, st, thread, cwd, fs) ++ AG.USkill.prompt(ss), Hub.effort_of(st, thread)), cwd, thread, inbox)
+
+def Grok.go(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +text: String, fs: K.Files, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +ss : List<&2, AG.USkill> <- Skills.scan(cwd)
+    Grok.run(Grok.args(r, model, Hub.effort_of(st, thread)),
+      AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs) ++ AG.USkill.prompt(ss), AG.Mention.expand("grok", text, ss), session, Grok.asks(r)}, cwd, thread, inbox)
+
 def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
   match h o:
     case Hub{st, f, ls, +cl, as, inbox, cfg, note} B.Send{+client, text}:
@@ -1625,11 +1823,11 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         Wire.all(cl, text)
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
-    case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentStart{+thread, +cwd, _, +model, +session, r, i}:
-      Hub.start.k(Agents.get(as, thread), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, cwd, model, session, r, i)
-    case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentSend{+thread, line}:
+    case Hub{+st, f, ls, cl, +as, inbox, cfg, note} B.AgentStart{+thread, +cwd, _, +model, +session, r, i}:
+      Hub.start.k(Agents.get(as, thread), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, cwd, model, session, r, i, Hub.effort_of(st, thread))
+    case Hub{+st, f, ls, cl, +as, inbox, cfg, note} B.AgentSend{+thread, +line}:
       do IO<Hub>:
-        Hub.agent_send(Agents.get(as, thread), line)
+        Hub.agent_send.k(String.contains(line, "$"), Agents.get(as, thread), line, B.Hub.cwd(st, B.Hub.thread(st, thread)))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentStop{+thread}:
       do IO<Hub>:
@@ -1640,7 +1838,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
-        IO.spawn(Unit, Codex.run(Codex.args(cfg, thread, model, session, r, text, Hub.prompt(cfg, st, thread, cwd, fs)), cwd, thread, inbox))
+        IO.spawn(Unit, Codex.go(cfg, st, thread, cwd, model, session, r, text, fs, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.KiCadInstall{}:
       do IO<Hub>:
@@ -1649,7 +1847,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.GrokTurn{+thread, +cwd, +model, +session, r, +text}:
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
-        IO.spawn(Unit, Grok.run(Grok.args(r, model), AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs), text, session}, cwd, thread, inbox))
+        IO.spawn(Unit, Grok.go(cfg, st, thread, cwd, model, session, r, text, fs, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
@@ -1661,7 +1859,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
       do IO<Hub>:
-        IO.spawn(Unit, GitJob.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg)))
+        IO.spawn(Unit, Jobs.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg)))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.AskAnswered{+ask, +answer}:
       do IO<Hub>:

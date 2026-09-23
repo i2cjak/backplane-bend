@@ -3,6 +3,7 @@ import ./json.bend as J
 import ./model.bend as M
 import ./codec.bend as C
 import ./vt.bend as VT
+import ./agent.bend as AG
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -213,9 +214,29 @@ def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
     case False{}:
       Ui.reply.k(u, o)
 
-# an answer: its request leaves the outbox; a diff opens the diff view
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+# the machine info map with k set to v (skills the composer offers live here)
+def Ui.info_set(u: Ui, +k: String, v: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, Map.set(&2, String, nf, k, v), ob, tr}
+
+def Skills.got(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.info_set(Ui.info_set(u, "skills", J.Json.show(J.Json.get_obj(J.Json.get_obj(o, "result"), "skills"))), "skills.for", J.Json.get_str(J.Json.get_obj(o, "result"), "thread", ""))
+    case False{}:
+      u
+
+def Skills.has(+o: J.Json) -> Bool:
+  Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "skills"), J.Null{})), "null"))
+
+def Ui.reply.body(u: Ui, +o: J.Json) -> Ui:
   Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o)
+
+# an answer: its request leaves the outbox; a diff opens the diff view; a
+# skills list is kept for the composer
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Skills.got(Skills.has(o), Ui.reply.body(u, o), o)
 
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
@@ -339,7 +360,7 @@ def Ui.select(u: Ui, +id: String) -> Act:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Act{Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
 
-def Ui.draft(u: Ui, text: String) -> Act:
+def Ui.draft.set(u: Ui, text: String) -> Act:
   match u:
     case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Act{Ui{st, sel, Map.set(&2, String, dr, sel, text), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, Nil{}}
@@ -432,7 +453,8 @@ def Ui.dismiss(u: Ui) -> Act:
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
-   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert"]
+   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert",
+   "effort", "skill"]
 
 # Reading the client state
 # ------------------------
@@ -583,6 +605,124 @@ def Ui.answer.k(ps: List<&2, String>) -> List<&2, J.KV>:
 def Ui.answer(u: Ui, v: String) -> Act:
   Ui.rpc(u, "ask.answer", Ui.answer.k(String.split(v, '|')))
 
+# Skills in the composer
+# ----------------------
+# Typing `$` asks the server for the thread's skills (user and project,
+# once per thread); the composer then offers those whose name starts with
+# what follows the `$`, and Tab or Enter completes the first (or a
+# clicked one).
+
+type SkillRow is Data:
+  SkillRow{name: String, description: String}
+
+# the draft's last word
+def Skills.token(+draft: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, String.split(Maybe.default(&2, String, List.last(&2, String, String.lines(draft)), ""), ' ')), "")
+
+# whether the draft ends in a `$name` being typed
+def Skills.typing(+draft: String) -> Bool:
+  Bool.and(String.starts_with(Skills.token(draft), "$"), String.eq(AG.Mention.name(Skills.token(draft)), String.drop(Skills.token(draft), 1n)))
+
+def Skills.rows.k(keep: Bool, +r: SkillRow, rest: List<&2, SkillRow>) -> List<&2, SkillRow>:
+  match keep:
+    case True{}:
+      r <> rest
+    case False{}:
+      rest
+
+def Skills.rows(xs: List<&2, J.Json>, +q: String) -> List<&2, SkillRow>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Skills.rows.k(String.starts_with(J.Json.get_str(x, "name", ""), q), SkillRow{J.Json.get_str(x, "name", ""), J.Json.get_str(x, "description", "")}, Skills.rows(t, q))
+
+def Skills.offer(on: Bool, +list: String, +q: String) -> List<&2, SkillRow>:
+  match on:
+    case True{}:
+      List.take(&2, SkillRow, Skills.rows(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(list), J.Null{})), q), 6n)
+    case False{}:
+      Nil{}
+
+# the skills the composer offers now (none unless a `$name` is being typed)
+def Skills.of(+sel: String, +dr: Map<&2, String>, +nf: Map<&2, String>) -> List<&2, SkillRow>:
+  Skills.offer(Bool.and(Skills.typing(Str.get(dr, sel)), String.eq(Str.get(nf, "skills.for"), sel)), Str.get(nf, "skills"), String.drop(Skills.token(Str.get(dr, sel)), 1n))
+
+def Ui.skills(u: Ui) -> List<&2, SkillRow>:
+  match u:
+    case Ui{_, +sel, +dr, _, _, _, _, _, _, _, _, _, _, _, +nf, _, _}:
+      Skills.of(sel, dr, nf)
+
+def Skills.named(rs: List<&2, SkillRow>, +v: String) -> Bool:
+  match rs:
+    case Nil{}:
+      False{}
+    case SkillRow{n, _} <> t:
+      Bool.or(String.eq(n, v), Skills.named(t, v))
+
+def Skills.first(rs: List<&2, SkillRow>) -> String:
+  match rs:
+    case SkillRow{n, _} <> _:
+      n
+    case Nil{}:
+      ""
+
+# the name a completion puts in: the one clicked, else the first offered
+def Skills.pick(+rs: List<&2, SkillRow>, +v: String) -> String:
+  Bool.pick(String, Skills.named(rs, v), v, Skills.first(rs))
+
+def Skills.complete(+draft: String, +name: String) -> String:
+  String.take(draft, Nat.sub(String.length(draft), String.length(Skills.token(draft)))) ++ "$" ++ name ++ " "
+
+def Ui.skill.k(+name: String, +u: Ui) -> Act:
+  Bool.pick(Act, String.is_empty(name), Act{u, Nil{}}, Ui.draft.set(u, Skills.complete(Ui.draft_text(u), name)))
+
+# complete the `$name` being typed
+def Ui.skill(+u: Ui, +v: String) -> Act:
+  Ui.skill.k(Skills.pick(Ui.skills(u), v), u)
+
+def Skills.fetch(need: Bool, a: Act) -> Act:
+  match need a:
+    case True{} Act{+u, cs}:
+      Ui.also(Ui.on_thread(Ui.info_set(Ui.info_set(u, "skills.for", Ui.sel(u)), "skills", "[]"), "skills.list"), cs)
+    case False{} _:
+      a
+
+def Skills.need(+u: Ui) -> Bool:
+  Bool.and(Skills.typing(Ui.draft_text(u)), Bool.not(String.eq(Ui.info(u, "skills.for"), Ui.sel(u))))
+
+def Skills.want(a: Act) -> Act:
+  match a:
+    case Act{+u, cs}:
+      Skills.fetch(Skills.need(u), Act{u, cs})
+
+# the selected thread's draft; typing a `$` fetches its skills once
+def Ui.draft(u: Ui, text: String) -> Act:
+  Skills.want(Ui.draft.set(u, text))
+
+# Reasoning effort in the composer
+# --------------------------------
+
+# a thread's effort ("" for its provider's default)
+def Effort.of(+st: M.State, +thread: String) -> String:
+  M.Setting.get(st, AG.Effort.key(thread), "")
+
+def Ui.effort(u: Ui) -> String:
+  match u:
+    case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Effort.of(st, sel)
+
+# the levels a provider offers, its default ("") first
+def Effort.chips(+provider: String) -> List<&2, String>:
+  Bool.pick(List<&2, String>, List.is_empty(&2, String, AG.Effort.levels(provider)), Nil{}, "" <> AG.Effort.levels(provider))
+
+def Effort.name(+e: String) -> String:
+  Bool.pick(String, String.is_empty(e), "auto", e)
+
+# the model chip's label with the thread's effort
+def Effort.label(+label: String, +e: String) -> String:
+  Bool.pick(String, String.is_empty(e), label, label ++ " · " ++ e)
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -637,6 +777,10 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
     case 25n:
       Ui.on_thread.p(u, "git.revert", [J.KV{"turn", J.Num{Bool.pick(String, String.is_empty(value), "0", value)}}])
+    case 26n:
+      Ui.on_thread.p(u, "thread.effort", [J.KV{"effort", J.Str{value}}])
+    case 27n:
+      Ui.skill(u, value)
     case _:
       Act{u, Nil{}}
 

@@ -6,16 +6,25 @@ import ../src/core/json.bend as J
 # The Grok ACP translator: a scripted exchange, checked line by line.
 
 def turn(+sid: String) -> A.AcpTurn:
-  A.AcpTurn{"/tmp/p", "http://127.0.0.1:1/mcp/t?token=x", "RULES", "hello", sid}
+  A.AcpTurn{"/tmp/p", "http://127.0.0.1:1/mcp/t?token=x", "RULES", "hello", sid, False{}}
+
+# a supervised turn: tool requests go to the user
+def turn.ask(+sid: String) -> A.AcpTurn:
+  A.AcpTurn{"/tmp/p", "http://127.0.0.1:1/mcp/t?token=x", "RULES", "hello", sid, True{}}
 
 def outs(o: A.AcpOut) -> String:
   match o:
-    case A.AcpOut{_, send, emit}:
+    case A.AcpOut{_, send, emit, _}:
       String.join(List.append(&2, String, send, emit), " | ")
+
+def asks(o: A.AcpOut) -> String:
+  match o:
+    case A.AcpOut{_, _, _, ks}:
+      String.join(ks, " | ")
 
 def st(o: A.AcpOut) -> A.Acp:
   match o:
-    case A.AcpOut{a, _, _}:
+    case A.AcpOut{a, _, _, _}:
       a
 
 def method(+line: String) -> String:
@@ -40,6 +49,8 @@ def main() -> IO(Unit):
   +orp = A.Acp.line(a0, turn("OLD"), "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"OLD\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"old\"}}}}")
   +oe = A.Acp.line(a0, t, "{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32000,\"message\":\"Authentication required\"}}")
   +op = A.Acp.line(a0, t, "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"method\":\"session/request_permission\",\"params\":{\"options\":[{\"optionId\":\"no\",\"kind\":\"reject_once\"},{\"optionId\":\"yes\",\"kind\":\"allow_once\"}]}}")
+  +oq = A.Acp.line(a0, turn.ask(""), "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"method\":\"session/request_permission\",\"params\":{\"toolCall\":{\"toolCallId\":\"c1\",\"title\":\"List files\",\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls -la\"}},\"options\":[{\"optionId\":\"no\",\"kind\":\"reject_once\"},{\"optionId\":\"always\",\"kind\":\"allow_always\"},{\"optionId\":\"yes\",\"kind\":\"allow_once\"}]}}")
+  +body = {"{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"method\":\"session/request_permission\",\"params\":{\"toolCall\":{\"toolCallId\":\"c1\",\"title\":\"List files\",\"kind\":\"execute\",\"rawInput\":{\"command\":\"ls -la\"}},\"options\":[{\"optionId\":\"no\",\"kind\":\"reject_once\"},{\"optionId\":\"always\",\"kind\":\"allow_always\"},{\"optionId\":\"yes\",\"kind\":\"allow_once\"}]}}" : String}
   do IO<Unit>:
     C.Check.str("acp init method", method(A.Acp.init()), "initialize")
     C.Check.str("acp new session", method(outs(o1)), "session/new")
@@ -53,3 +64,12 @@ def main() -> IO(Unit):
     C.Check.str("acp finished state", done(st(o5)), "done")
     C.Check.str("acp auth", outs(oe), "{\"type\":\"turn.failed\",\"message\":\"Authentication required (sign in once with `grok login`)\"}")
     C.Check.str("acp permit", outs(op), "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"result\":{\"outcome\":{\"outcome\":\"selected\",\"optionId\":\"yes\"}}}")
+    C.Check.str("acp ask routes", outs(oq), "")
+    C.Check.str("acp ask parks", method(asks(oq)), "session/request_permission")
+    C.Check.str("acp full never parks", asks(op), "")
+    C.Check.str("acp answer accept", A.Acp.permit.answer(body, "accept"), "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"result\":{\"outcome\":{\"outcome\":\"selected\",\"optionId\":\"yes\"}}}")
+    C.Check.str("acp answer session", A.Acp.permit.answer(body, "session"), "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"result\":{\"outcome\":{\"outcome\":\"selected\",\"optionId\":\"always\"}}}")
+    C.Check.str("acp answer decline", A.Acp.permit.answer(body, "decline"), "{\"jsonrpc\":\"2.0\",\"id\":\"p9\",\"result\":{\"outcome\":{\"outcome\":\"selected\",\"optionId\":\"no\"}}}")
+    C.Check.str("acp answer no reject", A.Acp.permit.answer("{\"id\":4,\"params\":{\"options\":[{\"optionId\":\"y\",\"kind\":\"allow_once\"}]}}", "decline"), "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"outcome\":{\"outcome\":\"cancelled\"}}}")
+    C.Check.str("acp tool", A.Acp.tool(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), "params")), "execute")
+    C.Check.str("acp detail", A.Acp.detail(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), "params")), "ls -la")
