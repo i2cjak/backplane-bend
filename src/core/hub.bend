@@ -54,7 +54,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, n, _}:
+    case M.State{_, _, _, n, _, _}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -66,7 +66,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _}:
+    case M.State{_, ts, _, _, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -75,7 +75,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -173,7 +173,7 @@ def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
-   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update"]
+   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set"]
 
 def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   match i:
@@ -210,6 +210,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
         C.Interaction.of(J.Json.get_str(p, "interaction", "default")), J.Json.get_str(p, "model", ""), now}])
     case 15n:
       Step.outs([Reply.ok(client, id), Upgrade{}])
+    case 16n:
+      Step.reply(client, id, [M.SettingSet{J.Json.get_str(p, "key", ""), J.Json.get_str(p, "value", ""), now}])
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 
@@ -362,11 +364,15 @@ def Hub.settle.go(ts: List<&2, M.Thread>, +now: Nat, +w: Nat) -> List<&2, M.Chan
     case +t <> rest:
       Hub.settle.k(M.Settle.auto(now, w, t), M.Shelf.of(t), t, now, Hub.settle.go(rest, now, w))
 
+# the settle window in seconds: the "settle.days" setting (1..90), else 3 days
+def Hub.settle.window(+s: M.State) -> Nat:
+  Nat.mul(Nat.max(1n, Nat.min(90n, Maybe.default(&2, Nat, Nat.read(M.Setting.get(s, "settle.days", "3")), 3n))), 86400n)
+
 # every thread that should settle now, settled
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{_, ts, _, _, _}:
-      Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, M.Settle.window()), Nil{}}
+    case M.State{_, ts, _, _, _, _}:
+      Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, Hub.settle.window(s)), Nil{}}
 
 # Codex (codex exec --json)
 # -------------------------
@@ -434,7 +440,7 @@ def Task.of_child.k(+ts: List<&2, M.Task>, +child: String) -> Maybe<&2, M.Task>:
 # the task a child thread is working on, if any
 def Task.of_child(s: M.State, +child: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk}:
+    case M.State{_, _, _, _, tk, _}:
       Task.of_child.k(Map.values(&2, M.Task, tk), child)
 
 def Task.depth.k(m: Maybe<&2, M.Task>) -> Nat:
@@ -474,7 +480,7 @@ def Task.last.go(es: List<&2, M.Entry>, hit: Bool, +th: String) -> String:
 
 def Task.last(s: M.State, +th: String) -> String:
   match s:
-    case M.State{_, _, +es, _, _}:
+    case M.State{_, _, +es, _, _, _}:
       Task.last.go(es, Task.last.hit(es, th), th)
 
 # the turn outcome a step reports for a thread, if it ended one
