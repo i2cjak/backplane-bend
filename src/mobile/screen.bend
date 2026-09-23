@@ -12,7 +12,7 @@ import ./notify.bend as N
 
 def Mob.st(u: U.Ui) -> M.State:
   match u:
-    case U.Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case U.Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       st
 
 def Mob.state(t: M.TurnState) -> String:
@@ -126,7 +126,7 @@ def Mob.strs(xs: List<&2, String>) -> List<&2, J.Json>:
 
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> J.Json:
   match u t:
-    case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, _, _, _, _, _, _}:
+    case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, _, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, _, _, _, _, _, _}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"branch", J.Json.str(branch)},
         J.KV{"state", J.Json.str(Mob.state(turn))},
         J.KV{"tools", J.Json.arr(List.append(&2, J.Json, Mob.stop(V.View.running(turn)), [Mob.pin(pinned), Mob.settle(o, Nat.is_gt(sa, ua)), Mob.tool("Archive", "archive", False{})]))},
@@ -151,7 +151,7 @@ def Mob.empty(n: Nat) -> String:
 # the whole screen
 def Mob.screen(+u: U.Ui) -> J.Json:
   match u:
-    case U.Ui{+st, +sel, _, _, +o, +on, +now, _, _, +v, _, _, +e, +note, _, _}:
+    case U.Ui{+st, +sel, _, _, +o, +on, +now, _, _, +v, _, _, +e, +note, _, _, _}:
       J.Json.obj([J.KV{"online", J.Json.bool(on)}, J.KV{"version", J.Json.str(v)}, J.KV{"error", J.Json.str(e)},
         J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.str(sel)},
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
