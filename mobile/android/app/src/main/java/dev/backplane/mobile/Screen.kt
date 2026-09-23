@@ -5,12 +5,25 @@ import org.json.JSONObject
 
 // The screen src/mobile/screen.bend emits. Plain data; no decisions.
 
-data class Row(val id: String, val title: String, val state: String, val ago: String, val pinned: Boolean)
+// a swipe button: the action it sends with its value, or (a snooze)
+// choices whose values it sends instead
+data class Choice(val label: String, val value: String)
+
+data class Swipe(val label: String, val action: String, val value: String, val tone: String, val options: List<Choice>)
+
+data class Row(
+    val id: String, val title: String, val state: String, val ago: String, val pinned: Boolean,
+    val lead: List<Swipe>, val trail: List<Swipe>,
+)
 
 data class Project(
     val id: String, val title: String, val root: String, val open: Boolean,
-    val threads: List<Row>, val shelf: String, val settled: List<Row>,
+    val threads: List<Row>, val snoozedShelf: String, val snoozed: List<Row>,
+    val shelf: String, val settled: List<Row>,
 )
+
+// a delete a row asked for, waiting for yes ("row-delete" id) or no
+data class Deleting(val id: String, val title: String, val body: String, val yes: String, val no: String)
 
 data class Tool(val label: String, val action: String, val on: Boolean)
 
@@ -38,7 +51,7 @@ data class Island(val running: Int, val headline: String, val lines: List<Island
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
-    val island: Island,
+    val island: Island, val deleting: Deleting?,
 )
 
 data class Cmd(
@@ -54,8 +67,14 @@ private fun blocks(a: JSONArray?): List<Block> = a.map { o ->
     if (o.has("tag")) Block.El(o.getString("tag"), blocks(o.optJSONArray("kids"))) else Block.Txt(o.optString("text"))
 }
 
+private fun swipe(o: JSONObject) = Swipe(
+    o.optString("label"), o.optString("action"), o.optString("value"), o.optString("tone"),
+    o.optJSONArray("options").map { Choice(it.optString("label"), it.optString("value")) },
+)
+
 private fun row(o: JSONObject) = Row(
     o.optString("id"), o.optString("title"), o.optString("state"), o.optString("ago"), o.optBoolean("pinned"),
+    o.optJSONArray("lead").map(::swipe), o.optJSONArray("trail").map(::swipe),
 )
 
 private fun thread(o: JSONObject) = ThreadView(
@@ -82,10 +101,14 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optString("sel"), o.optString("empty"),
     o.optJSONArray("projects").map {
         Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optBoolean("open"),
-            it.optJSONArray("threads").map(::row), it.optString("shelf"), it.optJSONArray("settled").map(::row))
+            it.optJSONArray("threads").map(::row), it.optString("snoozedShelf"), it.optJSONArray("snoozed").map(::row),
+            it.optString("shelf"), it.optJSONArray("settled").map(::row))
     },
     o.optJSONObject("thread")?.let(::thread),
     island(o.optJSONObject("island")),
+    o.optJSONObject("deleting")?.let {
+        Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
+    },
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =

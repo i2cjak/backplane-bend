@@ -53,9 +53,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -135,18 +138,70 @@ private fun Status(state: String) {
 }
 
 @Composable
+private fun swipeColor(s: Swipe?): Color = when (s?.tone) {
+    "danger" -> MaterialTheme.colorScheme.errorContainer
+    "settle" -> MaterialTheme.colorScheme.primaryContainer
+    else -> MaterialTheme.colorScheme.secondaryContainer
+}
+
+// Swiping from the start sends the row's lead action; from the end it
+// opens the trail's (delete, snooze and its choices). The row always
+// springs back: what happens to the thread comes with the next screen.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun ThreadRow(m: AppModel, r: Row) {
-    ListItem(
-        headlineContent = { Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        leadingContent = { Status(r.state) },
-        trailingContent = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (r.pinned) Icon(Icons.Filled.PushPin, "Pinned", Modifier.size(16.dp).padding(end = 4.dp))
-                Text(r.ago, style = MaterialTheme.typography.labelMedium)
+    var menu by remember { mutableStateOf(false) }
+    val lead = r.lead.firstOrNull()
+    val state = rememberSwipeToDismissBoxState(confirmValueChange = {
+        when (it) {
+            SwipeToDismissBoxValue.StartToEnd -> lead?.let { l -> m.act(l.action, l.value) }
+            SwipeToDismissBoxValue.EndToStart -> menu = true
+            SwipeToDismissBoxValue.Settled -> {}
+        }
+        false
+    })
+    Box {
+        SwipeToDismissBox(
+            state,
+            enableDismissFromStartToEnd = lead != null,
+            enableDismissFromEndToStart = r.trail.isNotEmpty(),
+            backgroundContent = {
+                val start = state.dismissDirection == SwipeToDismissBoxValue.StartToEnd
+                Box(Modifier.fillMaxSize().background(swipeColor(if (start) lead else r.trail.firstOrNull()))
+                    .padding(horizontal = 24.dp), contentAlignment = if (start) Alignment.CenterStart else Alignment.CenterEnd) {
+                    Text(if (start) lead?.label ?: "" else r.trail.joinToString(" · ") { it.label },
+                        style = MaterialTheme.typography.labelLarge)
+                }
+            },
+        ) {
+            ListItem(
+                headlineContent = { Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                leadingContent = { Status(r.state) },
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (r.pinned) Icon(Icons.Filled.PushPin, "Pinned", Modifier.size(16.dp).padding(end = 4.dp))
+                        Text(r.ago, style = MaterialTheme.typography.labelMedium)
+                    }
+                },
+                modifier = Modifier.combinedClickableCompat { m.act("select", r.id) },
+            )
+        }
+        Box(Modifier.align(Alignment.TopEnd)) {
+            DropdownMenu(menu, { menu = false }) {
+                for (t in r.trail) {
+                    if (t.options.isEmpty()) DropdownMenuItem(
+                        text = { Text(t.label, color = if (t.tone == "danger") MaterialTheme.colorScheme.error else Color.Unspecified) },
+                        onClick = { menu = false; m.act(t.action, t.value) },
+                    ) else {
+                        HorizontalDivider()
+                        Text(t.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                        for (o in t.options) DropdownMenuItem(text = { Text(o.label) }, onClick = { menu = false; m.act(t.action, o.value) })
+                    }
+                }
             }
-        },
-        modifier = Modifier.combinedClickableCompat { m.act("select", r.id) },
-    )
+        }
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -195,6 +250,12 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                     )
                 }
                 items(p.threads, key = { "t:" + it.id }) { ThreadRow(m, it) }
+                if (p.snoozed.isNotEmpty()) {
+                    item(key = "z:" + p.id) {
+                        ListItem(headlineContent = { Text(p.snoozedShelf, style = MaterialTheme.typography.labelLarge) })
+                    }
+                    items(p.snoozed, key = { "t:" + it.id }) { ThreadRow(m, it) }
+                }
                 if (p.settled.isNotEmpty()) {
                     item(key = "s:" + p.id) {
                         ListItem(
@@ -211,6 +272,20 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
             }
         }
     }
+    val d = s.deleting
+    // the delete just answered: its dialog stays down until the screen drops it
+    var answered by remember(d?.id) { mutableStateOf(false) }
+    if (d != null && !answered) AlertDialog(
+        onDismissRequest = { answered = true; m.act("delete-no") },
+        title = { Text(d.title) },
+        text = { Text(d.body) },
+        confirmButton = {
+            TextButton(onClick = { answered = true; m.act("row-delete", d.id) }) {
+                Text(d.yes, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
+    )
     if (adding) {
         var path by rememberSaveable { mutableStateOf("") }
         AlertDialog(

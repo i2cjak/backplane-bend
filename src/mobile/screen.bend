@@ -26,34 +26,74 @@ def Mob.state(t: M.TurnState) -> String:
     case _:
       "idle"
 
-def Mob.row(t: M.Thread, +now: Nat) -> J.Json:
-  match t:
-    case M.Thread{id, _, title, _, +a, turn, _, _, _, _, _, pinned, _, _, _, _, _, _, _, _, _}:
-      J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"state", J.Json.str(Mob.state(turn))},
-        J.KV{"ago", J.Json.str(U.Time.ago(now, a))}, J.KV{"pinned", J.Json.bool(pinned)}])
+# a swipe button: what it says, the action it sends with its value, its
+# tone ("danger", "settle", ""), and choices (a snooze) whose values it
+# sends instead
+def Mob.swipe(label: String, action: String, value: String, tone: String, opts: List<&2, J.Json>) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"action", J.Json.str(action)}, J.KV{"value", J.Json.str(value)},
+    J.KV{"tone", J.Json.str(tone)}, J.KV{"options", J.Json.arr(opts)}])
 
-def Mob.rows(ts: List<&2, M.Thread>, +now: Nat) -> List<&2, J.Json>:
+def Mob.opt(label: String, value: String) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"value", J.Json.str(value)}])
+
+def Mob.snoozes(+id: String) -> List<&2, J.Json>:
+  [Mob.opt("1 hour", id ++ "|1h"), Mob.opt("Tomorrow", id ++ "|tomorrow"), Mob.opt("1 week", id ++ "|1w")]
+
+# the swipe from the leading edge: settle an open thread, bring back a
+# settled one, wake a snoozed one (shelf 0 open, 1 settled, 2 snoozed)
+def Mob.lead(shelf: Nat, +id: String) -> J.Json:
+  match shelf:
+    case 0n:
+      Mob.swipe("Settle", "row-settle", id, "settle", Nil{})
+    case 1n:
+      Mob.swipe("Unsettle", "row-unsettle", id, "settle", Nil{})
+    case _:
+      Mob.swipe("Wake", "row-snooze", id ++ "|off", "settle", Nil{})
+
+# the swipe from the trailing edge: delete (asks first), snooze
+def Mob.trail(+id: String) -> List<&2, J.Json>:
+  [Mob.swipe("Delete", "row-delete", id, "danger", Nil{}), Mob.swipe("Snooze", "row-snooze", "", "", Mob.snoozes(id))]
+
+# a row's time: since its last activity, or (snoozed) until it wakes
+def Mob.when(shelf: Nat, +st: M.State, +id: String, +a: Nat, +now: Nat) -> String:
+  match shelf:
+    case 2n:
+      U.Time.ago(U.Side.until(st, id), now)
+    case _:
+      U.Time.ago(now, a)
+
+def Mob.row(t: M.Thread, +st: M.State, +now: Nat, +shelf: Nat) -> J.Json:
+  match t:
+    case M.Thread{+id, _, title, _, +a, turn, _, _, _, _, _, pinned, _, _, _, _, _, _, _, _, _}:
+      J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"state", J.Json.str(Mob.state(turn))},
+        J.KV{"ago", J.Json.str(Mob.when(shelf, st, id, a, now))}, J.KV{"pinned", J.Json.bool(pinned)},
+        J.KV{"lead", J.Json.arr([Mob.lead(shelf, id)])}, J.KV{"trail", J.Json.arr(Mob.trail(id))}])
+
+def Mob.rows(ts: List<&2, M.Thread>, +st: M.State, +now: Nat, +shelf: Nat) -> List<&2, J.Json>:
   match ts:
     case Nil{}:
       Nil{}
     case t <> rest:
-      Mob.row(t, now) <> Mob.rows(rest, now)
+      Mob.row(t, st, now, shelf) <> Mob.rows(rest, st, now, shelf)
 
-def Mob.project(r: V.PRow, +open: Map<&2, Bool>, +now: Nat) -> J.Json:
+# snoozed threads sit on their own shelf, soonest to wake first
+def Mob.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +now: Nat) -> J.Json:
   match r:
-    case V.PRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, +settled, _, _}}:
+    case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, +settled, _, snoozed}}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"root", J.Json.str(root)},
         J.KV{"open", J.Json.bool(U.Flag.get(open, id))},
-        J.KV{"threads", J.Json.arr(Mob.rows(List.append(&2, M.Thread, pinned, active), now))},
+        J.KV{"threads", J.Json.arr(Mob.rows(List.append(&2, M.Thread, pinned, active), st, now, 0n))},
+        J.KV{"snoozedShelf", J.Json.str("Snoozed")},
+        J.KV{"snoozed", J.Json.arr(Mob.rows(snoozed, st, now, 2n))},
         J.KV{"shelf", J.Json.str("Settled " ++ Nat.show(List.length(&2, M.Thread, settled)))},
-        J.KV{"settled", J.Json.arr(Mob.rows(settled, now))}])
+        J.KV{"settled", J.Json.arr(Mob.rows(settled, st, now, 1n))}])
 
-def Mob.projects(rs: List<&2, V.PRow>, +open: Map<&2, Bool>, +now: Nat) -> List<&2, J.Json>:
+def Mob.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +now: Nat) -> List<&2, J.Json>:
   match rs:
     case Nil{}:
       Nil{}
     case r <> t:
-      Mob.project(r, open, now) <> Mob.projects(t, open, now)
+      Mob.project(r, open, st, now) <> Mob.projects(t, open, st, now)
 
 # markdown blocks from the same Md.render the web page uses
 def Mob.nodes(ns: List<&2, D.Node>) -> List<&2, J.Json>:
@@ -148,6 +188,24 @@ def Mob.main(none: Bool, +u: U.Ui, +sel: String) -> J.Json:
 def Mob.empty(n: Nat) -> String:
   Bool.pick(String, Nat.is_eq(n, 0n), "Add a project to start.", "Pick a thread, or start one in a project.")
 
+def Mob.title(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      title
+
+# a delete a row asked for, to confirm: its thread, what to ask, the
+# buttons (the yes button sends "row-delete id" again, the no "delete-no")
+def Mob.deleting.k(none: Bool, +st: M.State, +id: String) -> J.Json:
+  match none:
+    case True{}:
+      J.Null{}
+    case False{}:
+      J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str("Delete thread?")},
+        J.KV{"body", J.Json.str(Mob.title(U.Ui.thread(st, id)))}, J.KV{"yes", J.Json.str("Delete")}, J.KV{"no", J.Json.str("Cancel")}])
+
+def Mob.deleting(+u: U.Ui) -> J.Json:
+  Mob.deleting.k(String.is_empty(U.Ui.row_deleting(u)), Mob.st(u), U.Ui.row_deleting(u))
+
 # the whole screen
 def Mob.screen(+u: U.Ui) -> J.Json:
   match u:
@@ -155,6 +213,7 @@ def Mob.screen(+u: U.Ui) -> J.Json:
       J.Json.obj([J.KV{"online", J.Json.bool(on)}, J.KV{"version", J.Json.str(v)}, J.KV{"error", J.Json.str(e)},
         J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.str(sel)},
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
-        J.KV{"projects", J.Json.arr(Mob.projects(List.sort(~V.PRow, ~V.PRow.before, V.View.rows(U.Ui.projects(st), U.Ui.threads(st))), o, now))},
+        J.KV{"projects", J.Json.arr(Mob.projects(U.Side.rows(st, now), o, st, now))},
+        J.KV{"deleting", Mob.deleting(u)},
         J.KV{"island", N.Note.island(U.Ui.threads(st), U.Ui.entries(st))},
         J.KV{"thread", Mob.main(String.is_empty(sel), u, sel)}])

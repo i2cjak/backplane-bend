@@ -710,6 +710,12 @@ law delete_asks_first:
   for u: U.Ui
   {U.Act.cmds(U.Ui.delete.k(False{}, u)) == Nil{} : List<&2, U.Cmd>}
 
+# deleting from a row (a swipe on the phone) asks first too
+law row_delete_asks_first:
+  for u: U.Ui
+  for +id: String
+  {U.Act.cmds(U.Ui.row_delete.k(False{}, u, id)) == Nil{} : List<&2, U.Cmd>}
+
 # an answer to anything but the project picker's newest request leaves the
 # client as it was (a late listing never replaces a newer one)
 law picker_drops_stale:

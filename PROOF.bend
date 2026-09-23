@@ -2093,6 +2093,9 @@ def Laws.edit_type_replaces():
 def Laws.delete_asks_first(u):
   {==}
 
+def Laws.row_delete_asks_first(u, id):
+  {==}
+
 def Laws.picker_drops_stale(u, o):
   {==}
 

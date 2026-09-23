@@ -19,6 +19,11 @@ final class AppModel {
     // the composer's text, owned here so typing never waits on Bend
     var composer = ""
     private(set) var scrolls = 0
+    // the navigation stack's path: moved at once by a tap or a swipe back,
+    // and by the screen only when its selection changes, so a screen that
+    // answers an older action never pulls a thread back open
+    private(set) var path: [String] = []
+    @ObservationIgnored private var shownSel = ""
     var active = true
     // drafts sent to Bend and not yet answered: until then a screen may
     // carry an older draft than the one on screen
@@ -109,6 +114,11 @@ final class AppModel {
         run { await $0.act(action, value) }
     }
 
+    func navigate(_ p: [String]) {
+        path = p
+        act("select", p.last ?? "")
+    }
+
     func draft(_ text: String) {
         composer = text
         typing += 1
@@ -141,6 +151,10 @@ final class AppModel {
         if let s = o.screen {
             if typing == 0 { composer = s.thread?.draft ?? "" }
             screen = s
+            if s.sel != shownSel {
+                shownSel = s.sel
+                path = s.sel.isEmpty ? [] : [s.sel]
+            }
             island?.show(s.island, foreground: active)
             #if DEBUG
             if let id = opening, s.projects.contains(where: { $0.threads.contains { $0.id == id } }) {

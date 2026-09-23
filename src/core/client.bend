@@ -538,7 +538,8 @@ def Ui.actions() -> List<&2, String>:
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
-   "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine"]
+   "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
+   "row-settle", "row-unsettle", "row-snooze", "row-delete"]
 
 # Reading the client state
 # ------------------------
@@ -2044,6 +2045,45 @@ def Ui.delete.k(armed: Bool, +u: Ui) -> Act:
 def Ui.delete(+u: Ui) -> Act:
   Ui.delete.k(Ui.deleting(u), u)
 
+# Acting on a thread's row
+# ------------------------
+# The phone's swipes act on a thread without selecting it: the value is
+# its id ("id|1h" for a snooze). Deleting from a row asks first the same
+# way: "row-delete id" arms "@del" with that id, the same again deletes
+# it, and "delete-no" disarms.
+
+def Ui.on_row(u: Ui, +id: String, m: String) -> Act:
+  Ui.rpc(u, m, [J.KV{"thread", J.Str{id}}])
+
+def Ui.row_snooze.k(u: Ui, s: Sect) -> Act:
+  match s:
+    case Sect{id, t}:
+      Ui.rpc(u, "thread.snooze", [J.KV{"thread", J.Str{id}}, J.KV{"for", J.Str{Side.first(t)}}])
+
+def Ui.row_snooze(u: Ui, v: String) -> Act:
+  Ui.row_snooze.k(u, Side.pair(String.split(v, '|')))
+
+def Ui.unselect.if(on: Bool, a: Act) -> Act:
+  match on:
+    case True{}:
+      Ui.unselect(a)
+    case False{}:
+      a
+
+def Ui.row_delete.k(armed: Bool, +u: Ui, +id: String) -> Act:
+  match armed:
+    case True{}:
+      Ui.unselect.if(String.eq(id, Ui.sel(u)), Ui.on_row(Ui.scratch_set(u, "@del", ""), id, "thread.delete"))
+    case False{}:
+      Act{Ui.scratch_set(u, "@del", id), Nil{}}
+
+# the thread a row asks to delete ("" when none)
+def Ui.row_deleting(+u: Ui) -> String:
+  Ui.scratch(u, "@del")
+
+def Ui.row_delete(+u: Ui, +id: String) -> Act:
+  Ui.row_delete.k(Bool.and(Bool.not(String.is_empty(id)), String.eq(Ui.row_deleting(u), id)), u, id)
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2152,6 +2192,14 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.rpc(u, "update.check", Nil{})
     case 58n:
       Ui.machine(u, value)
+    case 59n:
+      Ui.on_row(u, value, "thread.settle")
+    case 60n:
+      Ui.on_row(u, value, "thread.unsettle")
+    case 61n:
+      Ui.row_snooze(u, value)
+    case 62n:
+      Ui.row_delete(u, value)
     case _:
       Act{u, Nil{}}
 

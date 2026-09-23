@@ -8,10 +8,7 @@ struct RootView: View {
         if model.link.isEmpty {
             NavigationStack { PairView(link: "") { model.pair($0) } }
         } else if let s = model.screen {
-            NavigationStack(path: Binding(
-                get: { s.thread.map { [$0.id] } ?? [] },
-                set: { model.act("select", $0.last ?? "") }
-            )) {
+            NavigationStack(path: Binding(get: { model.path }, set: { model.navigate($0) })) {
                 ProjectsView(model: model, screen: s, pairing: $pairing)
                     .navigationDestination(for: String.self) { _ in
                         if let t = model.screen?.thread { ThreadScreen(model: model, thread: t) }
@@ -67,9 +64,42 @@ private struct Status: View {
     }
 }
 
+private struct SwipeButton: View {
+    let model: AppModel
+    let swipe: Swipe
+    let choose: (Swipe) -> Void
+
+    private var icon: String {
+        switch swipe.action {
+        case "row-delete": "trash"
+        case "row-settle": "checkmark.circle"
+        case "row-unsettle": "arrow.uturn.backward"
+        default: swipe.options.isEmpty ? "sun.max" : "moon.zzz"
+        }
+    }
+
+    private var tint: Color {
+        switch swipe.tone {
+        case "danger": .red
+        case "settle": .green
+        default: .indigo
+        }
+    }
+
+    var body: some View {
+        Button {
+            if swipe.options.isEmpty { model.act(swipe.action, swipe.value) } else { choose(swipe) }
+        } label: {
+            Label(swipe.label, systemImage: icon)
+        }
+        .tint(tint)
+    }
+}
+
 private struct ThreadRow: View {
     let model: AppModel
     let row: Row
+    let choose: (Swipe) -> Void
 
     var body: some View {
         NavigationLink(value: row.id) {
@@ -81,6 +111,12 @@ private struct ThreadRow: View {
                 Text(row.ago).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .swipeActions(edge: .leading) {
+            ForEach(row.lead, id: \.self) { SwipeButton(model: model, swipe: $0, choose: choose) }
+        }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            ForEach(row.trail, id: \.self) { SwipeButton(model: model, swipe: $0, choose: choose) }
+        }
     }
 }
 
@@ -90,12 +126,20 @@ struct ProjectsView: View {
     @Binding var pairing: Bool
     @State private var adding = false
     @State private var path = ""
+    // a swipe whose choices are up (a snooze)
+    @State private var choosing: Swipe?
+    // the delete just answered: its dialog stays down until the screen drops it
+    @State private var answered = ""
 
     var body: some View {
         List {
             ForEach(screen.projects) { p in
                 Section {
-                    ForEach(p.threads) { ThreadRow(model: model, row: $0) }
+                    ForEach(p.threads) { ThreadRow(model: model, row: $0) { choosing = $0 } }
+                    if !p.snoozed.isEmpty {
+                        Text(p.snoozedShelf).font(.subheadline).foregroundStyle(.secondary)
+                        ForEach(p.snoozed) { ThreadRow(model: model, row: $0) { choosing = $0 } }
+                    }
                     if !p.settled.isEmpty {
                         Button { model.act("toggle-settled", p.id) } label: {
                             HStack {
@@ -105,7 +149,7 @@ struct ProjectsView: View {
                             }
                         }
                         .tint(.secondary)
-                        if p.open { ForEach(p.settled) { ThreadRow(model: model, row: $0) } }
+                        if p.open { ForEach(p.settled) { ThreadRow(model: model, row: $0) { choosing = $0 } } }
                     }
                 } header: {
                     HStack {
@@ -136,6 +180,18 @@ struct ProjectsView: View {
                 Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Pairing")
             }
         }
+        .confirmationDialog(choosing?.label ?? "", isPresented: Binding(get: { choosing != nil }, set: { if !$0 { choosing = nil } }),
+                            titleVisibility: .visible, presenting: choosing) { s in
+            ForEach(s.options, id: \.self) { o in Button(o.label) { model.act(s.action, o.value) } }
+        }
+        .alert(screen.deleting?.title ?? "", isPresented: Binding(get: { screen.deleting.map { $0.id != answered } ?? false }, set: { _ in }),
+               presenting: screen.deleting) { d in
+            Button(d.yes, role: .destructive) { answered = d.id; model.act("row-delete", d.id) }
+            Button(d.no, role: .cancel) { answered = d.id; model.act("delete-no") }
+        } message: { d in
+            Text(d.body)
+        }
+        .onChange(of: screen.deleting?.id) { answered = "" }
         .alert("Add project", isPresented: $adding) {
             TextField("/path/to/project", text: $path).textInputAutocapitalization(.never).autocorrectionDisabled()
             Button("Add") { model.act("add-project", path); path = "" }

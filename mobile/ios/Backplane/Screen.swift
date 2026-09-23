@@ -2,15 +2,29 @@ import Foundation
 
 // The screen src/mobile/screen.bend emits. Plain data; no decisions.
 
+// a swipe button: the action it sends with its value, or (a snooze)
+// choices whose values it sends instead
+struct Swipe: Decodable, Hashable {
+    let label, action, value, tone: String
+    let options: [Choice]
+}
+
+struct Choice: Decodable, Hashable {
+    let label, value: String
+}
+
 struct Row: Decodable, Identifiable, Hashable {
     let id, title, state, ago: String
     let pinned: Bool
+    let lead, trail: [Swipe]
 }
 
 struct Project: Decodable, Identifiable {
     let id, title, root: String
     let open: Bool
     let threads: [Row]
+    let snoozedShelf: String
+    let snoozed: [Row]
     let shelf: String
     let settled: [Row]
 }
@@ -46,10 +60,16 @@ struct ThreadView: Decodable {
     let working, draft, send: String
 }
 
+// a delete a row asked for, waiting for yes ("row-delete" id) or no
+struct Deleting: Decodable, Equatable {
+    let id, title, body, yes, no: String
+}
+
 struct Screen: Decodable {
     let online: Bool
     let version, error, note, sel, empty: String
     let projects: [Project]
+    let deleting: Deleting?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
 }
