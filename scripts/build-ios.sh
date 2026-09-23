@@ -35,10 +35,30 @@ archive)
   . ./signing.env
   auth="-allowProvisioningUpdates -authenticationKeyPath $ASC_KEY_PATH -authenticationKeyID $ASC_KEY_ID -authenticationKeyIssuerID $ASC_ISSUER_ID"
   n=${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}
+  # ~/.bp-sign (a keychain password and App Store profiles, never
+  # committed): sign by hand with the Distribution identity in the
+  # backplane-signing keychain, which works over SSH; else let Xcode sign
+  kc=$HOME/Library/Keychains/backplane-signing.keychain-db
+  if [ -f "$HOME/.bp-sign/kcpass" ] && [ -f "$kc" ]; then
+    security unlock-keychain -p "$(cat "$HOME/.bp-sign/kcpass")" "$kc"
+    set -- CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Apple Distribution" OTHER_CODE_SIGN_FLAGS="--keychain $kc" \
+      'PROVISIONING_PROFILE_SPECIFIER=$(BP_PROFILE_$(TARGET_NAME))' \
+      BP_PROFILE_Backplane="Backplane AppStore" BP_PROFILE_BackplaneIsland="Backplane Island AppStore"
+    style="<key>signingStyle</key><string>manual</string>
+  <key>signingCertificate</key><string>Apple Distribution</string>
+  <key>provisioningProfiles</key><dict>
+    <key>$BUNDLE_ID</key><string>Backplane AppStore</string>
+    <key>$BUNDLE_ID.island</key><string>Backplane Island AppStore</string>
+  </dict>"
+  else
+    set --
+    style="<key>signingStyle</key><string>automatic</string>"
+  fi
+  rm -rf build/Backplane.xcarchive
   xcodebuild -quiet -project Backplane.xcodeproj -scheme Backplane -configuration Release \
     -destination 'generic/platform=iOS' -archivePath build/Backplane.xcarchive -derivedDataPath build/dd \
     DEVELOPMENT_TEAM="$TEAM_ID" BASE_BUNDLE_ID="$BUNDLE_ID" CURRENT_PROJECT_VERSION="$n" \
-    $auth archive
+    "$@" $auth archive
   cat > build/export.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -46,10 +66,11 @@ archive)
   <key>method</key><string>app-store-connect</string>
   <key>destination</key><string>upload</string>
   <key>teamID</key><string>$TEAM_ID</string>
-  <key>signingStyle</key><string>automatic</string>
+  $style
   <key>manageAppVersionAndBuildNumber</key><false/>
 </dict></plist>
 PLIST
+  rm -rf build/export
   xcodebuild -exportArchive -archivePath build/Backplane.xcarchive -exportOptionsPlist build/export.plist \
     -exportPath build/export $auth
   echo "uploaded build $n to App Store Connect (TestFlight)"
