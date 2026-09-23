@@ -3,6 +3,7 @@ import ./json.bend as J
 import ./model.bend as M
 import ./codec.bend as C
 import ./attach.bend as AT
+import ./agent.bend as AG
 
 # The decider. Requests from clients and lines from agents come in; changes
 # (persisted, folded into the read model) and effects (run by the server)
@@ -30,6 +31,7 @@ type Out is Data:
   AskAnswered{id: String, answer: String}
   Git{client: U32, id: String, job: String, thread: String, cwd: String, a: String, b: String}
   TermOp{op: String, thread: String, cwd: String, data: List<&2, U32>, cols: U32, rows: U32}
+  Fs{client: U32, id: String, op: String, path: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -203,9 +205,28 @@ def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
     Reply.ok(client, id) <> Bool.pick(List<&2, Out>, String.eq(env, "worktree"),
       [Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, project)), Hub.base(Hub.project.root(Hub.project(s, project))), ""}], Nil{})}
 
+def Hub.has_root(ps: List<&2, M.Project>, +root: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case M.Project{_, _, r, _, rm} <> t:
+      Bool.or(Bool.and(String.eq(r, root), Bool.not(rm)), Hub.has_root(t, root))
+
+def Hub.projects(s: M.State) -> List<&2, M.Project>:
+  match s:
+    case M.State{ps, _, _, _, _, _, _, _, _}:
+      Map.values(&2, M.Project, ps)
+
+def Hub.project_add.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:
+  match dup:
+    case True{}:
+      Step.outs([Reply.err(client, id, "already a project: " ++ root)])
+    case False{}:
+      Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
+
+# a folder becomes a project once (the same root twice is refused)
 def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
-  +root = J.Json.get_str(p, "path", "")
-  Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
+  Hub.project_add.k(Hub.has_root(Hub.projects(s), J.Json.get_str(p, "path", "")), s, now, client, id, p, J.Json.get_str(p, "path", ""))
 
 # change a thread's modes; what the request leaves out stays as it is
 def Hub.modes(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, t: M.Thread) -> Step:
@@ -306,13 +327,54 @@ def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
 # Method groups (each appended to only by its own feature area)
 # ------------------------------------------------------------
 
+# folders for the project picker (listing, creating); the server answers
+def Hub.methods.fs() -> List<&2, String>:
+  ["fs.list", "fs.mkdir"]
+
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
   []
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
-  []
+  ["thread.branch", "skills.list", "thread.effort"]
+
+def Hub.provider_of(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, p, _, _, _, _, _}:
+      p
+
+def Hub.worktree(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, wt, _, _, _, _, _, _}:
+      wt
+
+# a thread's reasoning effort: kept in the settings map (effort.<thread>),
+# only as a level its provider offers ("" is the provider's default)
+def Hub.effort(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +e: String) -> Step:
+  Step.reply(client, id, [M.SettingSet{AG.Effort.key(thread), AG.Effort.of(Hub.provider_of(Hub.thread(s, thread)), e), now}])
+
+# a worktree thread's first message names its branch: the server asks a
+# small model for a name while the turn runs, renames the temporary
+# backplane/<hex> branch and reports it (thread.branch)
+def Name.out.k(go: Bool, +thread: String, +wt: String, +branch: String, +text: String) -> List<&2, Out>:
+  match go:
+    case True{}:
+      [Git{0, "", "name", thread, wt, branch, text}]
+    case False{}:
+      Nil{}
+
+def Name.out(t: M.Thread, +text: String) -> List<&2, Out>:
+  match t:
+    case M.Thread{+id, _, +title, _, _, _, _, _, _, _, _, _, _, +br, +wt, _, _, _, _, _, _}:
+      Name.out.k(Bool.and(Bool.and(String.eq(title, "New thread"), AG.Name.temp(br)), Bool.not(String.is_empty(wt))), id, wt, br, text)
+
+# Commit & push and Open PR without a message: the server writes one from
+# the thread's diff (the thread's title when it cannot)
+def Hub.act(+s: M.State, +client: U32, +id: String, +thread: String, +action: String, +p: J.Json) -> Step:
+  Bool.pick(Step, Bool.and(String.contains(action, "commit"), String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(p, "message"), J.Null{})), "null")),
+    Hub.git(s, client, id, "act_gen", thread, action, Hub.thread_title(Hub.thread(s, thread))),
+    Hub.git(s, client, id, "act", thread, action, J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, thread)))))
 
 # attachments, files and the web client's panes
 def Hub.methods.media() -> List<&2, String>:
@@ -349,6 +411,12 @@ def Hub.media(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
 
 def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
+    case 0n:
+      Step.reply(client, id, [M.WorktreeSet{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "branch", ""), Hub.worktree(Hub.thread(s, J.Json.get_str(p, "thread", ""))), now}])
+    case 1n:
+      Hub.git(s, client, id, "skills", J.Json.get_str(p, "thread", ""), "", "")
+    case 2n:
+      Hub.effort(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "effort", ""))
     case _:
       Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
 
@@ -357,6 +425,15 @@ def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
     case _:
       Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
 
+def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Step.outs([Fs{client, id, "list", J.Json.get_str(p, "path", "")}])
+    case 1n:
+      Step.outs([Fs{client, id, "mkdir", J.Json.get_str(p, "path", "")}])
+    case _:
+      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
+
 def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
     case 0n:
@@ -364,7 +441,7 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case 1n:
       Hub.git(s, client, id, "revert", J.Json.get_str(p, "thread", ""), J.Json.as_raw(J.Json.get(p, "turn"), "0"), "")
     case 2n:
-      Hub.git(s, client, id, "act", J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), J.Json.get_str(p, "message", Hub.thread_title(Hub.thread(s, J.Json.get_str(p, "thread", "")))))
+      Hub.act(s, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "action", "commit"), p)
     case 3n:
       Hub.git(s, client, id, "status", J.Json.get_str(p, "thread", ""), "", "")
     case 4n:
@@ -379,7 +456,7 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case 8n:
       Hub.term(s, client, id, "resize", p)
     case _:
-      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
+      Hub.fs(C.Codec.pos(Hub.methods.fs(), m), s, now, client, id, p, m)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
@@ -535,7 +612,7 @@ def Hub.answer(+s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, 
 def Hub.turn.go(+s: M.State, +t: M.Thread, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
   match t:
     case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
-      Step.before(Hub.title.k(String.eq(title, "New thread"), thread, text, now, Nil{}), [Reply.ok(client, id)], Hub.post(s, now, thread, msg, M.User{}, text))
+      Step.before(Hub.title.k(String.eq(title, "New thread"), thread, text, now, Nil{}), Reply.ok(client, id) <> Name.out(Hub.thread(s, thread), text), Hub.post(s, now, thread, msg, M.User{}, text))
 
 def Hub.turn.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
   match dup:

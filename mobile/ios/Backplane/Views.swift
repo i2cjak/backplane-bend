@@ -39,7 +39,7 @@ struct PairView: View {
     var body: some View {
         Form {
             Section {
-                TextField("Pairing link", text: $link, prompt: Text(verbatim: "http://host:3773/#token=…"))
+                TextField("Pairing link", text: $link, prompt: Text(verbatim: "http://host:3787/#token=…"))
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)

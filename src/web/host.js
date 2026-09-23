@@ -333,6 +333,14 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keydown", (e) => {
+  if (e.key === "Tab" && !e.shiftKey) {
+    const tab = e.target.getAttribute?.("data-tab");
+    if (tab) {
+      e.preventDefault();
+      dispatch(tab, valueOf(e.target));
+    }
+    return;
+  }
   const el = e.target.closest?.("[data-enter]");
   if (!el || e.key !== "Enter" || e.shiftKey || e.isComposing) return;
   e.preventDefault();

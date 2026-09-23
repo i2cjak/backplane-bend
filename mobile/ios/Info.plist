@@ -8,7 +8,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<!-- a pairing link: backplane://pair?url=http://host:3773/%23token=... -->
+	<!-- a pairing link: backplane://pair?url=http://host:3787/%23token=... -->
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

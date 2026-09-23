@@ -25,7 +25,7 @@ This installs into `~/.local/share/backplane` and links the binaries into `~/.lo
 
 - The installer checks the sha256 of what it downloads.
 - Backplane updates itself from GitHub releases. Set `BACKPLANE_NO_UPDATE=1` to turn that off.
-- `backplane` opens the window. Without a display it keeps serving the web client on `127.0.0.1:3773`.
+- `backplane` opens the window. Without a display it keeps serving the web client on `127.0.0.1:3787`.
 - `backplane-serve` runs headless.
 
 ## Build
