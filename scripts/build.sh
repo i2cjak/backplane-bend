@@ -5,6 +5,13 @@
 #   dist/web/             the web client (for other devices)
 # X11 headers: /usr/include (libx11-dev), or BACKPLANE_X11=<prefix> holding
 # include/ and lib/libX11.so (see AGENTS.md).
+# System fonts (src/gfx/effects/font.c) need no headers and no link flags:
+# libfreetype.so.6 and libfontconfig.so.1 are dlopen'd at run time and the
+# few FreeType structs read are declared in font.c; without them text falls
+# back to the Spleen bitmap font. To re-check those struct layouts against
+# real headers without root:
+#   apt-get download libfreetype-dev && dpkg -x libfreetype-dev_*.deb ~/.local/ft
+#   (headers in ~/.local/ft/usr/include/freetype2; compare offsetof values)
 set -eu
 cd "$(dirname "$0")/.."
 for f in src/web/app.bend src/server/main.bend src/app/main.bend; do
