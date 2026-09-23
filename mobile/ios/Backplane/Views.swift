@@ -185,6 +185,16 @@ struct ThreadScreen: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     ForEach(thread.entries) { EntryView(model: model, entry: $0).id($0.id) }
+                    ForEach(Array(thread.sending.enumerated()), id: \.offset) { _, text in
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text(text)
+                                .padding(.horizontal, 14).padding(.vertical, 10)
+                                .background(Color.accentColor.opacity(0.08), in: .rect(cornerRadius: 18))
+                            Text("Sending…").font(.caption2).foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .opacity(0.7)
+                    }
                     if !thread.live.isEmpty {
                         MarkdownView(blocks: thread.live)
                     } else if !thread.working.isEmpty {
@@ -203,6 +213,19 @@ struct ThreadScreen: View {
             .onChange(of: thread.entries.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
         }
         .safeAreaInset(edge: .bottom) {
+          VStack(spacing: 0) {
+            if !thread.queued.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                    Text("Queued: ").bold() + Text(thread.queued)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .padding(.horizontal).padding(.top, 8)
+                .accessibilityHint("Sends when this turn ends")
+            }
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Ask the agent", text: Binding(get: { model.composer }, set: { model.draft($0) }), axis: .vertical)
                     .lineLimit(1...6)
@@ -216,7 +239,8 @@ struct ThreadScreen: View {
                 .accessibilityLabel(thread.send)
             }
             .padding(.horizontal).padding(.vertical, 8)
-            .background(.bar)
+          }
+          .background(.bar)
         }
         .navigationTitle(thread.title)
         .navigationBarTitleDisplayMode(.inline)

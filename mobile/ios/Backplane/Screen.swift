@@ -39,6 +39,9 @@ struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
     let entries: [Entry]
+    // sent, not yet stored by the hub; and a message waiting for this turn
+    let sending: [String]
+    let queued: String
     let live: [Block]
     let working, draft, send: String
 }
@@ -47,12 +50,19 @@ struct Screen: Decodable {
     let online: Bool
     let version, error, note, sel, empty: String
     let projects: [Project]
+    let island: IslandAttributes.ContentState
     let thread: ThreadView?
 }
 
 struct Cmd: Decodable {
     let type: String
     let text: String?
+    // notify
+    let thread, title, kind, body: String?
+}
+
+struct Resume: Decodable {
+    let since, origin: String
 }
 
 struct Out: Decodable {

@@ -26,6 +26,11 @@ final class Engine: @unchecked Sendable {
         }
     }
 
+    func start(_ cid: String) async -> String { await call("start", [cid]) }
+    func resume() async -> String { await call("resume", []) }
+    func register(_ kind: String, _ token: String, env: String, bundle: String) async -> String {
+        await call("register", ["ios", token, kind, "", env, bundle])
+    }
     func screen() async -> String { await call("screen", []) }
     func recv(_ text: String) async -> String { await call("recv", [text]) }
     func act(_ action: String, _ value: String) async -> String { await call("act", [action, value]) }

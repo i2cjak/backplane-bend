@@ -3,6 +3,13 @@ import Foundation
 // A pairing link as the desktop shows it (http://host:3773/#token=abc)
 // becomes the hub's socket address (ws://host:3773/ws?token=abc).
 enum Pairing {
+    // the socket address, resuming from since/origin
+    static func socket(_ link: String, since: String, origin: String) -> URL? {
+        guard let u = socket(link), var c = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return nil }
+        c.queryItems = (c.queryItems ?? []) + [URLQueryItem(name: "since", value: since), URLQueryItem(name: "origin", value: origin)]
+        return c.url
+    }
+
     static func socket(_ link: String) -> URL? {
         var s = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
@@ -27,7 +34,9 @@ enum Pairing {
 // The socket to the hub, reconnecting with backoff like host.js.
 @MainActor
 final class Hub {
-    private let url: URL
+    // the address for each (re)connect: it carries since/origin, so the
+    // hub sends only what this app has not seen
+    private let url: () async -> URL?
     private let onOpen: () -> Void
     private let onMessage: (String) -> Void
     private let onClose: () -> Void
@@ -36,7 +45,7 @@ final class Hub {
     private var stopped = false
     private var generation = 0
 
-    init(url: URL, onOpen: @escaping () -> Void, onMessage: @escaping (String) -> Void, onClose: @escaping () -> Void) {
+    init(url: @escaping () async -> URL?, onOpen: @escaping () -> Void, onMessage: @escaping (String) -> Void, onClose: @escaping () -> Void) {
         self.url = url
         self.onOpen = onOpen
         self.onMessage = onMessage
@@ -63,11 +72,14 @@ final class Hub {
         guard !stopped else { return }
         generation += 1
         let gen = generation
-        let t = URLSession.shared.webSocketTask(with: url)
-        task = t
-        t.resume()
-        // the first message proves the socket is up (the hub greets at once)
-        read(t, gen, first: true)
+        Task {
+            guard let u = await url(), gen == generation, !stopped else { return }
+            let t = URLSession.shared.webSocketTask(with: u)
+            task = t
+            t.resume()
+            // the first message proves the socket is up (the hub greets at once)
+            read(t, gen, first: true)
+        }
     }
 
     private func read(_ t: URLSessionWebSocketTask, _ gen: Int, first: Bool) {

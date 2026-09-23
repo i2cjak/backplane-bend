@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -64,6 +65,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -247,6 +249,21 @@ private fun EntryView(m: AppModel, e: Entry) {
     }
 }
 
+// a message the hub has not stored yet
+@Composable
+private fun SendingView(text: String) {
+    Column(Modifier.fillMaxWidth().alpha(0.55f), horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(Modifier.fillMaxWidth()) {
+            Spacer(Modifier.weight(1f).widthIn(min = 48.dp))
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large) {
+                Text(text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyLarge)
+            }
+        }
+        Text("Sending…", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
@@ -254,7 +271,7 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
     Errors(m, s, snacks)
-    val count = t.entries.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
+    val count = t.entries.size + t.sending.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
     LaunchedEffect(t.id, m.scrolls) { if (count > 0) list.scrollToItem(count - 1) }
     LaunchedEffect(count, t.live) {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -289,12 +306,17 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
         },
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
-                Row(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
-                        placeholder = { Text("Ask the agent") })
-                    IconButton(onClick = { m.act("send") }, enabled = m.composer.isNotBlank()) {
-                        Icon(Icons.AutoMirrored.Filled.Send, t.send)
+                Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
+                    if (t.queued.isNotEmpty()) Text("Queued: ${t.queued} · sends when this turn ends",
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
+                            placeholder = { Text("Ask the agent") })
+                        IconButton(onClick = { m.act("send") }, enabled = m.composer.isNotBlank()) {
+                            Icon(Icons.AutoMirrored.Filled.Send, t.send)
+                        }
                     }
                 }
             }
@@ -305,6 +327,7 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
             start = 16.dp, end = 16.dp, top = pad.calculateTopPadding() + 8.dp, bottom = pad.calculateBottomPadding() + 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(t.entries, key = { it.id }) { EntryView(m, it) }
+            itemsIndexed(t.sending, key = { i, _ -> "sending:$i" }) { _, text -> SendingView(text) }
             if (t.live.isNotEmpty()) item(key = "live") { Markdown(t.live) }
             else if (t.working.isNotEmpty()) item(key = "live") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {

@@ -27,6 +27,8 @@ When using Bend:
 - `src/core/vt.bend`: the terminal emulator (VT100/xterm: bytes in, styled rows, cursor, replies, key and paste bytes out); `src/server/pty.bend` + `effects/pty.c` run a shell on a pty whose master is a `Socket`. See `docs/terminal.md`.
 - `src/web/`: the web client for other devices (Tailscale, phone). View logic is Bend; `host.js` only touches the DOM, canvas and socket, and holds no product logic.
 - `test/`: Bend test programs (`bend test/x.bend`), run by `scripts/test.sh`.
+- `src/mobile/`: the phone apps' client in Bend: `screen.bend` (the shared `Ui` → a screen model as JSON), `notify.bend` (turn-end alerts and the Dynamic Island, laws `alert_*`), and `bridge.js`, which carries strings between them and the native app.
+- `mobile/`: the phone apps. `ios/` is SwiftUI with a Live Activity widget, running bridge.js in JavaScriptCore; `android/` is Jetpack Compose with a foreground service, running it in QuickJS. `scripts/build-mobile.sh` builds bridge.js and the APK (needs an Android SDK); `scripts/build-ios.sh` builds on a Mac over SSH. Neither runs in CI. See `mobile/README.md`.
 - `tools/step2glb/`: the one non-Bend helper, a host tool like git or curl. It converts STEP to GLB (OpenCascade WASM via Bun; LGPL-2.1, run as a subprocess, never linked). `scripts/build-step2glb.sh` builds `dist/backplane-step2glb`. The STEP viewer reads its GLB; all viewer logic stays in Bend. See its README.
 - `docs/reference/t3code-parity.md`: what the TS product did; `docs/parity.md`: what we match so far.
 

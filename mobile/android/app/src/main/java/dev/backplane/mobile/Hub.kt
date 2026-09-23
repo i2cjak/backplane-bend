@@ -3,11 +3,14 @@ package dev.backplane.mobile
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 // A pairing link as the desktop shows it (http://host:3773/#token=abc)
@@ -25,11 +28,24 @@ object Pairing {
         val port = if (u.port > 0) ":${u.port}" else ""
         return "$scheme://$host$port/ws" + (token?.let { "?token=$it" } ?: "")
     }
+
+    // the socket address for a (re)connect: the client's resume point
+    // ({"since", "origin"} from Backplane.resume()) as query parameters
+    fun resume(socket: String, resume: String): String {
+        val r = JSONObject(resume)
+        return Uri.parse(socket).buildUpon()
+            .appendQueryParameter("since", r.optString("since", "0"))
+            .appendQueryParameter("origin", r.optString("origin", ""))
+            .build().toString()
+    }
 }
 
-// The socket to the hub, reconnecting with backoff like host.js.
+// The socket to the hub, reconnecting with backoff like host.js. The
+// address is asked for afresh on every attempt, so each reconnect resumes
+// from what the client already holds.
 class Hub(
-    private val url: String,
+    private val scope: CoroutineScope,
+    private val url: suspend () -> String?,
     private val onOpen: () -> Unit,
     private val onMessage: (String) -> Unit,
     private val onClose: () -> Unit,
@@ -57,17 +73,28 @@ class Hub(
 
     private fun connect() {
         if (stopped) return
-        client.newWebSocket(Request.Builder().url(url).build(), object : WebSocketListener() {
+        scope.launch {
+            val u = url()
+            if (!stopped && u != null) open(u)
+        }
+    }
+
+    private fun open(u: String) {
+        client.newWebSocket(Request.Builder().url(u).build(), object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
                 main.post {
-                    socket = ws
-                    backoff = 250
-                    onOpen()
+                    if (stopped) {
+                        ws.close(1000, null)
+                    } else {
+                        socket = ws
+                        backoff = 250
+                        onOpen()
+                    }
                 }
             }
 
             override fun onMessage(ws: WebSocket, text: String) {
-                main.post { onMessage(text) }
+                main.post { if (!stopped && socket === ws) onMessage(text) }
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) = lost(ws)
@@ -77,10 +104,12 @@ class Hub(
 
     private fun lost(ws: WebSocket) {
         main.post {
-            if (socket === ws || socket == null) {
+            if (stopped) {
+                if (socket === ws) socket = null
+            } else if (socket === ws || socket == null) {
                 socket = null
                 onClose()
-                if (!stopped) main.postDelayed({ connect() }, backoff)
+                main.postDelayed({ connect() }, backoff)
                 backoff = minOf(backoff * 2, 5000)
             }
         }

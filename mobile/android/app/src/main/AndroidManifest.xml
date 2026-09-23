@@ -2,9 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- the live status: a foreground service while agents work -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 16: its notification may become a status-bar chip -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
     <!-- the hub is reached over the tailnet (WireGuard), as plain ws:// -->
     <application
+        android:name=".BackplaneApp"
         android:label="Backplane"
         android:icon="@android:drawable/sym_def_app_icon"
         android:networkSecurityConfig="@xml/network"
@@ -12,6 +19,7 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -25,5 +33,9 @@
                 <data android:scheme="backplane" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".LiveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>

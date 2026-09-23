@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.."
 MAC=${BACKPLANE_MAC:-hs-mac-mini}
 MODE=${1:-sim}
 DIR=backplane-ios
-scripts/build-mobile.sh --js
+[ -n "${BACKPLANE_SKIP_JS:-}" ] || scripts/build-mobile.sh --js
 cp mobile/build/assets/bridge.js mobile/ios/Backplane/bridge.js
 rsync -a --delete --exclude build/ --exclude authorize-mac.sh --exclude signing.env --exclude '*.p8' \
   mobile/ios/ "$MAC:$DIR/"
@@ -37,7 +37,7 @@ archive)
   n=${BUILD_NUMBER:-$(date +%Y%m%d%H%M)}
   xcodebuild -quiet -project Backplane.xcodeproj -scheme Backplane -configuration Release \
     -destination 'generic/platform=iOS' -archivePath build/Backplane.xcarchive -derivedDataPath build/dd \
-    DEVELOPMENT_TEAM="$TEAM_ID" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" CURRENT_PROJECT_VERSION="$n" \
+    DEVELOPMENT_TEAM="$TEAM_ID" BASE_BUNDLE_ID="$BUNDLE_ID" CURRENT_PROJECT_VERSION="$n" \
     $auth archive
   cat > build/export.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

@@ -8,8 +8,10 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 
 // The Bend client (bridge.js) in QuickJS, on one thread of its own.
-// Every call answers {"screen": ..., "cmds": [...]} as a string.
-class Engine(private val source: String) {
+// Every call answers {"screen": ..., "cmds": [...]} as a string, except
+// resume(), which answers {"since": "<n>", "origin": "<o>"}. The client is
+// started with this install's id before anything else runs.
+class Engine(private val source: String, private val cid: String) {
     private val thread = Executors.newSingleThreadExecutor { Thread(null, it, "bend", 64L shl 20) }
     private val dispatcher = thread.asCoroutineDispatcher()
     private var ctx: QuickJSContext? = null
@@ -20,6 +22,7 @@ class Engine(private val source: String) {
             QuickJSContext.create().also {
                 it.setMaxStackSize(48 shl 20)
                 it.evaluate(source, "bridge.js")
+                it.evaluate("Backplane.start(${q(cid)})")
                 ctx = it
             }
         }
@@ -29,6 +32,7 @@ class Engine(private val source: String) {
 
     private fun q(s: String) = JSONObject.quote(s)
 
+    suspend fun resume() = call("Backplane.resume()")
     suspend fun screen() = call("Backplane.screen()")
     suspend fun recv(text: String) = call("Backplane.recv(${q(text)})")
     suspend fun act(action: String, value: String) = call("Backplane.act(${q(action)}, ${q(value)})")
