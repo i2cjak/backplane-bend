@@ -179,3 +179,11 @@ function net_listen(host, port) {
 function sys_exe_dir() {
   return require("path").dirname(process.argv[1] ?? "");
 }
+
+function sys_exec(path, args) {
+  return io_fail(38);
+}
+
+function sys_exe_path() {
+  return process.argv[1] ?? "";
+}

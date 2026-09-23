@@ -1,0 +1,97 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish, e.g. v0.2.0
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  laws:
+    name: Check and prove
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/setup-bend
+      - run: scripts/check.sh
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [laws]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: linux-x64,    os: ubuntu-24.04 }
+          - { target: linux-arm64,  os: ubuntu-24.04-arm }
+          - { target: darwin-arm64, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: ./.github/actions/setup-bend
+      - uses: oven-sh/setup-bun@v2
+      - name: Install clang 19 and X11 headers
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 libx11-dev
+          sudo ln -sf /usr/bin/clang-19 /usr/local/bin/clang
+      - run: BACKPLANE_VERSION="$TAG" scripts/build.sh
+      - run: scripts/smoke.sh
+      - run: scripts/package.sh "$TAG" "${{ matrix.target }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backplane-${{ matrix.target }}
+          path: dist/backplane-*.tar.gz
+
+  publish:
+    name: Publish
+    needs: [build]
+    runs-on: ubuntu-24.04
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums and installer
+        run: |
+          set -eu
+          cd out
+          sha256sum backplane-*.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+          sum() { grep "backplane-$TAG-$1.tar.gz" SHA256SUMS | cut -d' ' -f1; }
+          sed -e "s/@VERSION@/$TAG/" \
+              -e "s/@SHA_LINUX_X64@/$(sum linux-x64)/" \
+              -e "s/@SHA_LINUX_ARM64@/$(sum linux-arm64)/" \
+              -e "s/@SHA_DARWIN_ARM64@/$(sum darwin-arm64)/" \
+              ../deploy/install.sh.in > install.sh
+          chmod +x install.sh
+      - name: Release
+        run: |
+          set -eu
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac
+          notes="Install: curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/* --clobber
+          else
+            gh release create "$TAG" out/* --title "Backplane $TAG" --notes "$notes" $pre
+          fi

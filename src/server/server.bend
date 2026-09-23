@@ -8,6 +8,8 @@ import ../core/model.bend as M
 import ../core/codec.bend as C
 import ../core/hub.bend as B
 import ../core/prompt.bend as Q
+import ./update.bend as UP
+import ../core/version.bend as VR
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -21,6 +23,7 @@ type Wire is Data:
   WClose{}
 
 type Msg is Data:
+  Announce{text: String}
   Join{client: U32, out: Chan(Wire)}
   Leave{client: U32}
   Rpc{client: U32, text: String}
@@ -494,7 +497,7 @@ def Ticker.loop(fuel: Nat, +inbox: Chan(Msg)) -> IO(Unit):
 # -------
 
 type Hub is Type:
-  Hub{state: M.State, log: File, lines: List<&2, String>, clients: List<&2, Client>, agents: List<&2, Agent>, inbox: Chan(Msg), cfg: Cfg}
+  Hub{state: M.State, log: File, lines: List<&2, String>, clients: List<&2, Client>, agents: List<&2, Agent>, inbox: Chan(Msg), cfg: Cfg, note: String}
 
 def Hub.changes_msg(ls: List<&2, String>) -> String:
   "{\"t\":\"changes\",\"items\":[" ++ String.join(ls, ",") ++ "]}"
@@ -503,25 +506,25 @@ def Hub.log_msg(+ls: List<&2, String>, version: String) -> String:
   "{\"t\":\"log\",\"version\":" ++ J.Json.show(J.Str{version}) ++ ",\"items\":[" ++ String.join(List.reverse(&2, String, ls), ",") ++ "]}"
 
 def Hub.commit.wrote(r: File & Result<&1, &1, U32 & String, Unit>, st: M.State, +line: String, ls: List<&2, String>, cl: List<&2, Client>,
-    as: List<&2, Agent>, +inbox: Chan(Msg), cfg: Cfg, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
+    as: List<&2, Agent>, +inbox: Chan(Msg), cfg: Cfg, note: String, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
   (f, _) = r
-  k(Hub{st, f, line <> ls, cl, as, inbox, cfg}, line <> fresh)
+  k(Hub{st, f, line <> ls, cl, as, inbox, cfg, note}, line <> fresh)
 
 def Hub.commit.one(h: Hub, +line: String, c: M.Change, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
   match h:
-    case Hub{st, f, ls, cl, as, +inbox, cfg}:
+    case Hub{st, f, ls, cl, as, +inbox, cfg, note}:
       IO.bind(File & Result<&1, &1, U32 & String, Unit>, Hub & List<&2, String>, File.write(f, line ++ "\n"),
-        r => Hub.commit.wrote(r, M.State.apply(st, c), line, ls, cl, as, inbox, cfg, fresh, k))
+        r => Hub.commit.wrote(r, M.State.apply(st, c), line, ls, cl, as, inbox, cfg, note, fresh, k))
 
 def Hub.announce(r: Hub & List<&2, String>) -> IO(Hub):
   (h, fresh) = r
   match h fresh:
     case _ Nil{}:
       IO.pure(Hub, h)
-    case Hub{st, f, ls, +cl, as, inbox, cfg} l <> t:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note} l <> t:
       do IO<Hub>:
         Wire.all(cl, Hub.changes_msg(List.reverse(&2, String, l <> t)))
-        return Hub{st, f, ls, cl, as, inbox, cfg}
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 # Effects
 # -------
@@ -551,12 +554,12 @@ def Hub.spawned.fail(e: U32 & String, h: Hub, +thread: String) -> IO(Hub):
 def Hub.spawned.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, +pid: U32, h: Hub, +thread: String) -> IO(Hub):
   (rd, res) = r
   match res h:
-    case Done{wr} Hub{st, f, ls, cl, as, +inbox, cfg}:
+    case Done{wr} Hub{st, f, ls, cl, as, +inbox, cfg, note}:
       do IO<Hub>:
         +input : Chan(String) <- Chan.new(String, 256)
         IO.spawn(Unit, Agent.writer(Fuel.forever(), wr, input))
         IO.spawn(Unit, Agent.reader(Fuel.forever(), rd, U.Lines.new(), pid, thread, inbox))
-        return Hub{st, f, ls, cl, Agent{thread, input, pid} <> as, inbox, cfg}
+        return Hub{st, f, ls, cl, Agent{thread, input, pid} <> as, inbox, cfg, note}
     case Fail{_} _:
       do IO<Hub>:
         Socket.close(rd)
@@ -570,8 +573,8 @@ def Hub.spawned.ok(started: U32 & Socket, h: Hub, +thread: String) -> IO(Hub):
 
 def Hub.spawned(r: Result<&1, &1, U32 & String, U32 & Socket>, h: Hub, +thread: String) -> IO(Hub):
   match r h:
-    case Done{started} Hub{st, f, ls, cl, as, +inbox, cfg}:
-      Hub.spawned.ok(started, Hub{st, f, ls, cl, as, inbox, cfg}, thread)
+    case Done{started} Hub{st, f, ls, cl, as, +inbox, cfg, note}:
+      Hub.spawned.ok(started, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread)
     case Fail{e} _:
       Hub.spawned.fail(e, h, thread)
 
@@ -579,10 +582,10 @@ def Hub.start.k(m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +mod
   match m h:
     case Some{_} _:
       IO.pure(Hub, h)
-    case None{} Hub{st, f, ls, cl, as, inbox, +cfg}:
+    case None{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
       IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Hub,
         H.Proc.spawn("claude", Hub.agent_args(cfg, model, session, r, i), cwd, 0),
-        res => Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg}, thread))
+        res => Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread))
 
 def Hub.agent_send(m: Maybe<&2, Agent>, line: String) -> IO(Unit):
   match m:
@@ -602,28 +605,210 @@ def Hub.agent_stop(m: Maybe<&2, Agent>) -> IO(Unit):
     case None{}:
       IO.pure(Unit, Unit{})
 
-def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
-  match h o:
-    case Hub{st, f, ls, +cl, as, inbox, cfg} B.Send{+client, text}:
+def Hub.state(h: Hub) -> M.State & Hub:
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      (st, Hub{st, f, ls, cl, as, inbox, cfg, note})
+
+def Cfg.version(c: Cfg) -> String:
+  match c:
+    case Cfg{_, _, _, _, _, _, v}:
+      v
+
+def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Wire, out, WText{note})
+        return Unit{}
+
+def Hub.join.note(+out: Chan(Wire), +note: String) -> IO(Unit):
+  Hub.join.note.k(String.is_empty(note), out, note)
+
+def Hub.join(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
+  match h:
+    case Hub{st, f, +ls, cl, as, inbox, +cfg, +note}:
+      do IO<Hub>:
+        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, Cfg.version(cfg))})
+        Hub.join.note(out, note)
+        return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg, note}
+
+def Hub.leave.close(m: Maybe<&2, Chan(Wire)>) -> IO(Unit):
+  match m:
+    case Some{c}:
+      Chan.close(Wire, c)
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Hub.leave.close(Clients.get(cl, client))
+        return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg, note}
+
+def Hub.push(h: Hub, +client: U32, text: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
       do IO<Hub>:
         Wire.send(Clients.get(cl, client), WText{text})
-        return Hub{st, f, ls, cl, as, inbox, cfg}
-    case Hub{st, f, ls, +cl, as, inbox, cfg} B.Broadcast{+text}:
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.note(h: Hub, +text: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, _}:
       do IO<Hub>:
         Wire.all(cl, text)
-        return Hub{st, f, ls, cl, as, inbox, cfg}
-    case Hub{st, f, ls, cl, +as, inbox, cfg} B.AgentStart{+thread, +cwd, _, +model, +session, r, i}:
-      Hub.start.k(Agents.get(as, thread), Hub{st, f, ls, cl, as, inbox, cfg}, thread, cwd, model, session, r, i)
-    case Hub{st, f, ls, cl, +as, inbox, cfg} B.AgentSend{+thread, line}:
+        return Hub{st, f, ls, cl, as, inbox, cfg, text}
+
+def Hub.close(h: Hub) -> IO(Unit):
+  match h:
+    case Hub{_, f, _, _, _, _, _, _}:
+      File.close(f)
+
+# the hub's inbox, handed to k beside the hub
+def Hub.inbox(h: Hub, k: Chan(Msg) -> Hub -> IO(Unit)) -> IO(Unit):
+  match h:
+    case Hub{st, f, ls, cl, as, +inbox, cfg, note}:
+      k(inbox, Hub{st, f, ls, cl, as, inbox, cfg, note})
+
+# Updates
+# -------
+
+def Cfg.home(c: Cfg) -> String:
+  match c:
+    case Cfg{h, _, _, _, _, _, _}:
+      h
+
+def Upgrade.note(kvs: List<&2, J.KV>) -> String:
+  J.Json.show(J.Json.obj(J.KV{"t", J.Str{"update"}} <> kvs))
+
+def Upgrade.say(+inbox: Chan(Msg), text: String) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- Chan.send(Msg, inbox, Announce{text})
+    return Unit{}
+
+def Upgrade.exec.fail(e: U32 & String, +inbox: Chan(Msg)) -> IO(Unit):
+  (_, m) = e
+  Upgrade.say(inbox, Upgrade.note([J.KV{"error", J.Str{"restart failed: " ++ m}}]))
+
+def Upgrade.exec(r: Result<&1, &1, U32 & String, Unit>, +inbox: Chan(Msg)) -> IO(Unit):
+  match r:
+    case Done{_}:
+      IO.pure(Unit, Unit{})
+    case Fail{e}:
+      Upgrade.exec.fail(e, inbox)
+
+def Upgrade.found.k(none: Bool, +tag: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match none:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      Upgrade.say(inbox, Upgrade.note([J.KV{"version", J.Str{tag}}]))
+
+def Upgrade.found(+tag: String, +inbox: Chan(Msg)) -> IO(Unit):
+  Upgrade.found.k(String.is_empty(tag), tag, inbox)
+
+# 15 s after start, then hourly: announce a newer release
+def Upgrade.check(fuel: Nat, +wait: U32, +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        IO.sleep(wait)
+        r : Maybe<&2, UP.Release> <- UP.Update.latest()
+        Upgrade.found(UP.Update.newer(r), inbox)
+        Upgrade.check(f, 3600000, inbox)
+
+def Upgrade.start.go(on: Bool, +inbox: Chan(Msg)) -> IO(Unit):
+  match on:
+    case True{}:
+      IO.spawn(Unit, Upgrade.check(Fuel.forever(), 15000, inbox))
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def Upgrade.start.k(+off: String, +inbox: Chan(Msg)) -> IO(Unit):
+  Upgrade.start.go(String.is_empty(off), inbox)
+
+# Startup
+# -------
+
+def Env.or(r: Result<&1, &1, U32 & String, String>, d: String) -> String:
+  match r:
+    case Done{+v}:
+      Bool.pick(String, String.is_empty(v), d, v)
+    case Fail{_}:
+      d
+
+def Env.get(name: String, d: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
+    return Env.or(r, d)
+
+def Upgrade.start(+inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +off : String <- Env.get("BACKPLANE_NO_UPDATE", "")
+    Upgrade.start.k(off, inbox)
+
+def Names.copy(xs: List<String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      x <> Names.copy(t)
+
+def Upgrade.done.k(ok: Bool, +err: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match ok:
+    case True{}:
+      do IO<Unit>:
+        Upgrade.say(inbox, Upgrade.note([J.KV{"state", J.Str{"restarting"}}]))
+        path : String <- H.Sys.exe_path()
+        args : List<String> <- IO.args()
+        r : Result<&1, &1, U32 & String, Unit> <- H.Sys.exec(path, Names.copy(args))
+        Upgrade.exec(r, inbox)
+    case False{}:
+      Upgrade.say(inbox, Upgrade.note([J.KV{"error", J.Str{err}}]))
+
+def Upgrade.done(+err: String, +inbox: Chan(Msg)) -> IO(Unit):
+  Upgrade.done.k(String.is_empty(err), err, inbox)
+
+# install the latest release and restart into it
+def Upgrade.go(+home: String, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    Upgrade.say(inbox, Upgrade.note([J.KV{"state", J.Str{"updating"}}]))
+    exe : String <- H.Sys.exe_dir()
+    err : String <- UP.Update.apply(exe, home)
+    Upgrade.done(err, inbox)
+
+def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
+  match h o:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note} B.Send{+client, text}:
+      do IO<Hub>:
+        Wire.send(Clients.get(cl, client), WText{text})
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note} B.Broadcast{+text}:
+      do IO<Hub>:
+        Wire.all(cl, text)
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentStart{+thread, +cwd, _, +model, +session, r, i}:
+      Hub.start.k(Agents.get(as, thread), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, cwd, model, session, r, i)
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentSend{+thread, line}:
       do IO<Hub>:
         Hub.agent_send(Agents.get(as, thread), line)
-        return Hub{st, f, ls, cl, as, inbox, cfg}
-    case Hub{st, f, ls, cl, +as, inbox, cfg} B.AgentStop{+thread}:
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentStop{+thread}:
       do IO<Hub>:
         Hub.agent_stop(Agents.get(as, thread))
-        return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg}
+        return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
     case _ B.Watch{_, _}:
       IO.pure(Hub, h)
+    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
+      do IO<Hub>:
+        IO.spawn(Unit, Upgrade.go(Cfg.home(cfg), inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
   match os:
@@ -639,11 +824,6 @@ def Hub.step(h: Hub, s: B.Step) -> IO(Hub):
         r : Hub & List<&2, String> <- Hub.commit(cs, h, Nil{})
         h2 : Hub <- Hub.announce(r)
         Hub.outs(os, h2)
-
-def Hub.state(h: Hub) -> M.State & Hub:
-  match h:
-    case Hub{+st, f, ls, cl, as, inbox, cfg}:
-      (st, Hub{st, f, ls, cl, as, inbox, cfg})
 
 def Hub.rpc.k(p: M.State & Hub, +client: U32, +text: String, +now: Nat) -> IO(Hub):
   (st, h) = p
@@ -661,49 +841,18 @@ def Hub.line(h: Hub, +thread: String, +line: String, +now: Nat) -> IO(Hub):
 
 def Hub.gone(h: Hub, +thread: String, +code: U32, +now: Nat) -> IO(Hub):
   match h:
-    case Hub{+st, f, ls, cl, as, inbox, cfg}:
-      Hub.step(Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg}, B.Hub.agent_gone(st, now, thread, code))
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.step(Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}, B.Hub.agent_gone(st, now, thread, code))
 
 def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
   match h:
-    case Hub{+st, f, ls, cl, as, inbox, cfg}:
-      Hub.step(Hub{st, f, ls, cl, as, inbox, cfg}, B.Hub.tick(st, now))
-
-def Cfg.version(c: Cfg) -> String:
-  match c:
-    case Cfg{_, _, _, _, _, _, v}:
-      v
-
-def Hub.join(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
-  match h:
-    case Hub{st, f, +ls, cl, as, inbox, +cfg}:
-      do IO<Hub>:
-        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, Cfg.version(cfg))})
-        return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg}
-
-def Hub.leave.close(m: Maybe<&2, Chan(Wire)>) -> IO(Unit):
-  match m:
-    case Some{c}:
-      Chan.close(Wire, c)
-    case None{}:
-      IO.pure(Unit, Unit{})
-
-def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, +cl, as, inbox, cfg}:
-      do IO<Hub>:
-        Hub.leave.close(Clients.get(cl, client))
-        return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg}
-
-def Hub.push(h: Hub, +client: U32, text: String) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, +cl, as, inbox, cfg}:
-      do IO<Hub>:
-        Wire.send(Clients.get(cl, client), WText{text})
-        return Hub{st, f, ls, cl, as, inbox, cfg}
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.tick(st, now))
 
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
+    case Announce{text}:
+      Hub.note(h, text)
     case Join{client, out}:
       Hub.join(h, client, out)
     case Leave{client}:
@@ -719,11 +868,6 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
     case Push{client, text}:
       Hub.push(h, client, text)
 
-def Hub.close(h: Hub) -> IO(Unit):
-  match h:
-    case Hub{_, f, _, _, _, _, _}:
-      File.close(f)
-
 def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{msg}:
@@ -734,12 +878,6 @@ def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
     case None{}:
       Hub.close(h)
 
-# the hub's inbox, handed to k beside the hub
-def Hub.inbox(h: Hub, k: Chan(Msg) -> Hub -> IO(Unit)) -> IO(Unit):
-  match h:
-    case Hub{st, f, ls, cl, as, +inbox, cfg}:
-      k(inbox, Hub{st, f, ls, cl, as, inbox, cfg})
-
 def Hub.loop(fuel: Nat, h: Hub) -> IO(Unit):
   match fuel:
     case 0n:
@@ -747,28 +885,6 @@ def Hub.loop(fuel: Nat, h: Hub) -> IO(Unit):
     case 1n+f:
       Hub.inbox(h, inbox => h2 =>
         IO.bind(Maybe<&1, Msg>, Unit, Chan.recv(Msg, inbox), m => Hub.got(m, h2, h3 => Hub.loop(f, h3))))
-
-# Startup
-# -------
-
-def Env.or(r: Result<&1, &1, U32 & String, String>, d: String) -> String:
-  match r:
-    case Done{+v}:
-      Bool.pick(String, String.is_empty(v), d, v)
-    case Fail{_}:
-      d
-
-def Env.get(name: String, d: String) -> IO(String):
-  do IO<String>:
-    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
-    return Env.or(r, d)
-
-def Names.copy(xs: List<String>) -> List<&2, String>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case x <> t:
-      x <> Names.copy(t)
 
 def Names.list(r: Result<&1, &1, U32 & String, List<String>>) -> List<&2, String>:
   match r:
@@ -838,13 +954,14 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       c
 
 def Main.version() -> String:
-  "0.1.0"
+  VR.Version.current()
 
 def Main.serve(l: Listener, h: Hub, +web: String, +inbox: Chan(Msg), front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   do IO<Unit>:
     IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 1, web, inbox))
     IO.spawn(Unit, Ticker.loop(Fuel.forever(), inbox))
     IO.spawn(Unit, Hub.loop(Fuel.forever(), h))
+    Upgrade.start(inbox)
     front(inbox)
 
 # without the web server (its port was taken): hub and ticker only
@@ -852,6 +969,7 @@ def Main.headless(h: Hub, +inbox: Chan(Msg), front: Chan(Msg) -> IO(Unit)) -> IO
   do IO<Unit>:
     IO.spawn(Unit, Ticker.loop(Fuel.forever(), inbox))
     IO.spawn(Unit, Hub.loop(Fuel.forever(), h))
+    Upgrade.start(inbox)
     front(inbox)
 
 def Main.failed(e: U32 & String, h: Hub, addr: String) -> IO(Unit):
@@ -883,7 +1001,7 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
       do IO<Unit>:
         +inbox : Chan(Msg) <- Chan.new(Msg, 4096)
         l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(host, port)
-        Main.listened(l, Hub{st, f, ls, Nil{}, Nil{}, inbox, Cfg{home, web, host, port, pr, ds, v}}, web, inbox, host ++ ":" ++ U32.show(port), need, front)
+        Main.listened(l, Hub{st, f, ls, Nil{}, Nil{}, inbox, Cfg{home, web, host, port, pr, ds, v}, ""}, web, inbox, host ++ ":" ++ U32.show(port), need, front)
     case Fail{e} _:
       Main.nolog(e)
 
@@ -908,4 +1026,3 @@ def Main.config(+user: String, +exe: String, args: List<String>, ks: String & Li
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
-

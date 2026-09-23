@@ -1,0 +1,63 @@
+#!/bin/sh
+# Installs Backplane: curl -fsSL https://github.com/i2cjak/backplane-bend/releases/latest/download/install.sh | sh
+#
+# The release workflow fills in the version and the sha256 of each archive,
+# so this script vouches for what it downloads. It unpacks into
+# $BACKPLANE_PREFIX (~/.local/share/backplane) and links the binaries into
+# ~/.local/bin. No sudo, no shell files edited. Backplane updates itself
+# from the same releases afterwards.
+set -eu
+
+REPO="i2cjak/backplane-bend"
+VER="@VERSION@"
+SHA_LINUX_X64="@SHA_LINUX_X64@"
+SHA_LINUX_ARM64="@SHA_LINUX_ARM64@"
+SHA_DARWIN_ARM64="@SHA_DARWIN_ARM64@"
+
+fail() { printf 'backplane: %s\n' "$*" >&2; exit 1; }
+
+case $(uname -s) in
+  Linux) os=linux ;;
+  Darwin) os=darwin ;;
+  *) fail "$(uname -s) is not supported yet (Linux and macOS are)" ;;
+esac
+case $(uname -m) in
+  x86_64|amd64) arch=x64 ;;
+  arm64|aarch64) arch=arm64 ;;
+  *) fail "$(uname -m) is not supported yet" ;;
+esac
+case $os-$arch in
+  linux-x64) sum=$SHA_LINUX_X64 ;;
+  linux-arm64) sum=$SHA_LINUX_ARM64 ;;
+  darwin-arm64) sum=$SHA_DARWIN_ARM64 ;;
+  *) fail "no build for $os-$arch yet" ;;
+esac
+[ -n "$sum" ] || fail "this release has no build for $os-$arch"
+
+prefix=${BACKPLANE_PREFIX:-$HOME/.local/share/backplane}
+bin=${BACKPLANE_BIN:-$HOME/.local/bin}
+name="backplane-$VER-$os-$arch.tar.gz"
+url="https://github.com/$REPO/releases/download/$VER/$name"
+mkdir -p "$prefix" "$bin"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+echo "downloading $url"
+curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/$name" "$url" || fail "download failed: $url"
+if command -v sha256sum >/dev/null 2>&1; then
+  echo "$sum  $tmp/$name" | sha256sum -c - >/dev/null 2>&1 || fail "$name does not match its sha256; not installed"
+else
+  echo "$sum  $tmp/$name" | shasum -a 256 -c - >/dev/null 2>&1 || fail "$name does not match its sha256; not installed"
+fi
+tar -xzf "$tmp/$name" -C "$tmp"
+rm -rf "$prefix/web.old"
+[ -d "$prefix/web" ] && mv "$prefix/web" "$prefix/web.old"
+mv -f "$tmp/backplane-$os-$arch/backplane" "$tmp/backplane-$os-$arch/backplane-serve" "$prefix/"
+mv "$tmp/backplane-$os-$arch/web" "$prefix/web"
+ln -sf "$prefix/backplane" "$bin/backplane"
+ln -sf "$prefix/backplane-serve" "$bin/backplane-serve"
+echo
+echo "  Backplane $VER is installed. Run: backplane"
+case ":$PATH:" in
+  *":$bin:"*) ;;
+  *) echo "  (add $bin to your PATH)" ;;
+esac

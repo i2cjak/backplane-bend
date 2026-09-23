@@ -15,6 +15,10 @@ if [ -n "${BACKPLANE_X11:-}" ]; then
   export CPATH="$BACKPLANE_X11/include${CPATH:+:$CPATH}"
   export LIBRARY_PATH="$BACKPLANE_X11/lib${LIBRARY_PATH:+:$LIBRARY_PATH}"
 fi
+# a release build stamps its version (BACKPLANE_VERSION=v1.2.3)
+if [ -n "${BACKPLANE_VERSION:-}" ]; then
+  printf 'import Base\n\n# The running build'"'"'s version (stamped by scripts/build.sh).\n\ndef Version.current() -> String:\n  "%s"\n' "${BACKPLANE_VERSION#v}" > src/core/version.bend
+fi
 rm -rf dist
 mkdir -p dist build
 bend src/web/index.html -o dist/web

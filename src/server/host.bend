@@ -82,3 +82,13 @@ def Net.listen(host: String, port: U32) -> IO(Result<&1, &1, U32 & String, Liste
 def Sys.exe_dir() -> IO(String):
   import "./effects/host.c"
   import "./effects/host.js"
+
+# replace this process with path and args (answers only on failure)
+def Sys.exec(path: String, args: List<&2, String>) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# the running binary's full path
+def Sys.exe_path() -> IO(String):
+  import "./effects/host.c"
+  import "./effects/host.js"

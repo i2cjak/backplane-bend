@@ -19,6 +19,8 @@ type Out is Data:
   AgentStop{thread: String}
   # watch a KiCad file for a client (the viewer)
   Watch{client: U32, path: String}
+  # install the latest release and restart
+  Upgrade{}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -156,7 +158,7 @@ def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
-   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes"]
+   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update"]
 
 def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   match i:
@@ -191,6 +193,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 14n:
       Step.reply(client, id, [M.ModesSet{J.Json.get_str(p, "thread", ""), C.Runtime.of(J.Json.get_str(p, "runtime", "full-access")),
         C.Interaction.of(J.Json.get_str(p, "interaction", "default")), J.Json.get_str(p, "model", ""), now}])
+    case 15n:
+      Step.outs([Reply.ok(client, id), Upgrade{}])
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 

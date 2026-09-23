@@ -1,0 +1,208 @@
+import Base
+import ./host.bend as H
+import ./proc.bend as P
+import ../core/json.bend as J
+import ../core/semver.bend as SV
+import ../core/version.bend as VR
+
+# Updates from GitHub releases. A check asks the releases API for the
+# latest release and announces it when it is newer than this build (law
+# update_never_same). Applying downloads this platform's tarball, checks its
+# sha256 against the release's SHA256SUMS, unpacks it beside the running
+# binary, swaps the files in with renames, and restarts in place.
+
+def Update.repo() -> String:
+  "i2cjak/backplane-bend"
+
+def Update.api() -> String:
+  "https://api.github.com/repos/" ++ Update.repo() ++ "/releases/latest"
+
+type Asset is Data:
+  Asset{name: String, url: String}
+
+type Release is Data:
+  Release{tag: String, assets: List<&2, Asset>}
+
+def Update.assets(xs: List<&2, J.Json>) -> List<&2, Asset>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Asset{J.Json.get_str(x, "name", ""), J.Json.get_str(x, "browser_download_url", "")} <> Update.assets(t)
+
+def Update.release(m: Maybe<&2, J.Json>) -> Maybe<&2, Release>:
+  match m:
+    case Some{+o}:
+      Some{Release{J.Json.get_str(o, "tag_name", ""), Update.assets(J.Json.elems(J.Json.get_obj(o, "assets")))}}
+    case None{}:
+      None{}
+
+def Update.ran(r: P.Ran) -> Maybe<&2, Release>:
+  match r:
+    case P.Ran{0, out}:
+      Update.release(J.Json.parse(out))
+    case _:
+      None{}
+
+# the latest release, or None when offline or rate-limited
+def Update.latest() -> IO(Maybe<&2, Release>):
+  do IO<Maybe<&2, Release>>:
+    r : P.Ran <- P.Proc.run("curl", ["-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github+json", Update.api()], "")
+    return Update.ran(r)
+
+# "linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"
+def Update.plat.k(linux: Bool, arm: Bool) -> String:
+  Bool.pick(String, linux, "linux-", "darwin-") ++ Bool.pick(String, arm, "arm64", "x64")
+
+def Update.plat(+uname: String) -> String:
+  Update.plat.k(String.starts_with(uname, "Linux"), Bool.or(String.contains(uname, "arm64"), String.contains(uname, "aarch64")))
+
+def Update.out(r: P.Ran) -> String:
+  match r:
+    case P.Ran{_, out}:
+      String.trim(out)
+
+def Update.platform() -> IO(String):
+  do IO<String>:
+    r : P.Ran <- P.Proc.run("uname", ["-sm"], "")
+    return Update.plat(Update.out(r))
+
+# the asset whose name ends with the suffix
+def Update.find.hit(xs: List<&2, Asset>, +suffix: String) -> Bool:
+  match xs:
+    case Asset{n, _} <> _:
+      String.ends_with(n, suffix)
+    case Nil{}:
+      False{}
+
+def Update.find.go(xs: List<&2, Asset>, hit: Bool, +suffix: String) -> Maybe<&2, Asset>:
+  match xs hit:
+    case a <> _ True{}:
+      Some{a}
+    case _ <> +t False{}:
+      Update.find.go(t, Update.find.hit(t, suffix), suffix)
+    case Nil{} _:
+      None{}
+
+def Update.find(+xs: List<&2, Asset>, +suffix: String) -> Maybe<&2, Asset>:
+  Update.find.go(xs, Update.find.hit(xs, suffix), suffix)
+
+# Checking
+# --------
+
+def Update.newer(r: Maybe<&2, Release>) -> String:
+  match r:
+    case Some{Release{+tag, _}}:
+      Bool.pick(String, SV.Ver.newer(SV.Ver.parse(tag), SV.Ver.parse(VR.Version.current())), tag, "")
+    case None{}:
+      ""
+
+def Update.then.k(ok: Bool, err: String, k: Unit -> IO(String)) -> IO(String):
+  match ok:
+    case True{}:
+      k(Unit{})
+    case False{}:
+      IO.pure(String, err)
+
+# Applying
+# --------
+
+# run k unless an earlier step failed ("" means it did not)
+def Update.then(+err: String, k: Unit -> IO(String)) -> IO(String):
+  Update.then.k(String.is_empty(err), err, k)
+
+def Update.run.k(r: P.Ran, +what: String) -> String:
+  match r:
+    case P.Ran{0, _}:
+      ""
+    case P.Ran{_, out}:
+      what ++ " failed: " ++ String.trim(out)
+
+def Update.run(cmd: String, args: List<&2, String>, +what: String) -> IO(String):
+  do IO<String>:
+    r : P.Ran <- P.Proc.run(cmd, args, "")
+    return Update.run.k(r, what)
+
+def Update.text(r: P.Ran) -> String:
+  match r:
+    case P.Ran{_, out}:
+      out
+
+# the sha256 SHA256SUMS lists for a file name ("" when absent)
+def Update.sum.k(ls: List<&2, String>, +name: String) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case +l <> t:
+      Bool.pick(String, String.ends_with(String.trim(l), name), String.take(l, 64n), Update.sum.k(t, name))
+
+def Update.verify.k(+got: String, +want: String) -> String:
+  Bool.pick(String, Bool.and(Bool.not(String.is_empty(want)), String.eq(got, want)), "", "checksum mismatch for the downloaded release")
+
+# compare the file's sha256 with the published one
+def Update.verify(+file: String, +name: String, +sums: String) -> IO(String):
+  do IO<String>:
+    r : P.Ran <- P.Proc.run("sh", ["-c", "command -v sha256sum >/dev/null && sha256sum \"$1\" || shasum -a 256 \"$1\"", "sh", file], "")
+    return Update.verify.k(String.take(Update.text(r), 64n), Update.sum.k(String.lines(sums), name))
+
+def Update.swap.err(e: U32 & String, +to: String) -> String:
+  (_, m) = e
+  "cannot replace " ++ to ++ ": " ++ m ++ " (reinstall with install.sh)"
+
+def Update.swap.k(r: Result<&1, &1, U32 & String, Unit>, +to: String) -> String:
+  match r:
+    case Done{_}:
+      ""
+    case Fail{e}:
+      Update.swap.err(e, to)
+
+def Update.swap.one(+from: String, +to: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(from, to)
+    return Update.swap.k(r, to)
+
+def Update.swap(+src: String, +exe: String, +tag: String) -> IO(String):
+  do IO<String>:
+    e1 : String <- Update.swap.one(src ++ "/backplane", exe ++ "/backplane")
+    e2 : String <- Update.swap.one(src ++ "/backplane-serve", exe ++ "/backplane-serve")
+    o : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(exe ++ "/web", exe ++ "/web.old-" ++ tag)
+    e3 : String <- Update.swap.one(src ++ "/web", exe ++ "/web")
+    return e1 ++ e2 ++ e3
+
+def Update.install.go(+tag: String, +plat: String, +tn: String, +tu: String, +su: String, +exe: String, +dir: String) -> IO(String):
+  do IO<String>:
+    mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
+    e1 : String <- Update.run("curl", ["-fsSL", "--max-time", "600", "-o", dir ++ "/" ++ tn, tu], "download")
+    Update.then(e1, u =>
+      IO.bind(P.Ran, String, P.Proc.run("curl", ["-fsSL", "--max-time", "60", su], ""), sums =>
+        IO.bind(String, String, Update.verify(dir ++ "/" ++ tn, tn, Update.text(sums)), e2 =>
+          Update.then(e2, u2 =>
+            IO.bind(String, String, Update.run("tar", ["-xzf", dir ++ "/" ++ tn, "-C", dir], "unpack"), e3 =>
+              Update.then(e3, u3 => Update.swap(dir ++ "/backplane-" ++ plat, exe, tag)))))))
+
+# download, verify, unpack, swap in; answers "" or what went wrong
+def Update.install(+tag: String, +plat: String, +tar: Asset, +sums: Asset, +exe: String, +home: String) -> IO(String):
+  match tar sums:
+    case Asset{+tn, +tu} Asset{_, +su}:
+      Update.install.go(tag, plat, tn, tu, su, exe, home ++ "/updates/" ++ tag)
+
+def Update.apply.assets(t: Maybe<&2, Asset>, s: Maybe<&2, Asset>, +tag: String, +plat: String, +exe: String, +home: String) -> IO(String):
+  match t s:
+    case Some{ta} Some{sa}:
+      Update.install(tag, plat, ta, sa, exe, home)
+    case _ _:
+      IO.pure(String, "the release has no build for " ++ plat)
+
+def Update.apply.k(r: Maybe<&2, Release>, +plat: String, +exe: String, +home: String) -> IO(String):
+  match r:
+    case Some{Release{+tag, +assets}}:
+      Update.apply.assets(Update.find(assets, plat ++ ".tar.gz"), Update.find(assets, "SHA256SUMS"), tag, plat, exe, home)
+    case None{}:
+      IO.pure(String, "no release found")
+
+# install the latest release beside the running binary
+def Update.apply(+exe: String, +home: String) -> IO(String):
+  do IO<String>:
+    r : Maybe<&2, Release> <- Update.latest()
+    +plat : String <- Update.platform()
+    Update.apply.k(r, plat, exe, home)

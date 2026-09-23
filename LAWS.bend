@@ -1,6 +1,7 @@
 import Base
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
+import ./src/core/semver.bend as SV
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -102,3 +103,16 @@ law fade_done:
   for +born: Nat
   for +k: Nat
   {V.Fade.alpha(Nat.add(Nat.add(born, V.Fade.ms()), k), born) == 255 : U32}
+
+# Updates
+# -------
+
+# a version is equal to itself
+law semver_cmp_refl:
+  for +v: SV.Ver
+  {SV.Ver.cmp(v, v) == EQ{} : Cmp}
+
+# the updater never offers the version already running
+law update_never_same:
+  for +v: SV.Ver
+  {SV.Ver.newer(v, v) == False{} : Bool}

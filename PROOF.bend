@@ -3,6 +3,7 @@ import ./LAWS.bend as Laws
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
 import ./src/core/board.bend as B
+import ./src/core/semver.bend as SV
 
 # Lemmas
 # ------
@@ -296,3 +297,40 @@ def Laws.scene_merge_self(ss, now):
         : {V.Scene.keep(_, B.Item{k, s, l, p}, b, now) <> V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now) == V.Seen{B.Item{k, s, l, p}, b} <> t : List<&2, V.Seen>}
       Equal.cong(List<&2, V.Seen>, List<&2, V.Seen>, xs => V.Seen{B.Item{k, s, l, p}, b} <> xs,
         V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now), t, Laws.scene_merge_self(t, now))
+
+# Update lemmas and laws
+# ----------------------
+
+law nat_cmp_refl:
+  for a: Nat
+  {Nat.cmp(a, a) == EQ{} : Cmp}
+
+def nat_cmp_refl(a):
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      nat_cmp_refl(p)
+
+law pre_cmp_refl:
+  for b: Bool
+  {SV.Ver.pre_cmp(b, b) == EQ{} : Cmp}
+
+def pre_cmp_refl(b):
+  match b:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.semver_cmp_refl(v):
+  match v:
+    case SV.Ver{+a, +b, +c, +p}:
+      %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.pre_cmp(p, p)))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.pre_cmp(p, p))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {SV.Ver.then(_, SV.Ver.pre_cmp(p, p)) == EQ{} : Cmp}
+      pre_cmp_refl(p)
+
+def Laws.update_never_same(v):
+  %Equal.sym(Cmp, SV.Ver.cmp(v, v), EQ{}, Laws.semver_cmp_refl(v)) : {Cmp.is_gt(_) == False{} : Bool}
+  {==}

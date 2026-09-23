@@ -189,7 +189,7 @@ static void __attribute__((constructor)) sock_shutdown_use(void) {
 // Proc
 // ====
 
-#ifdef CID_PROC_SPAWN
+#if defined(CID_PROC_SPAWN) || defined(CID_SYS_EXEC)
 
 static char** host_argv(Env e, Term cmd, Term xs, int* ok) {
   u64 cap = 8, n = 0, len = 0;
@@ -211,6 +211,10 @@ static char** host_argv(Env e, Term cmd, Term xs, int* ok) {
   v[n] = NULL;
   return v;
 }
+
+#endif
+
+#ifdef CID_PROC_SPAWN
 
 // Starts cmd (searched on PATH) in cwd. Its stdin and stdout are one end of
 // a socketpair; we keep the other, non-blocking. stderr: 0 discards it, 1
@@ -497,29 +501,55 @@ static void __attribute__((constructor)) net_listen_use(void) {
 // Sys
 // ===
 
-#ifdef CID_SYS_EXE_DIR
+#if defined(CID_SYS_EXE_DIR) || defined(CID_SYS_EXE_PATH)
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
 
-// The directory holding the running binary ("" when unknown).
-Term sys_exe_dir_run(Env e, Term* f, IoWork* w) {
-  char buf[4096];
+// the running binary's full path (n = its length; 0 when unknown)
+static ssize_t host_exe(char* buf, size_t cap) {
   ssize_t n = -1;
 #ifdef __APPLE__
-  uint32_t size = sizeof(buf);
+  uint32_t size = (uint32_t)cap;
   char raw[4096];
   if (_NSGetExecutablePath(raw, &size) == 0 && realpath(raw, buf) != NULL) {
     n = (ssize_t)strlen(buf);
   }
 #else
-  n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+  n = readlink("/proc/self/exe", buf, cap - 1);
 #endif
+  if (n > 0) {
+    buf[n] = 0;
+  }
+  return n;
+}
+
+#endif
+
+#ifdef CID_SYS_EXE_PATH
+
+Term sys_exe_path_run(Env e, Term* f, IoWork* w) {
+  char buf[4096];
+  ssize_t n = host_exe(buf, sizeof buf);
+  return io_str(e, buf, n > 0 ? (u64)n : 0);
+}
+
+static void __attribute__((constructor)) sys_exe_path_use(void) {
+  io_eff(CID_SYS_EXE_PATH, sys_exe_path_run, 0);
+}
+
+#endif
+
+#ifdef CID_SYS_EXE_DIR
+
+// The directory holding the running binary ("" when unknown).
+Term sys_exe_dir_run(Env e, Term* f, IoWork* w) {
+  char buf[4096];
+  ssize_t n = host_exe(buf, sizeof buf);
   if (n <= 0) {
     return io_str(e, "", 0);
   }
-  buf[n] = 0;
   char* slash = strrchr(buf, '/');
   size_t len = slash == NULL ? 0 : (size_t)(slash - buf);
   return io_str(e, buf, len);
@@ -527,6 +557,32 @@ Term sys_exe_dir_run(Env e, Term* f, IoWork* w) {
 
 static void __attribute__((constructor)) sys_exe_dir_use(void) {
   io_eff(CID_SYS_EXE_DIR, sys_exe_dir_run, 0);
+}
+
+#endif
+
+#ifdef CID_SYS_EXEC
+
+// Replace this process with path (argv[0] = path, then args). Descriptors
+// are close-on-exec, so agents see their stdin close and exit. Answers only
+// on failure.
+Term sys_exec_run(Env e, Term* f, IoWork* w) {
+  int ok = 1;
+  char** argv = host_argv(e, f[0], f[1], &ok);
+  int code = ok ? 0 : EILSEQ;
+  if (ok) {
+    execv(argv[0], argv);
+    code = errno;
+  }
+  for (char** a = argv; *a != NULL; a += 1) {
+    free(*a);
+  }
+  free(argv);
+  return io_fail(e, code, NULL);
+}
+
+static void __attribute__((constructor)) sys_exec_use(void) {
+  io_eff(CID_SYS_EXEC, sys_exec_run, 0);
 }
 
 #endif
