@@ -241,3 +241,55 @@ def Ws.encode(+op: U32, payload: List<&2, U32>) -> List<&2, U32>:
 
 def Ws.text(s: String) -> List<&2, U32>:
   Ws.encode(1, U.Utf8.encode(s))
+
+# Client side (a hub talking to another machine's hub)
+# ----------------------------------------------------
+
+# a client's frames are masked; the key only has to be there
+def Ws.key() -> List<&2, U32>:
+  [66, 80, 108, 110]
+
+def Ws.mask_len(bs: List<&2, U32>) -> List<&2, U32>:
+  match bs:
+    case x <> t:
+      U32.or(x, 128) <> t
+    case Nil{}:
+      Nil{}
+
+# a masked, final client frame
+def Ws.encode_masked(+op: U32, payload: List<&2, U32>) -> List<&2, U32>:
+  +p = payload
+  +n = List.length(&2, U32, p)
+  U32.or(128, op) <> List.append(&2, U32, Ws.mask_len(Ws.len_bytes.k(Nat.is_lt(n, 126n), Nat.is_lt(n, 65536n), n)),
+    List.append(&2, U32, Ws.key(), Ws.unmask(p, Ws.key(), 0n)))
+
+def Ws.client_text(s: String) -> List<&2, U32>:
+  Ws.encode_masked(1, U.Utf8.encode(s))
+
+# the upgrade request for path on host:port
+def Ws.request(+host: String, +port: U32, +path: String) -> String:
+  "GET " ++ path ++ " HTTP/1.1\r\nHost: " ++ host ++ ":" ++ U32.show(port) ++ "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: YmFja3BsYW5lLWxpbmsh\r\nSec-WebSocket-Version: 13\r\n\r\n"
+
+def Ws.need.ext(ok: Bool, +hd: Nat, +len: Nat, +bs: List<&2, U32>) -> Maybe<&2, Nat>:
+  match ok:
+    case True{}:
+      Some{Nat.add(Nat.add(2n, hd), Ws.be(List.take(&2, U32, List.drop(&2, U32, bs, 2n), hd), 0n))}
+    case False{}:
+      None{}
+
+def Ws.need.k(short: Bool, mid: Bool, +len7: U32, +bs: List<&2, U32>) -> Maybe<&2, Nat>:
+  match short mid:
+    case True{} _:
+      Some{Nat.add(2n, U32.to_nat(len7))}
+    case False{} True{}:
+      Ws.need.ext(Nat.is_ge(List.length(&2, U32, bs), 4n), 2n, 0n, bs)
+    case False{} False{}:
+      Ws.need.ext(Nat.is_ge(List.length(&2, U32, bs), 10n), 8n, 0n, bs)
+
+# how many bytes an unmasked (server) frame takes, once its header is in
+def Ws.need(+bs: List<&2, U32>) -> Maybe<&2, Nat>:
+  match bs:
+    case _ <> +b1 <> _:
+      Ws.need.k(U32.is_lt(U32.and(b1, 127), 126), U32.is_eq(U32.and(b1, 127), 126), U32.and(b1, 127), List.take(&2, U32, bs, 10n))
+    case _:
+      None{}

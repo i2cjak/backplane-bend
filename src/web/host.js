@@ -202,6 +202,9 @@ function run(cmds) {
     } else if (c.$ === "Focus") {
       focus = c.id; // after the next render, which may create it
       later();
+    } else if (c.$ === "Connect") {
+      // another machine's hub serves its own page; "" is this one
+      if (c.url) location.href = c.url + "/";
     } else if (c.$ === "Scroll") {
       scroll = true;
     }

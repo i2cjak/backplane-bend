@@ -10,7 +10,7 @@ Codex) with live KiCad viewers, in a native window drawn entirely by Bend.
 - **KiCad-aware agents.** Every agent is told the exact kicad-cli to use and the project's canonical files (from `.backplane.json` or the `.kicad_pro`). They also get the [KiStack](https://github.com/American-Embedded/KiStack) skills, pinned. With the [Backplane KiCad fork](https://github.com/i2cjak/Backplane_KiCad) they also get its IPC API server, which you can turn off in Settings. Settings can also install the fork.
 - **A browser for the agents.** It is Chrome: an installed Google Chrome, or Google's Chrome for Testing, which Backplane downloads. Agents drive it with `preview_*` tools, and you watch it live in the Browser tab.
 - **Laws.** The rules that matter are stated in [`LAWS.bend`](LAWS.bend) and proven in [`PROOF.bend`](PROOF.bend). `bend PROOF.bend` checks every one.
-- **Anywhere on your tailnet.** `backplane --tailscale` serves the web client to your other devices, gated by a pairing token.
+- **Anywhere on your tailnet.** Backplane also listens on your tailnet address (`--no-tailscale` turns that off). Your own devices get in without a token; anyone else needs the pairing token. Machines you own that run Backplane show up in the sidebar, and you can switch between them.
 
 ![Backplane](docs/media/native-viewer.png)
 

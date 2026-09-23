@@ -70,3 +70,10 @@ def Tailnet.online(ms: List<&2, Machine>) -> List<&2, Machine>:
       Nil{}
     case Machine{n, +ip, +on} <> t:
       Tailnet.online.k(Bool.and(on, Bool.not(String.is_empty(ip))), Machine{n, ip, on}, Tailnet.online(t))
+
+def Tailnet.self.of(+p: J.Json) -> Machine:
+  Machine{Tailnet.host(p), Tailnet.first_ip(J.Json.elems(J.Json.get_obj(p, "TailscaleIPs"))), True{}}
+
+# this node itself (its name and first address)
+def Tailnet.self(+status: String) -> Machine:
+  Tailnet.self.of(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Self"))

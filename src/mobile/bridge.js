@@ -41,6 +41,7 @@ function out(cmds, quiet, alerts) {
     else if (c.$ === "Copy") cs.push({ type: "copy", text: c.text });
     else if (c.$ === "Focus") cs.push({ type: "focus", id: c.id });
     else if (c.$ === "Scroll") cs.push({ type: "scroll" });
+    else if (c.$ === "Connect") cs.push({ type: "connect", url: c.url });
   }
   for (const a of alerts ?? []) cs.push({ type: "notify", ...a });
   return '{"screen":' + (quiet ? "null" : App.screen(ui)) + ',"cmds":' + JSON.stringify(cs) + "}";

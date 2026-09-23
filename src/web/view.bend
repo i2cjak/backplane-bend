@@ -12,12 +12,6 @@ import ../core/diff.bend as DF
 # Sidebar
 # -------
 
-# Ui -> Node. Every decision (order, shelf, status) comes from core defs
-# with laws behind them; this file only lays them out.
-
-# Sidebar
-# -------
-
 type PRow is Data:
   PRow{rank: Nat, project: M.Project, shelves: M.Shelves}
 
@@ -124,17 +118,36 @@ def View.add(adding: Bool) -> List<&2, D.Node>:
     case False{}:
       Nil{}
 
-def View.sidebar(u: U.Ui) -> D.Node:
-  match u:
-    case U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _, _, _, _, _}:
-      D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
+# the owner's machines (only with more than one): this page's hub first;
+# picking another opens that machine's page
+def View.mrows(rs: List<&2, U.MRow>) -> List<&2, D.Node>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case U.MRow{+n, url, +on} <> t:
+      D.Dom.button(Bool.pick(String, on, "machine on", "machine"), "machine", url, n, n) <> View.mrows(t)
+
+def View.machines(many: Bool, rs: List<&2, U.MRow>) -> List<&2, D.Node>:
+  match many:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "machines"}], View.mrows(rs)}]
+    case False{}:
+      Nil{}
+
+def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String) -> D.Node:
+  D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
             D.Dom.button("icon", "proj-open", "", "Add project", "+")]}],
-          D.Dom.cat(View.add(adding),
+          D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding),
             D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now),
-            [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")])))}
+            [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")]))))}
+
+def View.sidebar(u: U.Ui) -> D.Node:
+  match u:
+    case U.Ui{+st, +sel, d, l, +open, +on, +now, +adding, pa, +v, r, w, e, note, nf, ob, tr}:
+      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v)
 
 # Thread
 # ------

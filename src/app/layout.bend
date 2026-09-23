@@ -20,11 +20,6 @@ import ../core/attach.bend as AT
 # wants; hits likewise. Text is measured and drawn in the system's fonts
 # (Ty), the same faces and sizes as the Backplane web app.
 
-# Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
-# order) and reversed once into the topmost-first order the rasterizer
-# wants; hits likewise. Text is measured and drawn in the system's fonts
-# (Ty), the same faces and sizes as the Backplane web app.
-
 type Out is Data:
   Out{ops: List<&2, R.Op>, hits: List<&2, S.Hit>}
 
@@ -334,10 +329,48 @@ def Links.over(o: Out, ls: List<&2, U.Link2>, +now: Nat, +c: D.Clip) -> Out:
     case Out{os, +hs}:
       Out{List.append(&2, R.Op, os, Links.all(ls, Links.rows(hs, Map.new(&2, U32)), 0n, now, c)), hs}
 
+# Machines
+# --------
+# With more than one machine, a row under the header names the one shown
+# and opens the list to switch.
+
+def Mach.rows(+ty: Ty, rs: List<&2, U.MRow>, +y: U32) -> Out:
+  match rs:
+    case Nil{}:
+      Out.none()
+    case U.MRow{+n, +url, +on} <> t:
+      Out.cat(Out{List.append(&2, R.Op,
+          [D.Draw.disc(D.Clip.all(), 22.0, U32.to_f32((y + 15 : U32)), 3.0, Bool.pick(U32, on, T.Th.accent(), T.Th.line()), 255)],
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, n, 200), D.Clip.all(), 34, y, 30, Bool.pick(U32, on, T.Th.text(), T.Th.soft()))),
+          [Lay.hit(4, y, 256, 30, "machine", url)]},
+        Mach.rows(ty, t, (y + 30 : U32)))
+
+def Mach.menu(+ty: Ty, open: Bool, +rs: List<&2, U.MRow>) -> Out:
+  match open:
+    case True{}:
+      Out.cat(Out.ops(Lay.box(D.Clip.all(), 4, 88, 256, (U32.from_nat(List.length(&2, U.MRow, rs)) * 30 + 8 : U32), 0, T.Th.raise(), T.Th.line())),
+        Mach.rows(ty, rs, 92))
+    case False{}:
+      Out.none()
+
+def Mach.bar.k(any: Bool, +ty: Ty, +rs: List<&2, U.MRow>) -> Out:
+  match any:
+    case True{}:
+      Out{List.concat(&2, R.Op, [[D.Draw.rect(D.Clip.all(), 0, 87, 264, 1, T.Th.line(), 255)],
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, U.Machines.current(rs), 200), D.Clip.all(), 16, 52, 36, T.Th.text()),
+          Ty.text(ty, 2n, "▾", D.Clip.all(), 240, 52, 36, T.Th.dim())]), [Lay.hit(0, 52, 263, 36, "flag", "machines")]}
+    case False{}:
+      Out.none()
+
+# how far the machine row pushes the projects down
+def Mach.h(any: Bool) -> U32:
+  Bool.pick(U32, any, 36, 0)
+
 def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, +adding: Bool, +v: String,
-    +sd: U32, +caret: Nat, +focus: String, +path: String, +h: U32, +settings: Bool) -> Out:
+    +sd: U32, +caret: Nat, +focus: String, +path: String, +h: U32, +settings: Bool, +ms: List<&2, U.MRow>) -> Out:
   +top = {D.Clip{0, 0, 264, 52} : D.Clip}
-  +y0 = {Bool.pick(U32, adding, 96, 60) : U32}
+  +many = Nat.is_gt(List.length(&2, U.MRow, ms), 1n)
+  +y0 = {(Bool.pick(U32, adding, 96, 60) + Mach.h(many) : U32) : U32}
   Out.all([
     Out.ops([D.Draw.rect(D.Clip.all(), 0, 0, 264, h, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 263, 0, 1, h, T.Th.line(), 255),
       D.Draw.rect(top, 0, 51, 264, 1, T.Th.line(), 255),
@@ -350,7 +383,9 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
         Ty.text(ty, 2n, "Settings", D.Clip.all(), 16, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim()))),
-      [Lay.hit(0, (h - 48 : U32), 263, 48, "flag", "settings")]}])
+      [Lay.hit(0, (h - 48 : U32), 263, 48, "flag", "settings")]},
+    Mach.bar.k(many, ty, ms),
+    Mach.menu(ty, Bool.and(many, U.Flag.get(open, "machines")), ms)])
 
 # Timeline
 # --------
@@ -1060,7 +1095,8 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
     Lay.chip(ty, (x + w - 70 : U32), (500 + dy : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
     Set.head(ty, "Network and updates", x, (570 + dy : U32)),
     Set.card(x, (602 + dy : U32), w, 164),
-    Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), "Listening on " ++ U.Str.get(info, "listen") ++ ". Start with --tailscale to serve your tailnet.", x, (604 + dy : U32), w),
+    Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), Bool.pick(String, String.eq(U.Str.get(info, "tailnet"), "off"), "Listening on " ++ U.Str.get(info, "listen") ++ " only (started with --no-tailscale, or Tailscale is not up).",
+      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (604 + dy : U32), w),
     Set.row.r(ty, "Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note), x, (656 + dy : U32), w, 150),
     Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (666 + dy : U32), "Install update", T.Th.accent(), "update", ""),
       Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (666 + dy : U32), "Check now", T.Th.soft(), "update-check", "")),
@@ -1306,7 +1342,7 @@ def Lay.note.k(+ty: Ty, empty: Bool, offer: Bool, +note: String, +x: U32, +y: U3
 # an update to offer (clickable) or one being applied (status only), in
 # the sidebar's footer beside Settings
 def Lay.note(+ty: Ty, +note: String, +h: U32) -> Out:
-  Lay.note.k(ty, String.is_empty(note), String.starts_with(note, "update "), note, U32.dim(248, (Ty.width(ty, 2n, note) + 16 : U32)), (h - 34 : U32))
+  Lay.note.k(ty, String.is_empty(note), String.starts_with(note, "update "), Ty.fit(ty, 2n, note, 150), U32.dim(248, (Ty.width(ty, 2n, Ty.fit(ty, 2n, note, 150)) + 16 : U32)), (h - 34 : U32))
 
 def Lay.ghost.k(on: Bool, +ty: Ty, +title: String, +y: U32) -> Out:
   match on:
@@ -1326,7 +1362,7 @@ def Lay.ghost(+ty: Ty, +n: S.Nui) -> Out:
 def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
-      Out.all([Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h, U.Flag.get(open, "settings")), Lay.note(ty, note, h), Lay.ghost(ty, n)])
+      Out.all([Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h, U.Flag.get(open, "settings"), U.Machines.rows(S.Nui.ui(n))), Lay.note(ty, note, h), Lay.ghost(ty, n)])
 
 # Command palette (ctrl+k)
 # ------------------------

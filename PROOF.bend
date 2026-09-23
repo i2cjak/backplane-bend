@@ -11,6 +11,7 @@ import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
+import ./src/core/tailnet.bend as TN
 
 # Lemmas
 # ------
@@ -752,4 +753,7 @@ def Laws.fuzzy_empty_matches(s):
       {==}
 
 def Laws.caret_shows_when_moved():
+  {==}
+
+def Laws.tailnet_no_owner_no_trust(login):
   {==}

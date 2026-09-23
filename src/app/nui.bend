@@ -14,10 +14,6 @@ import ../core/attach.bend as AT
 # pointer, scroll, focus and the composer caret. Input is pure: an event
 # goes in, the next state and the commands to run come out.
 
-# The native window's state around the shared client state (Ui): size,
-# pointer, scroll, focus and the composer caret. Input is pure: an event
-# goes in, the next state and the commands to run come out.
-
 # a clickable region from the last layout (topmost first)
 type Hit is Data:
   Hit{x0: U32, y0: U32, x1: U32, y1: U32, action: String, value: String}
@@ -45,6 +41,7 @@ type NCmd is Data:
   NCopy{text: String}
   NPaste{}
   NQuit{}
+  NConnect{url: String}
 
 type Step is Data:
   Step{nui: Nui, cmds: List<&2, NCmd>, dirty: Bool}
@@ -94,6 +91,8 @@ def Nui.cmd(c: U.Cmd, rest: List<&2, NCmd>) -> List<&2, NCmd>:
       NSend{t} <> rest
     case U.Copy{t}:
       NCopy{t} <> rest
+    case U.Connect{url}:
+      NConnect{url} <> rest
     case _:
       rest
 
@@ -876,12 +875,13 @@ def Pick.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
 def Pick.click(+n: Nui, +v: String) -> Step:
   Pick.run(U.Palette.at(U.Proj.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
 
-# a click outside the model picker closes it (its own rows and chips, and
-# its toggle, keep their meaning)
+# a click outside the model picker or the machine list closes it (their own
+# rows and chips, and their toggles, keep their meaning)
 def Menu.inside(m: Maybe<&2, Hit>) -> Bool:
   match m:
     case Some{Hit{_, _, _, _, +a, +v}}:
-      Bool.or(Bool.or(String.eq(a, "model"), String.eq(a, "effort")), Bool.and(String.eq(a, "flag"), String.eq(v, "models")))
+      Bool.or(Bool.or(Bool.or(String.eq(a, "model"), String.eq(a, "effort")), String.eq(a, "machine")),
+        Bool.and(String.eq(a, "flag"), Bool.or(String.eq(v, "models"), String.eq(v, "machines"))))
     case None{}:
       False{}
 
@@ -890,7 +890,7 @@ def Menu.shut(inside: Bool, +n: Nui) -> Nui:
     case True{}:
       n
     case False{}:
-      Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "models"))
+      Nui.with_ui(n, U.Ui.flag_off(U.Ui.flag_off(Nui.ui(n), "models"), "machines"))
 
 def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
   match open:
@@ -1284,16 +1284,16 @@ def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mo
 def Nui.key.go(+name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Nui.key.go.k(String.is_empty(name), name, n, code, text, mods)
 
-# Esc first closes an open menu (the model picker)
+# Esc first closes an open menu (the model picker, the machine list)
 def Nui.key.menu(menu: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match menu:
     case True{}:
-      Step{Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "models")), Nil{}, True{}}
+      Step{Nui.with_ui(n, U.Ui.flag_off(U.Ui.flag_off(Nui.ui(n), "models"), "machines")), Nil{}, True{}}
     case False{}:
       Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
 
 def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), U.Ui.flag(Nui.ui(n), "models")), n, code, text, mods)
+  Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), Bool.or(U.Ui.flag(Nui.ui(n), "models"), U.Ui.flag(Nui.ui(n), "machines"))), n, code, text, mods)
 
 def Row.press(m: Maybe<&2, Hit>, +n: Nui, +x: U32, +y: U32) -> Step:
   match m:

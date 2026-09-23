@@ -18,6 +18,7 @@ import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
 import ../core/schematic.bend as SC
 import ../server/proc.bend as P
+import ./link.bend as LK
 import ../gfx/bitmap.bend as BM
 
 # `backplane`: the hub, the web server (for other devices), and the native
@@ -26,18 +27,25 @@ import ../gfx/bitmap.bend as BM
 
 type ShellMsg is Data:
   FromWin{words: List<&2, U32>}
-  FromHub{text: String}
+  FromHub{tag: String, text: String}
   Frame{}
-  Gone{}
+  Gone{tag: String}
+  Retry{tag: String}
   Board{key: String, items: List<&2, B.Item>}
   Mesh3{key: String, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
   Shot{key: String, bmp: BM.Bitmap}
   Blink{}
 
+# which hub the window talks to: its own (url "") or another machine's
+# through a link; each connection gets its own tag so messages from one
+# already left are dropped
+type Tie is Data:
+  Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat}
+
 # the boards being watched and the fonts
 type Aux is Data:
-  Aux{watched: List<&2, String>, ty: L.Ty}
+  Aux{watched: List<&2, String>, ty: L.Ty, tie: Tie}
 
 type Shell is Type:
   Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg), aux: Aux}
@@ -58,26 +66,26 @@ def Pump.loop(fuel: Nat, w: Window, +q: Chan(ShellMsg)) -> IO(Unit):
     case 1n+f:
       IO.bind(Window & List<&2, U32>, Unit, W.Win.words(w), r => Pump.got(r, q, w2 => Pump.loop(f, w2, q)))
 
-def Fwd.got(m: Maybe<&1, S.Wire>, +q: Chan(ShellMsg), k: Unit -> IO(Unit)) -> IO(Unit):
+def Fwd.got(m: Maybe<&1, S.Wire>, +q: Chan(ShellMsg), +tag: String, k: Unit -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{S.WText{t}}:
       do IO<Unit>:
-        ok : Bool <- Chan.send(ShellMsg, q, FromHub{t})
+        ok : Bool <- Chan.send(ShellMsg, q, FromHub{tag, t})
         k(Unit{})
     case Some{_}:
       k(Unit{})
     case None{}:
       do IO<Unit>:
-        ok : Bool <- Chan.send(ShellMsg, q, Gone{})
+        ok : Bool <- Chan.send(ShellMsg, q, Gone{tag})
         return Unit{}
 
-# the hub's messages for client 0
-def Fwd.loop(fuel: Nat, +out: Chan(S.Wire), +q: Chan(ShellMsg)) -> IO(Unit):
+# a hub's messages for client 0, tagged with the connection
+def Fwd.loop(fuel: Nat, +out: Chan(S.Wire), +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
   match fuel:
     case 0n:
       IO.pure(Unit, Unit{})
     case 1n+f:
-      IO.bind(Maybe<&1, S.Wire>, Unit, Chan.recv(S.Wire, out), m => Fwd.got(m, q, u => Fwd.loop(f, out, q)))
+      IO.bind(Maybe<&1, S.Wire>, Unit, Chan.recv(S.Wire, out), m => Fwd.got(m, q, tag, u => Fwd.loop(f, out, q, tag)))
 
 def Timer.once(+q: Chan(ShellMsg)) -> IO(Unit):
   do IO<Unit>:
@@ -144,32 +152,48 @@ def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
     case V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}:
       V.Fade.busy(ss, now)
 
-# Commands
+# Machines
 # --------
 
-def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
-  match a c:
-    case Shell{n, w, d, qd, q, +i, wa} N.NSend{t}:
-      do IO<Shell>:
-        ok : Bool <- Chan.send(S.Msg, i, S.Rpc{0, t})
-        return Shell{n, w, d, qd, q, i, wa}
-    case Shell{n, w, d, qd, q, i, wa} N.NCopy{t}:
-      do IO<Shell>:
-        w2 : Window <- W.Win.copy(w, t)
-        return Shell{n, w2, d, qd, q, i, wa}
-    case Shell{n, w, d, qd, q, i, wa} N.NPaste{}:
-      do IO<Shell>:
-        w2 : Window <- W.Win.paste(w)
-        return Shell{n, w2, d, qd, q, i, wa}
-    case _ N.NQuit{}:
-      IO.die(Shell, 0, "")
+def Tie.tag(t: Tie) -> String:
+  match t:
+    case Tie{_, _, g, _}:
+      g
 
-def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
-  match cs:
-    case Nil{}:
-      IO.pure(Shell, a)
-    case c <> t:
-      IO.bind(Shell, Shell, Shell.cmd(a, c), a2 => Shell.cmds(t, a2))
+def Tie.url(t: Tie) -> String:
+  match t:
+    case Tie{_, u, _, _}:
+      u
+
+# the hub to join: this machine's own, or a link to another
+def Shell.hub(local: Bool, +home: Chan(S.Msg), +url: String) -> IO(Chan(S.Msg)):
+  match local:
+    case True{}:
+      IO.pure(Chan(S.Msg), home)
+    case False{}:
+      LK.Link.start(url)
+
+def Shell.joined(+i2: Chan(S.Msg), +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+  do IO<Unit>:
+    +out : Chan(S.Wire) <- Chan.new(S.Wire, 8192)
+    ok : Bool <- Chan.send(S.Msg, i2, S.Join{0, out, 0n, ""})
+    IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, tag))
+
+def Shell.connect.k(t: Tie, a: Shell, +url: String) -> IO(Shell):
+  match t a:
+    case Tie{+home, _, _, +n} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _}}:
+      do IO<Shell>:
+        ok : Bool <- Chan.send(S.Msg, i, S.Leave{0})
+        +tag : String = url ++ "#" ++ Nat.show(n)
+        +i2 : Chan(S.Msg) <- Shell.hub(String.is_empty(url), home, url)
+        Shell.joined(i2, q, tag)
+        return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n}}}
+
+def Shell.retry.later(+q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+  do IO<Unit>:
+    IO.sleep(3000)
+    ok : Bool <- Chan.send(ShellMsg, q, Retry{tag})
+    return Unit{}
 
 # the caret toggled: the next frame redraws it
 def Shell.blinked(a: Shell) -> Shell:
@@ -184,37 +208,17 @@ def Shell.dirty(a: Shell) -> IO(Shell):
     case _:
       IO.pure(Shell, a)
 
-# fold a step into the app: its state, its commands, maybe a frame
-def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
-  match a s:
-    case Shell{_, w, d, qd, q, i, wa} N.Step{n, cs, dirty}:
-      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i, wa}), Shell.dirty)
-
-# Events
-# ------
-
-def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux) -> IO(Shell):
-  (w, text) = r
-  Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.paste(n, text))
-
-def Shell.event(a: Shell, e: W.WinEv) -> IO(Shell):
-  match a e:
-    case Shell{n, w, d, qd, q, i, wa} W.WPaste{_}:
-      IO.bind(Window & String, Shell, W.Win.pasted(w), r => Shell.pasted(r, n, d, qd, q, i, wa))
-    case Shell{+n, w, d, qd, q, i, wa} _:
-      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.event(n, e))
-
-def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
-  match es:
-    case Nil{}:
-      IO.pure(Shell, a)
-    case e <> t:
-      IO.bind(Shell, Shell, Shell.event(a, e), a2 => Shell.events(t, a2))
-
 def Shell.recv(a: Shell, +text: String) -> IO(Shell):
   match a:
     case Shell{n, w, _, qd, q, i, wa}:
       Shell.later(Shell{N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})), w, True{}, qd, q, i, wa})
+
+def Shell.from(current: Bool, a: Shell, +t: String) -> IO(Shell):
+  match current:
+    case True{}:
+      Shell.recv(a, t)
+    case False{}:
+      IO.pure(Shell, a)
 
 def Shell.queue(a: Shell, k: Chan(ShellMsg) -> Shell -> IO(Unit)) -> IO(Unit):
   match a:
@@ -246,18 +250,128 @@ def Shell.has(ws: List<&2, String>, +r: String) -> Bool:
 
 def Aux.ty(a: Aux) -> L.Ty:
   match a:
-    case Aux{_, t}:
+    case Aux{_, t, _}:
       t
 
 def Aux.watched(a: Aux) -> List<&2, String>:
   match a:
-    case Aux{ws, _}:
+    case Aux{ws, _, _}:
       ws
 
 def Aux.add(a: Aux, r: String) -> Aux:
   match a:
-    case Aux{ws, t}:
-      Aux{r <> ws, t}
+    case Aux{ws, t, ti}:
+      Aux{r <> ws, t, ti}
+
+def Aux.tie(a: Aux) -> Tie:
+  match a:
+    case Aux{_, _, ti}:
+      ti
+
+# talk to the hub at url ("" is this machine's): leave the one now joined,
+# join the other; its log replaces what the window shows
+def Shell.connect(a: Shell, +url: String) -> IO(Shell):
+  match a:
+    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti}}:
+      Shell.connect.k(ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti}}, url)
+
+# Commands
+# --------
+
+def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
+  match a c:
+    case Shell{n, w, d, qd, q, +i, wa} N.NSend{t}:
+      do IO<Shell>:
+        ok : Bool <- Chan.send(S.Msg, i, S.Rpc{0, t})
+        return Shell{n, w, d, qd, q, i, wa}
+    case Shell{n, w, d, qd, q, i, wa} N.NCopy{t}:
+      do IO<Shell>:
+        w2 : Window <- W.Win.copy(w, t)
+        return Shell{n, w2, d, qd, q, i, wa}
+    case Shell{n, w, d, qd, q, i, wa} N.NPaste{}:
+      do IO<Shell>:
+        w2 : Window <- W.Win.paste(w)
+        return Shell{n, w2, d, qd, q, i, wa}
+    case _ N.NQuit{}:
+      IO.die(Shell, 0, "")
+    case _ N.NConnect{url}:
+      Shell.connect(a, url)
+
+# a connection closed: this machine's own hub means the app is ending;
+# another machine's is tried again in a moment; an old one is let go
+def Shell.gone(current: Bool, local: Bool, a: Shell, +tag: String) -> IO(Shell):
+  match current local a:
+    case True{} True{} _:
+      IO.die(Shell, 0, "")
+    case True{} False{} Shell{n, w, d, qd, +q, i, wa}:
+      do IO<Shell>:
+        IO.spawn(Unit, Shell.retry.later(q, tag))
+        return Shell{n, w, d, qd, q, i, wa}
+    case False{} _ _:
+      IO.pure(Shell, a)
+
+def Shell.retry(current: Bool, a: Shell, +url: String) -> IO(Shell):
+  match current:
+    case True{}:
+      Shell.connect(a, url)
+    case False{}:
+      IO.pure(Shell, a)
+
+# messages that belong to one connection: only the current one's count
+def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
+  match m:
+    case FromHub{tag, t}:
+      Shell.from(String.eq(tag, Tie.tag(ti)), a, t)
+    case Gone{tag}:
+      Shell.gone(String.eq(tag, Tie.tag(ti)), String.is_empty(Tie.url(ti)), a, Tie.tag(ti))
+    case Retry{tag}:
+      Shell.retry(String.eq(tag, Tie.tag(ti)), a, Tie.url(ti))
+    case _:
+      IO.pure(Shell, a)
+
+def Shell.tagged(a: Shell, m: ShellMsg) -> IO(Shell):
+  match a:
+    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti}}:
+      Shell.tagged.k(m, ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti}})
+
+def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
+  match cs:
+    case Nil{}:
+      IO.pure(Shell, a)
+    case c <> t:
+      IO.bind(Shell, Shell, Shell.cmd(a, c), a2 => Shell.cmds(t, a2))
+
+# fold a step into the app: its state, its commands, maybe a frame
+def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
+  match a s:
+    case Shell{_, w, d, qd, q, i, wa} N.Step{n, cs, dirty}:
+      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i, wa}), Shell.dirty)
+
+# Events
+# ------
+
+def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux) -> IO(Shell):
+  (w, text) = r
+  Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.paste(n, text))
+
+def Shell.event(a: Shell, e: W.WinEv) -> IO(Shell):
+  match a e:
+    case Shell{n, w, d, qd, q, i, wa} W.WPaste{_}:
+      IO.bind(Window & String, Shell, W.Win.pasted(w), r => Shell.pasted(r, n, d, qd, q, i, wa))
+    case Shell{+n, w, d, qd, q, i, wa} _:
+      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.event(n, e))
+
+def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
+  match es:
+    case Nil{}:
+      IO.pure(Shell, a)
+    case e <> t:
+      IO.bind(Shell, Shell, Shell.event(a, e), a2 => Shell.events(t, a2))
+
+def Aux.with_tie(a: Aux, ti: Tie) -> Aux:
+  match a:
+    case Aux{ws, t, _}:
+      Aux{ws, t, ti}
 
 # no display: keep serving the web UI
 def Shell.nowin(e: U32 & String) -> IO(Unit):
@@ -658,14 +772,16 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
   match m:
     case FromWin{ws}:
       Shell.events(W.Win.decode(ws), a)
-    case FromHub{t}:
-      Shell.recv(a, t)
+    case FromHub{tag, t}:
+      Shell.tagged(a, FromHub{tag, t})
     case Frame{}:
       Shell.frame(a)
     case Blink{}:
       Shell.frame(Shell.blinked(a))
-    case Gone{}:
-      IO.die(Shell, 0, "")
+    case Gone{tag}:
+      Shell.tagged(a, Gone{tag})
+    case Retry{tag}:
+      Shell.tagged(a, Retry{tag})
     case Board{key, items}:
       Shell.board(a, key, items)
     case Mesh3{key, ts}:
@@ -702,9 +818,9 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     t : U32 <- H.Clock.epoch()
     ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out, 0n, ""})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
-    IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q))
+    IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     ty : L.Ty <- L.Ty.load()
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg)) -> IO(Unit):

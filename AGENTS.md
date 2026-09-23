@@ -23,6 +23,7 @@ When using Bend:
 - `src/gfx/bitmap.bend`: raw RGB frames (the browser helper's frame file) as an `Image` quadtree, composited into a frame at a place and size.
 - `tools/browser/`: `backplane-browser`, a Bun + playwright-core headless Chromium driven by NDJSON on stdin/stdout; raw frames go to a file. Protocol in its README. Built by `scripts/build-browser.sh`.
 - `src/core/client.bend`: the client state and actions both UIs share.
+- `src/core/tailnet.bend` (pure: owner trust from `tailscale whois`, the owner's machines from `tailscale status`) and `src/app/link.bend` (a WebSocket client shaped like a hub, so the native window can switch to another machine's hub). Each hub finds the owner's other hubs (GET /hello) and lists them in the sidebar; `BACKPLANE_PEERS` names hubs off the tailnet.
 - `src/core/diff.bend` (pure: unified diff → files, hunks, numbered lines; stats) and `src/server/git.bend` (IO: repo info, porcelain status, worktrees, hidden-ref checkpoints, stacked commit/push/PR). See `docs/git.md`. Native test: `bend test/native/git_test.bend -o build/git_test && build/git_test`.
 - `src/core/vt.bend`: the terminal emulator (VT100/xterm: bytes in, styled rows, cursor, replies, key and paste bytes out); `src/server/pty.bend` + `effects/pty.c` run a shell on a pty whose master is a `Socket`. See `docs/terminal.md`.
 - `src/web/`: the web client for other devices (Tailscale, phone). View logic is Bend; `host.js` only touches the DOM, canvas and socket, and holds no product logic.

@@ -48,6 +48,8 @@ Backplane stands. Updated as features land.
   - Stable takes only full releases. Nightly also takes the `vX.Y.Z-nightly.YYYYMMDD.N` prereleases that `.github/workflows/nightly.yml` publishes daily through release.yml's jobs.
   - Semver orders nightlies by day and then by build, with every nightly before its release (laws `semver_pre_before_release`, `semver_nightly_later`, `semver_nightly_next_day`).
 - **Remote:** a web client for other devices over Tailscale with a pairing token. It uses CBOR frames, resumes from a sequence number, and has an outbox, an app shell cache and gzip.
+- **Machines:** each hub listens on the tailnet by default (`--no-tailscale` turns this off) and lets in its owner's devices without the token, going by `tailscale whois` (law `tailnet_no_owner_no_trust`). It finds the owner's other hubs with GET /hello, plus any listed in `BACKPLANE_PEERS`. The sidebar lists them: the native window switches its connection there through a WebSocket link, and the web client opens that machine's page. Board viewers still read files on the machine the window runs on.
+- **Models:** the pickers show what each CLI offers now. Claude Code's /model list comes from an `initialize` control request, which calls no model. Codex's list comes from its cache and Grok's from `grok models`. The lists are read again every 15 minutes and pushed to clients. The effort chips follow the model.
 - **Viewers:** board, schematic and 3D (KiCad), STEP (through step2glb), and the agents' browser (Chrome). Clicking inspects an item.
 
 ## Not yet

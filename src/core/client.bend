@@ -13,12 +13,6 @@ import ./attach.bend as AT
 # the server uses (law replay_snoc), so what a client shows is exactly what
 # the server stored.
 
-# The client state, Elm-style, shared by the native window and the web
-# page: a host feeds server messages to Ui.recv and user actions to Ui.act,
-# then draws the result. The read model is folded by the same State.apply
-# the server uses (law replay_snoc), so what a client shows is exactly what
-# the server stored.
-
 type Ui is Data:
   Ui{
     st: M.State,
@@ -45,6 +39,8 @@ type Cmd is Data:
   Copy{text: String}
   Focus{id: String}
   Scroll{}
+  # talk to another machine's hub ("" is this machine's own)
+  Connect{url: String}
 
 type Act is Data:
   Act{ui: Ui, cmds: List<&2, Cmd>}
@@ -172,10 +168,70 @@ def Info.of(o: J.Json) -> Map<&2, String>:
 
 # the machine info changed while connected (new models): its fields replace
 # the old ones, the rest stays
+# Machines
+# --------
+# The owner's machines that run Backplane (the hub finds them on the
+# tailnet). This client's own keys start with "local." and survive a new
+# log: which machine it talks to ("" is its home hub) and the home hub's
+# list, so the switcher stays the same while another machine is shown.
+
+def Local.keep.go(ks: List<&2, String>, +old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
+  match ks:
+    case Nil{}:
+      m
+    case +k <> t:
+      Local.keep.go(t, old, Map.set(&2, String, m, k, Str.get(old, k)))
+
+def Local.keep(+old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
+  Local.keep.go(["local.machine", "local.machines"], old, m)
+
+def Machines.home.k(home: Bool, +nf: Map<&2, String>) -> Map<&2, String>:
+  Bool.pick(Map<&2, String>, Bool.and(home, Bool.not(String.is_empty(Str.get(nf, "machines")))), Map.set(&2, String, nf, "local.machines", Str.get(nf, "machines")), nf)
+
+# what the home hub says about machines becomes the switcher's list
+def Machines.home(+nf: Map<&2, String>) -> Map<&2, String>:
+  Machines.home.k(String.is_empty(Str.get(nf, "local.machine")), nf)
+
+type MRow is Data:
+  MRow{name: String, url: String, on: Bool}
+
+def Machines.peer(skip: Bool, +n: String, +url: String, +cur: String, rest: List<&2, MRow>) -> List<&2, MRow>:
+  match skip:
+    case True{}:
+      rest
+    case False{}:
+      MRow{n, url, String.eq(url, cur)} <> rest
+
+def Machines.peers(ps: List<&2, J.Json>, +me: String, +cur: String) -> List<&2, MRow>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      Machines.peer(String.eq(J.Json.get_str(p, "url", ""), me), J.Json.get_str(p, "name", ""), J.Json.get_str(p, "url", ""), cur, Machines.peers(t, me, cur))
+
+def Machines.of(+j: J.Json, +cur: String) -> List<&2, MRow>:
+  MRow{Bool.pick(String, String.is_empty(J.Json.get_str(J.Json.get_obj(j, "self"), "name", "")), "This machine", J.Json.get_str(J.Json.get_obj(j, "self"), "name", "")), "", String.is_empty(cur)}
+    <> Machines.peers(J.Json.elems(J.Json.get_obj(j, "peers")), J.Json.get_str(J.Json.get_obj(j, "self"), "url", ""), cur)
+
+# the name of the machine shown
+def Machines.current(rs: List<&2, MRow>) -> String:
+  match rs:
+    case Nil{}:
+      ""
+    case MRow{+n, _, +on} <> t:
+      Bool.pick(String, on, n, Machines.current(t))
+
+# switch to a machine: the host connects there, and its log replaces this
+# one (the selection and anything still unsent belong to the old machine)
+def Ui.machine(u: Ui, +url: String) -> Act:
+  match u:
+    case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, _, tr}:
+      Act{Ui{st, "", dr, live, Map.set(&2, Bool, op, "machines", False{}), on, now, ad, pa, v, rid, w, er, note, Map.set(&2, String, nf, "local.machine", url), Map.new(&2, String), tr}, [Connect{url}]}
+
 def Ui.info_merge(u: Ui, o: J.Json) -> Ui:
   match u o:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr} J.Obj{fs}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Info.fields(fs, nf), ob, tr}
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Machines.home(Info.fields(fs, nf)), ob, tr}
     case _ _:
       u
 
@@ -194,7 +250,7 @@ def Ui.reset(u: Ui, +o: J.Json) -> Ui:
     case Ui{st, sel, dr, live, op, _, now, ad, pa, _, rid, w, er, note, +nf, ob, tr}:
       Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))),
         Ui{Ui.base(Nat.is_gt(J.Json.get_nat(o, "since", 0n), 0n), st), sel, dr, live, op, True{}, now, ad, pa, J.Json.get_str(o, "version", ""), rid, w, er, note,
-          Map.set(&2, String, Map.set(&2, String, Info.of(J.Json.get_obj(o, "info")), "cid", Str.get(nf, "cid")), "origin", J.Json.get_str(o, "origin", "")), ob, tr})
+          Machines.home(Local.keep(nf, Map.set(&2, String, Map.set(&2, String, Info.of(J.Json.get_obj(o, "info")), "cid", Str.get(nf, "cid")), "origin", J.Json.get_str(o, "origin", "")))), ob, tr})
 
 # how many changes this client holds (a reconnect asks for the rest)
 def Ui.seq(u: Ui) -> Nat:
@@ -453,6 +509,14 @@ def Ui.info(u: Ui, +k: String) -> String:
     case Ui{_, _, _, _, _, _, _, _, _, _, _, _, _, _, nf, ob, tr}:
       Str.get(nf, k)
 
+# the switcher: this machine first, then the others ("on" marks the one shown)
+def Machines.rows(+u: Ui) -> List<&2, MRow>:
+  Machines.of(Maybe.default(&2, J.Json, J.Json.parse(Ui.info(u, "local.machines")), J.Null{}), Ui.info(u, "local.machine"))
+
+# only worth showing when there is somewhere else to go
+def Machines.any(+u: Ui) -> Bool:
+  Nat.is_gt(List.length(&2, MRow, Machines.rows(u)), 1n)
+
 def Ui.flag(u: Ui, +k: String) -> Bool:
   match u:
     case Ui{_, _, _, _, op, _, _, _, _, _, _, _, _, _, _, ob, tr}:
@@ -469,7 +533,7 @@ def Ui.actions() -> List<&2, String>:
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49",
-   "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check"]
+   "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine"]
 
 # Reading the client state
 # ------------------------
@@ -1875,6 +1939,8 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.key(u, value)
     case 57n:
       Ui.rpc(u, "update.check", Nil{})
+    case 58n:
+      Ui.machine(u, value)
     case _:
       Act{u, Nil{}}
 

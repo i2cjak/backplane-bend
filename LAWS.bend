@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/tailnet.bend as TN
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
@@ -446,3 +447,9 @@ law fuzzy_empty_matches:
 # a caret that just moved (or a field just focused) is shown
 law caret_shows_when_moved:
   {N.Blink.shown(0n) == True{} : Bool}
+
+# a hub that does not know its owner lets no tailnet device in without the
+# pairing token
+law tailnet_no_owner_no_trust:
+  for login: String
+  {TN.Tailnet.trusts("", login) == False{} : Bool}

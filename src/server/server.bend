@@ -20,13 +20,9 @@ import ./park.bend as PK
 import ./git.bend as GT
 import ./term.bend as TM
 import ../core/agent.bend as AG
+import ../core/tailnet.bend as TN
 import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
-
-# The server. One hub computation owns the read model and the event log;
-# every connection and agent process is its own computation and talks to
-# the hub over channels. The hub runs the pure decider (core/hub.bend) and
-# carries out the effects it answers.
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -55,11 +51,12 @@ type Msg is Data:
   # time to look for a release on the update channel
   UpdateCheck{}
   ModelsFound{models: String, text: String}
+  MachinesFound{machines: String}
 
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>, machines: String}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -597,8 +594,8 @@ def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
 
 def Info.net(n: Net) -> List<&2, J.KV>:
   match n:
-    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx}:
-      List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
+    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx, mc}:
+      List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"machines", J.Str{mc}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
 
 # what this machine runs, for the settings screen and the model picker
 def Hub.info(c: Cfg) -> J.Json:
@@ -1420,7 +1417,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _, _, _, brx, pkx, tmx}:
+    case Net{_, _, t, _, _, _, brx, pkx, tmx, mc}:
       t
 
 # Effects
@@ -1433,12 +1430,12 @@ def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
 
 def Cfg.mtext(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx, mc}}:
       mt
 
 def Cfg.rt(c: Cfg) -> K.Rt:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx, mc}}:
       rt
 
 def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
@@ -1497,6 +1494,14 @@ def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: 
   List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model), AG.Effort.args("codex", effort), AT.Att.codex(text),
     ["-c", "mcp_servers.backplane.url=\"" ++ Hub.mcp_url(cfg, thread) ++ "\"",
      "-c", "developer_instructions=" ++ J.Json.show(J.Str{prompt}), text]])
+
+# what a tailscale command printed ("" when it failed)
+def Tailnet.out(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, out}:
+      out
+    case _:
+      ""
 
 def Tailnet.first(r: P.Ran) -> String:
   match r:
@@ -1587,8 +1592,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx, mc}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
 
 # Startup
 # -------
@@ -1656,12 +1661,12 @@ def Agent.pid_is(m: Maybe<&2, Agent>, +pid: U32) -> Bool:
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx, mc}}:
       ms
 
 def Cfg.pk(c: Cfg) -> Maybe<&2, Chan(PK.PMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx, mc}}:
       pk
 
 def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
@@ -1698,17 +1703,17 @@ def Hub.mcp.send(later: Bool, +park: String, +body: String, +text: String, +repl
 
 def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, _, g, i}:
-      Net{a, b, c, d, e, f, Some{q}, g, i}
+    case Net{a, b, c, d, e, f, _, g, i, mc}:
+      Net{a, b, c, d, e, f, Some{q}, g, i, mc}
 
 def Net.with_tm(n: Net, q: Chan(TM.TMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, h, _}:
-      Net{a, b, c, d, e, f, g, h, Some{q}}
+    case Net{a, b, c, d, e, f, g, h, _, mc}:
+      Net{a, b, c, d, e, f, g, h, Some{q}, mc}
 
 def Cfg.tm(c: Cfg) -> Maybe<&2, Chan(TM.TMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm, mc}}:
       tm
 
 # a shell's output, to the hub (which sends it to every client)
@@ -1841,8 +1846,8 @@ def Term.json(+thread: String, bs: List<&2, U32>) -> String:
 
 def Net.with_pk(n: Net, q: Chan(PK.PMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, _, i}:
-      Net{a, b, c, d, e, f, g, Some{q}, i}
+    case Net{a, b, c, d, e, f, g, _, i, mc}:
+      Net{a, b, c, d, e, f, g, Some{q}, i, mc}
 
 def Browser.exe() -> IO(String):
   do IO<String>:
@@ -1852,7 +1857,7 @@ def Browser.exe() -> IO(String):
 
 def Cfg.br(c: Cfg) -> Maybe<&2, Chan(BR.BMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx, mc}}:
       br
 
 def Preview.shot(+o: J.Json) -> List<&2, J.Json>:
@@ -1936,8 +1941,8 @@ def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
 
 def Cfg.with_models(c: Cfg, +ms: String, +mt: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx, mc}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
 
 def Hub.models.k(h: Hub) -> IO(Hub):
   match h:
@@ -1945,6 +1950,17 @@ def Hub.models.k(h: Hub) -> IO(Hub):
       do IO<Hub>:
         Wire.all(cl, "{\"t\":\"info\",\"info\":" ++ J.Json.show(Hub.info(cfg)) ++ "}")
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Cfg.with_machines(c: Cfg, +mc: String) -> Cfg:
+  match c:
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, _}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
+
+# the owner's other machines changed: every client hears
+def Hub.machines(h: Hub, +mc: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
+      Hub.models.k(Hub{st, f, ls, cl, as, inbox, Cfg.with_machines(cfg, mc), note})
 
 # the providers' models changed: new threads' prompts and every client see
 # the new list
@@ -2015,10 +2031,12 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx}})
+    case "--no-tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{False{}, False{}, tok, ms, mt, rt, brx, pkx, tmx, mc}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx, mc}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx, mc}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -2034,8 +2052,120 @@ def Models.every() -> U32:
 
 def Net.models(n: Net) -> String:
   match n:
-    case Net{_, _, _, ms, _, _, brx, pkx, tmx}:
+    case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc}:
       ms
+
+# Machines
+# --------
+# Every Machines.every() ms: the owner's online tailnet peers (tailscale
+# status) and any hubs named in BACKPLANE_PEERS, each asked GET /hello;
+# those that answer run Backplane. The list goes to every client.
+
+def Machines.every() -> U32:
+  120000
+
+# a hub that may be there: a name and its base URL
+type Cand is Data:
+  Cand{name: String, url: String}
+
+def Machines.cands(ms: List<&2, TN.Machine>, +port: U32) -> List<&2, Cand>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case TN.Machine{n, ip, _} <> t:
+      Cand{n, "http://" ++ ip ++ ":" ++ U32.show(port)} <> Machines.cands(t, port)
+
+def Machines.name(+url: String) -> String:
+  Maybe.default(&2, String, List.head(&2, String, String.split(Bool.pick(String, String.starts_with(url, "http://"), String.drop(url, 7n), url), ':')), url)
+
+def Machines.static.k(blank: Bool, +u: String, rest: List<&2, Cand>) -> List<&2, Cand>:
+  match blank:
+    case True{}:
+      rest
+    case False{}:
+      Cand{Machines.name(u), u} <> rest
+
+# hubs named in BACKPLANE_PEERS ("http://host:port,..."), for machines
+# that are not on the tailnet
+def Machines.static(us: List<&2, String>) -> List<&2, Cand>:
+  match us:
+    case Nil{}:
+      Nil{}
+    case +u <> t:
+      Machines.static.k(String.is_empty(String.trim(u)), String.trim(u), Machines.static(t))
+
+def Machines.urls(cs: List<&2, Cand>) -> List<&2, String>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case Cand{_, u} <> t:
+      ("'" ++ u ++ "'") <> Machines.urls(t)
+
+# ask every hub at once; each answer is "<url> <json>"
+def Machines.probe.sh(+urls: List<&2, String>) -> String:
+  "for u in " ++ String.join(urls, " ") ++ "; do (r=$(curl -s -m 3 \"$u/hello\") && echo \"$u $r\") & done; wait"
+
+def Machines.answer(ls: List<&2, String>, +url: String) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case +l <> t:
+      Bool.pick(String, String.starts_with(l, url ++ " "), String.drop(l, Nat.add(String.length(url), 1n)), Machines.answer(t, url))
+
+def Machines.keep(+v: String, +n: String, +url: String, +rest: List<&2, J.Json>) -> List<&2, J.Json>:
+  Bool.pick(List<&2, J.Json>, String.is_empty(v), rest,
+    J.Json.obj([J.KV{"name", J.Str{n}}, J.KV{"url", J.Str{url}}, J.KV{"version", J.Str{v}}]) <> rest)
+
+def Machines.one(+c: Cand, +ls: List<&2, String>, rest: List<&2, J.Json>) -> List<&2, J.Json>:
+  match c:
+    case Cand{+n, +u}:
+      Machines.keep(J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(Machines.answer(ls, u)), J.Null{}), "backplane", ""), n, u, rest)
+
+def Machines.list(cs: List<&2, Cand>, +ls: List<&2, String>) -> List<&2, J.Json>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case +c <> t:
+      Machines.one(c, ls, Machines.list(t, ls))
+
+def Machines.found(cs: List<&2, Cand>, r: P.Ran) -> J.Json:
+  J.Json.arr(Machines.list(cs, String.lines(Tailnet.out(r))))
+
+# the hubs that answer /hello
+def Machines.peers(+cs: List<&2, Cand>) -> IO(J.Json):
+  Bool.pick(IO(J.Json), List.is_empty(&2, Cand, cs), IO.pure(J.Json, J.Json.arr(Nil{})),
+    IO.bind(P.Ran, J.Json, P.Proc.run("sh", ["-c", Machines.probe.sh(Machines.urls(cs))], "/"), r => IO.pure(J.Json, Machines.found(cs, r))))
+
+def Machines.me(m: TN.Machine, +port: U32) -> J.Json:
+  match m:
+    case TN.Machine{n, +ip, _}:
+      J.Json.obj([J.KV{"name", J.Str{n}}, J.KV{"url", J.Str{Bool.pick(String, String.is_empty(ip), "", "http://" ++ ip ++ ":" ++ U32.show(port))}}])
+
+# {"self": {"name", "url"}, "peers": [{"name", "url", "version"}]}
+def Machines.ask(+status: String, +port: U32, +extra: String) -> IO(String):
+  IO.bind(J.Json, String, Machines.peers(List.append(&2, Cand, Machines.cands(TN.Tailnet.online(TN.Tailnet.peers(status)), port), Machines.static(String.split(extra, ',')))),
+    ps => IO.pure(String, J.Json.show(J.Json.obj([J.KV{"self", Machines.me(TN.Tailnet.self(status), port)}, J.KV{"peers", ps}]))))
+
+def Machines.tell(+inbox: Chan(Msg), +now: String, +last: String) -> IO(String):
+  Bool.pick(IO(String), String.eq(now, last), IO.pure(String, last),
+    IO.bind(Bool, String, Chan.send(Msg, inbox, MachinesFound{now}), ok => IO.pure(String, now)))
+
+def Machines.loop(fuel: Nat, +inbox: Chan(Msg), +port: U32, +extra: String, +last: String) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        st : P.Ran <- P.Proc.run("sh", ["-c", "command -v tailscale >/dev/null && timeout 10 tailscale status --json"], "/")
+        found : String <- Machines.ask(Tailnet.out(st), port, extra)
+        now : String <- Machines.tell(inbox, found, last)
+        IO.sleep(Machines.every())
+        Machines.loop(f, inbox, port, extra, now)
+
+def Machines.start(+inbox: Chan(Msg), +port: U32) -> IO(Unit):
+  do IO<Unit>:
+    extra : String <- Env.get("BACKPLANE_PEERS", "")
+    IO.spawn(Unit, Machines.loop(Fuel.forever(), inbox, port, extra, ""))
 
 def Main.version() -> String:
   VR.Version.current()
@@ -2195,13 +2325,22 @@ def Conn.static.k(ok: Bool, s: Socket, +web: String, +path: String, gz: Bool) ->
 def Conn.static(s: Socket, +web: String, +path: String, gz: Bool) -> IO(Unit):
   Conn.static.k(Conn.safe(path), s, web, Conn.file(path), gz)
 
+# GET /hello says a Backplane hub runs here (and which version), so other
+# machines of the owner can find it; it needs no token and tells nothing more
+def Conn.get(hello: Bool, s: Socket, +web: String, +path: String, gz: Bool) -> IO(Unit):
+  match hello:
+    case True{}:
+      Conn.finish(s, W.Http.response("200 OK", "application/json", U.Utf8.encode("{\"backplane\":" ++ J.Json.show(J.Str{Main.version()}) ++ "}"), ""))
+    case False{}:
+      Conn.static(s, web, path, gz)
+
 def Conn.route.k(ws: Bool, s: Socket, req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
   match ws req:
     case True{} W.Request{_, +p, +hs}:
       Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox,
         Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"), String.eq(W.Http.param(p, "enc"), "cbor"))
-    case False{} W.Request{_, p, +hs}:
-      Conn.static(s, web, W.Http.route(p), String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"))
+    case False{} W.Request{_, +p, +hs}:
+      Conn.get(String.eq(W.Http.route(p), "/hello"), s, web, W.Http.route(p), String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"))
 
 def Conn.route.mcp(mcp: Bool, s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
   match mcp req:
@@ -2233,32 +2372,49 @@ def Conn.head(fuel: Nat, s: Socket, +buf: List<&2, U32>, +web: String, +id: U32,
 # Accepting
 # ---------
 
-def Accept.got(r: Listener & Result<&1, &1, U32 & String, Socket>, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, k: Listener -> IO(Unit)) -> IO(Unit):
+# a tailnet connection from a device its owner also owns is trusted like
+# loopback (Tailscale vouches for it); others still need the token
+def Accept.whois(r: Socket & String, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
+  (s, ip) = r
+  do IO<Unit>:
+    w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
+    Conn.head(64n, s, Nil{}, web, id, inbox, TN.Tailnet.trusts(owner, TN.Tailnet.login(Tailnet.out(w))), token)
+
+def Accept.trust(ask: Bool, s: Socket, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  match ask:
+    case True{}:
+      IO.bind(Socket & String, Unit, H.Sock.peer(s), r => Accept.whois(r, owner, id, web, inbox, token))
+    case False{}:
+      Conn.head(64n, s, Nil{}, web, id, inbox, trusted, token)
+
+def Accept.got(r: Listener & Result<&1, &1, U32 & String, Socket>, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String, k: Listener -> IO(Unit)) -> IO(Unit):
   (l, res) = r
   match res:
     case Done{s}:
       do IO<Unit>:
-        IO.spawn(Unit, Conn.head(64n, s, Nil{}, web, id, inbox, trusted, token))
+        IO.spawn(Unit, Accept.trust(Bool.and(Bool.not(trusted), Bool.not(String.is_empty(owner))), s, owner, id, web, inbox, trusted, token))
         k(l)
     case Fail{_}:
       k(l)
 
 # connections from one listener; ids count up from `id` (loopback from 1,
 # the tailnet from 2^31, so they never meet)
-def Accept.loop(fuel: Nat, l: Listener, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+def Accept.loop(fuel: Nat, l: Listener, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String) -> IO(Unit):
   match fuel:
     case 0n:
       Listener.close(l)
     case 1n+f:
       IO.bind(Listener & Result<&1, &1, U32 & String, Socket>, Unit, TCP.accept(l),
-        r => Accept.got(r, id, web, inbox, trusted, token, l2 => Accept.loop(f, l2, (id + 1 : U32), web, inbox, trusted, token)))
+        r => Accept.got(r, id, web, inbox, trusted, token, owner, l2 => Accept.loop(f, l2, (id + 1 : U32), web, inbox, trusted, token, owner)))
 
 def Tailnet.listened(r: Result<&1, &1, U32 & String, Listener>, +ip: String, +port: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
   match r:
     case Done{l}:
       do IO<Unit>:
-        IO.print("Backplane on your tailnet: http://" ++ ip ++ ":" ++ U32.show(port) ++ "/#token=" ++ token)
-        IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 2147483648, web, inbox, False{}, token))
+        w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
+        +owner : String = TN.Tailnet.login(Tailnet.out(w))
+        IO.print("Backplane on your tailnet: http://" ++ ip ++ ":" ++ U32.show(port) ++ "/ (" ++ Bool.pick(String, String.is_empty(owner), "pairing token " ++ token, owner ++ "'s devices, or pairing token " ++ token) ++ ")")
+        IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 2147483648, web, inbox, False{}, token, owner))
     case Fail{_}:
       Log.info("could not listen on the tailnet address " ++ ip)
 
@@ -2273,13 +2429,13 @@ def Tailnet.listen.k(none: Bool, +ip: String, +port: U32, +web: String, +inbox: 
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx}:
+    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx, mc}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _, _, _, brx, pkx, tmx}:
+    case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc}:
       IO.pure(Unit, Unit{})
 
 def Refresh.found(fd: Found, +inbox: Chan(Msg), +last: String) -> IO(String):
@@ -2427,7 +2583,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3787,
-    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt, None{}, None{}, None{}}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{True{}, False{}, "", ms, mt, rt, None{}, None{}, None{}, ""}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
@@ -2782,6 +2938,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.term_out(h, thread, data)
     case ModelsFound{ms, mt}:
       Hub.models(h, ms, mt)
+    case MachinesFound{mc}:
+      Hub.machines(h, mc)
 
 def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
   match m:
@@ -2811,10 +2969,11 @@ def Main.headless(h: Hub, +inbox: Chan(Msg), front: Chan(Msg) -> IO(Unit)) -> IO
 
 def Main.serve(l: Listener, h: Hub, +web: String, +inbox: Chan(Msg), +cfg: Cfg, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   do IO<Unit>:
-    IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 1, web, inbox, True{}, Net.token(Cfg.net(cfg))))
+    IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 1, web, inbox, True{}, Net.token(Cfg.net(cfg)), ""))
     Tailnet.start(Cfg.net(cfg), Cfg.port(cfg), web, inbox)
     IO.spawn(Unit, Ticker.loop(Fuel.forever(), inbox))
     Refresh.start(inbox, cfg)
+    Machines.start(inbox, Cfg.port(cfg))
     IO.spawn(Unit, Hub.loop(Fuel.forever(), h))
     Upgrade.start(inbox)
     front(inbox)
