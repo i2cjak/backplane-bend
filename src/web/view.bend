@@ -111,7 +111,7 @@ def View.sidebar(u: U.Ui) -> D.Node:
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
-            D.Dom.button("icon", "toggle-add", "", "Add project", "+")]}],
+            D.Dom.button("icon", "proj-open", "", "Add project", "+")]}],
           D.Dom.cat(View.add(adding),
             D.Dom.cat(View.projects(List.sort(~PRow, ~PRow.before, View.rows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now),
             [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")])))}
@@ -362,8 +362,8 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
     D.El{"header", "", [D.At{"class", "thread-head"}], [D.Dom.span("title", "Settings"), D.Dom.span("meta", ""), D.Dom.button("", "flag", "settings", "Close settings", "Close")]},
     D.El{"div", "", [D.At{"class", "settings"}], [
       View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
-      View.setrow("Provider for new threads", "Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
-      View.setrow("Model for new threads", "The models this machine's " ++ prov ++ " install offers.", View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
+      View.setrow("Provider for new threads", Bool.pick(String, String.is_empty(U.Models.cli(U.Str.get(nf, "models"), prov)), prov ++ " is not installed", U.Models.cli(U.Str.get(nf, "models"), prov)) ++ ". Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
+      View.setrow("Model for new threads", Bool.pick(String, String.is_empty(M.Setting.get(st, "agent.model", "")), "default", M.Setting.get(st, "agent.model", "")) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), prov, M.Setting.get(st, "agent.model", "")), View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
       View.setrow("KiCad CLI", U.Str.get(nf, "kicad.cli"), View.fork(U.Str.get(nf, "kicad.fork"))),
       View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
@@ -397,6 +397,30 @@ def View.error(e: String) -> List<&2, D.Node>:
     case SCon{h, t}:
       [D.El{"div", "error", [D.At{"class", "toast"}, D.On{"click", "dismiss"}], [D.Txt{SCon{h, t}}]}]
 
+# Project picker
+# --------------
+
+def View.prows(ps: List<&2, U.PItem>, +i: Nat, +sel: Nat) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case U.PItem{+l, +a, v} <> t:
+      D.Dom.button(Bool.pick(String, String.eq(a, "proj-cd"), "prow", Bool.pick(String, String.is_empty(a), "prow off", "prow act")) ++ Bool.pick(String, Nat.is_eq(i, sel), " sel", ""),
+        a, v, l, l) <> View.prows(t, 1n+i, sel)
+
+def View.picker(open: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "modal-back"}, D.On{"click", "proj-close"}], Nil{}},
+        D.El{"div", "picker", [D.At{"class", "picker"}], D.Dom.cat([
+          D.El{"div", "", [D.At{"class", "dir"}], [D.Txt{U.Proj.dir(u)}]},
+          D.El{"input", "proj", [D.At{"id", "proj"}, D.At{"placeholder", "Filter, name a new folder, or type a path"}, D.At{"autocomplete", "off"},
+            D.On{"input", "proj-q"}, D.At{"data-enter", "proj-enter"}], Nil{}}],
+          D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(U.Ui.info(u, "proj.err")), Nil{}, [D.El{"div", "", [D.At{"class", "perr"}], [D.Txt{U.Ui.info(u, "proj.err")}]}]),
+            [D.El{"div", "", [D.At{"class", "prows"}], View.prows(U.Proj.items(u), 0n, U.Proj.index(u))}]))}]
+    case False{}:
+      Nil{}
+
 # the whole page
 def View.page(u: U.Ui) -> D.Node:
   match u:
@@ -405,4 +429,4 @@ def View.page(u: U.Ui) -> D.Node:
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
           View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
           D.Dom.cat(D.Dom.when(pa, D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}),
-            View.error(e)))}
+            D.Dom.cat(View.picker(U.Flag.get(o, "proj"), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}), View.error(e))))}

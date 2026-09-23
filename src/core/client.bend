@@ -3,6 +3,7 @@ import ./json.bend as J
 import ./model.bend as M
 import ./codec.bend as C
 import ./vt.bend as VT
+import ./fuzzy.bend as FZ
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -213,8 +214,7 @@ def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
     case False{}:
       Ui.reply.k(u, o)
 
-# an answer: its request leaves the outbox; a diff opens the diff view
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+def Ui.reply.dispatch(u: Ui, +o: J.Json) -> Ui:
   Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o)
 
 def Ui.update.note(+ver: String, +state: String) -> String:
@@ -432,7 +432,7 @@ def Ui.dismiss(u: Ui) -> Act:
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
-   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert"]
+   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter"]
 
 # Reading the client state
 # ------------------------
@@ -583,67 +583,6 @@ def Ui.answer.k(ps: List<&2, String>) -> List<&2, J.KV>:
 def Ui.answer(u: Ui, v: String) -> Act:
   Ui.rpc(u, "ask.answer", Ui.answer.k(String.split(v, '|')))
 
-def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
-  match i:
-    case 0n:
-      Ui.select(u, value)
-    case 1n:
-      Ui.new_thread(u, value)
-    case 2n:
-      Ui.draft(u, value)
-    case 3n:
-      Ui.send(u)
-    case 4n:
-      Ui.add_project(u, value)
-    case 5n:
-      Ui.toggle_add(u)
-    case 6n:
-      Ui.on_thread(u, "thread.settle")
-    case 7n:
-      Ui.on_thread(u, "thread.unsettle")
-    case 8n:
-      Ui.on_thread(u, "thread.pin")
-    case 9n:
-      Ui.on_thread(u, "thread.unpin")
-    case 10n:
-      Ui.on_thread(u, "thread.archive")
-    case 11n:
-      Ui.on_thread(u, "turn.interrupt")
-    case 12n:
-      Ui.toggle_settled(u, value)
-    case 13n:
-      Act{u, [Copy{value}]}
-    case 14n:
-      Ui.toggle_panel(u)
-    case 15n:
-      Ui.dismiss(u)
-    case 16n:
-      Ui.on_thread(u, "thread.delete")
-    case 17n:
-      Ui.rpc(u, "app.update", Nil{})
-    case 18n:
-      Ui.toggle_settled(u, value)
-    case 19n:
-      Ui.setting(u, value)
-    case 20n:
-      Ui.model(u, value)
-    case 21n:
-      Ui.rpc(u, "kicad.install", Nil{})
-    case 22n:
-      Ui.answer(u, value)
-    case 23n:
-      Ui.on_thread.p(u, "git.act", [J.KV{"action", J.Str{value}}])
-    case 24n:
-      Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
-    case 25n:
-      Ui.on_thread.p(u, "git.revert", [J.KV{"turn", J.Num{Bool.pick(String, String.is_empty(value), "0", value)}}])
-    case _:
-      Act{u, Nil{}}
-
-# a user action with its value
-def Ui.act(u: Ui, +action: String, +value: String) -> Act:
-  Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
-
 def Asks.open.k(keep: Bool, a: M.Ask, rest: List<&2, M.Ask>) -> List<&2, M.Ask>:
   match keep:
     case True{}:
@@ -734,29 +673,6 @@ def Ui.term_feed(u: Ui, +thread: String, bs: List<&2, U32>) -> Ui:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, +tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, Map.set(&2, VT.Vt, tr, thread, VT.Vt.feed(Term.get(tr, thread), bs))}
 
-def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
-  match i:
-    case 0n:
-      Ui.reset(u, o)
-    case 1n:
-      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
-    case 2n:
-      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
-    case 3n:
-      Ui.reply(u, o)
-    case 4n:
-      Ui.update(u, o)
-    case 5n:
-      Ui.view(u, o)
-    case 6n:
-      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
-    case _:
-      u
-
-# a message from the server
-def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term"], J.Json.get_str(o, "t", "")), u, o)
-
 def Ui.term_replies.k(none: Bool, +u: Ui, +thread: String, +bs: List<&2, U32>, cs: List<&2, Cmd>) -> Act:
   match none:
     case True{}:
@@ -775,12 +691,6 @@ def Ui.recv_act.t(term: Bool, +thread: String, a: Act) -> Act:
       Ui.term_replies(u, thread, cs)
     case False{} _:
       a
-
-# a message from the server, with what to send: a (re)connection (the
-# server's log arrives first on each) sends the outbox again, so nothing
-# the user sent is lost to a dropped link
-def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
-  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
 
 # open the selected thread's terminal at this size (or resize it)
 def Ui.term_open(u: Ui, +cols: U32, +rows: U32) -> Act:
@@ -893,3 +803,285 @@ def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, Map.set(&2, String, nf, k, v), ob, tr}
+
+# What the machine says about a provider: its CLI version ("" when it is
+# not installed) and a label per model
+def Models.about(+info: String, +provider: String) -> J.Json:
+  J.Json.get_obj(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), "about"), provider)
+
+def Models.cli(+info: String, +provider: String) -> String:
+  J.Json.get_str(Models.about(info, provider), "cli", "")
+
+# "opus" -> "Opus 5.5 · claude-opus-5-5" ("" when unknown)
+def Models.label_of(+info: String, +provider: String, +model: String) -> String:
+  J.Json.get_str(J.Json.get_obj(Models.about(info, provider), "labels"), Bool.pick(String, String.is_empty(model), "default", model), "")
+
+# Project picker
+# --------------
+# A folder browser with fuzzy filtering: the listed folder and its
+# subfolders come from the server (fs.list); the query and selection live
+# in the drafts map under keys no thread id can take.
+
+def Proj.query(u: Ui) -> String:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(dr, "@proj")
+
+def Proj.index(u: Ui) -> Nat:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Maybe.default(&2, Nat, Nat.read(Str.get(dr, "@proj.i")), 0n)
+
+def Proj.set(u: Ui, +q: String, +i: Nat) -> Ui:
+  match u:
+    case Ui{st, sel, +dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, "@proj", q), "@proj.i", Nat.show(i)), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
+def Proj.reset(u: Ui, +q: String) -> Ui:
+  Ui.info_set(Proj.set(u, q, 0n), "proj.err", "")
+
+def Proj.dir(u: Ui) -> String:
+  Ui.info(u, "proj.dir")
+
+def Proj.focus(a: Act) -> Act:
+  match a:
+    case Act{u, cs}:
+      Act{u, List.append(&2, Cmd, cs, [Focus{"proj"}])}
+
+# opens where it was last (home the first time)
+def Proj.open(+u: Ui) -> Act:
+  Proj.focus(Ui.rpc(Proj.reset(Ui.flag_on(u, "proj"), ""), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}]))
+
+def Proj.names(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case J.Str{s} <> t:
+      s <> Proj.names(t)
+    case _ <> t:
+      Proj.names(t)
+
+# the subfolders of the listed folder
+def Proj.entries(u: Ui) -> List<&2, String>:
+  Proj.names(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(Ui.info(u, "proj.entries")), J.Null{})))
+
+# a listing (or its error) arrived
+def Proj.reply(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.info_set(Ui.info_set(Ui.info_set(u, "proj.dir", J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")), "proj.entries",
+        J.Json.show(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), "proj.err", "")
+    case False{}:
+      Ui.info_set(u, "proj.err", J.Json.get_str(J.Json.get_obj(o, "result"), "error", ""))
+
+# an answer: its request leaves the outbox; a diff opens the diff view
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Proj.reply(Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", ""))), Ui.reply.dispatch(u, o), o)
+
+def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 0n:
+      Ui.reset(u, o)
+    case 1n:
+      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
+    case 2n:
+      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
+    case 3n:
+      Ui.reply(u, o)
+    case 4n:
+      Ui.update(u, o)
+    case 5n:
+      Ui.view(u, o)
+    case 6n:
+      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
+    case _:
+      u
+
+# a message from the server
+def Ui.recv(u: Ui, +o: J.Json) -> Ui:
+  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term"], J.Json.get_str(o, "t", "")), u, o)
+
+# a message from the server, with what to send: a (re)connection (the
+# server's log arrives first on each) sends the outbox again, so nothing
+# the user sent is lost to a dropped link
+def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
+
+def Proj.join(+dir: String, +name: String) -> String:
+  Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
+
+def Proj.parent.k(+ps: List<&2, String>) -> String:
+  Bool.pick(String, Nat.is_le(List.length(&2, String, ps), 2n), "/", String.join(List.take(&2, String, ps, Nat.sub(List.length(&2, String, ps), 1n)), "/"))
+
+def Proj.parent(+dir: String) -> String:
+  Proj.parent.k(String.split(dir, '/'))
+
+# a name a new folder may take: no slash, not "." or "..", not blank
+def Proj.name_ok(+q: String) -> Bool:
+  Bool.and(Bool.and(Bool.not(String.is_empty(String.trim(q))), Bool.not(String.contains(q, "/"))), Bool.and(Bool.not(String.eq(q, ".")), Bool.not(String.eq(q, ".."))))
+
+def Proj.exact(ns: List<&2, String>, +q: String) -> Bool:
+  match ns:
+    case Nil{}:
+      False{}
+    case n <> t:
+      Bool.or(String.eq(n, q), Proj.exact(t, q))
+
+type Scored is Data:
+  Scored{score: Nat, name: String}
+
+def Scored.before(a: Scored, b: Scored) -> Bool:
+  match a b:
+    case Scored{+x, n} Scored{+y, m}:
+      Bool.or(Nat.is_gt(x, y), Bool.and(Nat.is_eq(x, y), String.is_le(n, m)))
+
+def Proj.scored.k(+sc: Nat, +n: String, +rest: List<&2, Scored>) -> List<&2, Scored>:
+  Bool.pick(List<&2, Scored>, Nat.is_eq(sc, 0n), rest, Scored{sc, n} <> rest)
+
+# matching folders; hidden ones (.git) only for a filter starting with "."
+def Proj.scored(ns: List<&2, String>, +q: String) -> List<&2, Scored>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +n <> t:
+      Proj.scored.k(Bool.pick(Nat, Bool.and(String.starts_with(n, "."), Bool.not(String.starts_with(q, "."))), 0n, FZ.Fuzzy.score(n, q)), n, Proj.scored(t, q))
+
+def Proj.rows(xs: List<&2, Scored>, +dir: String) -> List<&2, PItem>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Scored{_, +n} <> t:
+      PItem{n ++ "/", "proj-cd", Proj.join(dir, n)} <> Proj.rows(t, dir)
+
+def Proj.is_project(ps: List<&2, M.Project>, +root: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case M.Project{_, _, r, _, rm} <> t:
+      Bool.or(Bool.and(String.eq(r, root), Bool.not(rm)), Proj.is_project(t, root))
+
+# the listed folder as a project (once)
+def Proj.add(+u: Ui, +dir: String) -> List<&2, PItem>:
+  Bool.pick(List<&2, PItem>, Proj.is_project(Ui.projects(Ui.state(u)), dir), [PItem{dir ++ " is already a project", "", ""}], [PItem{"Add " ++ dir ++ " as a project", "proj-add", dir}])
+
+def Proj.items.k(path: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, String>) -> List<&2, PItem>:
+  match path:
+    case True{}:
+      [PItem{"Go to " ++ q, "proj-cd", q}]
+    case False{}:
+      Bool.pick(List<&2, PItem>, String.is_empty(q),
+        List.concat(&2, PItem, [Proj.add(u, dir), Bool.pick(List<&2, PItem>, String.eq(dir, "/"), Nil{}, [PItem{"..", "proj-cd", Proj.parent(dir)}]),
+          Proj.rows(Proj.scored(ns, q), dir)]),
+        List.concat(&2, PItem, [Proj.rows(List.sort(~Scored, ~Scored.before, Proj.scored(ns, q)), dir),
+          Bool.pick(List<&2, PItem>, Bool.and(Proj.name_ok(q), Bool.not(Proj.exact(ns, q))), [PItem{"Create folder '" ++ q ++ "' here", "proj-mkdir", Proj.join(dir, q)}], Nil{}),
+          Proj.add(u, dir)]))
+
+# what the picker offers. No filter: add the listed folder (once), the
+# parent, the subfolders. A filter: matching subfolders best first, then
+# creating the typed name (only when no folder has it), then adding. A
+# typed path (/..., ~...) goes there instead
+def Proj.items(+u: Ui) -> List<&2, PItem>:
+  Proj.items.k(Bool.or(String.starts_with(Proj.query(u), "/"), String.starts_with(Proj.query(u), "~")), u, Proj.query(u), Proj.dir(u), Proj.entries(u))
+
+# add (closes the picker), browse, create
+def Proj.run.k(i: Nat, u: Ui, +v: String) -> Act:
+  match i:
+    case 0n:
+      Ui.rpc(Ui.flag_off(u, "proj"), "project.add", [J.KV{"path", J.Str{v}}])
+    case 1n:
+      Ui.rpc(Proj.reset(u, ""), "fs.list", [J.KV{"path", J.Str{v}}])
+    case 2n:
+      Ui.rpc(Proj.reset(u, ""), "fs.mkdir", [J.KV{"path", J.Str{v}}])
+    case _:
+      Act{u, Nil{}}
+
+def Proj.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      i
+    case +h <> t:
+      Bool.pick(Nat, String.eq(h, x), i, Proj.pos(t, x, 1n+i))
+
+def Proj.run(it: PItem, u: Ui) -> Act:
+  match it:
+    case PItem{_, +a, +v}:
+      Proj.run.k(Proj.pos(["proj-add", "proj-cd", "proj-mkdir"], a, 0n), u, v)
+
+# Enter runs the selected row
+def Proj.enter(+u: Ui) -> Act:
+  Proj.run(Palette.at(Proj.items(u), Proj.index(u)), u)
+
+def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
+  match i:
+    case 0n:
+      Ui.select(u, value)
+    case 1n:
+      Ui.new_thread(u, value)
+    case 2n:
+      Ui.draft(u, value)
+    case 3n:
+      Ui.send(u)
+    case 4n:
+      Ui.add_project(u, value)
+    case 5n:
+      Ui.toggle_add(u)
+    case 6n:
+      Ui.on_thread(u, "thread.settle")
+    case 7n:
+      Ui.on_thread(u, "thread.unsettle")
+    case 8n:
+      Ui.on_thread(u, "thread.pin")
+    case 9n:
+      Ui.on_thread(u, "thread.unpin")
+    case 10n:
+      Ui.on_thread(u, "thread.archive")
+    case 11n:
+      Ui.on_thread(u, "turn.interrupt")
+    case 12n:
+      Ui.toggle_settled(u, value)
+    case 13n:
+      Act{u, [Copy{value}]}
+    case 14n:
+      Ui.toggle_panel(u)
+    case 15n:
+      Ui.dismiss(u)
+    case 16n:
+      Ui.on_thread(u, "thread.delete")
+    case 17n:
+      Ui.rpc(u, "app.update", Nil{})
+    case 18n:
+      Ui.toggle_settled(u, value)
+    case 19n:
+      Ui.setting(u, value)
+    case 20n:
+      Ui.model(u, value)
+    case 21n:
+      Ui.rpc(u, "kicad.install", Nil{})
+    case 22n:
+      Ui.answer(u, value)
+    case 23n:
+      Ui.on_thread.p(u, "git.act", [J.KV{"action", J.Str{value}}])
+    case 24n:
+      Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
+    case 25n:
+      Ui.on_thread.p(u, "git.revert", [J.KV{"turn", J.Num{Bool.pick(String, String.is_empty(value), "0", value)}}])
+    case 26n:
+      Proj.open(u)
+    case 27n:
+      Proj.run.k(1n, u, value)
+    case 28n:
+      Proj.run.k(0n, u, value)
+    case 29n:
+      Proj.run.k(2n, u, value)
+    case 30n:
+      Act{Proj.set(u, value, 0n), Nil{}}
+    case 31n:
+      Act{Ui.flag_off(u, "proj"), Nil{}}
+    case 32n:
+      Proj.enter(u)
+    case _:
+      Act{u, Nil{}}
+
+# a user action with its value
+def Ui.act(u: Ui, +action: String, +value: String) -> Act:
+  Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)

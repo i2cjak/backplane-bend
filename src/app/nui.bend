@@ -514,6 +514,48 @@ def Hover.set(+n: Nui, +key: String) -> Step:
 def Hover.stamp(+n: Nui, +ms: Nat) -> Nui:
   Bool.pick(Nui, String.eq(U.Ui.info(Nui.ui(n), "hover.at"), "0"), Nui.with_ui(n, U.Ui.info_set(Nui.ui(n), "hover.at", Nat.show(ms))), n)
 
+# Blink
+# -----
+# A focused field's caret blinks: shown for Blink.ms(), hidden as long. It
+# restarts shown whenever the focus or the caret moves (law
+# caret_shows_when_moved). Only a focused field asks for frames, one per
+# toggle.
+
+def Blink.ms() -> Nat:
+  530n
+
+# shown in the even half-periods since the caret last moved
+def Blink.shown(+d: Nat) -> Bool:
+  Nat.is_eq(Nat.mod(Nat.div(d, Blink.ms()), 2n), 0n)
+
+def Nui.caret_of(n: Nui) -> Nat:
+  match n:
+    case Nui{_, _, _, _, _, _, _, ca, _, _, _, _, vw}:
+      ca
+
+def Blink.sig(+n: Nui) -> String:
+  Nui.focus_of(n) ++ ":" ++ Nat.show(Nui.caret_of(n)) ++ ":" ++ U.Palette.query(Nui.ui(n)) ++ ":" ++ U.Proj.query(Nui.ui(n))
+
+def Blink.at(+n: Nui) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(U.Ui.info(Nui.ui(n), "caret.at")), 0n)
+
+def Blink.set(+n: Nui, +ms: Nat) -> Nui:
+  Nui.with_ui(n, U.Ui.info_set(U.Ui.info_set(Nui.ui(n), "caret.sig", Blink.sig(n)), "caret.at", Nat.show(ms)))
+
+def Blink.on.k(+n: Nui, +ms: Nat) -> Nui:
+  Nui.with_ui(n, U.Ui.info_set(Nui.ui(n), "caret.on", Bool.pick(String, Blink.shown(Nat.sub(ms, Blink.at(n))), "1", "")))
+
+# the frame notes whether the caret shows (restarting it when it moved)
+def Blink.stamp(+n: Nui, +ms: Nat) -> Nui:
+  Blink.on.k(Bool.pick(Nui, String.eq(U.Ui.info(Nui.ui(n), "caret.sig"), Blink.sig(n)), n, Blink.set(n, ms)), ms)
+
+def Blink.on(+n: Nui) -> Bool:
+  String.eq(U.Ui.info(Nui.ui(n), "caret.on"), "1")
+
+# ms until the caret toggles; 0 when no field is focused
+def Blink.wait(+n: Nui, +ms: Nat) -> Nat:
+  Bool.pick(Nat, String.is_empty(Nui.focus_of(n)), 0n, Nat.sub(Blink.ms(), Nat.mod(Nat.sub(ms, Blink.at(n)), Blink.ms())))
+
 def Nui.moved(+n: Nui, +x: U32, +y: U32) -> Step:
   Hover.set(Nui.moved.k(n, x, y), Hover.key(Hit.find(Nui.hits(n), x, y)))
 
@@ -784,6 +826,76 @@ def Pal.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
 def Pal.click(+n: Nui, +v: String) -> Step:
   Pal.run(U.Palette.at(U.Palette.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
 
+# Project picker
+# --------------
+# Open lists where it was last; the client fetches folders (fs.list) and
+# ranks them. Enter runs the selected row, Tab opens the selected folder,
+# Backspace on an empty filter goes up.
+
+def Pick.open(+n: Nui) -> Step:
+  Nui.focus.step(Nui.act(n, "proj-open", ""), "proj")
+
+def Pick.close(+n: Nui) -> Step:
+  Nui.focus(Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "proj")), "composer")
+
+def Pick.moved(+n: Nui, +i: Nat) -> Step:
+  Step{Nui.with_ui(n, U.Proj.set(Nui.ui(n), U.Proj.query(Nui.ui(n)), Nat.min(i, Nat.sub(List.length(&2, U.PItem, U.Proj.items(Nui.ui(n))), 1n)))), Nil{}, True{}}
+
+def Pick.typed(e: Ed, +n: Nui) -> Step:
+  match e:
+    case Ed{+t, _, _, _}:
+      Step{Nui.with_ui(n, U.Proj.set(Nui.ui(n), t, 0n)), Nil{}, True{}}
+
+# adding closes the picker; browsing and creating keep it open
+def Pick.run.k(i: Nat, +n: Nui, +v: String) -> Step:
+  match i:
+    case 0n:
+      Nui.focus.step(Nui.act(n, "proj-add", v), "composer")
+    case 1n:
+      Nui.act(n, "proj-cd", v)
+    case 2n:
+      Nui.act(n, "proj-mkdir", v)
+    case _:
+      Step{n, Nil{}, False{}}
+
+def Pick.run(it: U.PItem, +n: Nui) -> Step:
+  match it:
+    case U.PItem{_, +a, +v}:
+      Pick.run.k(Nui.pos(["proj-add", "proj-cd", "proj-mkdir"], a, 0n), n, v)
+
+def Pick.at(+n: Nui) -> U.PItem:
+  U.Palette.at(U.Proj.items(Nui.ui(n)), U.Proj.index(Nui.ui(n)))
+
+# Tab opens the selected row when it is a folder
+def Pick.tab.k(it: U.PItem, +n: Nui) -> Step:
+  match it:
+    case U.PItem{_, +a, +v}:
+      Bool.pick(Step, String.eq(a, "proj-cd"), Nui.act(n, "proj-cd", v), Step{n, Nil{}, False{}})
+
+def Pick.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, tab: Bool, up_dir: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match esc enter up down tab up_dir:
+    case True{} _ _ _ _ _:
+      Pick.close(n)
+    case _ True{} _ _ _ _:
+      Pick.run(Pick.at(n), n)
+    case _ _ True{} _ _ _:
+      Pick.moved(n, Nat.sub(U.Proj.index(Nui.ui(n)), 1n))
+    case _ _ _ True{} _ _:
+      Pick.moved(n, 1n+U.Proj.index(Nui.ui(n)))
+    case _ _ _ _ True{} _:
+      Pick.tab.k(Pick.at(n), n)
+    case _ _ _ _ _ True{}:
+      Nui.act(n, "proj-cd", U.Proj.parent(U.Proj.dir(Nui.ui(n))))
+    case _ _ _ _ _ _:
+      Pick.typed(Ed.key(code, text, mods, U.Proj.query(Nui.ui(n)), String.length(U.Proj.query(Nui.ui(n)))), n)
+
+def Pick.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  Pick.key.k(U32.is_eq(code, Key.escape()), Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, 65362), U32.is_eq(code, 65364),
+    U32.is_eq(code, Key.tab()), Bool.and(U32.is_eq(code, Key.backspace()), String.is_empty(U.Proj.query(Nui.ui(n)))), n, code, text, mods)
+
+def Pick.click(+n: Nui, +v: String) -> Step:
+  Pick.run(U.Palette.at(U.Proj.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
+
 def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
   match i:
     case 0n:
@@ -794,12 +906,18 @@ def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
       Pal.click(n, value)
     case 3n:
       Pal.close(n)
+    case 4n:
+      Pick.click(n, value)
+    case 5n:
+      Pick.close(n)
+    case 6n:
+      Pick.open(n)
     case _:
       Step{n, Nil{}, False{}}
 
 # the viewer's own actions (they never reach the client state)
 def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
-  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx"], action, 0n), n, value)
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo"], action, 0n), n, value)
 
 def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
   match focus:
@@ -818,10 +936,19 @@ def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
 def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
   Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
 
+def Nui.key.proj(proj: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match proj:
+    case True{}:
+      Pick.key(n, code, text, mods)
+    case False{}:
+      Nui.key.term.go(False{}, n, code, text, mods)
+
 def Nui.key.term.k(term: Bool, pal: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match term pal:
     case False{} True{}:
       Pal.key(n, code, text, mods)
+    case False{} False{}:
+      Nui.key.proj(String.eq(Nui.focus_of(n), "proj"), n, code, text, mods)
     case _ _:
       Nui.key.term.go(term, n, code, text, mods)
 

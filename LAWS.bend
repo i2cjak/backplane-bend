@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
@@ -309,3 +310,16 @@ law device_register_once:
   for b2: String
   for at2: Nat
   {Map.size(&2, M.Device, M.State.devices(M.State.apply(M.State.apply(M.State.empty(), M.DeviceRegistered{tok, p, k, th, e, b, at}), M.DeviceRegistered{tok, p2, k2, th2, e2, b2, at2}))) == 1n : Nat}
+
+# Pickers
+# -------
+
+# an empty query matches every candidate (a picker shows everything
+# before you type)
+law fuzzy_empty_matches:
+  for s: String
+  {Nat.is_gt(FZ.Fuzzy.score(s, ""), 0n) == True{} : Bool}
+
+# a caret that just moved (or a field just focused) is shown
+law caret_shows_when_moved:
+  {N.Blink.shown(0n) == True{} : Bool}

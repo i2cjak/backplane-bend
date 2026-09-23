@@ -908,6 +908,40 @@ def Codex.fed(r: U.Lines & List<&2, String>, s: Socket, +ended: Bool, +thread: S
   (carry, ls) = r
   IO.bind(Bool, Unit, Codex.lines(ls, ended, thread, inbox), e2 => k(s, carry, e2))
 
+# Folders for the project picker
+# ------------------------------
+# The path is always an argument ($1), never part of a script.
+
+def FsJob.list.sh() -> String:
+  "exec 2>&1; set -e; d=\"$1\"; case \"$d\" in ''|'~') d=\"$HOME\";; '~/'*) d=\"$HOME/${d#~/}\";; esac; d=$(realpath -e -- \"$d\"); [ -d \"$d\" ] || { echo \"not a folder: $d\"; exit 2; }; echo \"$d\"; find \"$d\" -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | LC_ALL=C sort | head -n 5000"
+
+def FsJob.mkdir.sh() -> String:
+  "exec 2>&1; set -e; d=\"$1\"; case \"$d\" in '~/'*) d=\"$HOME/${d#~/}\";; esac; if [ -e \"$d\" ]; then echo \"already exists: $d\"; exit 3; fi; mkdir -- \"$d\"; d=$(realpath -e -- \"$d\"); echo \"$d\""
+
+def FsJob.strs(ls: List<&2, String>) -> List<&2, J.Json>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      J.Str{l} <> FsJob.strs(t)
+
+def FsJob.listed.k(ls: List<&2, String>) -> J.Json:
+  match ls:
+    case d <> t:
+      J.Json.obj([J.KV{"dir", J.Str{d}}, J.KV{"entries", J.Json.arr(FsJob.strs(t))}])
+    case Nil{}:
+      J.Json.obj([J.KV{"error", J.Str{"not a folder"}}])
+
+def FsJob.listed(r: P.Ran) -> J.Json:
+  match r:
+    case P.Ran{0, out}:
+      FsJob.listed.k(String.lines(String.trim(out)))
+    case P.Ran{_, out}:
+      J.Json.obj([J.KV{"error", J.Str{String.trim(out)}}])
+
+def FsJob.ok(+r: J.Json) -> Bool:
+  String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(r, "error"), J.Null{})), "null")
+
 # Git jobs
 # --------
 # The hub asks; git runs here off the hub's thread; results go back as a
@@ -925,6 +959,24 @@ def GitJob.reply(+inbox: Chan(Msg), +client: U32, +id: String, +ok: Bool, r: J.J
   do IO<Unit>:
     sent : Bool <- Chan.send(Msg, inbox, Push{client, J.Json.show(J.Json.obj([J.KV{"t", J.Str{"reply"}}, J.KV{"id", J.Num{id}}, J.KV{"ok", J.Flag{ok}}, J.KV{"result", r}]))})
     return Unit{}
+
+def FsJob.answer(+inbox: Chan(Msg), +client: U32, +id: String, +r: J.Json) -> IO(Unit):
+  GitJob.reply(inbox, client, id, FsJob.ok(r), r)
+
+def FsJob.list(+inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
+  IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", FsJob.list.sh(), "sh", path], "/"), r => FsJob.answer(inbox, client, id, FsJob.listed(r)))
+
+def FsJob.made(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, out}:
+      FsJob.list(inbox, client, id, String.trim(out))
+    case P.Ran{_, out}:
+      FsJob.answer(inbox, client, id, J.Json.obj([J.KV{"error", J.Str{String.trim(out)}}]))
+
+def FsJob.run(+op: String, +inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(op, "mkdir"),
+    IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", FsJob.mkdir.sh(), "sh", path], "/"), r => FsJob.made(r, inbox, client, id)),
+    FsJob.list(inbox, client, id, path))
 
 def GitJob.nonblank(ls: List<&2, String>, +n: Nat) -> Nat:
   match ls:
@@ -1547,6 +1599,7 @@ def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
         return Unit{}
     case None{}:
       IO.pure(Unit, Unit{})
+
 # a phone push for an ended turn, off the hub loop; the tokens APNs calls
 # dead come back as device.drop requests, as if a client had sent them
 def Hub.drop_dead(ts: List<&2, String>, +inbox: Chan(Msg)) -> IO(Unit):
@@ -1654,6 +1707,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
         IO.spawn(Unit, Hub.phone(Cfg.home(cfg), st, thread, state, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, as, +inbox, cfg, note} B.Fs{+client, +id, +op, +path}:
+      do IO<Hub>:
+        IO.spawn(Unit, FsJob.run(op, inbox, client, id, path))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.TermOp{+op, +thread, +cwd, data, +cols, +rows}:
       do IO<Hub>:
@@ -2093,9 +2150,9 @@ def Models.text(+cl: List<&2, String>, +cx: List<&2, String>) -> String:
 def Models.text3(+cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>) -> String:
   Models.join(Models.text(cl, cx), Models.line("grok", gk))
 
-def Models.boot(ks: String & List<&2, Q.Skill>, +rt: K.Rt, +cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>) -> Boot:
+def Models.boot(ks: String & List<&2, Q.Skill>, +rt: K.Rt, +cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>, about: J.Json) -> Boot:
   (kdir, skills) = ks
-  Boot{kdir, skills, rt, J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}, J.KV{"grok", Models.strs(gk)}])), Models.text3(cl, cx, gk)}
+  Boot{kdir, skills, rt, J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}, J.KV{"grok", Models.strs(gk)}, J.KV{"about", about}])), Models.text3(cl, cx, gk)}
 
 def Models.grok.k(bullet: Bool, +l: String, rest: List<&2, String>) -> List<&2, String>:
   match bullet:
@@ -2131,6 +2188,55 @@ def Main.has(r: P.Ran) -> Bool:
 
 # KiStack at its pinned revision (fetched when missing), the KiCad CLI,
 # and which providers and models are installed
+# What each provider is: its CLI's version, and a label per model. Claude's
+# aliases name the newest model of a family; the CLI does not report which,
+# so this table says (update it when the families move).
+def About.claude() -> List<&2, J.KV>:
+  [J.KV{"default", J.Str{"Claude Code's own default"}}, J.KV{"fable", J.Str{"Fable 5.1 · claude-fable-5-1"}},
+   J.KV{"opus", J.Str{"Opus 5.5 · claude-opus-5-5"}}, J.KV{"sonnet", J.Str{"Sonnet 5 · claude-sonnet-5"}},
+   J.KV{"haiku", J.Str{"Haiku 4.5 · claude-haiku-4-5"}}]
+
+def About.codex.go(xs: List<&2, J.Json>) -> List<&2, J.KV>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +o <> t:
+      J.KV{J.Json.get_str(o, "slug", ""), J.Str{J.Json.get_str(o, "display_name", "") ++ " · " ++ J.Json.get_str(o, "description", "")}} <> About.codex.go(t)
+
+def About.codex(+text: String) -> List<&2, J.KV>:
+  J.KV{"default", J.Str{"Codex's configured default"}} <> About.codex.go(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{}), "models")))
+
+def About.grok.k(dflt: Bool, +slug: String, rest: List<&2, J.KV>, bullet: Bool) -> List<&2, J.KV>:
+  match bullet:
+    case True{}:
+      J.KV{slug, J.Str{Bool.pick(String, dflt, "Grok's default model", "Grok")}} <> rest
+    case False{}:
+      rest
+
+def About.grok.go(ls: List<&2, String>) -> List<&2, J.KV>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> t:
+      About.grok.k(String.contains(l, "(default)"), Maybe.default(&2, String, List.head(&2, String, String.split(String.drop(String.trim(l), 2n), ' ')), ""), About.grok.go(t), Bool.or(String.starts_with(String.trim(l), "* "), String.starts_with(String.trim(l), "- ")))
+
+def About.grok(r: P.Ran) -> List<&2, J.KV>:
+  match r:
+    case P.Ran{0, out}:
+      J.KV{"default", J.Str{"Grok's own default"}} <> About.grok.go(String.lines(out))
+    case _:
+      Nil{}
+
+def About.cli(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, out}:
+      String.trim(Maybe.default(&2, String, List.head(&2, String, String.lines(out)), ""))
+    case _:
+      ""
+
+def About.one(+cli: String, labels: List<&2, J.KV>) -> J.Json:
+  J.Json.obj([J.KV{"cli", J.Str{cli}}, J.KV{"labels", J.Json.obj(labels)}])
+
 def Main.prepare(+user: String, +exe: String) -> IO(Boot):
   do IO<Boot>:
     K.KiStack.ensure(user)
@@ -2139,9 +2245,13 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
     rt : K.Rt <- K.Rt.resolve(explicit, exe, user ++ "/.backplane-bend")
     cl : P.Ran <- P.Proc.run("sh", ["-c", "command -v claude"], "/")
     cx : P.Ran <- P.Proc.run("sh", ["-c", "command -v codex"], "/")
-    cache : String <- K.Io.text(user ++ "/.codex/models_cache.json")
-    gk : P.Ran <- P.Proc.run("sh", ["-c", "command -v grok >/dev/null && timeout 15 grok models"], "/")
-    return Models.boot(ks, rt, Models.on(Main.has(cl), Models.claude()), Models.on(Main.has(cx), Models.codex(cache)), Models.grok(gk))
+    +cache : String <- K.Io.text(user ++ "/.codex/models_cache.json")
+    +gk : P.Ran <- P.Proc.run("sh", ["-c", "command -v grok >/dev/null && timeout 15 grok models"], "/")
+    vc : P.Ran <- P.Proc.run("sh", ["-c", "timeout 10 claude --version"], "/")
+    vx : P.Ran <- P.Proc.run("sh", ["-c", "timeout 10 codex --version"], "/")
+    vg : P.Ran <- P.Proc.run("sh", ["-c", "timeout 10 grok --version"], "/")
+    return Models.boot(ks, rt, Models.on(Main.has(cl), Models.claude()), Models.on(Main.has(cx), Models.codex(cache)), Models.grok(gk),
+      J.Json.obj([J.KV{"claude", About.one(About.cli(vc), About.claude())}, J.KV{"codex", About.one(About.cli(vx), About.codex(cache))}, J.KV{"grok", About.one(About.cli(vg), About.grok(gk))}]))
 
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b

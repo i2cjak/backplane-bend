@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
@@ -502,3 +503,13 @@ def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, a
     case SCon{+c, +t}:
       %Equal.sym((String & String) & Cmp, String.cmp(SCon{c, t}, SCon{c, t}), ((SCon{c, t}, SCon{c, t}), EQ{}), string_cmp_refl(SCon{c, t})) : {Map.size(&2, M.Device, Map.set.fin.go(&2, M.Device, MLeaf{SCon{c, t}, M.Device{SCon{c, t}, p, k, th, e, b, at}}, SCon{c, t}, M.Device{SCon{c, t}, p2, k2, th2, e2, b2, at2}, _)) == 1n : Nat}
       {==}
+
+def Laws.fuzzy_empty_matches(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{Chr{c}, t}:
+      {==}
+
+def Laws.caret_shows_when_moved():
+  {==}

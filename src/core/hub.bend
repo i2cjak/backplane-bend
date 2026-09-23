@@ -29,6 +29,7 @@ type Out is Data:
   AskAnswered{id: String, answer: String}
   Git{client: U32, id: String, job: String, thread: String, cwd: String, a: String, b: String}
   TermOp{op: String, thread: String, cwd: String, data: List<&2, U32>, cols: U32, rows: U32}
+  Fs{client: U32, id: String, op: String, path: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -196,9 +197,28 @@ def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
     Reply.ok(client, id) <> Bool.pick(List<&2, Out>, String.eq(env, "worktree"),
       [Git{0, "", "worktree", th, Hub.project.root(Hub.project(s, project)), Hub.base(Hub.project.root(Hub.project(s, project))), ""}], Nil{})}
 
+def Hub.has_root(ps: List<&2, M.Project>, +root: String) -> Bool:
+  match ps:
+    case Nil{}:
+      False{}
+    case M.Project{_, _, r, _, rm} <> t:
+      Bool.or(Bool.and(String.eq(r, root), Bool.not(rm)), Hub.has_root(t, root))
+
+def Hub.projects(s: M.State) -> List<&2, M.Project>:
+  match s:
+    case M.State{ps, _, _, _, _, _, _, _, _}:
+      Map.values(&2, M.Project, ps)
+
+def Hub.project_add.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:
+  match dup:
+    case True{}:
+      Step.outs([Reply.err(client, id, "already a project: " ++ root)])
+    case False{}:
+      Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
+
+# a folder becomes a project once (the same root twice is refused)
 def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
-  +root = J.Json.get_str(p, "path", "")
-  Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
+  Hub.project_add.k(Hub.has_root(Hub.projects(s), J.Json.get_str(p, "path", "")), s, now, client, id, p, J.Json.get_str(p, "path", ""))
 
 # change a thread's modes; what the request leaves out stays as it is
 def Hub.modes(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, t: M.Thread) -> Step:
@@ -299,6 +319,10 @@ def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
 # Method groups (each appended to only by its own feature area)
 # ------------------------------------------------------------
 
+# folders for the project picker (listing, creating); the server answers
+def Hub.methods.fs() -> List<&2, String>:
+  ["fs.list", "fs.mkdir"]
+
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
   []
@@ -326,6 +350,15 @@ def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
     case _:
       Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
 
+def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
+  match i:
+    case 0n:
+      Step.outs([Fs{client, id, "list", J.Json.get_str(p, "path", "")}])
+    case 1n:
+      Step.outs([Fs{client, id, "mkdir", J.Json.get_str(p, "path", "")}])
+    case _:
+      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
+
 def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
     case 0n:
@@ -348,7 +381,7 @@ def Hub.more(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case 8n:
       Hub.term(s, client, id, "resize", p)
     case _:
-      Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
+      Hub.fs(C.Codec.pos(Hub.methods.fs(), m), s, now, client, id, p, m)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
