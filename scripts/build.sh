@@ -34,7 +34,15 @@ cp src/web/sw.js dist/web/sw.js
 # precompressed copies: the server sends these to browsers that take gzip
 for f in dist/web/*.js dist/web/*.css dist/web/*.html; do gzip -9 -k -n -f "$f"; done
 bend src/server/main.bend -o dist/backplane-serve
-bend src/app/main.bend -o dist/backplane
+# the window needs X11 (libX11.so.6, dlopen'd); a Mac has none, so there the
+# app always runs as hub + web UI, the same program as backplane-serve. The
+# app's one large C file also takes about 20 GB to compile, which a macOS
+# runner (7 GB) cannot give; build it only where a window can open
+if [ "$(uname -s)" = Darwin ]; then
+  cp dist/backplane-serve dist/backplane
+else
+  bend src/app/main.bend -o dist/backplane
+fi
 cp dist/backplane build/backplane
 # the host helpers (Bun): the agents' browser and STEP -> GLB for the 3D
 # viewer; the app runs without them, so a machine without bun skips them
