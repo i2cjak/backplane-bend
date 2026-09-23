@@ -4,6 +4,7 @@ import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
 import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
+import ./src/app/nui.bend as N
 
 # Lemmas
 # ------
@@ -388,3 +389,16 @@ def lt_add_self(n, k):
 
 def Laws.delegation_bounded(k):
   lt_add_self(M.Task.max_depth(), k)
+
+def Laws.setting_default(k, d):
+  {==}
+
+def Laws.nui_with_own_vw(n):
+  match n:
+    case N.Nui{u, w, hh, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      {==}
+
+def Laws.stale_board_ignored(n, key, items, now, h):
+  %Equal.sym(Bool, N.Vw.fresh_for(N.Nui.vw(n), key), False{}, h) : {N.Nui.with_vw(n, N.Vw.if(_, N.Nui.vw(n), v => N.Vw.board.same(v, key, items, now))) == n : N.Nui}
+  Laws.nui_with_own_vw(n)
+

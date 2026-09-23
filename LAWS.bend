@@ -2,6 +2,8 @@ import Base
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
 import ./src/core/semver.bend as SV
+import ./src/app/nui.bend as N
+import ./src/core/board.bend as B
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -141,3 +143,31 @@ law task_delivered_once:
 law delegation_bounded:
   for +k: Nat
   {M.Task.may_delegate(Nat.add(M.Task.max_depth(), k)) == False{} : Bool}
+
+# Settings
+# --------
+
+# a setting never set reads as its default (settings are events, so a
+# fresh or replayed store agrees on every unset key)
+law setting_default:
+  for +k: String
+  for +d: String
+  {M.Setting.get(M.State.empty(), k, d) == d : String}
+
+# Viewer sources
+# --------------
+
+# giving the window back its own viewer changes nothing
+law nui_with_own_vw:
+  for n: N.Nui
+  {N.Nui.with_vw(n, N.Nui.vw(n)) == n : N.Nui}
+
+# a scene read for a source the viewer no longer shows changes nothing:
+# switching views or projects can never show a stale file
+law stale_board_ignored:
+  for n: N.Nui
+  for +key: String
+  for items: List<&2, B.Item>
+  for +now: Nat
+  for h: {N.Vw.fresh_for(N.Nui.vw(n), key) == False{} : Bool}
+  {N.Nui.board(n, key, items, now) == n : N.Nui}
