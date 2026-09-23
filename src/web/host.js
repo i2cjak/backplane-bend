@@ -213,9 +213,20 @@ document.addEventListener("keydown", (e) => {
 
 let backoff = 250;
 
+// A tailnet link carries the pairing token in its fragment; keep it for
+// later visits and never send it anywhere but this server's socket.
+const token = (() => {
+  const m = location.hash.match(/token=([0-9a-f]+)/);
+  if (m) {
+    localStorage.setItem("backplane-token", m[1]);
+    history.replaceState(null, "", location.pathname);
+  }
+  return localStorage.getItem("backplane-token") ?? "";
+})();
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const s = new WebSocket(`${proto}//${location.host}/ws`);
+  const s = new WebSocket(`${proto}//${location.host}/ws${token ? "?token=" + token : ""}`);
   s.onopen = () => {
     socket = s;
     backoff = 250;
