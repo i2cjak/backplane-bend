@@ -21,6 +21,7 @@ import ./src/core/lightbox.bend as LBX
 import ./src/core/links.bend as LK
 import ./src/core/client.bend as U
 import ./src/gfx/text.bend as X
+import ./src/core/fold.bend as FO
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -861,3 +862,53 @@ law tl_frame_exact:
   for +px: U32
   for +pics: Map<&2, String>
   {L.TL.memo.shown(ty, L.TL.memo.of(ty, es, px, sel, L.TLMemo{px0, sel0, L.TL.memo.make(ty, old, px0, sel0)}), st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}
+
+# Tool calls folded
+# -----------------
+
+# folding a thread's tool calls into runs loses no entry and keeps the order
+law fold_keeps_entries:
+  for es: List<&2, M.Entry>
+  {FO.Fold.flat(FO.Fold.groups(es)) == es : List<&2, M.Entry>}
+
+# so the groups hold exactly as many entries as the thread
+law fold_count:
+  for es: List<&2, M.Entry>
+  {FO.Fold.count(FO.Fold.groups(es)) == List.length(&2, M.Entry, es) : Nat}
+
+# a folded run only ever holds tool calls
+law fold_runs_only_tools:
+  for es: List<&2, M.Entry>
+  {FO.Fold.all(FO.Fold.runs(FO.Fold.groups(es))) == True{} : Bool}
+
+# errors and messages are never folded
+law fold_never_error:
+  for +i: String
+  for +t: String
+  for +k: String
+  for +s: String
+  for +a: Nat
+  {FO.Fold.tool(M.Act{i, t, "error", k, s, a}) == False{} : Bool}
+
+law fold_never_message:
+  for +i: String
+  for +t: String
+  for +r: M.Role
+  for +x: String
+  for +a: Nat
+  {FO.Fold.tool(M.Msg{i, t, r, x, a}) == False{} : Bool}
+
+# a run the user opened stays open and one they shut stays shut, live or
+# not; one nobody touched is open only while live (the last thing in a
+# thread whose turn runs), so it shuts once the turn ends
+law fold_user_opened:
+  for +live: Bool
+  {FO.Fold.open("1", live) == True{} : Bool}
+
+law fold_user_shut:
+  for +live: Bool
+  {FO.Fold.open("0", live) == False{} : Bool}
+
+law fold_default_live:
+  for +live: Bool
+  {FO.Fold.open("", live) == live : Bool}

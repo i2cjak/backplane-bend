@@ -19,6 +19,7 @@ import ../core/diff.bend as DF
 import ../core/vt.bend as VT
 import ../core/attach.bend as AT
 import ../core/eq.bend as Q
+import ../core/fold.bend as FO
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -462,7 +463,10 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
 # one laid-out line. kind: 0 text, 1 code, 2 user, 3 activity, 4 gap,
 # 5 heading, 6 user padding, 7 footer with a Copy button, 8 code header,
 # 9 code bottom, 10 a message sent to another thread, 11 the thread a
-# message came from (copy holds the other thread). w is a user bubble's width
+# message came from (copy holds the other thread), 12 an image row, 13 a
+# line with links, 14 a run of tool calls folded into one row (copy holds
+# what a click asks, FO.Fold.ask; w is 1 when the run is open). w is a user
+# bubble's width
 type TLine is Data:
   TLine{text: String, color: U32, kind: U32, copy: String, w: U32}
 
@@ -494,6 +498,8 @@ def TL.h.k(k: Nat) -> U32:
       20
     case 13n:
       23
+    case 14n:
+      24
     case _:
       10
 
@@ -789,6 +795,10 @@ def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U
       TL.link.segs(LK.Link.cut(text, LK.Link.dec(copy)), ty, c, x0, y, color)
     case 12n:
       TL.img.draw(U32.is_eq(bw, 4096), ty, text, color, copy, bw, c, x0, y)
+    case 14n:
+      Out{List.append(&2, R.Op, Lay.icon(ty, Bool.pick(String, U32.is_eq(bw, 1), "chevron-down", "chevron-right"), c, x0, (y + 4 : U32), color),
+          Ty.text(ty, 2n, text, c, (x0 + 22 : U32), y, 24, color)),
+        [Lay.hit(x0, y, (Ty.width(ty, 2n, text) + 26 : U32), 24, "fold", copy)]}
     case 5n:
       Out.ops(Ty.text(ty, 1n, text, c, x0, y, 28, color))
     case _:
@@ -1919,13 +1929,55 @@ def TL.entry.p(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32, +pics: M
 def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, TL.part(TL.mine_of(e, sel), ty, e, px))
 
-# the timeline from scratch
-def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
-  match es:
-    case Nil{}:
+# Tool calls folded
+# -----------------
+# A run of tool calls shows as one row (FO.Fold decides the runs, their
+# labels and which are open); an entry's lines are shown as its role says.
+# What is open comes from the info map and the turn, both read each frame,
+# so the memo of entries' parts is untouched by it.
+
+def TL.fold.line(+ty: Ty, +id: String, +label: String, +open: Bool, +px: U32) -> TLine:
+  TLine{Ty.fit(ty, 2n, label, (px - 26 : U32)), T.Th.dim(), 14, FO.Fold.ask(open, id), Bool.pick(U32, open, 1, 0)}
+
+def TL.fold.shown(open: Bool, ls: List<&2, TLine>) -> List<&2, TLine>:
+  match open:
+    case True{}:
+      ls
+    case False{}:
       Nil{}
-    case e <> t:
-      List.append(&2, TLine, TL.entry(ty, e, st, sel, px, pics), TL.entries(ty, t, st, sel, px, pics))
+
+def TL.role(r: FO.Role, +ty: Ty, ls: List<&2, TLine>, +px: U32) -> List<&2, TLine>:
+  match r:
+    case FO.RShow{}:
+      ls
+    case FO.RHead{+id, +label, +open}:
+      TL.fold.line(ty, id, label, open, px) <> TL.fold.shown(open, ls)
+    case FO.RIn{open}:
+      TL.fold.shown(open, ls)
+
+def TL.turn(t: M.Thread) -> Bool:
+  match t:
+    case M.Thread{_, _, _, _, _, turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Lay.running(turn)
+
+# the roles of the open thread's entries (its last run stays open while
+# its turn runs)
+def TL.roles(es: List<&2, M.Entry>, +st: M.State, +sel: String, +pics: Map<&2, String>) -> List<&2, FO.Role>:
+  FO.Fold.roles(es, pics, TL.turn(U.Ui.thread(st, sel)))
+
+# the entries, each as its role says (one with no role as it is)
+def TL.entries.r(+ty: Ty, es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  match es rs:
+    case Nil{} _:
+      Nil{}
+    case +e <> t r <> rt:
+      List.append(&2, TLine, TL.role(r, ty, TL.entry(ty, e, st, sel, px, pics), px), TL.entries.r(ty, t, rt, st, sel, px, pics))
+    case +e <> t Nil{}:
+      List.append(&2, TLine, TL.entry(ty, e, st, sel, px, pics), TL.entries.r(ty, t, Nil{}, st, sel, px, pics))
+
+# the timeline from scratch
+def TL.entries(+ty: Ty, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  TL.entries.r(ty, es, TL.roles(es, st, sel, pics), st, sel, px, pics)
 
 # The timeline's memo
 # -------------------
@@ -1988,13 +2040,27 @@ def TL.memo.of(+ty: Ty, es: List<&2, M.Entry>, +px: U32, +sel: String, prev: TLM
     case TLMemo{ppx, psel, items}:
       TL.memo.of.k(Bool.and(U32.is_eq(ppx, px), Q.Eq.str(psel, sel)), ty, es, px, sel, items)
 
-# the timeline from the memo's items
-def TL.entries.m(+ty: Ty, its: List<&2, TLE>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+# the entries the memo's items were made for
+def TL.memo.es(its: List<&2, TLE>) -> List<&2, M.Entry>:
   match its:
     case Nil{}:
       Nil{}
-    case TLE{+e, p} <> t:
-      List.append(&2, TLine, TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, p), TL.entries.m(ty, t, st, sel, px, pics))
+    case TLE{e, _} <> t:
+      e <> TL.memo.es(t)
+
+# the memo's items, each as its role says
+def TL.entries.mr(+ty: Ty, its: List<&2, TLE>, rs: List<&2, FO.Role>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  match its rs:
+    case Nil{} _:
+      Nil{}
+    case TLE{+e, p} <> t r <> rt:
+      List.append(&2, TLine, TL.role(r, ty, TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, p), px), TL.entries.mr(ty, t, rt, st, sel, px, pics))
+    case TLE{+e, p} <> t Nil{}:
+      List.append(&2, TLine, TL.entry.p(TL.mine_of(e, sel), ty, e, st, px, pics, p), TL.entries.mr(ty, t, Nil{}, st, sel, px, pics))
+
+# the timeline from the memo's items
+def TL.entries.m(+ty: Ty, +its: List<&2, TLE>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  TL.entries.mr(ty, its, TL.roles(TL.memo.es(its), st, sel, pics), st, sel, px, pics)
 
 def TL.memo.lines.k(same: Bool, +ty: Ty, m: TLMemo, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   match same m:

@@ -92,6 +92,9 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .act .kind { color: var(--faint); flex: none; }
 .act .summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .act.error { color: var(--bad); }
+button.fold { align-self: flex-start; display: flex; align-items: center; gap: 6px; background: none; border-color: transparent; color: var(--dim); font-family: var(--mono); font-size: 12px; padding: 2px 4px 2px 0; max-width: 860px; }
+button.fold:hover { color: var(--text); }
+button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .working { color: var(--faint); font-size: 12px; }
 .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
 .composer textarea { resize: none; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; min-height: 60px; max-height: 40vh; }

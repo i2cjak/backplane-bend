@@ -7,6 +7,7 @@ import ../core/attach.bend as AT
 import ../core/vt.bend as VT
 import ../core/diff.bend as DF
 import ../core/images.bend as IM
+import ../core/fold.bend as FO
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -489,12 +490,42 @@ def View.entry.k(mine: Bool, e: M.Entry, +st: M.State) -> List<&2, D.Node>:
 def View.entry(+e: M.Entry, +st: M.State, +sel: String) -> List<&2, D.Node>:
   View.entry.k(String.eq(View.entry_thread(e), sel), e, st)
 
-def View.entries(es: List<&2, M.Entry>, +st: M.State, +sel: String) -> List<&2, D.Node>:
-  match es:
-    case Nil{}:
+# a run of tool calls folded into one row (FO.Fold decides the runs, their
+# labels and which are open); a click opens or shuts it
+def View.fold.row(+id: String, +label: String, +open: Bool) -> D.Node:
+  WI.WIcon.button("fold", "fold", FO.Fold.ask(open, id), Bool.pick(String, open, "Hide these tool calls", "Show these tool calls"),
+    Bool.pick(String, open, "chevron-down", "chevron-right"), 14, label)
+
+def View.fold.shown(open: Bool, ns: List<&2, D.Node>) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      ns
+    case False{}:
       Nil{}
-    case e <> t:
-      List.append(&2, D.Node, View.entry(e, st, sel), View.entries(t, st, sel))
+
+# an entry's nodes as its role says
+def View.role(r: FO.Role, ns: List<&2, D.Node>) -> List<&2, D.Node>:
+  match r:
+    case FO.RShow{}:
+      ns
+    case FO.RHead{+id, +label, +open}:
+      View.fold.row(id, label, open) <> View.fold.shown(open, ns)
+    case FO.RIn{open}:
+      View.fold.shown(open, ns)
+
+def View.entries.r(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +sel: String) -> List<&2, D.Node>:
+  match es rs:
+    case Nil{} _:
+      Nil{}
+    case e <> t r <> rt:
+      List.append(&2, D.Node, View.role(r, View.entry(e, st, sel)), View.entries.r(t, rt, st, sel))
+    case e <> t Nil{}:
+      List.append(&2, D.Node, View.entry(e, st, sel), View.entries.r(t, Nil{}, st, sel))
+
+# a thread's entries, its runs of tool calls folded (the last stays open
+# while its turn runs)
+def View.entries(+es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, D.Node>:
+  View.entries.r(es, FO.Fold.roles(es, info, running), st, sel)
 
 def View.sending(ps: List<&2, String>) -> List<&2, D.Node>:
   match ps:
@@ -635,7 +666,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff"), String.eq(U.Str.get(drafts, "@del"), id)),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
-          D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id), D.Dom.cat(View.sending(pend),
+          D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),

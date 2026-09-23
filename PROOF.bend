@@ -20,6 +20,7 @@ import ./src/gfx/raster.bend as R
 import ./src/gfx/font.bend as F
 import ./src/app/layout.bend as L
 import ./src/core/eq.bend as Q
+import ./src/core/fold.bend as FO
 
 # Lemmas
 # ------
@@ -2010,20 +2011,56 @@ def Laws.tl_memo_exact(ty, es, old, px0, sel0, px, sel):
 
 law tl_entries_memo:
   for +ty: L.Ty
-  for es: List<&2, M.Entry>
+  for +es: List<&2, M.Entry>
   for +st: M.State
   for +sel: String
   for +px: U32
   for +pics: Map<&2, String>
   {L.TL.entries.m(ty, L.TL.memo.make(ty, es, px, sel), st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}
 
-def tl_entries_memo(ty, es, st, sel, px, pics):
+# the memo's items were made for exactly the entries
+law tl_memo_es:
+  for +ty: L.Ty
+  for es: List<&2, M.Entry>
+  for +px: U32
+  for +sel: String
+  {L.TL.memo.es(L.TL.memo.make(ty, es, px, sel)) == es : List<&2, M.Entry>}
+
+def tl_memo_es(ty, es, px, sel):
   match es:
     case Nil{}:
       {==}
     case +e <> +t:
-      Equal.cong(List<&2, L.TLine>, List<&2, L.TLine>, x => List.append(&2, L.TLine, L.TL.entry(ty, e, st, sel, px, pics), x),
-        L.TL.entries.m(ty, L.TL.memo.make(ty, t, px, sel), st, sel, px, pics), L.TL.entries(ty, t, st, sel, px, pics), tl_entries_memo(ty, t, st, sel, px, pics))
+      Equal.cong(List<&2, M.Entry>, List<&2, M.Entry>, x => e <> x, L.TL.memo.es(L.TL.memo.make(ty, t, px, sel)), t, tl_memo_es(ty, t, px, sel))
+
+# under the same roles, the memo's items show as the entries do
+law tl_entries_roles:
+  for +ty: L.Ty
+  for es: List<&2, M.Entry>
+  for rs: List<&2, FO.Role>
+  for +st: M.State
+  for +sel: String
+  for +px: U32
+  for +pics: Map<&2, String>
+  {L.TL.entries.mr(ty, L.TL.memo.make(ty, es, px, sel), rs, st, sel, px, pics) == L.TL.entries.r(ty, es, rs, st, sel, px, pics) : List<&2, L.TLine>}
+
+def tl_entries_roles(ty, es, rs, st, sel, px, pics):
+  match es:
+    case Nil{}:
+      {==}
+    case +e <> +t:
+      match rs:
+        case Nil{}:
+          Equal.cong(List<&2, L.TLine>, List<&2, L.TLine>, x => List.append(&2, L.TLine, L.TL.entry(ty, e, st, sel, px, pics), x),
+            L.TL.entries.mr(ty, L.TL.memo.make(ty, t, px, sel), Nil{}, st, sel, px, pics), L.TL.entries.r(ty, t, Nil{}, st, sel, px, pics), tl_entries_roles(ty, t, Nil{}, st, sel, px, pics))
+        case +r <> +rt:
+          Equal.cong(List<&2, L.TLine>, List<&2, L.TLine>, x => List.append(&2, L.TLine, L.TL.role(r, ty, L.TL.entry(ty, e, st, sel, px, pics), px), x),
+            L.TL.entries.mr(ty, L.TL.memo.make(ty, t, px, sel), rt, st, sel, px, pics), L.TL.entries.r(ty, t, rt, st, sel, px, pics), tl_entries_roles(ty, t, rt, st, sel, px, pics))
+
+def tl_entries_memo(ty, es, st, sel, px, pics):
+  %Equal.sym(List<&2, M.Entry>, L.TL.memo.es(L.TL.memo.make(ty, es, px, sel)), es, tl_memo_es(ty, es, px, sel))
+    : {L.TL.entries.mr(ty, L.TL.memo.make(ty, es, px, sel), L.TL.roles(_, st, sel, pics), st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}
+  tl_entries_roles(ty, es, L.TL.roles(es, st, sel, pics), st, sel, px, pics)
 
 law tl_lines_k:
   for s: Bool
@@ -2249,3 +2286,89 @@ def Laws.tl_frame_exact(ty, es, old, px0, sel0, st, sel, px, pics):
     Laws.tl_memo_exact(ty, es, old, px0, sel0, px, sel))
     : {L.TL.memo.shown(ty, _, st, sel, px, pics) == L.TL.entries(ty, es, st, sel, px, pics) : List<&2, L.TLine>}
   tl_entries_memo(ty, es, st, sel, px, pics)
+
+# Tool calls folded
+# -----------------
+
+law fold_flat_push:
+  for b: Bool
+  for +e: M.Entry
+  for gs: List<&2, FO.Grp>
+  {FO.Fold.flat(FO.Fold.push.k(b, e, gs)) == e <> FO.Fold.flat(gs) : List<&2, M.Entry>}
+
+def fold_flat_push(b, e, gs):
+  match b:
+    case False{}:
+      {==}
+    case True{}:
+      match gs:
+        case Nil{}:
+          {==}
+        case +g <> +t:
+          match g:
+            case FO.GOne{+x}:
+              {==}
+            case FO.GRun{+xs}:
+              {==}
+
+def Laws.fold_keeps_entries(es):
+  match es:
+    case Nil{}:
+      {==}
+    case +e <> +t:
+      Equal.trans(List<&2, M.Entry>, FO.Fold.flat(FO.Fold.push.k(FO.Fold.tool(e), e, FO.Fold.groups(t))), e <> FO.Fold.flat(FO.Fold.groups(t)), e <> t,
+        fold_flat_push(FO.Fold.tool(e), e, FO.Fold.groups(t)),
+        Equal.cong(List<&2, M.Entry>, List<&2, M.Entry>, x => e <> x, FO.Fold.flat(FO.Fold.groups(t)), t, Laws.fold_keeps_entries(t)))
+
+def Laws.fold_count(es):
+  %Equal.sym(List<&2, M.Entry>, FO.Fold.flat(FO.Fold.groups(es)), es, Laws.fold_keeps_entries(es))
+    : {List.length(&2, M.Entry, _) == List.length(&2, M.Entry, es) : Nat}
+  {==}
+
+law fold_runs_push:
+  for b: Bool
+  for +e: M.Entry
+  for gs: List<&2, FO.Grp>
+  for h: {FO.Fold.tool(e) == b : Bool}
+  for ih: {FO.Fold.all(FO.Fold.runs(gs)) == True{} : Bool}
+  {FO.Fold.all(FO.Fold.runs(FO.Fold.push.k(b, e, gs))) == True{} : Bool}
+
+def fold_runs_push(b, e, gs, h, ih):
+  match b:
+    case False{}:
+      ih
+    case True{}:
+      match gs:
+        case Nil{}:
+          %Equal.sym(Bool, FO.Fold.tool(e), True{}, h) : {FO.Fold.all.and(_, True{}) == True{} : Bool}
+          {==}
+        case +g <> +t:
+          match g:
+            case FO.GOne{+x}:
+              %Equal.sym(Bool, FO.Fold.tool(e), True{}, h) : {FO.Fold.all.and(_, FO.Fold.all(FO.Fold.runs(t))) == True{} : Bool}
+              ih
+            case FO.GRun{+xs}:
+              %Equal.sym(Bool, FO.Fold.tool(e), True{}, h) : {FO.Fold.all.and(_, FO.Fold.all(List.append(&2, M.Entry, xs, FO.Fold.runs(t)))) == True{} : Bool}
+              ih
+
+def Laws.fold_runs_only_tools(es):
+  match es:
+    case Nil{}:
+      {==}
+    case +e <> +t:
+      fold_runs_push(FO.Fold.tool(e), e, FO.Fold.groups(t), {==}, Laws.fold_runs_only_tools(t))
+
+def Laws.fold_never_error(i, t, k, s, a):
+  {==}
+
+def Laws.fold_never_message(i, t, r, x, a):
+  {==}
+
+def Laws.fold_user_opened(live):
+  {==}
+
+def Laws.fold_user_shut(live):
+  {==}
+
+def Laws.fold_default_live(live):
+  {==}

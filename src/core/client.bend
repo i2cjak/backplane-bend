@@ -6,6 +6,7 @@ import ./vt.bend as VT
 import ./fuzzy.bend as FZ
 import ./agent.bend as AG
 import ./attach.bend as AT
+import ./fold.bend as FO
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -544,7 +545,7 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold"]
 
 # Reading the client state
 # ------------------------
@@ -1470,6 +1471,11 @@ def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, Map.set(&2, String, nf, k, v), ob, tr}
 
+# a run of tool calls opened or shut: the value is "1" or "0", then the
+# run's id (FO.Fold.ask); the choice is kept in the info map (FO.Fold.user)
+def Ui.tool_fold(u: Ui, +v: String) -> Ui:
+  Ui.info_set(u, FO.Fold.key(String.drop(v, 1n)), String.take(v, 1n))
+
 def Skills.got(has: Bool, u: Ui, +o: J.Json) -> Ui:
   match has:
     case True{}:
@@ -2214,6 +2220,8 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.row_snooze(u, value)
     case 62n:
       Ui.row_delete(u, value)
+    case 63n:
+      Act{Ui.tool_fold(u, value), Nil{}}
     case _:
       Act{u, Nil{}}
 
