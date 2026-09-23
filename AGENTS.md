@@ -23,6 +23,7 @@ When using Bend:
 - `src/core/client.bend`: the client state and actions both UIs share.
 - `src/web/`: the web client for other devices (Tailscale, phone). View logic is Bend; `host.js` only touches the DOM, canvas and socket, and holds no product logic.
 - `test/`: Bend test programs (`bend test/x.bend`), run by `scripts/test.sh`.
+- `tools/step2glb/`: the one non-Bend helper, a host tool like git or curl. It converts STEP to GLB (OpenCascade WASM via Bun; LGPL-2.1, run as a subprocess, never linked). `scripts/build-step2glb.sh` builds `dist/backplane-step2glb`. The STEP viewer reads its GLB; all viewer logic stays in Bend. See its README.
 - `docs/reference/t3code-parity.md`: what the TS product did; `docs/parity.md`: what we match so far.
 
 ## Commands
