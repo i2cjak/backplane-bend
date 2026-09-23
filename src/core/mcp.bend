@@ -46,8 +46,35 @@ def Tool.def(name: String, desc: String, props: List<&2, J.KV>, req: List<&2, St
   J.Json.obj([J.KV{"name", J.Str{name}}, J.KV{"description", J.Str{desc}},
     J.KV{"inputSchema", J.Json.obj([J.KV{"type", J.Str{"object"}}, J.KV{"properties", J.Json.obj(props)}, J.KV{"required", J.Json.arr(Tool.strs(req))}])}])
 
+def Tool.target() -> List<&2, J.KV>:
+  [Tool.prop("ref", "string", "A ref from preview_snapshot's outline, e.g. e5 (preferred)."),
+   Tool.prop("locator", "string", "A Playwright selector, role or text based, e.g. role=button[name='Send'] or text=Continue."),
+   Tool.prop("selector", "string", "A CSS selector."),
+   Tool.prop("timeoutMs", "number", "Timeout in ms (default 15000, at most 60000).")]
+
+# The browser Backplane hosts (a headless Chromium the user watches in the
+# app's Browser tab); the server forwards these to it
+def Mcp.preview_tools() -> List<&2, J.Json>:
+  [Tool.def("preview_open", "Open the Backplane browser (the user sees it live in the app's Browser tab), optionally at a URL. Use it to check web UIs, datasheets, distributor pages and docs.",
+     [Tool.prop("url", "string", "URL to load; a bare host gets https://, localhost gets http://."), Tool.prop("width", "number", "Viewport width (default 1280)."), Tool.prop("height", "number", "Viewport height (default 800).")], Nil{}),
+   Tool.def("preview_navigate", "Go to a URL in the Backplane browser.", [Tool.prop("url", "string", "The URL."), Tool.prop("readiness", "string", "load (default), domContentLoaded or none.")], ["url"]),
+   Tool.def("preview_snapshot", "Read the page: URL, title, visible text, interactive elements and an outline whose [ref=eN] marks are targets for click and type. Snapshot before acting.",
+     [Tool.prop("screenshot", "boolean", "Also return a PNG screenshot.")], Nil{}),
+   Tool.def("preview_click", "Click an element (ref, locator or selector) or a point (x, y in viewport pixels).",
+     List.append(&2, J.KV, Tool.target(), [Tool.prop("x", "number", "X in viewport pixels."), Tool.prop("y", "number", "Y in viewport pixels.")]), Nil{}),
+   Tool.def("preview_type", "Type text into an element (or the focused one).",
+     List.append(&2, J.KV, Tool.target(), [Tool.prop("text", "string", "The text, inserted literally."), Tool.prop("clear", "boolean", "Clear the field first.")]), ["text"]),
+   Tool.def("preview_press", "Press a key (Enter, Escape, Tab, ArrowDown, Backspace, a...).", [Tool.prop("key", "string", "Playwright key name.")], ["key"]),
+   Tool.def("preview_scroll", "Scroll the page (dx, dy in pixels; positive is right/down), or an element with a target.",
+     List.append(&2, J.KV, Tool.target(), [Tool.prop("dx", "number", "Horizontal pixels."), Tool.prop("dy", "number", "Vertical pixels.")]), Nil{}),
+   Tool.def("preview_evaluate", "Evaluate a JavaScript expression in the page and return its JSON value.", [Tool.prop("expression", "string", "The expression.")], ["expression"]),
+   Tool.def("preview_wait_for", "Wait until an element is visible, some text appears, or the URL contains a string.",
+     List.append(&2, J.KV, Tool.target(), [Tool.prop("text", "string", "Text to wait for."), Tool.prop("url", "string", "URL substring to wait for.")]), Nil{}),
+   Tool.def("preview_resize", "Resize the browser viewport.", [Tool.prop("width", "number", "Width."), Tool.prop("height", "number", "Height.")], ["width", "height"]),
+   Tool.def("preview_status", "The browser's state: open, URL, title, viewport.", Nil{}, Nil{})]
+
 def Mcp.tools() -> J.Json:
-  J.Json.obj([J.KV{"tools", J.Json.arr([
+  J.Json.obj([J.KV{"tools", J.Json.arr(List.append(&2, J.Json, [
     Tool.def("orchestrator_capabilities",
       "List the providers and models this Backplane can run, the delegation depth limit, and this thread's own provider, model and depth.",
       Nil{}, Nil{}),
@@ -68,7 +95,8 @@ def Mcp.tools() -> J.Json:
       [Tool.prop("threadId", "string", "The thread."), Tool.prop("text", "string", "The message.")], ["threadId", "text"]),
     Tool.def("viewer_show",
       "Show a file in the user's Backplane viewer panel: a .kicad_pcb (board), .kicad_sch (schematic), .step/.stp or .glb (3D). Use it after changing a design so the user sees the result; the viewer also follows the file live.",
-      [Tool.prop("path", "string", "Absolute path of the file."), Tool.prop("kind", "string", "board, schematic, 3d or step (default: from the extension).")], ["path"])])}])
+      [Tool.prop("path", "string", "Absolute path of the file."), Tool.prop("kind", "string", "board, schematic, 3d or step (default: from the extension).")], ["path"])]
+    , Mcp.preview_tools()))}])
 
 def Mcp.thread_json(t: M.Thread) -> J.Json:
   match t:

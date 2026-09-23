@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { chromium, type Browser, type BrowserContext, type CDPSession, type Locator, type Page } from "playwright-core";
 
-import { findChromium, INSTALL_HINT } from "./chromium.ts";
+import { findChromium, installChrome, INSTALL_HINT } from "./chromium.ts";
 import { decodePng } from "./png.ts";
 
 type Json = Record<string, any>;
@@ -95,11 +95,25 @@ function normalizeUrl(raw: string): string {
 // Browser lifecycle
 // -----------------
 
+// one launch at a time: concurrent requests share it
+let opening: Promise<Page> | null = null;
+
 async function ensurePage(): Promise<Page> {
   if (page && !page.isClosed()) return page;
+  if (!opening) opening = openPage().finally(() => { opening = null; });
+  return opening;
+}
+
+async function openPage(): Promise<Page> {
   if (!browser) {
     executable = CHROMIUM_ARG ?? findChromium();
-    if (!executable) throw new Error(INSTALL_HINT);
+    if (!executable) {
+      try {
+        executable = await installChrome((m) => process.stderr.write(`backplane-browser: ${m}\n`));
+      } catch (e) {
+        throw new Error(`${INSTALL_HINT} (${e instanceof Error ? e.message : String(e)})`);
+      }
+    }
     browser = await chromium.launch({
       executablePath: executable,
       headless: !HEADED,

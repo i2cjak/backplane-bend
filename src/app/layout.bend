@@ -10,6 +10,7 @@ import ./theme.bend as T
 import ./nui.bend as S
 import ./viewer.bend as V
 import ../core/glb.bend as G
+import ../gfx/bitmap.bend as BM
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -998,26 +999,37 @@ def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: 
 def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
   Lay.chip(ty, x, 12, label, U32.is_eq(k, cur), "vw-kind", U32.show(k))
 
+def Lay.shown(+k: U32, +empty: Bool, +ts: List<&2, G.Tri3>, b: BM.Bitmap) -> Bool:
+  match b:
+    case BM.Bitmap{w, _, _, _, _, _, _, _}:
+      Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(List.is_empty(&2, G.Tri3, ts)), Bool.not(empty)))
+
+def Lay.help(+k: U32) -> String:
+  Bool.pick(String, U32.is_eq(k, 3), "what the agents' browser shows, live",
+    Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit"))
+
 def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String) -> Out:
   match x:
-    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _}:
-      +help = Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit")
+    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, bm}:
+      +help = Lay.help(k)
       +bw = Lay.button.w(ty, "Board")
       +sw = Lay.button.w(ty, "Schematic")
+      +tw = Lay.button.w(ty, "3D")
       Out.all([
         Out.ops([D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 52, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255),
           D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)]),
         Lay.tab(ty, "Board", 0, k, (x0 + 16 : U32)),
         Lay.tab(ty, "Schematic", 1, k, (x0 + 24 + bw : U32)),
         Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
-        Out.ops(Ty.text(ty, 2n, help, D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, help) : U32), 0, 52, T.Th.faint())),
-        Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.or(Bool.and(empty, U32.is_lt(k, 2)), Bool.and(U32.is_eq(k, 2), List.is_empty(&2, G.Tri3, ts)))),
-          Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - Ty.width(ty, 3n, busy) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
+        Lay.tab(ty, "Browser", 3, k, (x0 + 40 + bw + sw + tw : U32)),
+        Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32)), D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32))) : U32), 0, 52, T.Th.faint())),
+        Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.not(Lay.shown(k, empty, ts, bm))),
+          Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - U32.min(Ty.width(ty, 3n, busy), (x1 - x0 : U32)) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
         Lay.inspect(ty, info, draft, x0, x1, h)])
 
 def Lay.picked(x: V.Vx) -> String:
   match x:
-    case V.Vx{_, p, _, _, _, _, _, _, _, _}:
+    case V.Vx{_, p, _, _, _, _, _, _, _, _, bm}:
       p
 
 def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:

@@ -18,6 +18,7 @@ import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
 import ../core/schematic.bend as SC
 import ../server/proc.bend as P
+import ../gfx/bitmap.bend as BM
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -31,6 +32,7 @@ type ShellMsg is Data:
   Board{key: String, items: List<&2, B.Item>}
   Mesh3{key: String, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
+  Shot{key: String, bmp: BM.Bitmap}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -403,6 +405,65 @@ def Watch.loop(fuel: Nat, +key: String, +path: String, +sz: U32, +mt: U32, re: N
         st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
         Watch.step(Watch.stat(st), sz, mt, Bool.pick(Nat, U32.is_eq(Src.kind(key), 2), 0n, re), key, path, q, s2 => m2 => r2 => Watch.loop(f, key, path, s2, m2, r2, q))
 
+def Watch.seq(h: BM.BmHead) -> U32:
+  match h:
+    case BM.BmHead{_, _, s}:
+      s
+
+# The agents' browser: its frame file starts with a 16-byte header whose
+# seq grows with each frame; poll the header, load the pixels on a change
+
+def Watch.head.k(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(U32):
+  (f, res) = r
+  do IO<U32>:
+    File.close(f)
+    return Watch.seq(BM.Bitmap.head(Result.default(&1, &1, U32 & String, List<&2, U32>, res, Nil{})))
+
+def Watch.head.o(r: Result<&1, &1, U32 & String, File>) -> IO(U32):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, List<&2, U32>>, U32, File.read_bytes(f, 16), Watch.head.k)
+    case Fail{_}:
+      IO.pure(U32, 0)
+
+def Watch.head(+path: String) -> IO(U32):
+  IO.bind(Result<&1, &1, U32 & String, File>, U32, File.open(path, "r"), Watch.head.o)
+
+def Watch.w(h: BM.BmHead) -> U32:
+  match h:
+    case BM.BmHead{w, _, _}:
+      w
+
+def Watch.h(h: BM.BmHead) -> U32:
+  match h:
+    case BM.BmHead{_, h2, _}:
+      h2
+
+def Watch.shot(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    +bs : List<&2, U32> <- S.Files.read(path)
+    ok : Bool <- Chan.send(ShellMsg, q, Shot{key, BM.Bitmap.load(bs, 0, 0, Watch.w(BM.Bitmap.head(bs)), Watch.h(BM.Bitmap.head(bs)))})
+    return Unit{}
+
+def Watch.shots.k(changed: Bool, +seq: U32, +key: String, +path: String, +q: Chan(ShellMsg), k: U32 -> IO(Unit)) -> IO(Unit):
+  match changed:
+    case True{}:
+      do IO<Unit>:
+        Watch.shot(path, key, q)
+        k(seq)
+    case False{}:
+      k(seq)
+
+def Watch.shots(fuel: Nat, +key: String, +path: String, +last: U32, +q: Chan(ShellMsg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        IO.sleep(120)
+        +seq : U32 <- Watch.head(path)
+        Watch.shots.k(Bool.and(U32.is_ne(seq, last), U32.is_ne(seq, 0)), seq, key, path, q, s2 => Watch.shots(f, key, path, s2, q))
+
 def Watch.none(+key: String) -> String:
   Bool.pick(String, U32.is_eq(Src.kind(key), 1), "No schematic in this project yet", "No board in this project yet")
 
@@ -411,9 +472,9 @@ def Watch.go(none: Bool, once: Bool, +key: String, +path: String, +q: Chan(Shell
     case True{} _:
       Watch.say(key, Watch.none(key), q)
     case False{} True{}:
-      Watch.read(path, key, q)
+      Bool.pick(IO(Unit), U32.is_eq(Src.kind(key), 3), Watch.shot(path, key, q), Watch.read(path, key, q))
     case False{} False{}:
-      Watch.loop(S.Fuel.forever(), key, path, 0, 0, 0n, q)
+      Bool.pick(IO(Unit), U32.is_eq(Src.kind(key), 3), Watch.shots(S.Fuel.forever(), key, path, 0, q), Watch.loop(S.Fuel.forever(), key, path, 0, 0, 0n, q))
 
 # watch a source (or, when it is watched already, read it once)
 def Watch.start(once: Bool, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
@@ -451,6 +512,11 @@ def Shell.mesh(a: Shell, +key: String, ts: List<&2, G.Tri3>) -> IO(Shell):
     case Shell{n, w, _, qd, q, i, wa}:
       Shell.later(Shell{N.Nui.mesh(n, key, ts), w, True{}, qd, q, i, wa})
 
+def Shell.shot(a: Shell, +key: String, b: BM.Bitmap) -> IO(Shell):
+  match a:
+    case Shell{n, w, _, qd, q, i, wa}:
+      Shell.later(Shell{N.Nui.shot(n, key, b), w, True{}, qd, q, i, wa})
+
 def Shell.status(a: Shell, +key: String, +text: String) -> IO(Shell):
   match a:
     case Shell{n, w, _, qd, q, i, wa}:
@@ -461,16 +527,30 @@ def Shell.status(a: Shell, +key: String, +text: String) -> IO(Shell):
 
 def Vx.kind(x: V.Vx) -> U32:
   match x:
-    case V.Vx{k, _, _, _, _, _, _, _, _, _}:
+    case V.Vx{k, _, _, _, _, _, _, _, _, _, bm}:
       k
+
+# the browser's frame, scaled down to fit the panel and centred
+def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
+  match b:
+    case BM.Bitmap{+w, +h, d, t, _, _, _, _}:
+      +pw = {(ww - x0 : U32) : U32}
+      +ph = {(hh - 52 : U32) : U32}
+      +sc = {F32.min(1.0, F32.min(F32.div(U32.to_f32(pw), F32.max(U32.to_f32(w), 1.0)), F32.div(U32.to_f32(ph), F32.max(U32.to_f32(h), 1.0)))) : F32}
+      +fw = {D.Draw.floor(F32.mul(U32.to_f32(w), sc)) : U32}
+      +fh = {D.Draw.floor(F32.mul(U32.to_f32(h), sc)) : U32}
+      BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{w, h, d, t, 0, 0, 0, 0}, (x0 + U32.shr((pw - fw : U32)) : U32), (52 + U32.shr((ph - fh : U32)) : U32), fw, fh),
+        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, 526603, 255)], T.Th.bg()))
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base):
 # a 3D model rendered into the panel, or the board/schematic's items
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, x: V.Vx) -> Image:
   match x:
-    case V.Vx{2, _, ts, c, _, _, _, _, _, _}:
+    case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
       MS.Mesh.render.at(ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, 526603)
-    case V.Vx{+k, _, _, _, _, _, _, _, _, _}:
+    case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
+      Shell.shot.base(ww, hh, x0, bm)
+    case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
       R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
         <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k)), T.Th.bg())
 
@@ -496,7 +576,7 @@ def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat) -
 
 def Vx.pick(x: V.Vx) -> String:
   match x:
-    case V.Vx{_, p, _, _, _, _, _, _, _, _}:
+    case V.Vx{_, p, _, _, _, _, _, _, _, _, bm}:
       p
 
 # UI ops over the fading items and the picked item, over the base
@@ -560,6 +640,8 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.mesh(a, key, ts)
     case Status{key, text}:
       Shell.status(a, key, text)
+    case Shot{key, b}:
+      Shell.shot(a, key, b)
 
 def Shell.got(m: Maybe<&1, ShellMsg>, a: Shell, k: Shell -> IO(Unit)) -> IO(Unit):
   match m:

@@ -5,6 +5,7 @@ import ../gfx/draw.bend as D
 import ../core/schematic.bend as SC
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
+import ../gfx/bitmap.bend as BM
 
 # The board viewer. A scene is the board's items, each with the time it
 # appeared. A new file merges into the scene by key: an item whose key and
@@ -345,12 +346,13 @@ def Ops.pick(keep: Bool, on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip,
     case False{}:
       rest
 
-# what the viewer shows: kind 0 board, 1 schematic, 2 3D; `pick` is the
+# what the viewer shows: kind 0 board, 1 schematic, 2 3D, 3 the agents'
+# browser (`bmp` its latest frame); `pick` is the
 # selected item's key; `tris` and `cam` the 3D model and camera; `shown`
 # the source (Src.key) the scene belongs to; `busy` a status line; (px,
 # py) where the pointer went down; `path` a file an agent asked to show
 type Vx is Data:
-  Vx{kind: U32, pick: String, tris: List<&2, G.Tri3>, cam: MS.Cam, shown: String, busy: String, px: U32, py: U32, path: String, seen: String}
+  Vx{kind: U32, pick: String, tris: List<&2, G.Tri3>, cam: MS.Cam, shown: String, busy: String, px: U32, py: U32, path: String, seen: String, bmp: BM.Bitmap}
 
 # Viewer state (held by the window's state)
 # ----------------------------------------
@@ -363,7 +365,7 @@ type Vw is Data:
   Vw{scene: List<&2, Seen>, view: View, fitted: Bool, root: String, drag: Bool, lx: U32, ly: U32, base: Image, fresh: Bool, cut: Nat, x: Vx}
 
 def Vx.init() -> Vx:
-  Vx{0, "", Nil{}, MS.Cam{0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.8}, "", "", 0, 0, "", ""}
+  Vx{0, "", Nil{}, MS.Cam{0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.8}, "", "", 0, 0, "", "", BM.Bitmap{0, 0, 0n, Pix{0}, 0, 0, 0, 0}}
 
 def Vw.init() -> Vw:
   Vw{Nil{}, View{1.0, 0.0, 0.0}, False{}, "", False{}, 0, 0, Pix{0}, False{}, 0n, Vx.init()}

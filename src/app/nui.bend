@@ -6,6 +6,7 @@ import ./viewer.bend as V
 import ../core/board.bend as B
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
+import ../gfx/bitmap.bend as BM
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -274,13 +275,13 @@ def Hit.find(+hs: List<&2, Hit>, +x: U32, +y: U32) -> Maybe<&2, Hit>:
 # show another kind of view: the scene starts empty and refits
 def Vw.kind_set(v: V.Vw, +k: U32, +path: String) -> V.Vw:
   match v:
-    case V.Vw{_, vi, _, r, d, lx, ly, b, _, cu, V.Vx{_, _, t, c, sh, bu, px, py, _, se}}:
-      V.Vw{Nil{}, vi, False{}, "", d, lx, ly, b, False{}, cu, V.Vx{k, "", t, c, sh, bu, px, py, path, se}}
+    case V.Vw{_, vi, _, r, d, lx, ly, b, _, cu, V.Vx{_, _, t, c, sh, bu, px, py, _, se, bm}}:
+      V.Vw{Nil{}, vi, False{}, "", d, lx, ly, b, False{}, cu, V.Vx{k, "", t, c, sh, bu, px, py, path, se, bm}}
 
 def Vw.pick_set(v: V.Vw, +key: String) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, _, t, c, sh, bu, px, py, pa, se}}:
-      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, key, t, c, sh, bu, px, py, pa, se}}
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, _, t, c, sh, bu, px, py, pa, se, bm}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, key, t, c, sh, bu, px, py, pa, se, bm}}
 
 def Nui.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
   match xs:
@@ -403,7 +404,7 @@ def Vw.drag(v: V.Vw, on: Bool, +x: U32, +y: U32) -> V.Vw:
 
 def Vx.kind(x: V.Vx) -> U32:
   match x:
-    case V.Vx{k, _, _, _, _, _, _, _, _, _}:
+    case V.Vx{k, _, _, _, _, _, _, _, _, _, bm}:
       k
 
 def Vw.x(v: V.Vw) -> V.Vx:
@@ -416,18 +417,18 @@ def Vw.kind(v: V.Vw) -> U32:
 
 def Vx.orbit(x: V.Vx, +dx: F32, +dy: F32) -> V.Vx:
   match x:
-    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se}:
-      V.Vx{k, p, t, MS.Cam.orbit(c, F32.mul(dx, 0.01), F32.mul(dy, 0.01)), sh, bu, px, py, pa, se}
+    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, MS.Cam.orbit(c, F32.mul(dx, 0.01), F32.mul(dy, 0.01)), sh, bu, px, py, pa, se, bm}
 
 def Vx.zoom(x: V.Vx, +f: F32) -> V.Vx:
   match x:
-    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se}:
-      V.Vx{k, p, t, MS.Cam.zoom(c, F32.div(1.0, f)), sh, bu, px, py, pa, se}
+    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, MS.Cam.zoom(c, F32.div(1.0, f)), sh, bu, px, py, pa, se, bm}
 
 def Vx.refit(x: V.Vx) -> V.Vx:
   match x:
-    case V.Vx{k, p, +t, _, sh, bu, px, py, pa, se}:
-      V.Vx{k, p, t, MS.Cam.fit(t), sh, bu, px, py, pa, se}
+    case V.Vx{k, p, +t, _, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, MS.Cam.fit(t), sh, bu, px, py, pa, se, bm}
 
 # a drag pans a board or schematic and orbits a 3D model
 def Vw.moved.k(three: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
@@ -486,13 +487,13 @@ def Vw.stale(v: V.Vw) -> V.Vw:
 # changed fades), a new root starts over (the whole board fades in)
 def Vx.shown(x: V.Vx) -> String:
   match x:
-    case V.Vx{_, _, _, _, sh, _, _, _, _, _}:
+    case V.Vx{_, _, _, _, sh, _, _, _, _, _, bm}:
       sh
 
 def Vx.busy(x: V.Vx, bu: String) -> V.Vx:
   match x:
-    case V.Vx{k, p, t, c, sh, _, px, py, pa, se}:
-      V.Vx{k, p, t, c, sh, bu, px, py, pa, se}
+    case V.Vx{k, p, t, c, sh, _, px, py, pa, se, bm}:
+      V.Vx{k, p, t, c, sh, bu, px, py, pa, se, bm}
 
 # a scene file arrived for a source: the same source merges (only what
 # changed fades), another starts over (the whole scene fades in)
@@ -505,8 +506,8 @@ def Vw.board.k(same: Bool, v: V.Vw, +root: String, +items: List<&2, B.Item>, +no
 
 def Vx.mesh(x: V.Vx, ts: List<&2, G.Tri3>) -> V.Vx:
   match x:
-    case V.Vx{k, p, _, c, sh, _, px, py, pa, se}:
-      Vx.refit(V.Vx{k, p, ts, c, sh, "", px, py, pa, se})
+    case V.Vx{k, p, _, c, sh, _, px, py, pa, se, bm}:
+      Vx.refit(V.Vx{k, p, ts, c, sh, "", px, py, pa, se, bm})
 
 def Vw.mesh(v: V.Vw, ts: List<&2, G.Tri3>) -> V.Vw:
   match v:
@@ -543,22 +544,32 @@ def Nui.board(+n: Nui, +key: String, +items: List<&2, B.Item>, +now: Nat) -> Nui
 def Nui.mesh(+n: Nui, +key: String, ts: List<&2, G.Tri3>) -> Nui:
   Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.mesh(v, ts)))
 
+def Vw.shot(v: V.Vw, b: BM.Bitmap) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, bb, _, cu, V.Vx{k, p, t, c, sh, _, px, py, pa, se, _}}:
+      V.Vw{s, vi, f, r, d, lx, ly, bb, False{}, cu, V.Vx{k, p, t, c, sh, "", px, py, pa, se, b}}
+
+# a new frame of the agents' browser
+def Nui.shot(+n: Nui, +key: String, b: BM.Bitmap) -> Nui:
+  Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.shot(v, b)))
+
 def Nui.status(+n: Nui, +key: String, +text: String) -> Nui:
   Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.status(v, text)))
 
-def Nui.source.k(x: V.Vx, +root: String) -> String:
+# the browser's source is its frame file, whatever the project
+def Nui.source.k(x: V.Vx, +root: String, +frames: String) -> String:
   match x:
-    case V.Vx{+k, _, _, _, _, _, _, _, +pa, _}:
-      V.Src.key(k, root, pa)
+    case V.Vx{+k, _, _, _, _, _, _, _, +pa, _, bm}:
+      Bool.pick(String, U32.is_eq(k, 3), V.Src.key(3, "", frames), V.Src.key(k, root, pa))
 
 # the source the viewer should show now (Src.key)
 def Nui.source(+n: Nui) -> String:
-  Nui.source.k(Vw.x(Nui.vw(n)), U.Ui.root(Nui.ui(n)))
+  Nui.source.k(Vw.x(Nui.vw(n)), U.Ui.root(Nui.ui(n)), U.Ui.info(Nui.ui(n), "browser.frames"))
 
 def Vw.asked(v: V.Vw, +key: String) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{+k, p, t, c, _, _, px, py, pa, se}}:
-      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, key, Bool.pick(String, U32.is_eq(k, 2), "Exporting 3D model…", "Loading…"), px, py, pa, se}}
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{+k, p, t, c, _, _, px, py, pa, se, bm}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, key, Bool.pick(String, U32.is_eq(k, 2), "Exporting 3D model…", Bool.pick(String, U32.is_eq(k, 3), "The agents' browser shows here when they open a page.", "Loading…")), px, py, pa, se, bm}}
 
 # the viewer asked for a source (the shell starts reading it)
 def Nui.asked(+n: Nui, +key: String) -> Nui:
@@ -586,21 +597,22 @@ def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
 
 # the kind of view for a requested file: named, else from its extension
 def View.kind_of(+kind: String, +path: String) -> U32:
+  Bool.pick(U32, String.eq(kind, "browser"), 3,
   Bool.pick(U32, String.eq(kind, "schematic"), 1,
     Bool.pick(U32, Bool.or(String.eq(kind, "3d"), String.eq(kind, "step")), 2,
       Bool.pick(U32, String.eq(kind, "board"), 0,
         Bool.pick(U32, String.ends_with(path, ".kicad_sch"), 1,
-          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0)))))
+          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0))))))
 
 def Vx.seen(x: V.Vx) -> String:
   match x:
-    case V.Vx{_, _, _, _, _, _, _, _, _, se}:
+    case V.Vx{_, _, _, _, _, _, _, _, _, se, bm}:
       se
 
 def Vw.seen_set(v: V.Vw, +seen: String) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, _}}:
-      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, seen}}
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, _, bm}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, seen, bm}}
 
 def Nui.request.k(fresh: Bool, +n: Nui, +seen: String) -> Nui:
   match fresh:
@@ -620,19 +632,19 @@ def Nui.prepare(+n: Nui) -> Nui:
 # the pointer, and a press released where it began picks an item
 def Vw.press(v: V.Vw, +x: U32, +y: U32) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, V.Vx{k, p, t, c, sh, bu, _, _, pa, se}}:
-      V.Vw{s, vi, f, r, True{}, x, y, b, fr, cu, V.Vx{k, p, t, c, sh, bu, x, y, pa, se}}
+    case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, V.Vx{k, p, t, c, sh, bu, _, _, pa, se, bm}}:
+      V.Vw{s, vi, f, r, True{}, x, y, b, fr, cu, V.Vx{k, p, t, c, sh, bu, x, y, pa, se, bm}}
 
 def Vw.release.k(click: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
   match click v:
-    case True{} V.Vw{+s, +vi, f, r, _, lx, ly, b, fr, cu, V.Vx{+k, _, t, c, sh, bu, px, py, pa, se}}:
-      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k)), t, c, sh, bu, px, py, pa, se}}
+    case True{} V.Vw{+s, +vi, f, r, _, lx, ly, b, fr, cu, V.Vx{+k, _, t, c, sh, bu, px, py, pa, se, bm}}:
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k)), t, c, sh, bu, px, py, pa, se, bm}}
     case False{} V.Vw{s, vi, f, r, _, lx, ly, b, fr, cu, vx}:
       V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, vx}
 
 def Vx.press_at(x: V.Vx) -> U32 & U32:
   match x:
-    case V.Vx{_, _, _, _, _, _, px, py, _, _}:
+    case V.Vx{_, _, _, _, _, _, px, py, _, _, bm}:
       (px, py)
 
 def Vw.near(p: U32 & U32, +x: U32, +y: U32) -> Bool:

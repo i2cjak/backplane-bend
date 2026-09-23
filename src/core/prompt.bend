@@ -105,6 +105,7 @@ def Prompt.kistack(ss: List<&2, Skill>) -> String:
 def Prompt.runtime(harness: String, ss: List<&2, Skill>) -> String:
   "<runtime_info>In case you're asked: you are running in Backplane through the " ++ harness
   ++ " harness. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n"
+  ++ "<backplane_browser>Backplane hosts a web browser for you: the backplane MCP server's preview_* tools (preview_open, preview_navigate, preview_snapshot, preview_click, preview_type, preview_press, preview_scroll, preview_evaluate, preview_wait_for). The user watches it live in the app's Browser tab. Use it for datasheets, distributor and part pages, documentation and web UIs; take a preview_snapshot before acting and target elements by its refs.</backplane_browser>\n\n"
   ++ Prompt.kistack(ss)
 
 def Prompt.kicad.basics(+cli: String) -> String:

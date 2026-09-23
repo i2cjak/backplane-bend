@@ -16,31 +16,23 @@ Flags: `--frames FILE` (frame file path; default
 `--headed` (debugging). `BACKPLANE_BROWSER_DEBUG=1` logs frame timings to
 stderr.
 
-## Chromium
+## Chrome
 
-No browser is bundled. The first request that needs a page launches one,
-chosen in this order:
+The agents' browser is Chrome. The first request that needs a page
+launches one, chosen in this order:
 
-1. `--chromium PATH`, then `$BACKPLANE_CHROMIUM`
-2. an installed browser on `PATH`: `google-chrome-stable`, `google-chrome`,
-   `chromium`, `chromium-browser`, `chrome`; then `/opt/google/chrome/chrome`,
-   `/snap/bin/chromium`, and the macOS `/Applications` Chrome/Chromium
-3. Playwright's downloads in `$PLAYWRIGHT_BROWSERS_PATH` or
-   `~/.cache/ms-playwright` (`~/Library/Caches/ms-playwright` on macOS),
-   newest revision first, `chromium_headless_shell-*` before `chromium-*`
+1. `--chromium PATH`, then `$BACKPLANE_CHROME` (or `$BACKPLANE_CHROMIUM`)
+2. an installed Google Chrome: `google-chrome-stable`, `google-chrome`,
+   `chrome` on `PATH`, then `/opt/google/chrome/chrome`, the macOS
+   `/Applications/Google Chrome.app`, or the Windows Program Files install
+3. Google's Chrome for Testing in Backplane's cache
+   (`~/.cache/backplane/chrome/<version>`; `~/Library/Caches/backplane/chrome`
+   on macOS, `%LOCALAPPDATA%\backplane\chrome` on Windows)
 
-If none is found the request fails with
-`no Chromium found: ... run `bunx playwright install chromium``. The app
-installs one with:
-
-```sh
-bunx playwright@1.63.0 install chromium            # full browser + headless shell (~170 MB)
-bunx playwright@1.63.0 install chromium-headless-shell   # headless shell only (~110 MB)
-# Linux without system libraries: add --with-deps (needs root)
-```
-
-`status` reports the chosen path in `chromium` (null when there is none),
-so the UI can offer the install before opening a page.
+With none of these, the helper downloads the current Stable Chrome for
+Testing from Google (`googlechromelabs.github.io/chrome-for-testing`) into
+that cache, with no root needed, and uses it. `status` reports the path in
+`chromium`.
 
 ## Protocol
 

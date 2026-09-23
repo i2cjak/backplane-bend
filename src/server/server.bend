@@ -12,6 +12,7 @@ import ../core/mcp.bend as MC
 import ./update.bend as UP
 import ../core/version.bend as VR
 import ./kicad.bend as K
+import ./browser.bend as BR
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -38,7 +39,7 @@ type Msg is Data:
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -604,14 +605,14 @@ def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
 
 def Info.net(n: Net) -> List<&2, J.KV>:
   match n:
-    case Net{tn, hs, _, ms, _, rt}:
+    case Net{tn, hs, _, ms, _, rt, brx}:
       List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
 
 # what this machine runs, for the settings screen and the model picker
 def Hub.info(c: Cfg) -> J.Json:
   match c:
-    case Cfg{home, _, host, port, _, _, _, net}:
-      J.Json.obj(List.append(&2, J.KV, [J.KV{"home", J.Str{home}}, J.KV{"listen", J.Str{host ++ ":" ++ U32.show(port)}}], Info.net(net)))
+    case Cfg{+home, _, host, port, _, _, _, net}:
+      J.Json.obj(List.append(&2, J.KV, [J.KV{"home", J.Str{home}}, J.KV{"browser.frames", J.Str{home ++ "/browser.rgb"}}, J.KV{"listen", J.Str{host ++ ":" ++ U32.show(port)}}], Info.net(net)))
 
 def Hub.commit.wrote(r: File & Result<&1, &1, U32 & String, Unit>, st: M.State, +line: String, ls: List<&2, String>, cl: List<&2, Client>,
     as: List<&2, Agent>, +inbox: Chan(Msg), cfg: Cfg, note: String, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
@@ -898,7 +899,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _, _, _}:
+    case Net{_, _, t, _, _, _, brx}:
       t
 
 # Effects
@@ -911,12 +912,12 @@ def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
 
 def Cfg.mtext(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx}}:
       mt
 
 def Cfg.rt(c: Cfg) -> K.Rt:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx}}:
       rt
 
 def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
@@ -1015,13 +1016,13 @@ def Tailnet.https(on: Bool, +port: U32, +token: String) -> IO(Unit):
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token, _, _, _}:
+    case Net{True{}, https, +token, _, _, _, brx}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _, _, _}:
+    case Net{False{}, _, _, _, _, _, brx}:
       IO.pure(Unit, Unit{})
 
 def Token.digit(+d: U32) -> Char:
@@ -1078,8 +1079,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx}}
 
 # Startup
 # -------
@@ -1215,7 +1216,7 @@ def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx}}:
       ms
 
 def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String)) -> IO(Hub):
@@ -1225,11 +1226,108 @@ def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String)) -> IO(Hub):
         ok : Bool <- Chan.send(String, reply, text)
         Hub.step(h, st)
 
-def Hub.mcp(h: Hub, +thread: String, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
+  match n:
+    case Net{a, b, c, d, e, f, _}:
+      Net{a, b, c, d, e, f, Some{q}}
+
+def Browser.exe() -> IO(String):
+  do IO<String>:
+    +d : String <- H.Sys.exe_dir()
+    ok : Bool <- K.Io.is_file(d ++ "/backplane-browser")
+    return Bool.pick(String, ok, d ++ "/backplane-browser", "backplane-browser")
+
+def Cfg.br(c: Cfg) -> Maybe<&2, Chan(BR.BMsg)>:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br}}:
+      br
+
+def Preview.shot(+o: J.Json) -> List<&2, J.Json>:
+  Bool.pick(List<&2, J.Json>, String.is_empty(J.Json.get_str(o, "data", "")), Nil{},
+    [J.Json.obj([J.KV{"type", J.Str{"image"}}, J.KV{"data", J.Str{J.Json.get_str(o, "data", "")}}, J.KV{"mimeType", J.Str{J.Json.get_str(o, "mimeType", "image/png")}}])])
+
+def Preview.drop.fs(fs: J.Json) -> J.Json:
+  match fs:
+    case J.Field{"screenshot", _, t}:
+      Preview.drop.fs(t)
+    case J.Field{k, v, t}:
+      J.Field{k, v, Preview.drop.fs(t)}
+    case _:
+      fs
+
+def Preview.drop_shot(o: J.Json) -> J.Json:
+  match o:
+    case J.Obj{fs}:
+      J.Obj{Preview.drop.fs(fs)}
+    case _:
+      o
+
+def Preview.blocks(+r: J.Json) -> List<&2, J.Json>:
+  J.Json.obj([J.KV{"type", J.Str{"text"}}, J.KV{"text", J.Str{J.Json.show(Preview.drop_shot(r))}}])
+    <> Preview.shot(J.Json.get_obj(r, "screenshot"))
+
+def Preview.content.k(ok: Bool, r: J.Json, +err: String) -> J.Json:
+  match ok:
+    case True{}:
+      J.Json.obj([J.KV{"content", J.Json.arr(Preview.blocks(r))}, J.KV{"isError", J.Flag{False{}}}])
+    case False{}:
+      J.Json.obj([J.KV{"content", J.Json.arr([J.Json.obj([J.KV{"type", J.Str{"text"}}, J.KV{"text", J.Str{err}}])])}, J.KV{"isError", J.Flag{True{}}}])
+
+# a browser tool's reply as an MCP result: the helper's result as text,
+# a screenshot as an image block, an error flagged
+def Preview.content(+o: J.Json) -> J.Json:
+  Preview.content.k(J.Json.get_bool(o, "ok", False{}), J.Json.get_obj(o, "result"), J.Json.get_str(o, "error", "browser error"))
+
+def Preview.answer(+id: String, +line: String) -> String:
+  "{\"jsonrpc\":\"2.0\",\"id\":" ++ id ++ ",\"result\":" ++ J.Json.show(Preview.content(Maybe.default(&2, J.Json, J.Json.parse(line), J.Null{}))) ++ "}"
+
+def Preview.run.k(m: Maybe<&2, Chan(BR.BMsg)>, +id: String, +op: String, args: J.Json, +reply: Chan(String)) -> IO(Unit):
+  match m:
+    case Some{q}:
+      do IO<Unit>:
+        line : String <- BR.Browser.ask(q, op, args)
+        ok : Bool <- Chan.send(String, reply, Preview.answer(id, line))
+        return Unit{}
+    case None{}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(String, reply, Preview.answer(id, BR.Browser.fail("no browser in this Backplane")))
+        return Unit{}
+
+# a preview_* tool call, answered by the browser off the hub's thread
+def Preview.run(+cfg: Cfg, +o: J.Json, +reply: Chan(String)) -> IO(Unit):
+  Preview.run.k(Cfg.br(cfg), J.Json.as_raw(J.Json.get(o, "id"), "null"), String.drop(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), 8n),
+    J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), reply)
+
+def Preview.is(+o: J.Json) -> Bool:
+  Bool.and(String.eq(J.Json.get_str(o, "method", ""), "tools/call"), String.starts_with(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "preview_"))
+
+# opening or navigating brings the Browser tab forward in every window
+def Preview.shows(+o: J.Json) -> Bool:
+  Bool.or(String.eq(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "preview_open"), String.eq(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "preview_navigate"))
+
+def Hub.preview(h: Hub, +o: J.Json, +reply: Chan(String)) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Preview.run(cfg, o, reply))
+        Bool.pick(IO(Unit), Preview.shows(o), Wire.all(cl, "{\"t\":\"view\",\"kind\":\"browser\",\"path\":\"\"}"), IO.pure(Unit, Unit{}))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.mcp.hub(h: Hub, +thread: String, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   match h:
     case Hub{+st, f, ls, cl, as, inbox, +cfg, note}:
       Hub.mcp.k(MC.Mcp.text(st, now, thread, Maybe.default(&2, J.Json, J.Json.parse(Cfg.models(cfg)), J.Null{}), Cfg.version(cfg), body),
         Hub{st, f, ls, cl, as, inbox, cfg, note}, reply)
+
+def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match pv:
+    case True{}:
+      Hub.preview(h, o, reply)
+    case False{}:
+      Hub.mcp.hub(h, thread, body, reply, now)
+
+def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)
 
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
@@ -1332,10 +1430,10 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -1386,9 +1484,13 @@ def Main.nolog(e: U32 & String) -> IO(Unit):
 
 def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2, String>, cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   match r cfg:
-    case Done{f} Cfg{+home, +web, +host, +port, +pr, +ds, +v, +nt}:
+    case Done{f} Cfg{+home, +web, +host, +port, +pr, +ds, +v, nt0}:
       do IO<Unit>:
         +inbox : Chan(Msg) <- Chan.new(Msg, 4096)
+        +bq : Chan(BR.BMsg) <- Chan.new(BR.BMsg, 256)
+        bexe : String <- Browser.exe()
+        IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, BR.Br.new(bexe, home ++ "/browser.rgb")))
+        +nt : Net = Net.with_br(nt0, bq)
         l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(host, port)
         Main.listened(l, Hub{st, f, ls, Nil{}, Nil{}, inbox, Cfg{home, web, host, port, pr, ds, v, nt}, ""}, web, inbox, host ++ ":" ++ U32.show(port), need, Cfg{home, web, host, port, pr, ds, v, nt}, front)
     case Fail{e} _:
@@ -1486,7 +1588,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3773,
-    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt, None{}}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
