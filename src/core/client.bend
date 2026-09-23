@@ -184,6 +184,15 @@ def Ui.update(u: Ui, +o: J.Json) -> Ui:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w,
         J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", "")), nf}
 
+# an agent asked to show a file: the viewer opens on it (view.n counts
+# requests, so the same file asked for twice still comes to the front)
+def Ui.view(u: Ui, +o: J.Json) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf}:
+      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
+        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "view.path", J.Json.get_str(o, "path", "")), "view.kind", J.Json.get_str(o, "kind", "")),
+          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n)))}
+
 def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
   match i:
     case 0n:
@@ -196,12 +205,14 @@ def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
       Ui.reply(u, o)
     case 4n:
       Ui.update(u, o)
+    case 5n:
+      Ui.view(u, o)
     case _:
       u
 
 # a message from the server
 def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update"], J.Json.get_str(o, "t", "")), u, o)
+  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view"], J.Json.get_str(o, "t", "")), u, o)
 
 def Ui.online(u: Ui, b: Bool) -> Ui:
   match u:

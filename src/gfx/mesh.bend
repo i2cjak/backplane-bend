@@ -434,3 +434,14 @@ def Mesh.raster(+w: U32, +h: U32, ts: List<&2, STri>, +bg: U32) -> Image:
 # the triangles through the camera, z-buffered, over bg
 def Mesh.render(+w: U32, +h: U32, ts: List<&2, G.Tri3>, +c: Cam, +bg: U32) -> Image:
   Mesh.raster(w, h, Mesh.project(w, h, ts, c, True{}), bg)
+
+# the view of a pw x ph panel whose corner is at (x0, y0) in a W x H frame
+def View.at(v: View, +x0: U32, +y0: U32, +ww: U32, +hh: U32) -> View:
+  match v:
+    case View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, _, _, lx, ly, lz}:
+      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, F32.add(cx, U32.to_f32(x0)), F32.add(cy, U32.to_f32(y0)), n, U32.to_f32(ww), U32.to_f32(hh), lx, ly, lz}
+
+# render into a panel of a larger frame (the rest of the frame is bg or
+# whatever falls outside the panel; the caller draws over it)
+def Mesh.render.at(+ww: U32, +hh: U32, +x0: U32, +y0: U32, +pw: U32, +ph: U32, ts: List<&2, G.Tri3>, +c: Cam, +bg: U32) -> Image:
+  Mesh.raster(ww, hh, Proj.all(ts, True{}, View.at(View.of(c, pw, ph), x0, y0, ww, hh), Nil{}), bg)

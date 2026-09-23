@@ -9,6 +9,7 @@ import ../web/dom.bend as N
 import ./theme.bend as T
 import ./nui.bend as S
 import ./viewer.bend as V
+import ../core/glb.bend as G
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -944,13 +945,89 @@ def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
       Bool.pick(Out, U.Flag.get(op, "settings"), Lay.settings(ty, st, nf, v, note, x0, x1, h),
         Bool.pick(Out, String.is_empty(sel), Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(ty, n, x0, x1)))
 
-# the viewer's header strip; the board below it is drawn by the viewer
-def Lay.viewer(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool) -> Out:
-  Out.ops(List.concat(&2, R.Op, [
-    [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 52, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255),
-     D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)],
-    Ty.text(ty, 0n, Bool.pick(String, empty, "Board: none yet", "Board"), D.Clip.all(), (x0 + 16 : U32), 0, 52, T.Th.soft()),
-    Ty.text(ty, 2n, "wheel zoom · drag pan · f fit", D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, "wheel zoom · drag pan · f fit") : U32), 0, 52, T.Th.faint())]))
+# Viewer chrome
+# -------------
+
+type KV2 is Data:
+  KV2{k: String, v: String}
+
+def Info.row(kv: List<&2, String>) -> KV2:
+  match kv:
+    case k <> v:
+      KV2{k, String.join(v, "=")}
+    case Nil{}:
+      KV2{"", ""}
+
+def Info.rows(ps: List<&2, String>) -> List<&2, KV2>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case p <> t:
+      Info.row(String.split(p, '=')) <> Info.rows(t)
+
+def Info.draw.k(+ty: Ty, r: KV2, +x: U32, +y: U32, +w: U32) -> Out:
+  KV2{k, v} = r
+  Out.ops(List.append(&2, R.Op, Ty.text(ty, 2n, k, D.Clip.all(), (x + 14 : U32), y, 22, T.Th.faint()),
+    Ty.text(ty, 2n, Ty.fit(ty, 2n, v, (w - 110 : U32)), D.Clip.all(), (x + 96 : U32), y, 22, T.Th.text())))
+
+def Info.draw(+ty: Ty, rs: List<&2, KV2>, +x: U32, +y: U32, +w: U32) -> Out:
+  match rs:
+    case Nil{}:
+      Out.none()
+    case r <> t:
+      Out.cat(Info.draw.k(ty, r, x, y, w), Info.draw(ty, t, x, (y + 22 : U32), w))
+
+# what the picked item is: its kind, then key = value rows (the info the
+# parser recorded: net, ref, value, footprint, pin, label...)
+def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+  +ps = String.split(info, ';')
+  +title = Maybe.default(&2, String, List.head(&2, String, ps), "")
+  +rows = Info.rows(List.drop(&2, String, ps, 1n))
+  +n = {U32.from_nat(List.length(&2, KV2, rows)) : U32}
+  +w = {U32.min((x1 - x0 - 32 : U32), 420) : U32}
+  +ch = {(n * 22 + 88 : U32) : U32}
+  +y = {(h - 16 - ch : U32) : U32}
+  +mention = "[" ++ info ++ "] "
+  Out.when(Bool.not(String.is_empty(info)), Out.all([
+    Out.ops(Lay.box(D.Clip.all(), (x0 + 16 : U32), y, w, ch, 10, T.Th.panel(), T.Th.line())),
+    Out.ops(Ty.text(ty, 1n, title, D.Clip.all(), (x0 + 30 : U32), (y + 8 : U32), 28, T.Th.text())),
+    Out{Ty.text(ty, 0n, "×", D.Clip.all(), (x0 + w - 8 : U32), (y + 8 : U32), 28, T.Th.dim()), [Lay.hit((x0 + w - 16 : U32), (y + 6 : U32), 28, 28, "vw-unpick", "")]},
+    Info.draw(ty, rows, (x0 + 16 : U32), (y + 38 : U32), w),
+    Lay.button(ty, D.Clip.all(), (x0 + 30 : U32), (y + ch - 40 : U32), "Mention in chat", T.Th.accent(), "draft", draft ++ Bool.pick(String, String.is_empty(draft), "", " ") ++ mention)]))
+
+def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
+  Lay.chip(ty, x, 12, label, U32.is_eq(k, cur), "vw-kind", U32.show(k))
+
+def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String) -> Out:
+  match x:
+    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _}:
+      +help = Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit")
+      +bw = Lay.button.w(ty, "Board")
+      +sw = Lay.button.w(ty, "Schematic")
+      Out.all([
+        Out.ops([D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 52, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255),
+          D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)]),
+        Lay.tab(ty, "Board", 0, k, (x0 + 16 : U32)),
+        Lay.tab(ty, "Schematic", 1, k, (x0 + 24 + bw : U32)),
+        Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
+        Out.ops(Ty.text(ty, 2n, help, D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, help) : U32), 0, 52, T.Th.faint())),
+        Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.or(Bool.and(empty, U32.is_lt(k, 2)), Bool.and(U32.is_eq(k, 2), List.is_empty(&2, G.Tri3, ts)))),
+          Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - Ty.width(ty, 3n, busy) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
+        Lay.inspect(ty, info, draft, x0, x1, h)])
+
+def Lay.picked(x: V.Vx) -> String:
+  match x:
+    case V.Vx{_, p, _, _, _, _, _, _, _, _}:
+      p
+
+def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match v:
+    case V.Vw{+ss, _, _, _, _, _, _, _, _, _, +vx}:
+      Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft)
+
+# the viewer's chrome; the scene under it is drawn by the viewer
+def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
+  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)
 
 def Lay.toast(+ty: Ty, +e: String, +w: U32, +h: U32) -> Out:
   +tw = {(Ty.width(ty, 2n, e) + 28 : U32) : U32}
@@ -966,7 +1043,7 @@ def Lay.rev(o: Out) -> Out:
 
 def Lay.scene(n: S.Nui) -> List<&2, V.Seen>:
   match n:
-    case S.Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{ss, _, _, _, _, _, _, _, _, _}}:
+    case S.Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}}:
       ss
 
 def Lay.note.k(+ty: Ty, empty: Bool, offer: Bool, +note: String, +x: U32) -> Out:
@@ -994,7 +1071,8 @@ def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
   match n:
     case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
+        Out.when(pa, Out.ops([D.Draw.rect(D.Clip.all(), 264, 0, U32.shr((w - 264 : U32)), h, T.Th.bg(), 255)])),
         Lay.main(ty, n, 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
-        Bool.pick(Out, pa, Lay.viewer(ty, (264 + U32.shr((w - 264 : U32)) : U32), w, h, List.is_empty(&2, V.Seen, Lay.scene(n))), Out.none()),
+        Bool.pick(Out, pa, Lay.viewer(ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
         Lay.sidebar(ty, n, h),
         Lay.toast(ty, err, w, h)]))

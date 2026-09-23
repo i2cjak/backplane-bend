@@ -2,6 +2,9 @@ import Base
 import ../core/board.bend as B
 import ../gfx/raster.bend as R
 import ../gfx/draw.bend as D
+import ../core/schematic.bend as SC
+import ../core/glb.bend as G
+import ../gfx/mesh.bend as MS
 
 # The board viewer. A scene is the board's items, each with the time it
 # appeared. A new file merges into the scene by key: an item whose key and
@@ -314,19 +317,40 @@ def Ops.item.k(look: U32 & U32, p: B.Prim, +v: View, +c: D.Clip, +fade: U32) -> 
   (color, +base) = look
   Ops.item.show(U32.is_eq(base, 0), p, v, c, color, ((base * fade : U32) / 255 : U32))
 
-def Ops.layer.k(on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+def Look.of.k(sch: Bool, +layer: U32) -> U32 & U32:
+  match sch:
+    case True{}:
+      SC.Sch.look(layer)
+    case False{}:
+      Layer.look(U32.to_nat(layer))
+
+# a layer's colour and opacity in a board (kind 0) or a schematic (kind 1)
+def Look.of(+kind: U32, +layer: U32) -> U32 & U32:
+  Look.of.k(U32.is_eq(kind, 1), layer)
+
+def Look.count(+kind: U32) -> Nat:
+  Bool.pick(Nat, U32.is_eq(kind, 1), 24n, 25n)
+
+def Ops.layer.k(on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   match on:
     case True{}:
-      List.append(&2, R.Op, Ops.item.k(Layer.look(U32.to_nat(layer)), p, v, c, fade), rest)
+      List.append(&2, R.Op, Ops.item.k(Look.of(kind, layer), p, v, c, fade), rest)
     case False{}:
       rest
 
-def Ops.pick(keep: Bool, on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+def Ops.pick(keep: Bool, on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   match keep:
     case True{}:
-      Ops.layer.k(on, p, layer, v, c, fade, rest)
+      Ops.layer.k(on, p, layer, v, c, fade, kind, rest)
     case False{}:
       rest
+
+# what the viewer shows: kind 0 board, 1 schematic, 2 3D; `pick` is the
+# selected item's key; `tris` and `cam` the 3D model and camera; `shown`
+# the source (Src.key) the scene belongs to; `busy` a status line; (px,
+# py) where the pointer went down; `path` a file an agent asked to show
+type Vx is Data:
+  Vx{kind: U32, pick: String, tris: List<&2, G.Tri3>, cam: MS.Cam, shown: String, busy: String, px: U32, py: U32, path: String, seen: String}
 
 # Viewer state (held by the window's state)
 # ----------------------------------------
@@ -336,10 +360,17 @@ def Ops.pick(keep: Bool, on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip,
 # `cut` is when the base was drawn: the base holds exactly the items whose
 # fade had ended by then; the rest are drawn over it every frame
 type Vw is Data:
-  Vw{scene: List<&2, Seen>, view: View, fitted: Bool, root: String, drag: Bool, lx: U32, ly: U32, base: Image, fresh: Bool, cut: Nat}
+  Vw{scene: List<&2, Seen>, view: View, fitted: Bool, root: String, drag: Bool, lx: U32, ly: U32, base: Image, fresh: Bool, cut: Nat, x: Vx}
+
+def Vx.init() -> Vx:
+  Vx{0, "", Nil{}, MS.Cam{0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.8}, "", "", 0, 0, "", ""}
 
 def Vw.init() -> Vw:
-  Vw{Nil{}, View{1.0, 0.0, 0.0}, False{}, "", False{}, 0, 0, Pix{0}, False{}, 0n}
+  Vw{Nil{}, View{1.0, 0.0, 0.0}, False{}, "", False{}, 0, 0, Pix{0}, False{}, 0n, Vx.init()}
+
+# the source a scene comes from: kind, project root and an explicit path
+def Src.key(+kind: U32, +root: String, +path: String) -> String:
+  U32.show(kind) ++ "|" ++ root ++ "|" ++ path
 
 # whether an item belongs in a base drawn at `cut`
 def Vw.settled(+born: Nat, +cut: Nat) -> Bool:
@@ -347,24 +378,135 @@ def Vw.settled(+born: Nat, +cut: Nat) -> Bool:
 
 # the ops of one layer's items, in paint order: those in a base drawn at
 # `cut` when `base` is set, the others when it is not
-def Ops.layer(ss: List<&2, Seen>, +layer: U32, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool) -> List<&2, R.Op>:
+def Ops.layer(ss: List<&2, Seen>, +layer: U32, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
   match ss:
     case Nil{}:
       Nil{}
     case Seen{B.Item{_, _, +l, p, _}, +b} <> t:
-      Ops.pick(Bool.not(Bool.xor(base, Vw.settled(b, cut))), U32.is_eq(l, layer), p, layer, v, c, Fade.alpha(now, b),
-        Ops.layer(t, layer, v, c, now, cut, base))
+      Ops.pick(Bool.not(Bool.xor(base, Vw.settled(b, cut))), U32.is_eq(l, layer), p, layer, v, c, Fade.alpha(now, b), kind,
+        Ops.layer(t, layer, v, c, now, cut, base, kind))
 
-def Ops.layers(n: Nat, +i: U32, +ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool) -> List<&2, R.Op>:
+def Ops.layers(n: Nat, +i: U32, +ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
   match n:
     case 0n:
       Nil{}
     case 1n+m:
-      List.append(&2, R.Op, Ops.layer(ss, i, v, c, now, cut, base), Ops.layers(m, (i + 1 : U32), ss, v, c, now, cut, base))
+      List.append(&2, R.Op, Ops.layer(ss, i, v, c, now, cut, base, kind), Ops.layers(m, (i + 1 : U32), ss, v, c, now, cut, base, kind))
 
 # the whole scene bottom-up (paint order), cut to the panel
-def Ops.scene(+ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool) -> List<&2, R.Op>:
-  Ops.layers(25n, 0, ss, v, c, now, cut, base)
+def Ops.scene(+ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
+  Ops.layers(Look.count(kind), 0, ss, v, c, now, cut, base, kind)
+
+# Picking
+# -------
+# A click picks the smallest visible item under the pointer (a pad over
+# the zone it sits in); tol is a few pixels in mm.
+
+def Pick.d2(+ax: F32, +ay: F32, +bx: F32, +by: F32) -> F32:
+  F32.add(F32.mul(F32.sub(ax, bx), F32.sub(ax, bx)), F32.mul(F32.sub(ay, by), F32.sub(ay, by)))
+
+# distance from (x, y) to the segment a-b
+def Pick.seg(a: B.Pt, b: B.Pt, +x: F32, +y: F32) -> F32:
+  match a b:
+    case B.Pt{+ax, +ay} B.Pt{+bx, +by}:
+      +dx = F32.sub(bx, ax)
+      +dy = F32.sub(by, ay)
+      +l2 = F32.max(F32.add(F32.mul(dx, dx), F32.mul(dy, dy)), 0.000001)
+      +t = F32.max(0.0, F32.min(1.0, F32.div(F32.add(F32.mul(F32.sub(x, ax), dx), F32.mul(F32.sub(y, ay), dy)), l2)))
+      F32.sqrt(Pick.d2(x, y, F32.add(ax, F32.mul(t, dx)), F32.add(ay, F32.mul(t, dy))))
+
+def Pick.path(ps: List<&2, B.Pt>, +x: F32, +y: F32, +acc: F32) -> F32:
+  match ps:
+    case +a <> +b <> t:
+      Pick.path(b <> t, x, y, F32.min(acc, Pick.seg(a, b, x, y)))
+    case _:
+      acc
+
+def Pick.inside(b: D.Box, +x: F32, +y: F32) -> Bool:
+  match b:
+    case D.Box{x0, y0, x1, y1}:
+      Bool.and(Bool.and(F32.is_ge(x, x0), F32.is_le(x, x1)), Bool.and(F32.is_ge(y, y0), F32.is_le(y, y1)))
+
+def Pick.area(b: D.Box) -> F32:
+  match b:
+    case D.Box{x0, y0, x1, y1}:
+      F32.mul(F32.max(F32.sub(x1, x0), 0.01), F32.max(F32.sub(y1, y0), 0.01))
+
+def Pick.big() -> D.Box:
+  D.Box{1000000.0, 1000000.0, F32.neg(1000000.0), F32.neg(1000000.0)}
+
+def Pick.circ(c: B.Pt, +r: F32) -> D.Box:
+  match c:
+    case B.Pt{+x, +y}:
+      D.Box{F32.sub(x, r), F32.sub(y, r), F32.add(x, r), F32.add(y, r)}
+
+# whether the prim is under (x, y), and its size (for the smallest-wins rule)
+def Pick.hit(p: B.Prim, +x: F32, +y: F32, +tol: F32) -> Bool & F32:
+  match p:
+    case B.PSeg{+a, +b, +w}:
+      (F32.is_le(Pick.seg(a, b, x, y), F32.add(F32.mul(w, 0.5), tol)), Pick.area(View.box.pt(b, View.box.pt(a, Pick.big()))))
+    case B.PLine{+ps, +w}:
+      (F32.is_le(Pick.path(ps, x, y, 1000000.0), F32.add(F32.mul(w, 0.5), tol)), Pick.area(View.box.pts(ps, Pick.big())))
+    case B.PCirc{B.Pt{+cx, +cy}, +r, +w, True{}}:
+      (F32.is_le(F32.sqrt(Pick.d2(x, y, cx, cy)), F32.add(r, tol)), F32.mul(F32.mul(r, r), 4.0))
+    case B.PCirc{B.Pt{+cx, +cy}, +r, +w, False{}}:
+      (F32.is_le(F32.abs(F32.sub(F32.sqrt(Pick.d2(x, y, cx, cy)), r)), F32.add(F32.mul(w, 0.5), tol)), F32.mul(F32.mul(r, r), 4.0))
+    case B.PPoly{+ps, _, True{}}:
+      (Pick.inside(View.box.pts(ps, Pick.big()), x, y), Pick.area(View.box.pts(ps, Pick.big())))
+    case B.PPoly{+ps, +w, False{}}:
+      (F32.is_le(Pick.path(ps, x, y, 1000000.0), F32.add(F32.mul(w, 0.5), tol)), Pick.area(View.box.pts(ps, Pick.big())))
+
+def Pick.better.k(take: Bool, +key: String, +area: F32, bk: String, +ba: F32) -> String & F32:
+  match take:
+    case True{}:
+      (key, area)
+    case False{}:
+      (bk, ba)
+
+def Pick.better(r: Bool & F32, +shown: Bool, +key: String, best: String & F32) -> String & F32:
+  (hit, +area) = r
+  (bk, +ba) = best
+  Pick.better.k(Bool.and(Bool.and(hit, shown), F32.is_lt(area, ba)), key, area, bk, ba)
+
+def Look.alpha.k(l: U32 & U32) -> U32:
+  (_, a) = l
+  a
+
+def Look.alpha(+kind: U32, +layer: U32) -> U32:
+  Look.alpha.k(Look.of(kind, layer))
+
+def Pick.go(ss: List<&2, Seen>, +x: F32, +y: F32, +tol: F32, +kind: U32, best: String & F32) -> String & F32:
+  match ss:
+    case Nil{}:
+      best
+    case Seen{B.Item{+k, _, +l, p, _}, _} <> t:
+      Pick.go(t, x, y, tol, kind, Pick.better(Pick.hit(p, x, y, tol), U32.is_gt(Look.alpha(kind, l), 0), k, best))
+
+def Pick.key(r: String & F32) -> String:
+  (k, _) = r
+  k
+
+# the key of the item under screen point (sx, sy), "" for none
+def Pick.at(+ss: List<&2, Seen>, v: View, +sx: F32, +sy: F32, +kind: U32) -> String:
+  match v:
+    case View{+z, +ox, +oy}:
+      Pick.key(Pick.go(ss, F32.div(F32.sub(sx, ox), z), F32.div(F32.sub(sy, oy), z), F32.div(4.0, z), kind, ("", 1000000000000.0)))
+
+# the picked item's info ("" when it is gone)
+def Pick.info(ss: List<&2, Seen>, +key: String) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case Seen{B.Item{+k, _, _, _, info}, _} <> t:
+      Bool.pick(String, String.eq(k, key), info, Pick.info(t, key))
+
+# the picked item drawn again on top, bright
+def Ops.picked(ss: List<&2, Seen>, +key: String, +v: View, +c: D.Clip) -> List<&2, R.Op>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Seen{B.Item{+k, _, _, p, _}, _} <> t:
+      Bool.pick(List<&2, R.Op>, String.eq(k, key), Ops.prim(p, v, c, 16777215, 200), Ops.picked(t, key, v, c))
 
 # some item's fade ended after the base was drawn: fold it into the base
 def Vw.late(ss: List<&2, Seen>, +cut: Nat, +now: Nat) -> Bool:

@@ -4,6 +4,8 @@ import ./win.bend as W
 import ../core/json.bend as J
 import ./viewer.bend as V
 import ../core/board.bend as B
+import ../core/glb.bend as G
+import ../gfx/mesh.bend as MS
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -269,27 +271,28 @@ def Hit.go(hs: List<&2, Hit>, hit: Bool, +x: U32, +y: U32) -> Maybe<&2, Hit>:
 def Hit.find(+hs: List<&2, Hit>, +x: U32, +y: U32) -> Maybe<&2, Hit>:
   Hit.go(hs, Hit.first(hs, x, y), x, y)
 
-def Nui.click.act(focus: Bool, n: Nui, +action: String, +value: String) -> Step:
-  match focus:
-    case True{}:
-      Nui.focus(n, value)
-    case False{}:
-      Nui.act(n, action, value)
+# show another kind of view: the scene starts empty and refits
+def Vw.kind_set(v: V.Vw, +k: U32, +path: String) -> V.Vw:
+  match v:
+    case V.Vw{_, vi, _, r, d, lx, ly, b, _, cu, V.Vx{_, _, t, c, sh, bu, px, py, _, se}}:
+      V.Vw{Nil{}, vi, False{}, "", d, lx, ly, b, False{}, cu, V.Vx{k, "", t, c, sh, bu, px, py, path, se}}
 
-def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
-  match m:
-    case Some{Hit{_, _, _, _, +action, +value}}:
-      Nui.click.act(String.eq(action, "focus"), n, action, value)
-    case None{}:
-      Step{n, Nil{}, False{}}
+def Vw.pick_set(v: V.Vw, +key: String) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, _, t, c, sh, bu, px, py, pa, se}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, key, t, c, sh, bu, px, py, pa, se}}
+
+def Nui.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
+  match xs:
+    case Nil{}:
+      i
+    case +h <> t:
+      Bool.pick(Nat, String.eq(h, x), i, Nui.pos(t, x, 1n+i))
 
 def Nui.hits(n: Nui) -> List<&2, Hit>:
   match n:
     case Nui{_, _, _, _, _, _, _, _, _, _, hi, _, vw}:
       hi
-
-def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
-  Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
 
 def Nui.wheel.k(side: Bool, up: Bool, down: Bool, n: Nui, +sd: U32, +sc: U32) -> Step:
   match side up down n:
@@ -363,27 +366,96 @@ def Nui.vw(n: Nui) -> V.Vw:
     case Nui{_, _, _, _, _, _, _, _, _, _, _, _, vw}:
       vw
 
+def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
+  match i:
+    case 0n:
+      Step{Nui.with_vw(n, Vw.kind_set(Nui.vw(n), Maybe.default(&2, U32, U32.read(value), 0), "")), Nil{}, True{}}
+    case 1n:
+      Step{Nui.with_vw(n, Vw.pick_set(Nui.vw(n), "")), Nil{}, True{}}
+    case _:
+      Step{n, Nil{}, False{}}
+
+# the viewer's own actions (they never reach the client state)
+def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick"], action, 0n), n, value)
+
+def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
+  match focus:
+    case True{}:
+      Nui.focus(n, value)
+    case False{}:
+      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.act(n, action, value))
+
+def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +action, +value}}:
+      Nui.click.act(String.eq(action, "focus"), n, action, value)
+    case None{}:
+      Step{n, Nil{}, False{}}
+
+def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
+  Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
+
 def Vw.drag(v: V.Vw, on: Bool, +x: U32, +y: U32) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, _, _, _, b, fr, cu}:
-      V.Vw{s, vi, f, r, on, x, y, b, fr, cu}
+    case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, vx}:
+      V.Vw{s, vi, f, r, on, x, y, b, fr, cu, vx}
 
-def Vw.moved(v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+def Vx.kind(x: V.Vx) -> U32:
+  match x:
+    case V.Vx{k, _, _, _, _, _, _, _, _, _}:
+      k
+
+def Vw.x(v: V.Vw) -> V.Vx:
   match v:
-    case V.Vw{s, vi, f, r, True{}, +lx, +ly, b, _, cu}:
-      V.Vw{s, V.View.pan(vi, F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly))), f, r, True{}, x, y, b, False{}, cu}
-    case _:
+    case V.Vw{_, _, _, _, _, _, _, _, _, _, vx}:
+      vx
+
+def Vw.kind(v: V.Vw) -> U32:
+  Vx.kind(Vw.x(v))
+
+def Vx.orbit(x: V.Vx, +dx: F32, +dy: F32) -> V.Vx:
+  match x:
+    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se}:
+      V.Vx{k, p, t, MS.Cam.orbit(c, F32.mul(dx, 0.01), F32.mul(dy, 0.01)), sh, bu, px, py, pa, se}
+
+def Vx.zoom(x: V.Vx, +f: F32) -> V.Vx:
+  match x:
+    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se}:
+      V.Vx{k, p, t, MS.Cam.zoom(c, F32.div(1.0, f)), sh, bu, px, py, pa, se}
+
+def Vx.refit(x: V.Vx) -> V.Vx:
+  match x:
+    case V.Vx{k, p, +t, _, sh, bu, px, py, pa, se}:
+      V.Vx{k, p, t, MS.Cam.fit(t), sh, bu, px, py, pa, se}
+
+# a drag pans a board or schematic and orbits a 3D model
+def Vw.moved.k(three: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+  match three v:
+    case False{} V.Vw{s, vi, f, r, True{}, +lx, +ly, b, _, cu, vx}:
+      V.Vw{s, V.View.pan(vi, F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly))), f, r, True{}, x, y, b, False{}, cu, vx}
+    case True{} V.Vw{s, vi, f, r, True{}, +lx, +ly, b, _, cu, vx}:
+      V.Vw{s, vi, f, r, True{}, x, y, b, False{}, cu, Vx.orbit(vx, F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly)))}
+    case _ _:
       v
 
-def Vw.zoom(v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
-  match v:
-    case V.Vw{s, vi, fi, r, d, lx, ly, b, _, cu}:
-      V.Vw{s, V.View.zoom(vi, f, U32.to_f32(x), U32.to_f32(y)), fi, r, d, lx, ly, b, False{}, cu}
+def Vw.moved(+v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+  Vw.moved.k(U32.is_eq(Vw.kind(v), 2), v, x, y)
+
+def Vw.zoom.k(three: Bool, v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
+  match three v:
+    case False{} V.Vw{s, vi, fi, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, V.View.zoom(vi, f, U32.to_f32(x), U32.to_f32(y)), fi, r, d, lx, ly, b, False{}, cu, vx}
+    case True{} V.Vw{s, vi, fi, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, fi, r, d, lx, ly, b, False{}, cu, Vx.zoom(vx, f)}
+
+def Vw.zoom(+v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
+  Vw.zoom.k(U32.is_eq(Vw.kind(v), 2), v, f, x, y)
 
 def Vw.refit(v: V.Vw) -> V.Vw:
   match v:
-    case V.Vw{s, vi, _, r, d, lx, ly, b, _, cu}:
-      V.Vw{s, vi, False{}, r, d, lx, ly, b, False{}, cu}
+    case V.Vw{s, vi, _, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, False{}, r, d, lx, ly, b, False{}, cu, Vx.refit(vx)}
 
 def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match nofocus fit:
@@ -407,31 +479,96 @@ def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
 
 def Vw.stale(v: V.Vw) -> V.Vw:
   match v:
-    case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu}:
-      V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu}
+    case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, vx}
 
 # a board file arrived for a project root: same root merges (only what
 # changed fades), a new root starts over (the whole board fades in)
+def Vx.shown(x: V.Vx) -> String:
+  match x:
+    case V.Vx{_, _, _, _, sh, _, _, _, _, _}:
+      sh
+
+def Vx.busy(x: V.Vx, bu: String) -> V.Vx:
+  match x:
+    case V.Vx{k, p, t, c, sh, _, px, py, pa, se}:
+      V.Vx{k, p, t, c, sh, bu, px, py, pa, se}
+
+# a scene file arrived for a source: the same source merges (only what
+# changed fades), another starts over (the whole scene fades in)
 def Vw.board.k(same: Bool, v: V.Vw, +root: String, +items: List<&2, B.Item>, +now: Nat) -> V.Vw:
   match same v:
-    case True{} V.Vw{+s, vi, f, _, d, lx, ly, b, _, cu}:
-      V.Vw{V.Scene.update(s, items, now), vi, f, root, d, lx, ly, b, False{}, cu}
-    case False{} V.Vw{_, vi, _, _, d, lx, ly, b, _, cu}:
-      V.Vw{V.Scene.update(Nil{}, items, now), vi, False{}, root, d, lx, ly, b, False{}, cu}
+    case True{} V.Vw{+s, vi, f, _, d, lx, ly, b, _, cu, vx}:
+      V.Vw{V.Scene.update(s, items, now), vi, f, root, d, lx, ly, b, False{}, cu, Vx.busy(vx, "")}
+    case False{} V.Vw{_, vi, _, _, d, lx, ly, b, _, cu, vx}:
+      V.Vw{V.Scene.update(Nil{}, items, now), vi, False{}, root, d, lx, ly, b, False{}, cu, Vx.busy(vx, "")}
+
+def Vx.mesh(x: V.Vx, ts: List<&2, G.Tri3>) -> V.Vx:
+  match x:
+    case V.Vx{k, p, _, c, sh, _, px, py, pa, se}:
+      Vx.refit(V.Vx{k, p, ts, c, sh, "", px, py, pa, se})
+
+def Vw.mesh(v: V.Vw, ts: List<&2, G.Tri3>) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, Vx.mesh(vx, ts)}
+
+def Vw.status(v: V.Vw, +text: String) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, vx}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, Vx.busy(vx, text)}
+
+def Vw.if(ok: Bool, v: V.Vw, k: V.Vw -> V.Vw) -> V.Vw:
+  match ok:
+    case True{}:
+      k(v)
+    case False{}:
+      v
 
 def Vw.root(v: V.Vw) -> String:
   match v:
-    case V.Vw{_, _, _, r, _, _, _, _, _, _}:
+    case V.Vw{_, _, _, r, _, _, _, _, _, _, vx}:
       r
 
-def Nui.board(+n: Nui, +root: String, +items: List<&2, B.Item>, +now: Nat) -> Nui:
-  Nui.with_vw(n, Vw.board.k(String.eq(Vw.root(Nui.vw(n)), root), Nui.vw(n), root, items, now))
+def Vw.fresh_for(+v: V.Vw, +key: String) -> Bool:
+  String.eq(Vx.shown(Vw.x(v)), key)
+
+def Vw.board.same(+v: V.Vw, +key: String, +items: List<&2, B.Item>, +now: Nat) -> V.Vw:
+  Vw.board.k(String.eq(Vw.root(v), key), v, key, items, now)
+
+# results for a source other than the one on show are stale: dropped
+def Nui.board(+n: Nui, +key: String, +items: List<&2, B.Item>, +now: Nat) -> Nui:
+  Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.board.same(v, key, items, now)))
+
+def Nui.mesh(+n: Nui, +key: String, ts: List<&2, G.Tri3>) -> Nui:
+  Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.mesh(v, ts)))
+
+def Nui.status(+n: Nui, +key: String, +text: String) -> Nui:
+  Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.status(v, text)))
+
+def Nui.source.k(x: V.Vx, +root: String) -> String:
+  match x:
+    case V.Vx{+k, _, _, _, _, _, _, _, +pa, _}:
+      V.Src.key(k, root, pa)
+
+# the source the viewer should show now (Src.key)
+def Nui.source(+n: Nui) -> String:
+  Nui.source.k(Vw.x(Nui.vw(n)), U.Ui.root(Nui.ui(n)))
+
+def Vw.asked(v: V.Vw, +key: String) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{+k, p, t, c, _, _, px, py, pa, se}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, key, Bool.pick(String, U32.is_eq(k, 2), "Exporting 3D model…", "Loading…"), px, py, pa, se}}
+
+# the viewer asked for a source (the shell starts reading it)
+def Nui.asked(+n: Nui, +key: String) -> Nui:
+  Nui.with_vw(n, Vw.asked(Nui.vw(n), key))
 
 # fit the view to the board the first time the viewer shows it
 def Vw.fit(v: V.Vw, +x0: U32, +h: U32, +w: U32) -> V.Vw:
   match v:
-    case V.Vw{+s, vi, False{}, r, d, lx, ly, b, _, cu}:
-      V.Vw{s, V.View.fit(s, U32.to_f32(x0), 52.0, U32.to_f32((w - x0 : U32)), U32.to_f32((h - 52 : U32))), Bool.not(List.is_empty(&2, V.Seen, s)), r, d, lx, ly, b, False{}, cu}
+    case V.Vw{+s, vi, False{}, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, V.View.fit(s, U32.to_f32(x0), 52.0, U32.to_f32((w - x0 : U32)), U32.to_f32((h - 52 : U32))), Bool.not(List.is_empty(&2, V.Seen, s)), r, d, lx, ly, b, False{}, cu, vx}
     case _:
       v
 
@@ -447,16 +584,79 @@ def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
     case False{}:
       n
 
-def Nui.prepare(+n: Nui) -> Nui:
-  Nui.prepare.k(Nui.panel(n), n)
+# the kind of view for a requested file: named, else from its extension
+def View.kind_of(+kind: String, +path: String) -> U32:
+  Bool.pick(U32, String.eq(kind, "schematic"), 1,
+    Bool.pick(U32, Bool.or(String.eq(kind, "3d"), String.eq(kind, "step")), 2,
+      Bool.pick(U32, String.eq(kind, "board"), 0,
+        Bool.pick(U32, String.ends_with(path, ".kicad_sch"), 1,
+          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0)))))
 
-# pointer events on the viewer: drag pans, the wheel zooms at the pointer
+def Vx.seen(x: V.Vx) -> String:
+  match x:
+    case V.Vx{_, _, _, _, _, _, _, _, _, se}:
+      se
+
+def Vw.seen_set(v: V.Vw, +seen: String) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, _}}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, fr, cu, V.Vx{k, p, t, c, sh, bu, px, py, pa, seen}}
+
+def Nui.request.k(fresh: Bool, +n: Nui, +seen: String) -> Nui:
+  match fresh:
+    case True{}:
+      Nui.with_vw(n, Vw.seen_set(Vw.kind_set(Nui.vw(n), View.kind_of(U.Ui.info(Nui.ui(n), "view.kind"), U.Ui.info(Nui.ui(n), "view.path")), U.Ui.info(Nui.ui(n), "view.path")), seen))
+    case False{}:
+      n
+
+# an agent's viewer_show request not yet applied: switch to that file
+def Nui.request(+n: Nui) -> Nui:
+  Nui.request.k(Bool.not(String.eq(U.Ui.info(Nui.ui(n), "view.n"), Vx.seen(Vw.x(Nui.vw(n))))), n, U.Ui.info(Nui.ui(n), "view.n"))
+
+def Nui.prepare(+n: Nui) -> Nui:
+  Nui.prepare.k(Nui.panel(n), Nui.request(n))
+
+# pointer events on the viewer: drag pans (or orbits), the wheel zooms at
+# the pointer, and a press released where it began picks an item
+def Vw.press(v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, V.Vx{k, p, t, c, sh, bu, _, _, pa, se}}:
+      V.Vw{s, vi, f, r, True{}, x, y, b, fr, cu, V.Vx{k, p, t, c, sh, bu, x, y, pa, se}}
+
+def Vw.release.k(click: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+  match click v:
+    case True{} V.Vw{+s, +vi, f, r, _, lx, ly, b, fr, cu, V.Vx{+k, _, t, c, sh, bu, px, py, pa, se}}:
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k)), t, c, sh, bu, px, py, pa, se}}
+    case False{} V.Vw{s, vi, f, r, _, lx, ly, b, fr, cu, vx}:
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, vx}
+
+def Vx.press_at(x: V.Vx) -> U32 & U32:
+  match x:
+    case V.Vx{_, _, _, _, _, _, px, py, _, _}:
+      (px, py)
+
+def Vw.near(p: U32 & U32, +x: U32, +y: U32) -> Bool:
+  (+px, +py) = p
+  U32.is_lt((U32.max(x, px) - U32.min(x, px) + U32.max(y, py) - U32.min(y, py) : U32), 4)
+
+def Vw.dragging(v: V.Vw) -> Bool:
+  match v:
+    case V.Vw{_, _, _, _, d, _, _, _, _, _, _}:
+      d
+
+def Vw.release(+v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+  Vw.release.k(Bool.and(Vw.dragging(v), Vw.near(Vx.press_at(Vw.x(v)), x, y)), v, x, y)
+
 def Nui.view_press(+n: Nui, +x: U32, +y: U32, down: Bool) -> Step:
-  Step{Nui.with_vw(n, Vw.drag(Nui.vw(n), down, x, y)), Nil{}, False{}}
+  match down:
+    case True{}:
+      Step{Nui.with_vw(n, Vw.press(Nui.vw(n), x, y)), Nil{}, False{}}
+    case False{}:
+      Step{Nui.with_vw(n, Vw.release(Nui.vw(n), x, y)), Nil{}, Vw.dragging(Nui.vw(n))}
 
 def Nui.dragging(n: Nui) -> Bool:
   match n:
-    case Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{_, _, _, _, d, _, _, _, _, _}}:
+    case Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{_, _, _, _, d, _, _, _, _, _, vx}}:
       d
 
 def Nui.view_move(+n: Nui, +x: U32, +y: U32) -> Step:
@@ -465,12 +665,23 @@ def Nui.view_move(+n: Nui, +x: U32, +y: U32) -> Step:
 def Nui.view_wheel(+n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
   Step{Nui.with_vw(n, Vw.zoom(Nui.vw(n), Bool.pick(F32, U32.is_eq(dir, 0), 1.25, 0.8), x, y)), Nil{}, True{}}
 
-def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
-  match viewer:
+def Nui.nohit(m: Maybe<&2, Hit>) -> Bool:
+  match m:
+    case Some{_}:
+      False{}
+    case None{}:
+      True{}
+
+def Nui.press.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match drag:
     case True{}:
       Nui.view_press(n, x, y, True{})
     case False{}:
       Nui.click(n, x, y)
+
+# a press on the viewer's own buttons is a click, elsewhere in it a drag
+def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  Nui.press.k(Bool.and(viewer, Nui.nohit(Hit.find(Nui.hits(n), x, y))), n, x, y)
 
 def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   match drag:
