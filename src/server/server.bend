@@ -11,6 +11,7 @@ import ../core/prompt.bend as Q
 import ../core/mcp.bend as MC
 import ./update.bend as UP
 import ../core/version.bend as VR
+import ./kicad.bend as K
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -37,7 +38,7 @@ type Msg is Data:
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -881,7 +882,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _}:
+    case Net{_, _, t, _, _, _}:
       t
 
 # Effects
@@ -892,9 +893,37 @@ def Net.token(n: Net) -> String:
 def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
   "http://127.0.0.1:" ++ U32.show(Cfg.port(cfg)) ++ "/mcp/" ++ thread ++ "?token=" ++ Net.token(Cfg.net(cfg))
 
-def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode) -> List<&2, String>:
+def Cfg.mtext(c: Cfg) -> String:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _}}:
+      mt
+
+def Cfg.rt(c: Cfg) -> K.Rt:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt}}:
+      rt
+
+def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
+  match rt:
+    case K.Rt{+cli, fork, +v, +c}:
+      Q.Prompt.kicad(cli, fork, v, c, ipc)
+
+def Hub.prompt.files(+cwd: String, fs: K.Files) -> String:
+  match fs:
+    case K.Files{+pro, +pcb, +sch}:
+      Q.Prompt.project(cwd, pro, pcb, sch)
+
+# one thread's instructions: the shared runtime and skills, then this
+# machine's KiCad, the project's canonical files, and what it may delegate
+def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Files) -> String:
+  String.join([Cfg.prompt(cfg),
+    Hub.prompt.kicad(Cfg.rt(cfg), Bool.not(String.eq(M.Setting.get(st, "kicad.ipc", "on"), "off"))),
+    Hub.prompt.files(cwd, fs),
+    Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n")
+
+def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode, prompt: String) -> List<&2, String>:
   match cfg:
-    case Cfg{_, _, _, _, prompt, dirs, _, _}:
+    case Cfg{_, _, _, _, _, dirs, _, _}:
       List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, dirs),
         ["--mcp-config", "{\"mcpServers\":{\"backplane\":{\"type\":\"http\",\"url\":\"" ++ Hub.mcp_url(cfg, thread) ++ "\"}}}"])
 
@@ -902,17 +931,18 @@ def Hub.start.k(m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +mod
   match m h:
     case Some{_} _:
       IO.pure(Hub, h)
-    case None{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
-      IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Hub,
-        H.Proc.spawn("claude", Hub.agent_args(cfg, thread, model, session, r, i), cwd, 0),
-        res => Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread))
+    case None{} Hub{+st, f, ls, cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        fs : K.Files <- K.Files.read(cwd)
+        res : Result<&1, &1, U32 & String, U32 & Socket> <- H.Proc.spawn("claude", Hub.agent_args(cfg, thread, model, session, r, i, Hub.prompt(cfg, st, thread, cwd, fs)), cwd, 0)
+        Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread)
 
 # `codex exec` for one turn, with this thread's MCP endpoint and the
 # Backplane instructions (the same runtime block Claude gets)
-def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String) -> List<&2, String>:
+def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, prompt: String) -> List<&2, String>:
   List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model),
     ["-c", "mcp_servers.backplane.url=\"" ++ Hub.mcp_url(cfg, thread) ++ "\"",
-     "-c", "developer_instructions=" ++ J.Json.show(J.Str{Cfg.prompt(cfg)}), text]])
+     "-c", "developer_instructions=" ++ J.Json.show(J.Str{prompt}), text]])
 
 def Tailnet.first(r: P.Ran) -> String:
   match r:
@@ -969,13 +999,13 @@ def Tailnet.https(on: Bool, +port: U32, +token: String) -> IO(Unit):
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token, _}:
+    case Net{True{}, https, +token, _, _, _}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _}:
+    case Net{False{}, _, _, _, _, _}:
       IO.pure(Unit, Unit{})
 
 def Token.digit(+d: U32) -> Char:
@@ -1032,8 +1062,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt}}
 
 # Startup
 # -------
@@ -1107,9 +1137,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
     case _ B.Watch{_, _}:
       IO.pure(Hub, h)
-    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
       do IO<Hub>:
-        IO.spawn(Unit, Codex.run(Codex.args(cfg, thread, model, session, r, text), cwd, thread, inbox))
+        fs : K.Files <- K.Files.read(cwd)
+        IO.spawn(Unit, Codex.run(Codex.args(cfg, thread, model, session, r, text, Hub.prompt(cfg, st, thread, cwd, fs)), cwd, thread, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
@@ -1157,7 +1188,7 @@ def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _}}:
       ms
 
 def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String)) -> IO(Hub):
@@ -1274,10 +1305,10 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -1351,10 +1382,84 @@ def Main.boot(cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
         tok : String <- Token.load(home)
         Main.opened(f, st, ls, Cfg.with_token(Cfg{home, w, h, p, pr, ds, v, nt}, tok), need, front)
 
-def Main.config(+user: String, +exe: String, args: List<String>, ks: String & List<&2, Q.Skill>, kicad: String) -> Cfg:
+# what the machine offers, found once at start
+type Boot is Data:
+  Boot{kdir: String, skills: List<&2, Q.Skill>, rt: K.Rt, models: String, mtext: String}
+
+def Models.strs.go(xs: List<&2, String>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      J.Str{x} <> Models.strs.go(t)
+
+def Models.strs(xs: List<&2, String>) -> J.Json:
+  J.Json.arr(Models.strs.go(xs))
+
+def Models.listed(o: J.Json) -> Bool:
+  String.eq(J.Json.get_str(o, "visibility", "list"), "list")
+
+def Models.slugs.k(keep: Bool, +slug: String, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      slug <> rest
+    case False{}:
+      rest
+
+def Models.slugs(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +o <> t:
+      Models.slugs.k(Bool.and(Models.listed(o), Bool.not(String.is_empty(J.Json.get_str(o, "slug", "")))), J.Json.get_str(o, "slug", ""), Models.slugs(t))
+
+# Codex's cached model list ({"models": [{"slug", "visibility"}]})
+def Models.codex(+text: String) -> List<&2, String>:
+  Models.slugs(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{}), "models")))
+
+def Models.claude() -> List<&2, String>:
+  ["fable", "opus", "sonnet", "haiku"]
+
+def Models.on(has: Bool, +xs: List<&2, String>) -> List<&2, String>:
+  Bool.pick(List<&2, String>, has, xs, Nil{})
+
+def Models.line(+name: String, +xs: List<&2, String>) -> String:
+  Bool.pick(String, List.is_empty(&2, String, xs), "", name ++ " (" ++ String.join(xs, ", ") ++ ")")
+
+def Models.join(+a: String, +b: String) -> String:
+  Bool.pick(String, String.is_empty(a), b, Bool.pick(String, String.is_empty(b), a, a ++ "; " ++ b))
+
+def Models.text(+cl: List<&2, String>, +cx: List<&2, String>) -> String:
+  Models.join(Models.line("claude", cl), Models.line("codex", cx))
+
+def Models.boot(ks: String & List<&2, Q.Skill>, +rt: K.Rt, +cl: List<&2, String>, +cx: List<&2, String>) -> Boot:
   (kdir, skills) = ks
+  Boot{kdir, skills, rt, J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}])), Models.text(cl, cx)}
+
+def Main.has(r: P.Ran) -> Bool:
+  match r:
+    case P.Ran{0, _}:
+      True{}
+    case _:
+      False{}
+
+# KiStack at its pinned revision (fetched when missing), the KiCad CLI,
+# and which providers and models are installed
+def Main.prepare(+user: String, +exe: String) -> IO(Boot):
+  do IO<Boot>:
+    K.KiStack.ensure(user)
+    ks : String & List<&2, Q.Skill> <- Skills.kistack.dir(user ++ "/.cache/backplane/kistack/" ++ K.KiStack.revision())
+    explicit : String <- Env.get("BACKPLANE_KICAD_CLI", "")
+    rt : K.Rt <- K.Rt.resolve(explicit, exe, user ++ "/.backplane-bend")
+    cl : P.Ran <- P.Proc.run("sh", ["-c", "command -v claude"], "/")
+    cx : P.Ran <- P.Proc.run("sh", ["-c", "command -v codex"], "/")
+    cache : String <- K.Io.text(user ++ "/.codex/models_cache.json")
+    return Models.boot(ks, rt, Models.on(Main.has(cl), Models.claude()), Models.on(Main.has(cx), Models.codex(cache)))
+
+def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
+  Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3773,
-    Q.Prompt.runtime("Claude Code", kicad, skills), [kdir], Main.version(), Net{False{}, False{}, "", ""}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()

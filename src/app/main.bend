@@ -445,8 +445,7 @@ def Shell.run(+inbox: Chan(S.Msg)) -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     +user : String <- S.Env.get("HOME", "/tmp")
-    exe : String <- S.Sys.exe_dir.io()
+    +exe : String <- S.Sys.exe_dir.io()
     args : List<String> <- IO.args()
-    ks : String & List<&2, Q.Skill> <- S.Skills.kistack(user)
-    kicad : String <- S.Env.get("BACKPLANE_KICAD_CLI", "kicad-cli")
-    S.Main.boot(S.Main.config(user, exe, args, ks, kicad), False{}, i => Shell.run(i))
+    b : S.Boot <- S.Main.prepare(user, exe)
+    S.Main.boot(S.Main.config(user, exe, args, b), False{}, i => Shell.run(i))

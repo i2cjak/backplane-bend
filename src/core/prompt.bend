@@ -101,12 +101,60 @@ def Prompt.kistack(ss: List<&2, Skill>) -> String:
   ++ "Resolve referenced scripts and documents relative to that skill's directory. User instructions take precedence. Other installed skills remain available.\n"
   ++ Prompt.skills(ss) ++ "\n</kistack_skills>"
 
-# the text appended to the provider's own system prompt
-def Prompt.runtime(harness: String, +kicad: String, ss: List<&2, Skill>) -> String:
+# the text every agent gets, before its per-thread blocks
+def Prompt.runtime(harness: String, ss: List<&2, Skill>) -> String:
   "<runtime_info>In case you're asked: you are running in Backplane through the " ++ harness
   ++ " harness. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n"
-  ++ "<kicad_runtime>Use the selected KiCad CLI at `" ++ kicad ++ "` for KiCad work. Check `\"" ++ kicad ++ "\" --version` and subcommand `--help`. Export with `\"" ++ kicad ++ "\" sch export` or `\"" ++ kicad ++ "\" pcb export`; run checks with `\"" ++ kicad ++ "\" sch erc` and `\"" ++ kicad ++ "\" pcb drc`. Use the full path when invoking it, quoting paths for your shell. The Backplane viewer shows the board live: save the canonical .kicad_pcb and it updates.</kicad_runtime>\n\n"
   ++ Prompt.kistack(ss)
+
+def Prompt.kicad.basics(+cli: String) -> String:
+  "Use the selected KiCad CLI at `" ++ cli ++ "` for KiCad work. Check `\"" ++ cli ++ "\" --version` and subcommand `--help`. Export with `\"" ++ cli ++ "\" sch export` or `\"" ++ cli ++ "\" pcb export`; run checks with `\"" ++ cli ++ "\" sch erc` and `\"" ++ cli ++ "\" pcb drc`. Use the full path when invoking it, quoting paths for your shell."
+
+def Prompt.kicad.fork(+cli: String, +version: String, +commit: String) -> String:
+  " This is Backplane KiCad " ++ version ++ ", source commit " ++ commit ++ ". For programmatic PCB/schematic edits, start `\"" ++ cli ++ "\" api-server <project-or-file> --socket <unique-socket>` and stop your server when finished. This is NNG/protobuf IPC, not HTTP. Read the matching guide https://github.com/i2cjak/Backplane_KiCad/blob/" ++ commit ++ "/BACKPLANE_IPC.md and examples https://github.com/i2cjak/Backplane_KiCad/tree/" ++ commit ++ "/scripts; protocol definitions are under api/proto at that revision. A Python IPC client is not preinstalled: when needed, use BACKPLANE_PYTHON if set to create an isolated virtualenv, install protobuf==5.29.6, pynng==0.9.0 and grpcio-tools==1.71.0, then generate matching bindings with `python -m grpc_tools.protoc` following the examples. Headless IPC has no interactive canvas; ERC/DRC use the CLI above. Preserve any `<native-filename>.backplane.json` companion metadata when moving or saving project files."
+
+def Prompt.kicad.k(fork: Bool, ipc: Bool, +cli: String, +version: String, +commit: String) -> String:
+  match fork ipc:
+    case True{} True{}:
+      Prompt.kicad.fork(cli, version, commit)
+    case True{} False{}:
+      " This is Backplane KiCad " ++ version ++ ". KiCad IPC is turned off in Backplane's settings: work through files and the CLI only, and do not start `api-server`."
+    case False{} _:
+      " No matching Backplane fork manifest was found; check available capabilities before using fork-specific API/IPC commands."
+
+# the KiCad runtime: the fork's IPC server is described only when this is
+# the fork and the kicad.ipc setting is on
+def Prompt.kicad(+cli: String, fork: Bool, +version: String, +commit: String, ipc: Bool) -> String:
+  "<kicad_runtime>" ++ Prompt.kicad.basics(cli) ++ Prompt.kicad.k(fork, ipc, cli, version, commit) ++ "</kicad_runtime>"
+
+def Prompt.path(+label: String, +p: String) -> String:
+  Bool.pick(String, String.is_empty(p), "", "\n- " ++ label ++ ": `" ++ p ++ "`")
+
+def Prompt.project.k(none: Bool, +pro: String, +pcb: String, +sch: String) -> String:
+  match none:
+    case True{}:
+      "No KiCad project was found in this project root. When you create one, give the .kicad_pro, .kicad_pcb and .kicad_sch the same name so Backplane picks them up, or name them in `.backplane.json`."
+    case False{}:
+      "This project's canonical KiCad files:" ++ Prompt.path("project", pro) ++ Prompt.path("board", pcb) ++ Prompt.path("schematic", sch)
+      ++ "\nWork on these exact paths. Backplane's viewer watches them and shows every save live, so save each meaningful step."
+
+# the files this project is assigned: `.backplane.json` in the project root
+# ({"pcb": "...", "schematic": "..."}) wins, else the .kicad_pro's siblings
+def Prompt.project(+root: String, +pro: String, +pcb: String, +sch: String) -> String:
+  "<backplane_project>Project root: `" ++ root ++ "`. "
+  ++ Prompt.project.k(Bool.and(String.is_empty(pcb), String.is_empty(sch)), pro, pcb, sch)
+  ++ "\nTo change which files are canonical, edit `.backplane.json` in the project root (keys `pcb`, `schematic`, relative paths). To show the user a board, schematic, 3D model or STEP file, call the backplane MCP tool `viewer_show` with its path.</backplane_project>"
+
+def Prompt.orchestration.k(may: Bool, +models: String) -> String:
+  match may:
+    case True{}:
+      "You may delegate well-scoped, independent pieces of work (footprint or symbol generation, part lookup, ERC/DRC review, mechanical checks) to other models with the backplane MCP tool `delegate_task`; `orchestrator_capabilities` lists them. Models available: " ++ models
+      ++ ". A child sees only the prompt you give it, so include paths and acceptance criteria, and say whether it may write the canonical board or schematic: only one agent writes a file at a time. Each result reaches you exactly once as a message when the child finishes; end your turn rather than polling. Finished tasks never restart, and delegation depth is limited."
+    case False{}:
+      "You are a delegated task at the depth limit: do not delegate further. Finish the task and put the result in your final message."
+
+def Prompt.orchestration(may: Bool, +models: String) -> String:
+  "<orchestration>" ++ Prompt.orchestration.k(may, models) ++ "</orchestration>"
 
 # Claude Code arguments
 # ---------------------

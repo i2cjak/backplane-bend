@@ -207,7 +207,7 @@ def KiStack.ensure.k(have: Bool, +dir: String) -> IO(Unit):
       do IO<Unit>:
         mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
         r : P.Ran <- P.Proc.run("sh", ["-c", "curl -fsSL --max-time 120 \"$1\" | tar -xz -C \"$2\" --strip-components=1", "sh",
-          "https://codeload.github.com/American-Embedded/KiStack/tar.gz/" ++ KiStack.revision(), dir], "")
+          "https://codeload.github.com/American-Embedded/KiStack/tar.gz/" ++ KiStack.revision(), dir], "/")
         return Unit{}
 
 # KiStack
@@ -241,5 +241,5 @@ def KiCad.install(+data: String) -> IO(String):
     mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
     r : P.Ran <- P.Proc.run("sh", ["-c",
       "set -e; cd \"$1\"; curl -fsSL -o pkg.tgz \"$2$3\"; curl -fsSL -o SUMS \"$2SHA256SUMS\"; want=$(grep \" $3\" SUMS | cut -d' ' -f1); got=$(sha256sum pkg.tgz | cut -d' ' -f1); [ \"$want\" = \"$got\" ] || { echo checksum mismatch; exit 1; }; tar -xzf pkg.tgz --strip-components=1; rm pkg.tgz SUMS",
-      "sh", dir, base, name], "")
+      "sh", dir, base, name], "/")
     return KiCad.install.k(r)
