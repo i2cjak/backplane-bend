@@ -100,6 +100,11 @@ type Change is Data:
   SessionSet{id: String, session: String, at: Nat}
   ModesSet{id: String, runtime: RuntimeMode, interaction: InteractionMode, model: String, at: Nat}
 
+# the later of two times. Base's Nat.max recurses once per unit and
+# overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
+def Time.max(+a: Nat, +b: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_ge(a, b), a, b)
+
 # Settle rule
 # -----------
 
@@ -201,7 +206,7 @@ def Thread.touched(+at: Nat, t: Thread) -> Thread:
 
 def Thread.turned(st: TurnState, +at: Nat, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, _, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  Thread{id, p, ti, c, Nat.max(a, at), st, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}
+  Thread{id, p, ti, c, Time.max(a, at), st, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}
 
 def Thread.pending_set(n: Nat, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, tu, _, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
@@ -222,7 +227,7 @@ def Thread.settled(manual: Bool, +at: Nat, t: Thread) -> Thread:
 # unsettling puts the thread back on top of the active shelf
 def Thread.unsettled(+at: Nat, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, tu, pe, ar, _, +sa, _, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  Thread{id, p, ti, c, Nat.max(a, at), tu, pe, ar, ForcedActive{}, sa, Nat.max(sa, at), pi, en, br, wt, pr, mo, rm, im, se, de}
+  Thread{id, p, ti, c, Time.max(a, at), tu, pe, ar, ForcedActive{}, sa, Time.max(sa, at), pi, en, br, wt, pr, mo, rm, im, se, de}
 
 def Thread.archived_set(b: Bool, t: Thread) -> Thread:
   Thread{id, p, ti, c, a, tu, pe, _, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
@@ -366,7 +371,7 @@ def Shelves.count(s: Shelves) -> Nat:
 # where a thread sorts on the active shelf: created, or brought back
 def Thread.rank(t: Thread) -> Nat:
   Thread{_, _, _, +c, _, _, _, _, _, _, +ua, _, _, _, _, _, _, _, _, _, _} = t
-  Nat.max(c, ua)
+  Time.max(c, ua)
 
 def Thread.settled_rank(t: Thread) -> Nat:
   Thread{_, _, _, _, _, _, _, _, _, +sa, _, _, _, _, _, _, _, _, _, _, _} = t

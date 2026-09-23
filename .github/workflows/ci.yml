@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  laws:
+    name: Check and prove
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bend
+      - run: scripts/check.sh
+
+  test:
+    name: Tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bend
+      - uses: oven-sh/setup-bun@v2
+      - run: scripts/test.sh
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: [laws]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: linux-x64,    os: ubuntu-24.04 }
+          - { target: linux-arm64,  os: ubuntu-24.04-arm }
+          - { target: darwin-arm64, os: macos-15 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bend
+      - uses: oven-sh/setup-bun@v2
+      - name: Install clang 19
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19
+          sudo ln -sf /usr/bin/clang-19 /usr/local/bin/clang
+      - run: clang --version
+      - run: scripts/build.sh
+      - run: scripts/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backplane-${{ matrix.target }}
+          path: dist/
+          retention-days: 7

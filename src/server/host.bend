@@ -1,0 +1,84 @@
+import Base
+
+# Host effects Base does not have. host.c / host.js implement them.
+
+
+def Clock.epoch() -> IO(U32):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# up to max bytes as they arrive; [] means the peer closed
+def Sock.recv_bytes(sock: Socket, max: U32) ->
+  IO(Socket & Result<&1, &1, U32 & String, List<&2, U32>>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def Sock.send_bytes(sock: Socket, data: List<&2, U32>) ->
+  IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def Sock.send_text(sock: Socket, text: String) ->
+  IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# a second handle on the same socket (one reader, one writer)
+def Sock.dup(sock: Socket) -> IO(Socket & Result<&1, &1, U32 & String, Socket>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# end our writing side; the peer reads EOF
+def Sock.shutdown(sock: Socket) -> IO(Socket):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# start cmd in cwd; stdin+stdout are the returned socket. err: 0 drop
+# stderr, 1 merge it into stdout, 2 inherit
+def Proc.spawn(cmd: String, args: List<&2, String>, cwd: String, err: U32) ->
+  IO(Result<&1, &1, U32 & String, U32 & Socket>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def Proc.wait(pid: U32) -> IO(U32):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def Proc.kill(pid: U32, sig: U32) -> IO(Unit):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# (kind, (size, mtime)): kind 0 file, 1 dir, 2 other
+def FS.stat(path: String) -> IO(Result<&1, &1, U32 & String, U32 & U32 & U32>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def FS.list(path: String) -> IO(Result<&1, &1, U32 & String, List<String>>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def FS.mkdirs(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def FS.rename(from: String, to: String) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def FS.remove(path: String) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+def FS.chmod(path: String, mode: U32) -> IO(Result<&1, &1, U32 & String, Unit>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# listen on one interface (Base's TCP.listen binds all of them)
+def Net.listen(host: String, port: U32) -> IO(Result<&1, &1, U32 & String, Listener>):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
+# the directory holding the running binary
+def Sys.exe_dir() -> IO(String):
+  import "./effects/host.c"
+  import "./effects/host.js"

@@ -330,7 +330,6 @@ def Lex.idle(k: Cls, c: Char, out: List<&2, Tok>) -> Lex & List<&2, Tok>:
     case COther{}:
       Lex.start(c, out)
 
-
 def Lex.esc.b.k(b: Bool, f: Bool, +u: U32, acc: String) -> Lex:
   match b f:
     case True{} _:
