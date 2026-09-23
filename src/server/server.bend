@@ -579,14 +579,16 @@ def Accept.loop(fuel: Nat, l: Listener, +id: U32, +web: String, +inbox: Chan(Msg
       IO.bind(Listener & Result<&1, &1, U32 & String, Socket>, Unit, TCP.accept(l),
         r => Accept.got(r, id, web, inbox, trusted, token, l2 => Accept.loop(f, l2, (id + 1 : U32), web, inbox, trusted, token)))
 
+# a tick at start (threads idle past the window settle at once), then
+# every minute
 def Ticker.loop(fuel: Nat, +inbox: Chan(Msg)) -> IO(Unit):
   match fuel:
     case 0n:
       IO.pure(Unit, Unit{})
     case 1n+f:
       do IO<Unit>:
-        IO.sleep(60000)
         ok : Bool <- Chan.send(Msg, inbox, Tick{})
+        IO.sleep(60000)
         Ticker.loop(f, inbox)
 
 # The hub

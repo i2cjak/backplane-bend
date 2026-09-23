@@ -600,19 +600,40 @@ def Lay.settle(o: M.Override, auto: Bool) -> List<&2, S.Hit>:
     case _ _:
       [S.Hit{0, 0, 0, 0, "Settle", "settle"}]
 
+def Lay.buttons.w(+ty: Ty, bs: List<&2, S.Hit>) -> U32:
+  match bs:
+    case Nil{}:
+      0
+    case S.Hit{_, _, _, _, +label, _} <> t:
+      (Lay.button.w(ty, label) + 8 + Lay.buttons.w(ty, t) : U32)
+
+def Lay.header.bs(turn: M.TurnState, override: M.Override, +sa: Nat, +ua: Nat, pinned: Bool, panel: Bool) -> List<&2, S.Hit>:
+  List.concat(&2, S.Hit, [
+    [S.Hit{0, 0, 0, 0, Bool.pick(String, panel, "Hide viewer", "Viewer"), "panel"},
+     S.Hit{0, 0, 0, 0, "Archive", "archive"}],
+    Lay.settle(override, Nat.is_gt(sa, ua)),
+    [Lay.pin(pinned)],
+    Bool.pick(List<&2, S.Hit>, Lay.running(turn), [S.Hit{0, 0, 0, 0, "Stop", "interrupt"}], Nil{})])
+
+# the title and branch get what the buttons leave
+# s fitted to px, or nothing when there is no room for a few letters
+def Lay.fit_or_none(+ty: Ty, +k: Nat, +s: String, +px: U32) -> String:
+  Bool.pick(String, U32.is_lt(px, 32), "", Ty.fit(ty, k, s, px))
+
+def Lay.header.k(+ty: Ty, +title: String, +branch: String, +bs: List<&2, S.Hit>, +x0: U32, +x1: U32) -> Out:
+  +room = {U32.sub(U32.sub((x1 - x0 : U32), Lay.buttons.w(ty, bs)), 56) : U32}
+  +t = Ty.fit(ty, 0n, title, room)
+  +tw = Ty.width(ty, 0n, t)
+  Out.all([
+    Out.ops([D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)]),
+    Out.ops(Ty.text(ty, 0n, t, D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())),
+    Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.sub(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 36 + tw : U32), 0, 52, T.Th.faint())),
+    Lay.buttons(ty, bs, 12, (x1 - 16 : U32))])
+
 def Lay.header(+ty: Ty, t: M.Thread, +x0: U32, +x1: U32, panel: Bool) -> Out:
   match t:
     case M.Thread{_, _, +title, _, _, turn, _, _, override, +sa, +ua, pinned, _, +branch, _, _, _, _, _, _, _}:
-      Out.all([
-        Out.ops([D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)]),
-        Out.ops(Ty.text(ty, 0n, title, D.Clip{x0, 0, (x1 - 340 : U32), 52}, (x0 + 24 : U32), 0, 52, T.Th.text())),
-        Out.ops(Ty.text(ty, 2n, branch, D.Clip{x0, 0, (x1 - 340 : U32), 52}, (x0 + 36 + Ty.width(ty, 0n, title) : U32), 0, 52, T.Th.faint())),
-        Lay.buttons(ty, List.concat(&2, S.Hit, [
-          [S.Hit{0, 0, 0, 0, Bool.pick(String, panel, "Hide viewer", "Viewer"), "panel"},
-           S.Hit{0, 0, 0, 0, "Archive", "archive"}],
-          Lay.settle(override, Nat.is_gt(sa, ua)),
-          [Lay.pin(pinned)],
-          Bool.pick(List<&2, S.Hit>, Lay.running(turn), [S.Hit{0, 0, 0, 0, "Stop", "interrupt"}], Nil{})]), 12, (x1 - 16 : U32))])
+      Lay.header.k(ty, title, branch, Lay.header.bs(turn, override, sa, ua, pinned, panel), x0, x1)
 
 def Lay.lines(+ty: Ty, ls: List<&2, String>, +c: D.Clip, +x: U32, +y: U32) -> Out:
   match ls:
@@ -861,9 +882,13 @@ def Lay.empty(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
 def Set.head(+ty: Ty, +label: String, +x: U32, +y: U32) -> Out:
   Out.ops(Ty.text(ty, 1n, label, D.Clip.all(), x, y, 28, T.Th.text()))
 
+# a row whose right `rw` pixels hold controls
+def Set.row.r(+ty: Ty, +label: String, +note: String, +x: U32, +y: U32, +w: U32, +rw: U32) -> Out:
+  Out.ops(List.append(&2, R.Op, Ty.text(ty, 0n, Ty.fit(ty, 0n, label, U32.sub(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), y, 28, T.Th.soft()),
+    Ty.text(ty, 2n, Ty.fit(ty, 2n, note, U32.sub(w, (32 + rw : U32))), D.Clip.all(), (x + 16 : U32), (y + 24 : U32), 20, T.Th.faint())))
+
 def Set.row(+ty: Ty, +label: String, +note: String, +x: U32, +y: U32, +w: U32) -> Out:
-  Out.ops(List.append(&2, R.Op, Ty.text(ty, 0n, label, D.Clip.all(), (x + 16 : U32), y, 28, T.Th.soft()),
-    Ty.text(ty, 2n, Ty.fit(ty, 2n, note, (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), (y + 24 : U32), 20, T.Th.faint())))
+  Set.row.r(ty, label, note, x, y, w, 0)
 
 def Set.card(+x: U32, +y: U32, +w: U32, +h: U32) -> Out:
   Out.ops(Lay.box(D.Clip.all(), x, y, w, h, 10, T.Th.panel(), T.Th.line()))
@@ -920,7 +945,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings"),
     Set.head(ty, "Threads", x, 76),
     Set.card(x, 108, w, 64),
-    Set.row(ty, "Settle after", "Threads idle this long move to Settled. They stay saved.", x, 110, w),
+    Set.row.r(ty, "Settle after", "Threads idle this long move to Settled. They stay saved.", x, 110, w, 190),
     Set.days(ty, M.Setting.get(st, "settle.days", "3"), (x + w - 172 : U32), 126),
     Set.head(ty, "Agents", x, 192),
     Set.card(x, 224, w, (124 + dy : U32)),
@@ -931,7 +956,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
     Set.card(x, (400 + dy : U32), w, 150),
     Set.row(ty, "KiCad CLI", U.Str.get(info, "kicad.cli"), x, (402 + dy : U32), w),
     Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (450 + dy : U32)),
-    Set.row(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (486 + dy : U32), w),
+    Set.row.r(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (486 + dy : U32), w, 140),
     Lay.chip(ty, (x + w - 120 : U32), (500 + dy : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
     Lay.chip(ty, (x + w - 70 : U32), (500 + dy : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
     Set.head(ty, "Network and updates", x, (570 + dy : U32)),
