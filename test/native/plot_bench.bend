@@ -33,13 +33,13 @@ def go(r: File & Result<&1, &1, U32 & String, List<&2, U32>>, +sch: Bool) -> IO(
     +cs : List<&2, P.Chunk> = P.Plot.chunks(pl)
     +m : Nat = List.length(&2, P.Chunk, cs)
     +t2 : Nat <- IO.now()
-    +msg : String = P.Plot.msg("k", P.Plot.box(pl), P.Plot.delta(cs, Nil{}))
-    +len : Nat = String.length(msg)
+    +msg : List<&2, U32> = P.Plot.msg("k", P.Plot.box(pl), P.Plot.thick(pl), P.Plot.delta(cs, Nil{}))
+    +len : Nat = List.length(&2, U32, msg)
     +t3 : Nat <- IO.now()
     +again : Nat = P.Plot.fresh(P.Plot.delta(cs, cs))
     t4 : Nat <- IO.now()
     IO.print(Nat.show(n) ++ " items " ++ Nat.show(Nat.sub(t1, t0)) ++ " ms, " ++ Nat.show(m) ++ " chunks " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms, message "
-      ++ Nat.show(len) ++ " chars " ++ Nat.show(Nat.sub(t3, t2)) ++ " ms, unchanged delta " ++ Nat.show(again) ++ " fresh " ++ Nat.show(Nat.sub(t4, t3)) ++ " ms")
+      ++ Nat.show(len) ++ " bytes " ++ Nat.show(Nat.sub(t3, t2)) ++ " ms, unchanged delta " ++ Nat.show(again) ++ " fresh " ++ Nat.show(Nat.sub(t4, t3)) ++ " ms")
 
 def once(+path: String) -> IO(Unit):
   do IO<Unit>:

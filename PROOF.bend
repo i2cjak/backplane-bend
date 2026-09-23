@@ -2415,6 +2415,12 @@ def Laws.fold_user_shut(live):
 def Laws.fold_default_live(live):
   {==}
 
+def Laws.hub_frames_cbor(t):
+  {==}
+
+def Laws.hub_plot_frames_binary(s):
+  {==}
+
 # The phones' board viewer
 # ------------------------
 
@@ -2432,8 +2438,9 @@ def eq_chunk_k_sound(s, a, b, hs, h):
       Empty.absurd({a == b : PL.Chunk}, false_ne_true(h))
     case True{}:
       match a b:
-        case PL.Chunk{+s1, +l1, +c1, +a1, +m1, +w1, +d1} PL.Chunk{+s2, +l2, +c2, +a2, +m2, +w2, +d2}:
-          +r5 = Bool.and(U32.is_eq(w1, w2), Q.Eq.str(d1, d2))
+        case PL.Chunk{+s1, +l1, +c1, +a1, +m1, +w1, +d1, +i1} PL.Chunk{+s2, +l2, +c2, +a2, +m2, +w2, +d2, +i2}:
+          +r6 = Bool.and(Q.Eq.str(d1, d2), Q.Eq.str(i1, i2))
+          +r5 = Bool.and(U32.is_eq(w1, w2), r6)
           +r4 = Bool.and(U32.is_eq(m1, m2), r5)
           +r3 = Bool.and(U32.is_eq(a1, a2), r4)
           +r2 = Bool.and(U32.is_eq(c1, c2), r3)
@@ -2441,20 +2448,23 @@ def eq_chunk_k_sound(s, a, b, hs, h):
           +h2 = and_r(U32.is_eq(c1, c2), r3, h1)
           +h3 = and_r(U32.is_eq(a1, a2), r4, h2)
           +h4 = and_r(U32.is_eq(m1, m2), r5, h3)
+          +h5 = and_r(U32.is_eq(w1, w2), r6, h4)
           e0 = u32_eq_sound(s1, s2, hs)
           el = u32_eq_sound(l1, l2, and_l(U32.is_eq(l1, l2), r2, h))
           ec = u32_eq_sound(c1, c2, and_l(U32.is_eq(c1, c2), r3, h1))
           ea = u32_eq_sound(a1, a2, and_l(U32.is_eq(a1, a2), r4, h2))
           em = u32_eq_sound(m1, m2, and_l(U32.is_eq(m1, m2), r5, h3))
-          ew = u32_eq_sound(w1, w2, and_l(U32.is_eq(w1, w2), Q.Eq.str(d1, d2), h4))
-          ed = eq_str_sound(d1, d2, and_r(U32.is_eq(w1, w2), Q.Eq.str(d1, d2), h4))
-          %e0 : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{_, l2, c2, a2, m2, w2, d2} : PL.Chunk}
-          %el : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, _, c2, a2, m2, w2, d2} : PL.Chunk}
-          %ec : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, _, a2, m2, w2, d2} : PL.Chunk}
-          %ea : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, _, m2, w2, d2} : PL.Chunk}
-          %em : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, _, w2, d2} : PL.Chunk}
-          %ew : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, m1, _, d2} : PL.Chunk}
-          %ed : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, m1, w1, _} : PL.Chunk}
+          ew = u32_eq_sound(w1, w2, and_l(U32.is_eq(w1, w2), r6, h4))
+          ed = eq_str_sound(d1, d2, and_l(Q.Eq.str(d1, d2), Q.Eq.str(i1, i2), h5))
+          ei = eq_str_sound(i1, i2, and_r(Q.Eq.str(d1, d2), Q.Eq.str(i1, i2), h5))
+          %e0 : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{_, l2, c2, a2, m2, w2, d2, i2} : PL.Chunk}
+          %el : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, _, c2, a2, m2, w2, d2, i2} : PL.Chunk}
+          %ec : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, _, a2, m2, w2, d2, i2} : PL.Chunk}
+          %ea : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, c1, _, m2, w2, d2, i2} : PL.Chunk}
+          %em : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, c1, a1, _, w2, d2, i2} : PL.Chunk}
+          %ew : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, c1, a1, m1, _, d2, i2} : PL.Chunk}
+          %ed : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, c1, a1, m1, w1, _, i2} : PL.Chunk}
+          %ei : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1} == PL.Chunk{s1, l1, c1, a1, m1, w1, d1, _} : PL.Chunk}
           {==}
 
 # chunks compared equal are equal
@@ -2466,8 +2476,8 @@ law eq_chunk_sound:
 
 def eq_chunk_sound(a, b, h):
   match a b:
-    case PL.Chunk{+s1, l1, c1, a1, m1, w1, d1} PL.Chunk{+s2, l2, c2, a2, m2, w2, d2}:
-      eq_chunk_k_sound(U32.is_eq(s1, s2), PL.Chunk{s1, l1, c1, a1, m1, w1, d1}, PL.Chunk{s2, l2, c2, a2, m2, w2, d2}, {==}, h)
+    case PL.Chunk{+s1, l1, c1, a1, m1, w1, d1, i1} PL.Chunk{+s2, l2, c2, a2, m2, w2, d2, i2}:
+      eq_chunk_k_sound(U32.is_eq(s1, s2), PL.Chunk{s1, l1, c1, a1, m1, w1, d1, i1}, PL.Chunk{s2, l2, c2, a2, m2, w2, d2, i2}, {==}, h)
 
 law eq_chunk_refl:
   for +x: PL.Chunk
@@ -2475,14 +2485,15 @@ law eq_chunk_refl:
 
 def eq_chunk_refl(x):
   match x:
-    case PL.Chunk{+s, +l, +c, +a, +m, +w, +d}:
-      %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s)) : {PL.Eq.chunk.k(_, PL.Chunk{s, l, c, a, m, w, d}, PL.Chunk{s, l, c, a, m, w, d}) == True{} : Bool}
-      %Equal.sym(Bool, U32.is_eq(l, l), True{}, u32_eq_refl(l)) : {Bool.and(_, Bool.and(U32.is_eq(c, c), Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d)))))) == True{} : Bool}
-      %Equal.sym(Bool, U32.is_eq(c, c), True{}, u32_eq_refl(c)) : {Bool.and(_, Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d))))) == True{} : Bool}
-      %Equal.sym(Bool, U32.is_eq(a, a), True{}, u32_eq_refl(a)) : {Bool.and(_, Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d)))) == True{} : Bool}
-      %Equal.sym(Bool, U32.is_eq(m, m), True{}, u32_eq_refl(m)) : {Bool.and(_, Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d))) == True{} : Bool}
-      %Equal.sym(Bool, U32.is_eq(w, w), True{}, u32_eq_refl(w)) : {Bool.and(_, Q.Eq.str(d, d)) == True{} : Bool}
-      eq_str_refl(d)
+    case PL.Chunk{+s, +l, +c, +a, +m, +w, +d, +i}:
+      %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s)) : {PL.Eq.chunk.k(_, PL.Chunk{s, l, c, a, m, w, d, i}, PL.Chunk{s, l, c, a, m, w, d, i}) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(l, l), True{}, u32_eq_refl(l)) : {Bool.and(_, Bool.and(U32.is_eq(c, c), Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Bool.and(Q.Eq.str(d, d), Q.Eq.str(i, i))))))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(c, c), True{}, u32_eq_refl(c)) : {Bool.and(_, Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Bool.and(Q.Eq.str(d, d), Q.Eq.str(i, i)))))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(a, a), True{}, u32_eq_refl(a)) : {Bool.and(_, Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Bool.and(Q.Eq.str(d, d), Q.Eq.str(i, i))))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(m, m), True{}, u32_eq_refl(m)) : {Bool.and(_, Bool.and(U32.is_eq(w, w), Bool.and(Q.Eq.str(d, d), Q.Eq.str(i, i)))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(w, w), True{}, u32_eq_refl(w)) : {Bool.and(_, Bool.and(Q.Eq.str(d, d), Q.Eq.str(i, i))) == True{} : Bool}
+      %Equal.sym(Bool, Q.Eq.str(d, d), True{}, eq_str_refl(d)) : {Bool.and(_, Q.Eq.str(i, i)) == True{} : Bool}
+      eq_str_refl(i)
 
 law ref_next_get:
   for r: PL.Ref
@@ -2622,8 +2633,27 @@ def Laws.view_asks_once(u, cmds, h):
   %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), cmds) == U.Act{u, cmds} : U.Act}
   {==}
 
-def Laws.hub_frames_cbor(t):
+def Laws.plot_frames_binary(bs):
   {==}
 
-def Laws.hub_plot_frames_binary(s):
+def Laws.pick_nothing_there(u):
+  {==}
+
+def Laws.pick_late_ignored(u, o, h):
+  %Equal.sym(Bool, String.is_empty(U.Ui.scratch(u, "@pick.rid")), True{}, h) : {MV.View.picked.k(Bool.and(Bool.and(Bool.not(_), String.eq(J.Json.as_raw(J.Json.get(o, "id"), ""), U.Ui.scratch(u, "@pick.rid"))), String.eq(J.Json.get_str(o, "t", ""), "reply")), u, o) == u : U.Ui}
+  {==}
+
+def Laws.pick_pad_over_zone():
+  {==}
+
+def Laws.pick_pad_over_zone_after():
+  {==}
+
+def Laws.pick_top_on_tie():
+  {==}
+
+def Laws.view_3d_draws_board(root):
+  {==}
+
+def Laws.view_3d_key():
   {==}

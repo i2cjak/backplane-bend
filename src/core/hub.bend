@@ -33,6 +33,9 @@ type Out is Data:
   Git{client: U32, id: String, job: String, thread: String, cwd: String, a: String, b: String}
   TermOp{op: String, thread: String, cwd: String, data: List<&2, U32>, cols: U32, rows: U32}
   Fs{client: U32, id: String, op: String, path: String}
+  # what a piece a phone tapped is: the info of piece idx of the chunk at
+  # `at` of the plot key it holds (the plot actor answers)
+  PlotInfo{client: U32, id: String, key: String, at: Nat, idx: Nat}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -542,7 +545,7 @@ def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
    "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
-   "ask.answer", "device.register", "device.drop"]
+   "ask.answer", "device.register", "device.drop", "kicad.info"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -863,6 +866,9 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
       Device.register(now, client, id, p)
     case 20n:
       Step.reply(client, id, [M.DeviceDropped{J.Json.get_str(p, "token", ""), now}])
+    case 21n:
+      Step.outs([PlotInfo{client, id, J.Json.get_str(p, "key", ""), Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "at"), "0")), 0n),
+        Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "idx"), "0")), 0n)}])
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 

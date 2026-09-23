@@ -1,23 +1,28 @@
 import MetalKit
+import simd
 import SwiftUI
 
-// The board viewer: a plot on the GPU. A plot is uploaded once; panning
-// and zooming only move a transform, so every frame costs the same however
-// big the board. Frames are drawn on demand: while a finger moves, a fade
-// runs or a fling coasts, and never otherwise.
+// The board viewer: a plot on the GPU. A plot is uploaded once; panning,
+// zooming and orbiting only move a transform, so every frame costs the
+// same however big the board. Frames are drawn on demand: while a finger
+// moves, a fade runs or a fling coasts, and never otherwise.
 
 private struct Uniforms {
     var size: SIMD2<Float>
     var off: SIMD2<Float>
     var scale: Float
     var fade: Float
-    var pad = SIMD2<Float>(0, 0)
+    var z: Float = 0
+    var focal: Float = 0
     var color: SIMD4<Float>
+    var mvp = matrix_identity_float4x4
+    var light = SIMD4<Float>(0, 0, 1, 0)
 }
 
 // one layer's share of the buffers: capsules and fill vertices, the chunks
 // already shown first, then those fading in
 private struct LayerDraw {
+    var layer: Int
     var color: SIMD4<Float>
     var caps: Range<Int>
     var freshCaps: Range<Int>
@@ -25,20 +30,63 @@ private struct LayerDraw {
     var freshTris: Range<Int>
 }
 
+// a 3D camera: orbiting a target, in a right-handed world where the
+// board's y is flipped (KiCad's y points down the screen), micrometres
+struct Orbit {
+    var target = SIMD3<Float>(0, 0, 0)
+    var yaw: Float = 0.5
+    var pitch: Float = 0.75
+    var dist: Float = 100_000
+    var fov: Float = 35
+
+    var eye: SIMD3<Float> {
+        target + dist * SIMD3(sin(yaw) * cos(pitch), -cos(yaw) * cos(pitch), sin(pitch))
+    }
+
+    func proj(_ aspect: Float) -> float4x4 {
+        let f = 1 / tan(fov * .pi / 360), n = dist * 0.01, fa = dist * 20 + 1_000_000
+        return float4x4(columns: (SIMD4(f / aspect, 0, 0, 0), SIMD4(0, f, 0, 0), SIMD4(0, 0, fa / (n - fa), -1), SIMD4(0, 0, n * fa / (n - fa), 0)))
+    }
+
+    var view: float4x4 {
+        let e = eye, fw = simd_normalize(target - e)
+        let r = simd_normalize(simd_cross(fw, SIMD3(0, 0, 1)))
+        let u = simd_cross(r, fw)
+        return float4x4(columns: (SIMD4(r.x, u.x, -fw.x, 0), SIMD4(r.y, u.y, -fw.y, 0), SIMD4(r.z, u.z, -fw.z, 0),
+                                  SIMD4(-simd_dot(r, e), -simd_dot(u, e), simd_dot(fw, e), 1)))
+    }
+
+    // board micrometres to clip space
+    func mvp(_ aspect: Float) -> float4x4 {
+        proj(aspect) * view * float4x4(diagonal: SIMD4(1, -1, 1, 1))
+    }
+}
+
 @MainActor
 final class PlotRenderer: NSObject, MTKViewDelegate {
     let device: MTLDevice
     private let queue: MTLCommandQueue
-    private let capPipe, fillStencilPipe, fillCoverPipe, quadPipe: MTLRenderPipelineState
-    private let plain, stencilWrite, stencilCover: MTLDepthStencilState
-    private var capBuf, triBuf: MTLBuffer?
+    private let lib: MTLLibrary
+    private var pipes: [String: MTLRenderPipelineState] = [:]
+    private let plain, stencilWrite, stencilCover, depthRead, depthWrite, depthStencilWrite, depthStencilCover: MTLDepthStencilState
+    private var capBuf, triBuf, meshBuf, colorBuf, hiCaps, hiTris, slabBuf, colorSlab: MTLBuffer?
     private var layers: [LayerDraw] = []
-    private var cov, stencil: MTLTexture?
+    private var meshCount = 0
+    private var hiCount = (0, 0)
+    private var hiLayer = -1
+    private var slabCount = 0
+    private var cov, stencil, depth: MTLTexture?
     var bg = SIMD4<Float>(0, 0, 0, 1)
-    // view: pixels per micrometre and where 0,0 lands, in points
+    // 2D view: pixels per micrometre and where 0,0 lands, in points
     var scale: Float = 0.01
     var off = SIMD2<Float>(0, 0)
     var fade: Float = 1
+    // 3D
+    var three = false
+    var orbit = Orbit()
+    var thick: Float = 1600
+    var top: [Int] = []
+    var bottom: [Int] = []
 
     private static var compiled: MTLLibrary?
 
@@ -53,62 +101,80 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
     }
 
     init?(view: MTKView) {
-        guard let d = MTLCreateSystemDefaultDevice(), let q = d.makeCommandQueue(), let lib = Self.library(d) else { return nil }
+        guard let d = MTLCreateSystemDefaultDevice(), let q = d.makeCommandQueue(), let l = Self.library(d) else { return nil }
         device = d
         queue = q
+        lib = l
         view.device = d
         view.colorPixelFormat = .bgra8Unorm
-        func pipe(_ v: String, _ f: String, _ fmt: MTLPixelFormat, stencil: Bool, write: Bool = true, over: Bool = false) -> MTLRenderPipelineState? {
-            let p = MTLRenderPipelineDescriptor()
-            p.vertexFunction = lib.makeFunction(name: v)
-            p.fragmentFunction = lib.makeFunction(name: f)
-            let c = p.colorAttachments[0]!
-            c.pixelFormat = fmt
-            c.writeMask = write ? .all : []
-            if write {
-                c.isBlendingEnabled = true
-                if over {
-                    c.sourceRGBBlendFactor = .one
-                    c.sourceAlphaBlendFactor = .one
-                    c.destinationRGBBlendFactor = .oneMinusSourceAlpha
-                    c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
-                } else {
-                    c.rgbBlendOperation = .max
-                    c.alphaBlendOperation = .max
-                    c.sourceRGBBlendFactor = .one
-                    c.destinationRGBBlendFactor = .one
-                    c.sourceAlphaBlendFactor = .one
-                    c.destinationAlphaBlendFactor = .one
-                }
-            }
-            if stencil { p.stencilAttachmentPixelFormat = .stencil8 }
-            return try? d.makeRenderPipelineState(descriptor: p)
-        }
-        guard let cp = pipe("cap_v", "cap_f", .r8Unorm, stencil: true),
-              let fs = pipe("fill_v", "fill_f", .r8Unorm, stencil: true, write: false),
-              let fc = pipe("fill_v", "fill_f", .r8Unorm, stencil: true),
-              let qp = pipe("quad_v", "quad_f", .bgra8Unorm, stencil: false, over: true) else { return nil }
-        capPipe = cp
-        fillStencilPipe = fs
-        fillCoverPipe = fc
-        quadPipe = qp
-        plain = d.makeDepthStencilState(descriptor: MTLDepthStencilDescriptor())!
+        func ds(_ f: (MTLDepthStencilDescriptor) -> Void) -> MTLDepthStencilState { let x = MTLDepthStencilDescriptor(); f(x); return d.makeDepthStencilState(descriptor: x)! }
         // nonzero winding: counter-clockwise triangles count up, others down
-        let w = MTLDepthStencilDescriptor()
-        let up = MTLStencilDescriptor(), down = MTLStencilDescriptor()
-        up.depthStencilPassOperation = .incrementWrap
-        down.depthStencilPassOperation = .decrementWrap
-        w.frontFaceStencil = up
-        w.backFaceStencil = down
-        stencilWrite = d.makeDepthStencilState(descriptor: w)!
+        func windUp(_ x: MTLDepthStencilDescriptor) {
+            let up = MTLStencilDescriptor(), down = MTLStencilDescriptor()
+            up.depthStencilPassOperation = .incrementWrap
+            down.depthStencilPassOperation = .decrementWrap
+            x.frontFaceStencil = up
+            x.backFaceStencil = down
+        }
         // cover where the count is not zero, and zero it again
-        let c = MTLDepthStencilDescriptor(), s = MTLStencilDescriptor()
-        s.stencilCompareFunction = .notEqual
-        s.depthStencilPassOperation = .zero
-        c.frontFaceStencil = s
-        c.backFaceStencil = s
-        stencilCover = d.makeDepthStencilState(descriptor: c)!
+        func cover(_ x: MTLDepthStencilDescriptor) {
+            let s = MTLStencilDescriptor()
+            s.stencilCompareFunction = .notEqual
+            s.depthStencilPassOperation = .zero
+            x.frontFaceStencil = s
+            x.backFaceStencil = s
+        }
+        plain = ds { _ in }
+        stencilWrite = ds(windUp)
+        stencilCover = ds(cover)
+        depthRead = ds { $0.depthCompareFunction = .lessEqual }
+        depthWrite = ds { $0.depthCompareFunction = .less; $0.isDepthWriteEnabled = true }
+        depthStencilWrite = ds { $0.depthCompareFunction = .lessEqual; windUp($0) }
+        depthStencilCover = ds { $0.depthCompareFunction = .lessEqual; cover($0) }
         super.init()
+    }
+
+    // a pipeline: vertex and fragment functions, the target (coverage or
+    // the frame), writing or not, blending by max (coverage) or over; in 3D
+    // with depth
+    private func pipe(_ v: String, _ f: String, cov: Bool, write: Bool = true, three: Bool) -> MTLRenderPipelineState {
+        let key = "\(v)|\(f)|\(cov)|\(write)|\(three)"
+        if let p = pipes[key] { return p }
+        let p = MTLRenderPipelineDescriptor()
+        p.vertexFunction = lib.makeFunction(name: v)
+        p.fragmentFunction = lib.makeFunction(name: f)
+        let c = p.colorAttachments[0]!
+        c.pixelFormat = cov ? .r8Unorm : .bgra8Unorm
+        c.writeMask = write ? .all : []
+        if write && f != "mesh_f" {
+            c.isBlendingEnabled = true
+            if cov {
+                c.rgbBlendOperation = .max
+                c.alphaBlendOperation = .max
+                c.sourceRGBBlendFactor = .one
+                c.destinationRGBBlendFactor = .one
+                c.sourceAlphaBlendFactor = .one
+                c.destinationAlphaBlendFactor = .one
+            } else {
+                c.sourceRGBBlendFactor = .one
+                c.sourceAlphaBlendFactor = .one
+                c.destinationRGBBlendFactor = .oneMinusSourceAlpha
+                c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
+            }
+        }
+        if three {
+            p.depthAttachmentPixelFormat = .depth32Float_stencil8
+            p.stencilAttachmentPixelFormat = .depth32Float_stencil8
+        } else if cov {
+            p.stencilAttachmentPixelFormat = .stencil8
+        }
+        let s = try! device.makeRenderPipelineState(descriptor: p)
+        pipes[key] = s
+        return s
+    }
+
+    private func buffer(_ a: [Float]) -> MTLBuffer? {
+        a.isEmpty ? nil : device.makeBuffer(bytes: a, length: a.count * 4, options: .storageModeShared)
     }
 
     // a plot's chunks into two buffers, layer by layer (the hub sends them
@@ -128,14 +194,47 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
             let c1 = caps.count / 5, t1 = tris.count / 2
             for k in i..<j where fresh.contains(k) { caps += chunks[k].caps; tris += chunks[k].tris }
             let rgb = first.color
-            out.append(LayerDraw(
+            out.append(LayerDraw(layer: first.layer,
                 color: SIMD4(Float((rgb >> 16) & 255) / 255, Float((rgb >> 8) & 255) / 255, Float(rgb & 255) / 255, first.alpha),
                 caps: c0..<c1, freshCaps: c1..<(caps.count / 5), tris: t0..<t1, freshTris: t1..<(tris.count / 2)))
             i = j
         }
-        capBuf = caps.isEmpty ? nil : device.makeBuffer(bytes: caps, length: caps.count * 4, options: .storageModeShared)
-        triBuf = tris.isEmpty ? nil : device.makeBuffer(bytes: tris, length: tris.count * 4, options: .storageModeShared)
+        capBuf = buffer(caps)
+        triBuf = buffer(tris)
         layers = out
+    }
+
+    func load(mesh m: PlotMesh?) {
+        guard let m, !m.colors.isEmpty else { meshBuf = nil; colorBuf = nil; meshCount = 0; return }
+        meshBuf = buffer(m.verts)
+        colorBuf = device.makeBuffer(bytes: m.colors, length: m.colors.count * 4, options: .storageModeShared)
+        meshCount = m.colors.count
+    }
+
+    // the board as a plain slab (before its model arrives)
+    func slab(_ box: [Float], color: UInt32) {
+        guard box.count == 4 else { slabBuf = nil; slabCount = 0; return }
+        let (x0, y0, x1, y1, z0, z1) = (box[0], box[1], box[2], box[3], Float(0), thick)
+        let p: [SIMD3<Float>] = [SIMD3(x0, y0, z0), SIMD3(x1, y0, z0), SIMD3(x1, y1, z0), SIMD3(x0, y1, z0),
+                                 SIMD3(x0, y0, z1), SIMD3(x1, y0, z1), SIMD3(x1, y1, z1), SIMD3(x0, y1, z1)]
+        let faces = [[0, 1, 2, 3], [4, 5, 6, 7], [0, 1, 5, 4], [1, 2, 6, 5], [2, 3, 7, 6], [3, 0, 4, 7]]
+        var v: [Float] = [], c: [UInt32] = []
+        for f in faces {
+            let n = simd_normalize(simd_cross(p[f[1]] - p[f[0]], p[f[2]] - p[f[0]]))
+            for k in [0, 1, 2, 0, 2, 3] { let q = p[f[k]]; v += [q.x, q.y, q.z, n.x, n.y, n.z]; c.append(color) }
+        }
+        slabBuf = buffer(v)
+        colorSlab = device.makeBuffer(bytes: c, length: c.count * 4, options: .storageModeShared)
+        slabCount = c.count
+    }
+
+    // the picked piece, drawn bright over everything
+    func highlight(_ c: PlotChunk?, _ p: PlotChunk.Piece?) {
+        guard let c, let p else { hiCaps = nil; hiTris = nil; hiCount = (0, 0); hiLayer = -1; return }
+        hiCaps = buffer(Array(c.caps[(p.caps.lowerBound * 5)..<(p.caps.upperBound * 5)]))
+        hiTris = buffer(Array(c.tris[(p.tris.lowerBound * 6)..<(p.tris.upperBound * 6)]))
+        hiCount = (p.caps.count, p.tris.count * 3)
+        hiLayer = c.layer
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -144,14 +243,97 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
 
     private func targets(_ w: Int, _ h: Int) {
         if let c = cov, c.width == w, c.height == h { return }
-        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .r8Unorm, width: w, height: h, mipmapped: false)
-        d.usage = [.renderTarget, .shaderRead]
-        d.storageMode = .private
-        cov = device.makeTexture(descriptor: d)
-        let s = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .stencil8, width: w, height: h, mipmapped: false)
-        s.usage = .renderTarget
-        s.storageMode = .memoryless
-        stencil = device.makeTexture(descriptor: s)
+        func tex(_ f: MTLPixelFormat, _ u: MTLTextureUsage, _ m: MTLStorageMode) -> MTLTexture? {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: f, width: w, height: h, mipmapped: false)
+            d.usage = u
+            d.storageMode = m
+            return device.makeTexture(descriptor: d)
+        }
+        cov = tex(.r8Unorm, [.renderTarget, .shaderRead], .private)
+        stencil = tex(.stencil8, .renderTarget, .memoryless)
+        depth = tex(.depth32Float_stencil8, .renderTarget, .private)
+    }
+
+    private func frame(_ cb: MTLCommandBuffer, _ t: MTLTexture, clear: Bool, depth d: Bool, _ f: (MTLRenderCommandEncoder) -> Void) {
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = t
+        pass.colorAttachments[0].loadAction = clear ? .clear : .load
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+        pass.colorAttachments[0].storeAction = .store
+        if d {
+            pass.depthAttachment.texture = depth
+            pass.depthAttachment.loadAction = .clear
+            pass.depthAttachment.clearDepth = 1
+            pass.depthAttachment.storeAction = .store
+            pass.stencilAttachment.texture = depth
+            pass.stencilAttachment.loadAction = .clear
+            pass.stencilAttachment.storeAction = .store
+        }
+        guard let e = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
+        f(e)
+        e.endEncoding()
+    }
+
+    // one layer's coverage (fills by stencil, then capsules), laid over the frame
+    private func layer(_ cb: MTLCommandBuffer, _ drawable: MTLTexture, _ u: inout Uniforms, color: SIMD4<Float>,
+                       caps: [(MTLBuffer?, Range<Int>, Float)], tris: [(MTLBuffer?, Range<Int>, Float)]) {
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = cov
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+        pass.colorAttachments[0].storeAction = .store
+        if three {
+            pass.depthAttachment.texture = depth
+            pass.depthAttachment.loadAction = .load
+            pass.depthAttachment.storeAction = .store
+            pass.stencilAttachment.texture = depth
+        } else {
+            pass.stencilAttachment.texture = stencil
+        }
+        pass.stencilAttachment.loadAction = .clear
+        pass.stencilAttachment.storeAction = three ? .store : .dontCare
+        guard let e = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
+        e.setFrontFacing(.counterClockwise)
+        e.setCullMode(.none)
+        let fillV = three ? "fill3_v" : "fill_v", capV = three ? "cap3_v" : "cap_v"
+        for (b, r, f) in tris where !r.isEmpty && b != nil {
+            u.fade = f
+            e.setVertexBuffer(b, offset: r.lowerBound * 8, index: 0)
+            e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            e.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            e.setRenderPipelineState(pipe(fillV, "fill_f", cov: true, write: false, three: three))
+            e.setDepthStencilState(three ? depthStencilWrite : stencilWrite)
+            e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: r.count)
+            e.setRenderPipelineState(pipe(fillV, "fill_f", cov: true, three: three))
+            e.setDepthStencilState(three ? depthStencilCover : stencilCover)
+            e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: r.count)
+        }
+        e.setRenderPipelineState(pipe(capV, "cap_f", cov: true, three: three))
+        e.setDepthStencilState(three ? depthRead : plain)
+        for (b, r, f) in caps where !r.isEmpty && b != nil {
+            u.fade = f
+            e.setVertexBuffer(b, offset: r.lowerBound * 20, index: 0)
+            e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            e.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            e.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: r.count)
+        }
+        e.endEncoding()
+        frame(cb, drawable, clear: false, depth: false) { q in
+            u.color = color
+            q.setRenderPipelineState(pipe("quad_v", "quad_f", cov: false, three: false))
+            q.setFragmentTexture(cov, index: 0)
+            q.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
+            q.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
+    }
+
+    private func draws(_ l: LayerDraw) -> ([(MTLBuffer?, Range<Int>, Float)], [(MTLBuffer?, Range<Int>, Float)]) {
+        ([(capBuf, l.caps, 1), (capBuf, l.freshCaps, fade)], [(triBuf, l.tris, 1), (triBuf, l.freshTris, fade)])
+    }
+
+    private func hi(_ cb: MTLCommandBuffer, _ t: MTLTexture, _ u: inout Uniforms) {
+        guard hiCount.0 + hiCount.1 > 0 else { return }
+        layer(cb, t, &u, color: SIMD4(1, 1, 1, 0.8), caps: [(hiCaps, 0..<hiCount.0, 1)], tris: [(hiTris, 0..<hiCount.1, 1)])
     }
 
     func draw(in view: MTKView) {
@@ -161,62 +343,49 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
         targets(w, h)
         let k = Float(view.contentScaleFactor)
         var u = Uniforms(size: SIMD2(Float(w), Float(h)), off: off * k, scale: scale * k, fade: 1, color: .zero)
-        var first = true
-        for l in layers {
-            let pass = MTLRenderPassDescriptor()
-            pass.colorAttachments[0].texture = cov
-            pass.colorAttachments[0].loadAction = .clear
-            pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
-            pass.colorAttachments[0].storeAction = .store
-            pass.stencilAttachment.texture = stencil
-            pass.stencilAttachment.loadAction = .clear
-            pass.stencilAttachment.storeAction = .dontCare
-            guard let e = cb.makeRenderCommandEncoder(descriptor: pass) else { return }
-            e.setFrontFacing(.counterClockwise)
-            e.setCullMode(.none)
-            for (r, f) in [(l.tris, Float(1)), (l.freshTris, fade)] where !r.isEmpty {
-                u.fade = f
-                e.setVertexBuffer(triBuf, offset: r.lowerBound * 8, index: 0)
+        let t = drawable.texture
+        if three {
+            u.mvp = orbit.mvp(Float(w) / Float(h))
+            u.focal = 1 / tan(orbit.fov * .pi / 360) * Float(h) / 2
+            let e = simd_normalize(orbit.eye - orbit.target)
+            u.light = SIMD4(e.x, -e.y, e.z, 0)
+            // the model (or a slab) with depth, then the faces' layers over it
+            let mc = meshCount, sc = slabCount
+            let (mb, cbuf, sb, sbc) = (meshBuf, colorBuf, slabBuf, colorSlab)
+            let meshPipe = pipe("mesh_v", "mesh_f", cov: false, three: true)
+            frame(cb, t, clear: true, depth: true) { e in
+                e.setFrontFacing(.counterClockwise)
+                e.setCullMode(.none)
+                e.setDepthStencilState(depthWrite)
+                e.setRenderPipelineState(meshPipe)
                 e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                e.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                e.setRenderPipelineState(fillStencilPipe)
-                e.setDepthStencilState(stencilWrite)
-                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: r.count)
-                e.setRenderPipelineState(fillCoverPipe)
-                e.setDepthStencilState(stencilCover)
-                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: r.count)
+                if mc > 0 {
+                    e.setVertexBuffer(mb, offset: 0, index: 0)
+                    e.setVertexBuffer(cbuf, offset: 0, index: 2)
+                    e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: mc)
+                } else if sc > 0 {
+                    e.setVertexBuffer(sb, offset: 0, index: 0)
+                    e.setVertexBuffer(sbc, offset: 0, index: 2)
+                    e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: sc)
+                }
             }
-            e.setRenderPipelineState(capPipe)
-            e.setDepthStencilState(plain)
-            for (r, f) in [(l.caps, Float(1)), (l.freshCaps, fade)] where !r.isEmpty {
-                u.fade = f
-                e.setVertexBuffer(capBuf, offset: r.lowerBound * 20, index: 0)
-                e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                e.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                e.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4, instanceCount: r.count)
+            for (face, z) in [(top, thick + 40), (bottom, Float(-40))] {
+                u.z = z
+                for id in face {
+                    for l in layers where l.layer == id {
+                        let (c, tr) = draws(l)
+                        layer(cb, t, &u, color: l.color, caps: c, tris: tr)
+                    }
+                }
+                if face.contains(hiLayer) { hi(cb, t, &u) }
             }
-            e.endEncoding()
-            let over = MTLRenderPassDescriptor()
-            over.colorAttachments[0].texture = drawable.texture
-            over.colorAttachments[0].loadAction = first ? .clear : .load
-            over.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
-            over.colorAttachments[0].storeAction = .store
-            first = false
-            guard let q = cb.makeRenderCommandEncoder(descriptor: over) else { return }
-            u.color = l.color
-            q.setRenderPipelineState(quadPipe)
-            q.setFragmentTexture(cov, index: 0)
-            q.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-            q.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-            q.endEncoding()
-        }
-        if first {
-            let over = MTLRenderPassDescriptor()
-            over.colorAttachments[0].texture = drawable.texture
-            over.colorAttachments[0].loadAction = .clear
-            over.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
-            over.colorAttachments[0].storeAction = .store
-            cb.makeRenderCommandEncoder(descriptor: over)?.endEncoding()
+        } else {
+            frame(cb, t, clear: true, depth: false) { _ in }
+            for l in layers {
+                let (c, tr) = draws(l)
+                layer(cb, t, &u, color: l.color, caps: c, tris: tr)
+            }
+            hi(cb, t, &u)
         }
         cb.present(drawable)
         cb.commit()
@@ -224,14 +393,18 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
 }
 
 // The view: gestures move the transform; a display link runs only while
-// something moves by itself (a fade, a fling).
+// something moves by itself (a fade, a fling). A tap asks what lies under
+// the finger.
 final class PlotCanvas: MTKView {
     var renderer: PlotRenderer!
     var box: [Float] = []
     var margin: Float = 0.9
     var zmin: Float = 0.5
     var zmax: Float = 0.5
+    var tap: Float = 14
     var fadeMs: Double = 220
+    var chunks: [PlotChunk] = []
+    var onPick: (String) -> Void = { _ in }
     private var fitted = false
     private var fadeFrom: Date?
     private var fling = SIMD2<Float>(0, 0)
@@ -252,13 +425,17 @@ final class PlotCanvas: MTKView {
         pan.maximumNumberOfTouches = 2
         let twice = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
         twice.numberOfTapsRequired = 2
-        for g in [pinch, pan, twice] as [UIGestureRecognizer] {
+        let once = UITapGestureRecognizer(target: self, action: #selector(picked(_:)))
+        once.require(toFail: twice)
+        for g in [pinch, pan, twice, once] as [UIGestureRecognizer] {
             g.delegate = self
             addGestureRecognizer(g)
         }
     }
 
     required init(coder: NSCoder) { fatalError() }
+
+    private var three: Bool { renderer.three }
 
     // the zoom that shows the whole box, and the range around it
     private var fit: Float {
@@ -272,6 +449,15 @@ final class PlotCanvas: MTKView {
         let s = fit
         renderer.scale = s
         renderer.off = SIMD2(Float(bounds.width) / 2 - (box[0] + box[2]) / 2 * s, Float(bounds.height) / 2 - (box[1] + box[3]) / 2 * s)
+        var o = renderer.orbit
+        o.target = SIMD3((box[0] + box[2]) / 2, -(box[1] + box[3]) / 2, renderer.thick / 2)
+        let diag = simd_length(SIMD2(box[2] - box[0], box[3] - box[1]))
+        // the narrower of the two fields of view takes the whole board
+        let half = tan(o.fov * .pi / 360), aspect = Float(bounds.width) / Float(max(bounds.height, 1))
+        o.dist = diag / 2 / (half * min(aspect, 1)) * 1.1
+        o.yaw = 0.5
+        o.pitch = 0.75
+        renderer.orbit = o
         fitted = true
         setNeedsDisplay()
     }
@@ -281,17 +467,37 @@ final class PlotCanvas: MTKView {
         if !fitted { refit() }
     }
 
-    func show(_ f: PlotFrame, bg: UInt32) {
+    func show(_ f: PlotFrame, bg: UInt32, slab: UInt32) {
         renderer.bg = SIMD4(Float((bg >> 16) & 255) / 255, Float((bg >> 8) & 255) / 255, Float(bg & 255) / 255, 1)
+        renderer.thick = f.thick > 0 ? f.thick : 1600
         renderer.load(f.chunks, fresh: f.fresh)
-        if box.isEmpty || !fitted { box = f.box; fitted = false; setNeedsLayout() } else { box = f.box }
+        chunks = f.chunks
+        let first = box.isEmpty || !fitted
+        box = f.box
+        renderer.slab(f.box, color: slab)
+        if first { fitted = false; setNeedsLayout() }
         fadeFrom = f.fresh.isEmpty ? nil : f.at
         renderer.fade = f.fresh.isEmpty ? 1 : 0
         run()
         setNeedsDisplay()
     }
 
+    // the picked piece ("chunk,info" of the held chunks), drawn bright
+    func mark(_ picked: String) {
+        let ps = picked.split(separator: ",").compactMap { Int($0) }
+        if ps.count == 2, ps[0] < chunks.count, let p = chunks[ps[0]].pieces.first(where: { $0.info == ps[1] }) {
+            renderer.highlight(chunks[ps[0]], p)
+        } else {
+            renderer.highlight(nil, nil)
+        }
+        setNeedsDisplay()
+    }
+
     private func zoom(by f: Float, at p: CGPoint) {
+        if three {
+            renderer.orbit.dist = min(max(renderer.orbit.dist / f, 2_000), 5_000_000)
+            return
+        }
         let s0 = renderer.scale
         let s = min(max(s0 * f, fit * zmin), max(zmax, fit))
         let k = s / s0
@@ -308,8 +514,23 @@ final class PlotCanvas: MTKView {
 
     @objc private func panned(_ g: UIPanGestureRecognizer) {
         let t = g.translation(in: self)
-        renderer.off += SIMD2(Float(t.x), Float(t.y))
         g.setTranslation(.zero, in: self)
+        if three {
+            var o = renderer.orbit
+            if g.numberOfTouches >= 2 {
+                // two fingers move the target across the view
+                let s = o.dist * 2 * tan(o.fov * .pi / 360) / Float(max(bounds.height, 1))
+                let fw = simd_normalize(o.target - o.eye), r = simd_normalize(simd_cross(fw, SIMD3(0, 0, 1))), u = simd_cross(r, fw)
+                o.target += (-r * Float(t.x) + u * Float(t.y)) * s
+            } else {
+                o.yaw -= Float(t.x) * 0.008
+                o.pitch = min(max(o.pitch + Float(t.y) * 0.008, -1.5), 1.5)
+            }
+            renderer.orbit = o
+            setNeedsDisplay()
+            return
+        }
+        renderer.off += SIMD2(Float(t.x), Float(t.y))
         if g.state == .began { fling = .zero }
         if g.state == .ended {
             let v = g.velocity(in: self)
@@ -320,9 +541,57 @@ final class PlotCanvas: MTKView {
     }
 
     @objc private func tapped(_ g: UITapGestureRecognizer) {
-        let s0 = renderer.scale
-        if s0 > fit * 1.5 { refit() } else { zoom(by: 3, at: g.location(in: self)) }
+        if three || renderer.scale > fit * 1.5 { refit() } else { zoom(by: 3, at: g.location(in: self)) }
         setNeedsDisplay()
+    }
+
+    // where on the board a point of the view lands (micrometres), and on
+    // which face's layers in 3D (the face toward the viewer)
+    private func board(_ p: CGPoint) -> (SIMD2<Float>, [Int]?)? {
+        guard three else {
+            return ((SIMD2(Float(p.x), Float(p.y)) - renderer.off) / renderer.scale, nil)
+        }
+        let w = Float(bounds.width), h = Float(bounds.height)
+        let inv = renderer.orbit.mvp(w / h).inverse
+        let n = SIMD2(Float(p.x) / w * 2 - 1, 1 - Float(p.y) / h * 2)
+        func at(_ z: Float) -> SIMD3<Float> { let q = inv * SIMD4(n.x, n.y, z, 1); return SIMD3(q.x, q.y, q.z) / q.w }
+        let a = at(0), b = at(1)
+        let above = renderer.orbit.eye.z > renderer.thick / 2
+        let z = above ? renderer.thick + 40 : -40
+        guard abs(b.z - a.z) > 1e-6 else { return nil }
+        let t = (z - a.z) / (b.z - a.z)
+        guard t > 0 else { return nil }
+        let q = a + (b - a) * t
+        return (SIMD2(q.x, q.y), above ? renderer.top : renderer.bottom)
+    }
+
+    @objc private func picked(_ g: UITapGestureRecognizer) {
+        tap(at: g.location(in: self))
+    }
+
+    // what lies under a point, for Bend to pick from (View.pick)
+    func tap(at p: CGPoint) {
+        guard let (q, face) = board(p) else { onPick("[]"); return }
+        // the finger's reach, in micrometres
+        let tol: Float
+        if three {
+            tol = tap * renderer.orbit.dist * 2 * tan(renderer.orbit.fov * .pi / 360) / Float(max(bounds.height, 1))
+        } else {
+            tol = tap / renderer.scale
+        }
+        var cands: [[String: Any]] = []
+        for (ci, c) in chunks.enumerated() {
+            if let face, !face.contains(c.layer) { continue }
+            for piece in c.pieces {
+                let b = piece.box
+                guard q.x >= b.x - tol, q.x <= b.z + tol, q.y >= b.y - tol, q.y <= b.w + tol else { continue }
+                guard c.distance(piece, q.x, q.y) <= tol else { continue }
+                let area = max(b.z - b.x, 1) * max(b.w - b.y, 1) / 100
+                cands.append(["c": ci, "p": piece.info, "a": Int(min(area, 4e9)), "l": c.layer])
+            }
+        }
+        let json = (try? JSONSerialization.data(withJSONObject: cands)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        onPick(json)
     }
 
     private func run() {
@@ -371,7 +640,9 @@ extension PlotCanvas: UIGestureRecognizerDelegate {
 
 struct PlotCanvasView: UIViewRepresentable {
     let frame: PlotFrame?
+    let mesh: MeshFrame?
     let viewer: Viewer
+    let pick: (String) -> Void
 
     func makeUIView(context: Context) -> UIView {
         guard let c = PlotCanvas(canvas: .zero) else {
@@ -388,47 +659,115 @@ struct PlotCanvasView: UIViewRepresentable {
         c.margin = viewer.margin
         c.zmin = viewer.zmin
         c.zmax = viewer.zmax
+        c.tap = viewer.tap
         c.fadeMs = Double(viewer.fade)
+        c.onPick = pick
+        c.renderer.top = viewer.top
+        c.renderer.bottom = viewer.bottom
+        c.renderer.orbit.fov = viewer.fov
+        let three = viewer.open == "3d"
+        if c.renderer.three != three {
+            c.renderer.three = three
+            c.refit()
+        }
         if let f = frame, f.at != context.coordinator.shown {
             context.coordinator.shown = f.at
-            c.show(f, bg: viewer.bg)
+            c.show(f, bg: viewer.bg, slab: viewer.slab)
+            #if DEBUG
+            // headless checks: SIMCTL_CHILD_BACKPLANE_TAP=x,y (points) taps there once
+            if let t = ProcessInfo.processInfo.environment["BACKPLANE_TAP"], !context.coordinator.tapped {
+                context.coordinator.tapped = true
+                let xy = t.split(separator: ",").compactMap { Double($0) }
+                if xy.count == 2 { DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { c.tap(at: CGPoint(x: xy[0], y: xy[1])) } }
+            }
+            #endif
+        }
+        if three, let m = mesh, m.at != context.coordinator.mesh {
+            context.coordinator.mesh = m.at
+            c.renderer.load(mesh: m.mesh)
+            c.setNeedsDisplay()
+        }
+        if viewer.picked != context.coordinator.picked {
+            context.coordinator.picked = viewer.picked
+            c.mark(viewer.picked)
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
-    final class Coordinator { var shown: Date? }
+    final class Coordinator {
+        var shown: Date?
+        var mesh: Date?
+        var picked = ""
+        var tapped = false
+    }
+}
+
+// what a tapped item is, as the window's inspector shows it
+private struct CardView: View {
+    let card: Card
+    let model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(card.title).font(.headline)
+                Spacer()
+                Button { model.act("view-unpick") } label: { Image(systemName: "xmark") }
+                    .accessibilityLabel("Close")
+            }
+            ForEach(Array(card.rows.enumerated()), id: \.offset) { _, r in
+                HStack(alignment: .firstTextBaseline) {
+                    Text(r.k).foregroundStyle(.secondary).frame(width: 84, alignment: .leading)
+                    Text(r.v).textSelection(.enabled).lineLimit(2)
+                }
+                .font(.subheadline)
+            }
+            Button("Mention in chat") { model.act("view-mention", card.info) }
+                .buttonStyle(.borderedProminent)
+        }
+        .padding()
+        .background(.regularMaterial, in: .rect(cornerRadius: 0))
+        .padding()
+    }
 }
 
 // The viewer over the thread: the plot of the screen's source, the source
-// choices, and a way back.
+// choices, the card of what was tapped, and a way back.
 struct PlotScreen: View {
     let model: AppModel
     let viewer: Viewer
 
     var body: some View {
         // a plot for any other source is stale (a switch in flight)
-        let f = model.plots.frame.flatMap { $0.key == viewer.key ? $0 : nil }
+        let f = model.plots.frame.flatMap { $0.key == viewer.layers ? $0 : nil }
+        let m = model.plots.mesh.flatMap { $0.key == viewer.key ? $0 : nil }
         ZStack(alignment: .top) {
             Color(rgb: viewer.bg).ignoresSafeArea()
-            PlotCanvasView(frame: f?.none.isEmpty == true ? f : nil, viewer: viewer).ignoresSafeArea()
+            PlotCanvasView(frame: f?.none.isEmpty == true ? f : nil, mesh: m, viewer: viewer) { model.act("view-pick", $0) }
+                .ignoresSafeArea()
             if f == nil {
                 ProgressView().tint(.white).frame(maxHeight: .infinity)
             } else if let why = f?.none, !why.isEmpty {
                 Text(why).foregroundStyle(.secondary).frame(maxHeight: .infinity)
+            } else if viewer.open == "3d", let why = m?.none, !why.isEmpty {
+                Text(why).font(.caption).foregroundStyle(.secondary).padding().frame(maxHeight: .infinity, alignment: .bottom)
             }
             HStack {
                 Picker("Source", selection: Binding(get: { viewer.open }, set: { model.act("view", $0) })) {
                     ForEach(viewer.choices, id: \.value) { Text($0.label).tag($0.value) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 260)
+                .frame(maxWidth: 300)
                 Spacer()
                 Button { model.act("view", "") } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
                     .accessibilityLabel("Close")
             }
             .padding(.horizontal)
             .padding(.top, 6)
+            if let c = viewer.card {
+                CardView(card: c, model: model).frame(maxHeight: .infinity, alignment: .bottom)
+            }
         }
         .preferredColorScheme(.dark)
         .statusBarHidden()

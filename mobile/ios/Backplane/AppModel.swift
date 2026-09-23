@@ -65,7 +65,12 @@ final class AppModel {
             ready = true
             island = IslandController { [weak self] kind, token in self?.register(kind, token) }
             connect()
+            #if DEBUG
+            // headless checks pair from the environment: no permission prompt over the screen
+            if ProcessInfo.processInfo.environment["BACKPLANE_LINK"] == nil, !link.isEmpty { notifier.setUp() }
+            #else
             if !link.isEmpty { notifier.setUp() }
+            #endif
         }
         Task {
             while true {
@@ -106,10 +111,9 @@ final class AppModel {
                 self?.plots.reset()
                 self?.run { await $0.online(true) }
             },
-            // a plot goes straight to the viewer; everything else is CBOR for Bend
+            // plots go straight to the viewer, never through the Bend client
             onMessage: { [weak self] d in
-                if PlotStore.isPlot(d) { self?.plots.receive(String(decoding: d, as: UTF8.self)) }
-                else { self?.run { await $0.recv(d.base64EncodedString()) } }
+                if PlotStore.isPlot(d) { self?.plots.receive(d) } else { self?.run { await $0.recv(d.base64EncodedString()) } }
             },
             onClose: { [weak self] in self?.run { await $0.online(false) } })
         hub = h

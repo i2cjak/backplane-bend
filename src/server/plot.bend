@@ -5,9 +5,14 @@ import ./proc.bend as PR
 import ../core/board.bend as B
 import ../core/schematic.bend as SC
 import ../core/plot.bend as P
+import ../core/glb.bend as G
+import ../core/sexpr.bend as SX
+import ../core/utf8.bend as U
+import ../core/eq.bend as Q
+import ../core/json.bend as J
 
-# The phones' viewer. One actor owns every board or schematic a phone
-# watches and what each phone holds of it. It polls the files (every
+# The phones' viewer. One actor owns every board, schematic or 3D model a
+# phone watches and what each phone holds of it. It polls the files (every
 # 150 ms, and only while one is watched), parses a changed one off the
 # actor (in parallel, core/plot.bend), and sends each phone watching it the
 # delta against what that phone holds: an unchanged file sends nothing.
@@ -15,17 +20,23 @@ import ../core/plot.bend as P
 # writes them to the phone's socket.
 
 type PMsg is Data:
-  # show a phone the board (kind 0) or schematic (1) of a project, or the
-  # file at path when set
+  # show a phone the board (kind 0), schematic (1) or 3D model (2: the
+  # board's body and parts, with the board's plot for its layers) of a
+  # project, or the file at path when set
   PWatch{client: U32, kind: U32, root: String, path: String}
   PStop{client: U32}
   PPoll{}
   # a file read: its size and mtime then, and its plot (None while it is
-  # half written)
-  PGot{key: String, sz: U32, mt: U32, plot: Maybe<&2, P.Plot>}
+  # half written, or when it failed: err says why)
+  PGot{key: String, sz: U32, mt: U32, plot: Maybe<&2, P.Plot>, err: String}
+  # a phone asks what a piece it tapped is (reply id)
+  PInfo{client: U32, id: String, key: String, at: Nat, idx: Nat}
 
+# a message for a phone: JSON text (the hub makes it CBOR), or a frame's
+# CBOR bytes as they are (a plot: never parsed again)
 type POut is Data:
   POut{client: U32, text: String}
+  PBin{client: U32, bytes: List<&2, U32>}
 
 # a watched file: the size and mtime last read, a countdown to one more
 # read after a change (a second save within the same second), whether a
@@ -33,9 +44,10 @@ type POut is Data:
 type Src is Data:
   Src{key: String, kind: U32, path: String, sz: U32, mt: U32, re: Nat, busy: Bool, plot: Maybe<&2, P.Plot>}
 
-# a phone's view: the source it watches and the chunks it holds
+# a phone's view: a source it watches, the chunks it holds, and the 3D
+# model's bytes it holds (a 3D view is two: the board's plot and the model)
 type Sub is Data:
-  Sub{client: U32, key: String, sent: List<&2, P.Chunk>}
+  Sub{client: U32, key: String, sent: List<&2, P.Chunk>, mesh: String}
 
 type PSt is Data:
   PSt{srcs: List<&2, Src>, subs: List<&2, Sub>, polling: Bool}
@@ -46,6 +58,11 @@ def Pv.fuel() -> Nat:
 def Pv.say(+out: Chan(POut), +client: U32, text: String) -> IO(Unit):
   do IO<Unit>:
     ok : Bool <- Chan.send(POut, out, POut{client, text})
+    return Unit{}
+
+def Pv.bin(+out: Chan(POut), +client: U32, bs: List<&2, U32>) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- Chan.send(POut, out, PBin{client, bs})
     return Unit{}
 
 # Sources
@@ -92,7 +109,7 @@ def Sub.watched(ss: List<&2, Sub>, +key: String) -> Bool:
   match ss:
     case Nil{}:
       False{}
-    case Sub{_, +k, _} <> t:
+    case Sub{_, +k, _, _} <> t:
       Bool.or(String.eq(k, key), Sub.watched(t, key))
 
 def Src.keep(keep: Bool, s: Src, rest: List<&2, Src>) -> List<&2, Src>:
@@ -124,7 +141,7 @@ def Sub.keep(drop: Bool, s: Sub, rest: List<&2, Sub>) -> List<&2, Sub>:
 
 def Sub.client(s: Sub) -> U32:
   match s:
-    case Sub{c, _, _}:
+    case Sub{c, _, _, _}:
       c
 
 # every view but the client's
@@ -143,17 +160,53 @@ def Pv.send.k(quiet: Bool, +out: Chan(POut), +client: U32, +key: String, +pl: P.
     case True{}:
       IO.pure(Unit, Unit{})
     case False{}:
-      Pv.say(out, client, P.Plot.msg(key, P.Plot.box(pl), rs))
+      Pv.bin(out, client, P.Plot.msg(key, P.Plot.box(pl), P.Plot.thick(pl), rs))
 
 # a phone's view brought up to a plot: the delta goes out unless it would
 # change nothing; the phone now holds the plot's chunks
-def Pv.send(s: Sub, +pl: P.Plot, +out: Chan(POut)) -> IO(Sub):
+def Pv.send.plot(s: Sub, +pl: P.Plot, +out: Chan(POut)) -> IO(Sub):
   match s:
-    case Sub{+client, +key, +sent}:
+    case Sub{+client, +key, +sent, mesh}:
       do IO<Sub>:
         +rs : List<&2, P.Ref> = P.Plot.delta(P.Plot.chunks(pl), sent)
         Pv.send.k(P.Plot.quiet(rs, 0n, List.length(&2, P.Chunk, sent)), out, client, key, pl, rs)
-        return Sub{client, key, P.Plot.chunks(pl)}
+        return Sub{client, key, P.Plot.chunks(pl), mesh}
+
+def Pv.solid.rev(so: P.Solid) -> String:
+  match so:
+    case P.Solid{_, _, d}:
+      d
+
+def Pv.solid.n(so: P.Solid) -> U32:
+  match so:
+    case P.Solid{n, _, _}:
+      n
+
+def Pv.send.solid.k(same: Bool, +out: Chan(POut), +client: U32, +key: String, so: P.Solid) -> IO(Unit):
+  match same:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      Pv.bin(out, client, P.Plot.msg.solid(key, so))
+
+# a phone's view brought up to a 3D model: sent whole, unless it holds
+# exactly this one
+def Pv.send.solid(s: Sub, +so: P.Solid, +out: Chan(POut)) -> IO(Sub):
+  match s:
+    case Sub{+client, +key, sent, +mesh}:
+      do IO<Sub>:
+        Pv.send.solid.k(Q.Eq.str(Pv.solid.rev(so), mesh), out, client, key, so)
+        return Sub{client, key, sent, Pv.solid.rev(so)}
+
+def Pv.send.at(solid: Bool, s: Sub, +pl: P.Plot, +out: Chan(POut)) -> IO(Sub):
+  match solid:
+    case True{}:
+      Pv.send.solid(s, P.Plot.solid(pl), out)
+    case False{}:
+      Pv.send.plot(s, pl, out)
+
+def Pv.send(s: Sub, +pl: P.Plot, +out: Chan(POut)) -> IO(Sub):
+  Pv.send.at(U32.is_ne(Pv.solid.n(P.Plot.solid(pl)), 0), s, pl, out)
 
 def Pv.send.if(hit: Bool, s: Sub, m: Maybe<&2, P.Plot>, +out: Chan(POut)) -> IO(Sub):
   match hit m:
@@ -164,8 +217,23 @@ def Pv.send.if(hit: Bool, s: Sub, m: Maybe<&2, P.Plot>, +out: Chan(POut)) -> IO(
 
 def Sub.is(s: Sub, +key: String) -> Bool:
   match s:
-    case Sub{_, k, _}:
+    case Sub{_, k, _, _}:
       String.eq(k, key)
+
+def Pv.fail.one(hit: Bool, +s: Sub, +key: String, +err: String, +out: Chan(POut)) -> IO(Unit):
+  match hit:
+    case True{}:
+      Pv.say(out, Sub.client(s), P.Plot.none(key, err))
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+# every phone watching key told why there is nothing to show
+def Pv.fail(ss: List<&2, Sub>, +key: String, +err: String, +out: Chan(POut)) -> IO(Unit):
+  match ss:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case +s <> t:
+      IO.bind(Unit, Unit, Pv.fail.one(Sub.is(s, key), s, key, err, out), u => Pv.fail(t, key, err, out))
 
 # every phone watching key, brought up to its plot
 def Pv.fan(ss: List<&2, Sub>, +key: String, +m: Maybe<&2, P.Plot>, +out: Chan(POut)) -> IO(List<&2, Sub>):
@@ -214,17 +282,123 @@ def Pv.stamp(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> U32 & U32:
 # process allocates and frees big structures), its memory goes back when
 # it exits, and a pathological file cannot stall the hub.
 
-def Pv.child.k(m: Maybe<&2, P.Plot>) -> IO(Unit):
+def Pv.write.done(r: File & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+  (f, _) = r
+  File.close(f)
+
+def Pv.write.opened(r: Result<&1, &1, U32 & String, File>, text: String) -> IO(Unit):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, Unit>, Unit, File.write(f, text), Pv.write.done)
+    case Fail{_}:
+      IO.pure(Unit, Unit{})
+
+# a file written whole, then put in place (a reader never sees half of it)
+def Pv.write(+path: String, text: String) -> IO(Unit):
+  do IO<Unit>:
+    r : Result<&1, &1, U32 & String, File> <- File.open(path ++ ".new", "w")
+    Pv.write.opened(r, text)
+    mv : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(path ++ ".new", path)
+    return Unit{}
+
+def Pv.dir(+path: String) -> String:
+  String.reverse(String.drop(String.reverse(path), Nat.add(String.length(Maybe.default(&2, String, List.last(&2, String, String.split(path, '/')), "")), 1n)))
+
+def Pv.child.k(m: Maybe<&2, P.Plot>, +thick: U32, +infos: String) -> IO(Unit):
   match m:
-    case Some{pl}:
-      IO.print(P.Line.plot(pl))
+    case Some{+pl}:
+      do IO<Unit>:
+        mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(Pv.dir(infos))
+        Bool.pick(IO(Unit), String.is_empty(infos), IO.pure(Unit, Unit{}), Pv.write(infos, P.Infos.file(P.Plot.chunks(pl))))
+        IO.print(P.Line.plot(P.Plot.bare(P.Plot.with_thick(pl, thick))))
     case None{}:
       IO.die(Unit, 2, "")
 
-def Pv.child(+kind: U32, +path: String) -> IO(Unit):
+def Pv.thick.seg(ss: List<&2, String>) -> String:
+  match ss:
+    case Nil{}:
+      ""
+    case +x <> t:
+      Bool.pick(String, String.starts_with(x, "thickness "), x, Pv.thick.seg(t))
+
+# the board's thickness in micrometres: the first (thickness ..) of the
+# file, (general)'s, near its start (1.6 mm when there is none)
+def Pv.thick.of(+seg: String) -> U32:
+  Bool.pick(U32, String.is_empty(seg), 1600,
+    P.Num.um(SX.Sx.f(SX.Sx.parse(U.Utf8.encode("(" ++ Maybe.default(&2, String, List.head(&2, String, String.split(seg, ')')), "") ++ ")")), 0n)))
+
+def Pv.thick(bs: List<&2, U32>) -> U32:
+  Pv.thick.of(Pv.thick.seg(String.split(U.Utf8.decode(List.take(&2, U32, bs, 8192n)), '(')))
+
+def Pv.home() -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env("HOME")
+    return Result.default(&1, &1, U32 & String, String, r, "/tmp")
+
+def Pv.cli.k(rt: K.Rt) -> String:
+  match rt:
+    case K.Rt{cli, _, _, _}:
+      cli
+
+# the kicad-cli the hub uses (K.Rt.resolve)
+def Pv.cli() -> IO(String):
+  do IO<String>:
+    +home : String <- Pv.home()
+    e : Result<&1, &1, U32 & String, String> <- IO.get_env("BACKPLANE_KICAD_CLI")
+    exe : String <- H.Sys.exe_dir()
+    rt : K.Rt <- K.Rt.resolve(Result.default(&1, &1, U32 & String, String, e, ""), exe, home ++ "/.backplane-bend")
+    return Pv.cli.k(rt)
+
+def Pv.step2glb() -> IO(String):
+  do IO<String>:
+    +d : String <- H.Sys.exe_dir()
+    ok : Bool <- K.Io.is_file(d ++ "/backplane-step2glb")
+    return Bool.pick(String, ok, d ++ "/backplane-step2glb", "backplane-step2glb")
+
+def Pv.is_step(+p: String) -> Bool:
+  Bool.or(String.ends_with(p, ".step"), Bool.or(String.ends_with(p, ".stp"), Bool.or(String.ends_with(p, ".STEP"), String.ends_with(p, ".STP"))))
+
+# a 3D model as a GLB: a .glb as it is; a STEP through step2glb; a board's
+# body and parts through kicad-cli (its copper, mask and silk the phone
+# draws from the board's plot)
+def Pv.glb.run(glb: Bool, step: Bool, +path: String, +out: String) -> IO(PR.Ran):
+  match glb step:
+    case True{} _:
+      IO.pure(PR.Ran, PR.Ran{0, ""})
+    case False{} True{}:
+      IO.bind(String, PR.Ran, Pv.step2glb(), x => PR.Proc.run(x, [path, out], "/"))
+    case False{} False{}:
+      IO.bind(String, PR.Ran, Pv.cli(), c => PR.Proc.run(c, ["pcb", "export", "glb", "--subst-models", "-f", "-o", out, path], "/"))
+
+def Pv.solid.done(r: PR.Ran, +glb: String) -> IO(Unit):
+  match r:
+    case PR.Ran{0, _}:
+      do IO<Unit>:
+        bs : List<&2, U32> <- K.Io.bytes(glb)
+        IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(G.Mesh.tris(G.Glb.parse(bs))))))
+    case PR.Ran{_, out}:
+      IO.die(Unit, 3, "3D export failed: " ++ String.take(String.trim(out), 160n))
+
+def Pv.child.solid(+path: String) -> IO(Unit):
   do IO<Unit>:
-    bs : List<&2, U32> <- K.Io.bytes(path)
-    Pv.child.k(Pv.plot(Pv.parse.k(U32.is_eq(kind, 1), bs), kind))
+    +isglb : Bool = String.ends_with(path, ".glb")
+    +out : String = Bool.pick(String, isglb, path, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(path, 2166136261)) ++ ".glb")
+    r : PR.Ran <- Pv.glb.run(isglb, Pv.is_step(path), path, out)
+    Pv.solid.done(r, out)
+
+def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
+  do IO<Unit>:
+    +bs : List<&2, U32> <- K.Io.bytes(path)
+    Pv.child.k(Pv.plot(Pv.parse.k(U32.is_eq(kind, 1), bs), kind), Bool.pick(U32, U32.is_eq(kind, 0), Pv.thick(bs), 0), infos)
+
+def Pv.child(+kind: U32, +path: String, +infos: String) -> IO(Unit):
+  Bool.pick(IO(Unit), U32.is_eq(kind, 2), Pv.child.solid(path), Pv.child.plot(kind, path, infos))
+
+# `backplane --plot-info FILE SIG IDX`: one piece's info from an info file
+def Pv.child.info(+file: String, +sig: U32, +idx: Nat) -> IO(Unit):
+  do IO<Unit>:
+    t : String <- K.Io.text(file)
+    IO.print(P.Infos.find(t, sig, idx))
 
 def Pv.args.copy(xs: List<String>) -> List<&2, String>:
   match xs:
@@ -242,8 +416,12 @@ def Pv.args.back(xs: List<&2, String>) -> List<String>:
 
 def Pv.main.k(xs: List<&2, String>, go: List<String> -> IO(Unit)) -> IO(Unit):
   match xs:
+    case "--plot" <> k <> f <> i <> _:
+      Pv.child(Maybe.default(&2, U32, U32.read(k), 0), f, i)
     case "--plot" <> k <> f <> _:
-      Pv.child(Maybe.default(&2, U32, U32.read(k), 0), f)
+      Pv.child(Maybe.default(&2, U32, U32.read(k), 0), f, "")
+    case "--plot-info" <> f <> sg <> ix <> _:
+      Pv.child.info(f, Maybe.default(&2, U32, U32.read(sg), 0), Maybe.default(&2, Nat, Nat.read(ix), 0n))
     case +a:
       go(Pv.args.back(a))
 
@@ -258,69 +436,83 @@ def Pv.got.ran(r: PR.Ran, +kind: U32) -> Maybe<&2, P.Plot>:
     case _:
       None{}
 
+# why a read failed ("" when it did not, or the file is half written)
+def Pv.got.err(r: PR.Ran) -> String:
+  match r:
+    case PR.Ran{0, _}:
+      ""
+    case PR.Ran{2, _}:
+      ""
+    case PR.Ran{_, out}:
+      String.take(String.trim(out), 200n)
+
 def Pv.read.k(sm: U32 & U32, +r: PR.Ran, +key: String, +kind: U32, +q: Chan(PMsg)) -> IO(Unit):
   (sz, mt) = sm
   do IO<Unit>:
-    ok : Bool <- Chan.send(PMsg, q, PGot{key, sz, mt, Pv.got.ran(r, kind)})
+    ok : Bool <- Chan.send(PMsg, q, PGot{key, sz, mt, Pv.got.ran(r, kind), Pv.got.err(r)})
     return Unit{}
 
 # read and plot a file in a child process (the stamp is taken first, so a
 # save during the read is seen by the next poll)
-def Pv.read(+key: String, +kind: U32, +path: String, +q: Chan(PMsg)) -> IO(Unit):
+# where the info tables of a source's newest plot are kept
+def Pv.infos(+dir: String, +key: String) -> String:
+  dir ++ "/" ++ U32.show(P.Key.hash(key, 2166136261)) ++ ".info"
+
+def Pv.read(+key: String, +kind: U32, +path: String, +q: Chan(PMsg), +dir: String) -> IO(Unit):
   do IO<Unit>:
     st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
     exe : String <- H.Sys.exe_path()
-    r : PR.Ran <- PR.Proc.run(exe, ["--plot", U32.show(kind), path], "/")
+    r : PR.Ran <- PR.Proc.run(exe, ["--plot", U32.show(kind), path, Pv.infos(dir, key)], "/")
     Pv.read.k(Pv.stamp(st), r, key, kind, q)
 
 # Polling
 # -------
 
-def Pv.poll.go(changed: Bool, re: Nat, s: Src, +q: Chan(PMsg)) -> IO(Src):
+def Pv.poll.go(changed: Bool, re: Nat, s: Src, +q: Chan(PMsg), +dir: String) -> IO(Src):
   match changed re s:
     case True{} _ Src{+k, +kd, +p, sz, mt, _, _, pl}:
       do IO<Src>:
-        IO.spawn(Unit, Pv.read(k, kd, p, q))
-        return Src{k, kd, p, sz, mt, 7n, True{}, pl}
+        IO.spawn(Unit, Pv.read(k, kd, p, q, dir))
+        return Src{k, kd, p, sz, mt, Bool.pick(Nat, U32.is_eq(kd, 2), 0n, 7n), True{}, pl}
     case False{} 1n Src{+k, +kd, +p, sz, mt, _, _, pl}:
       do IO<Src>:
-        IO.spawn(Unit, Pv.read(k, kd, p, q))
+        IO.spawn(Unit, Pv.read(k, kd, p, q, dir))
         return Src{k, kd, p, sz, mt, 0n, True{}, pl}
     case False{} 1n+r Src{k, kd, p, sz, mt, _, b, pl}:
       IO.pure(Src, Src{k, kd, p, sz, mt, r, b, pl})
     case False{} 0n _:
       IO.pure(Src, s)
 
-def Pv.poll.st(sm: U32 & U32, s: Src, +q: Chan(PMsg)) -> IO(Src):
+def Pv.poll.st(sm: U32 & U32, s: Src, +q: Chan(PMsg), +dir: String) -> IO(Src):
   (+s2, +m2) = sm
   match s:
     case Src{k, kd, p, +sz, +mt, +re, b, pl}:
-      Pv.poll.go(Bool.or(U32.is_ne(s2, sz), U32.is_ne(m2, mt)), re, Src{k, kd, p, sz, mt, re, b, pl}, q)
+      Pv.poll.go(Bool.or(U32.is_ne(s2, sz), U32.is_ne(m2, mt)), re, Src{k, kd, p, sz, mt, re, b, pl}, q, dir)
 
 # one source's turn: a changed size or mtime reads it again (not while a
 # read is under way)
-def Pv.poll.one(busy: Bool, s: Src, +q: Chan(PMsg)) -> IO(Src):
+def Pv.poll.one(busy: Bool, s: Src, +q: Chan(PMsg), +dir: String) -> IO(Src):
   match busy s:
     case True{} _:
       IO.pure(Src, s)
     case False{} Src{k, kd, +p, sz, mt, re, b, pl}:
       do IO<Src>:
         st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(p)
-        Pv.poll.st(Pv.stamp(st), Src{k, kd, p, sz, mt, re, b, pl}, q)
+        Pv.poll.st(Pv.stamp(st), Src{k, kd, p, sz, mt, re, b, pl}, q, dir)
 
 def Src.busy(s: Src) -> Bool:
   match s:
     case Src{_, _, _, _, _, _, b, _}:
       b
 
-def Pv.poll(ss: List<&2, Src>, +q: Chan(PMsg)) -> IO(List<&2, Src>):
+def Pv.poll(ss: List<&2, Src>, +q: Chan(PMsg), +dir: String) -> IO(List<&2, Src>):
   match ss:
     case Nil{}:
       IO.pure(List<&2, Src>, Nil{})
     case +s <> t:
       do IO<List<&2, Src>>:
-        s2 : Src <- Pv.poll.one(Src.busy(s), s, q)
-        t2 : List<&2, Src> <- Pv.poll(t, q)
+        s2 : Src <- Pv.poll.one(Src.busy(s), s, q, dir)
+        t2 : List<&2, Src> <- Pv.poll(t, q, dir)
         return s2 <> t2
 
 def Pv.later(+q: Chan(PMsg)) -> IO(Unit):
@@ -387,54 +579,112 @@ def Pv.watch.now(m: Maybe<&2, P.Plot>, s: Sub, +out: Chan(POut)) -> IO(Sub):
     case None{}:
       IO.pure(Sub, s)
 
-def Pv.watch.k(none: Bool, st: PSt, +client: U32, +kind: U32, +key: String, +file: String, +q: Chan(PMsg), +out: Chan(POut)) -> IO(PSt):
+def Pv.subs(keep: Bool, subs: List<&2, Sub>, +client: U32) -> List<&2, Sub>:
+  match keep:
+    case True{}:
+      subs
+    case False{}:
+      Sub.drop(subs, client)
+
+# a phone now watches key (its other views dropped unless keep: a 3D view
+# watches the model and the board's plot)
+def Pv.watch.k(none: Bool, keep: Bool, st: PSt, +client: U32, +kind: U32, +key: String, +file: String, +q: Chan(PMsg), +out: Chan(POut)) -> IO(PSt):
   match none st:
     case True{} PSt{ss, +subs, polling}:
       do IO<PSt>:
         Pv.say(out, client, P.Plot.none(key, Pv.none(kind)))
-        +subs2 : List<&2, Sub> = Sub.drop(subs, client)
+        +subs2 : List<&2, Sub> = Pv.subs(keep, subs, client)
         return PSt{Src.gc(ss, subs2), subs2, polling}
     case False{} PSt{+ss, subs, polling}:
       do IO<PSt>:
         +ss2 : List<&2, Src> = Src.add(Src.has(ss, key), key, kind, file, ss)
-        sub : Sub <- Pv.watch.now(Src.plot(ss2, key), Sub{client, key, Nil{}}, out)
-        +subs2 : List<&2, Sub> = sub <> Sub.drop(subs, client)
+        sub : Sub <- Pv.watch.now(Src.plot(ss2, key), Sub{client, key, Nil{}, SNil{}}, out)
+        +subs2 : List<&2, Sub> = sub <> Pv.subs(keep, subs, client)
         p2 : Bool <- Pv.start(polling, q)
         return PSt{Src.gc(ss2, subs2), subs2, p2}
 
-def Pv.handle(st: PSt, m: PMsg, +q: Chan(PMsg), +out: Chan(POut)) -> IO(PSt):
+# a 3D view also watches the board's plot (its copper, mask and silk)
+def Pv.watch.board(board: Bool, st: PSt, +client: U32, +root: String, +path: String, +file: String, +q: Chan(PMsg), +out: Chan(POut)) -> IO(PSt):
+  match board:
+    case True{}:
+      Pv.watch.k(False{}, True{}, st, client, 0, Src.key(0, root, path), file, q, out)
+    case False{}:
+      IO.pure(PSt, st)
+
+def Sub.sent.of(s: Sub) -> List<&2, P.Chunk>:
+  match s:
+    case Sub{_, _, cs, _}:
+      cs
+
+def Sub.mine(+s: Sub, +client: U32, +key: String) -> Bool:
+  Bool.and(U32.is_eq(Sub.client(s), client), Sub.is(s, key))
+
+# the chunks a phone holds of key
+def Sub.held(ss: List<&2, Sub>, +client: U32, +key: String) -> List<&2, P.Chunk>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case +s <> t:
+      Bool.pick(List<&2, P.Chunk>, Sub.mine(s, client, key), Sub.sent.of(s), Sub.held(t, client, key))
+
+def Pv.reply(+id: String, +info: String) -> String:
+  "{\"t\":\"reply\",\"id\":" ++ id ++ ",\"ok\":true,\"result\":{\"info\":" ++ J.Json.show(J.Str{info}) ++ "}}"
+
+def Pv.info.done(r: PR.Ran, +client: U32, +id: String, +out: Chan(POut)) -> IO(Unit):
+  match r:
+    case PR.Ran{0, text}:
+      Pv.say(out, client, Pv.reply(id, String.trim_end(text)))
+    case _:
+      Pv.say(out, client, Pv.reply(id, ""))
+
+# the answer to a phone's kicad.info: the tapped chunk (of those it holds)
+# by its sig, looked up in its source's info file by a child process
+def Pv.info(+client: U32, +id: String, +file: String, +sig: U32, +idx: Nat, +out: Chan(POut)) -> IO(Unit):
+  do IO<Unit>:
+    exe : String <- H.Sys.exe_path()
+    r : PR.Ran <- PR.Proc.run(exe, ["--plot-info", file, U32.show(sig), Nat.show(idx)], "/")
+    Pv.info.done(r, client, id, out)
+
+def Pv.handle(st: PSt, m: PMsg, +q: Chan(PMsg), +out: Chan(POut), +dir: String) -> IO(PSt):
   match st m:
     case _ PWatch{+client, +kind, +root, +path}:
       do IO<PSt>:
         +file : String <- Pv.file(kind, root, path)
-        Pv.watch.k(String.is_empty(file), st, client, kind, Src.key(kind, root, path), file, q, out)
+        st2 : PSt <- Pv.watch.k(String.is_empty(file), False{}, st, client, kind, Src.key(kind, root, path), file, q, out)
+        Pv.watch.board(Bool.and(U32.is_eq(kind, 2), String.ends_with(file, ".kicad_pcb")), st2, client, root, path, file, q, out)
     case PSt{ss, +subs, polling} PStop{+client}:
       do IO<PSt>:
         +subs2 : List<&2, Sub> = Sub.drop(subs, client)
         return PSt{Src.gc(ss, subs2), subs2, polling}
     case PSt{ss, subs, _} PPoll{}:
       do IO<PSt>:
-        +ss2 : List<&2, Src> <- Pv.poll(ss, q)
+        +ss2 : List<&2, Src> <- Pv.poll(ss, q, dir)
         p2 : Bool <- Pv.next(Bool.not(List.is_empty(&2, Src, ss2)), q)
         return PSt{ss2, subs, p2}
-    case PSt{ss, subs, polling} PGot{+key, +sz, +mt, +pl}:
+    case PSt{ss, +subs, polling} PInfo{+client, +id, +key, at, +idx}:
       do IO<PSt>:
+        IO.spawn(Unit, Pv.info(client, id, Pv.infos(dir, key), P.Chunk.sig(P.Plot.at(at, Sub.held(subs, client, key))), idx, out))
+        return PSt{ss, subs, polling}
+    case PSt{ss, +subs, polling} PGot{+key, +sz, +mt, +pl, +err}:
+      do IO<PSt>:
+        Bool.pick(IO(Unit), String.is_empty(err), IO.pure(Unit, Unit{}), Pv.fail(subs, key, err, out))
         subs2 : List<&2, Sub> <- Pv.fan(subs, key, pl, out)
         return PSt{Pv.got.srcs(ss, key, sz, mt, pl), subs2, polling}
 
-def Pv.got(m: Maybe<&1, PMsg>, st: PSt, +q: Chan(PMsg), +out: Chan(POut), k: PSt -> IO(Unit)) -> IO(Unit):
+def Pv.got(m: Maybe<&1, PMsg>, st: PSt, +q: Chan(PMsg), +out: Chan(POut), +dir: String, k: PSt -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{msg}:
-      IO.bind(PSt, Unit, Pv.handle(st, msg, q, out), k)
+      IO.bind(PSt, Unit, Pv.handle(st, msg, q, out, dir), k)
     case None{}:
       IO.pure(Unit, Unit{})
 
-def Pv.loop(fuel: Nat, +q: Chan(PMsg), st: PSt, +out: Chan(POut)) -> IO(Unit):
+# the actor; dir keeps the info tables (the hub's home/plot)
+def Pv.loop(fuel: Nat, +q: Chan(PMsg), st: PSt, +out: Chan(POut), +dir: String) -> IO(Unit):
   match fuel:
     case 0n:
       IO.pure(Unit, Unit{})
     case 1n+f:
-      IO.bind(Maybe<&1, PMsg>, Unit, Chan.recv(PMsg, q), m => Pv.got(m, st, q, out, st2 => Pv.loop(f, q, st2, out)))
+      IO.bind(Maybe<&1, PMsg>, Unit, Chan.recv(PMsg, q), m => Pv.got(m, st, q, out, dir, st2 => Pv.loop(f, q, st2, out, dir)))
 
 def Pv.empty() -> PSt:
   PSt{Nil{}, Nil{}, False{}}

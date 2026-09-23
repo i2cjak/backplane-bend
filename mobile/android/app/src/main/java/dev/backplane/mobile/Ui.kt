@@ -441,22 +441,34 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
 @Composable
 private fun PlotScreen(m: AppModel, v: Viewer) {
     // a plot for any other source is stale (a switch in flight)
-    val f = m.plots.frame?.takeIf { it.key == v.key }
+    val f = m.plots.frame?.takeIf { it.key == v.layers }
+    val mesh = m.plots.mesh?.takeIf { it.key == v.key }
     Box(Modifier.fillMaxSize().background(Color(0xFF000000.toInt() or v.bg))) {
         AndroidView(factory = { PlotSurface(it) }, modifier = Modifier.fillMaxSize(), update = { s ->
             s.margin = v.margin
             s.zmin = v.zmin
             s.zmax = v.zmax
+            s.tap = v.tap
             s.fadeMs = v.fade
-            if (f != null && f.none.isEmpty()) s.show(f, v.bg)
+            s.onPick = { m.act("view-pick", it) }
+            s.renderer.top = v.top
+            s.renderer.bottom = v.bottom
+            s.renderer.orbit.fov = v.fov
+            s.setThree(v.open == "3d")
+            if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab)
+            if (v.open == "3d") s.mesh(mesh)
+            s.mark(v.picked)
         })
         when {
             f == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             f.none.isNotEmpty() -> Text(f.none, Modifier.align(Alignment.Center), color = Color.Gray)
+            v.open == "3d" && mesh != null && mesh.none.isNotEmpty() ->
+                Text(mesh.none, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color.Gray,
+                    style = MaterialTheme.typography.labelMedium)
         }
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = 280.dp)) {
+            SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = 300.dp)) {
                 v.choices.forEachIndexed { i, c ->
                     SegmentedButton(selected = c.value == v.open, onClick = { m.act("view", c.value) },
                         shape = SegmentedButtonDefaults.itemShape(i, v.choices.size)) { Text(c.label) }
@@ -464,6 +476,25 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             }
             Spacer(Modifier.weight(1f))
             IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+        }
+        v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+// what a tapped item is, as the window's inspector shows it
+@Composable
+private fun PlotCard(m: AppModel, c: Card, modifier: Modifier) {
+    Surface(modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp), tonalElevation = 6.dp) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(c.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                IconButton(onClick = { m.act("view-unpick") }) { Icon(Icons.Filled.Close, "Close") }
+            }
+            for ((k, value) in c.rows) Row {
+                Text(k, Modifier.width(92.dp), color = MaterialTheme.colorScheme.outline, style = MaterialTheme.typography.bodyMedium)
+                Text(value, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Button(onClick = { m.act("view-mention", c.info) }) { Text("Mention in chat") }
         }
     }
 }

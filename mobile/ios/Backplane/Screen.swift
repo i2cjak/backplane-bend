@@ -56,12 +56,32 @@ struct Choice: Decodable, Hashable {
     let on: Bool
 }
 
+// a tapped item's card: its kind, then key = value rows, and the info
+// "Mention in chat" puts in the draft
+struct CardRow: Decodable, Hashable {
+    let k, v: String
+}
+
+struct Card: Decodable {
+    let info, title: String
+    let rows: [CardRow]
+}
+
+// the key of the plot it draws layers from, how far a tap reaches
+// (points), the layers a 3D view lays on the board's top and bottom faces,
+// the board's colour before its model arrives, the field of view, the
+// piece picked ("chunk,info" of the held chunks) and its card
 struct Viewer: Decodable {
-    let open, key: String
+    let open, key, layers: String
     let choices: [Choice]
     let bg: UInt32
     let fade: Int
-    let margin, zmin, zmax: Float
+    let margin, zmin, zmax, tap: Float
+    let top, bottom: [Int]
+    let slab: UInt32
+    let fov: Float
+    let picked: String
+    let card: Card?
 }
 
 struct ThreadView: Decodable {

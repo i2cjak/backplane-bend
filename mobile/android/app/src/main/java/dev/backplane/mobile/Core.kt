@@ -84,9 +84,9 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
                 plots.reset()
                 scope.launch { apply(engine.online(true)) }
             },
-            // a plot goes straight to the viewer; everything else is CBOR for Bend
+            // plots go straight to the viewer, never through the Bend client
             onMessage = { b ->
-                if (PlotStore.isPlot(b)) plots.receive(String(b, Charsets.UTF_8))
+                if (PlotStore.isPlot(b)) plots.receive(b)
                 else scope.launch { apply(engine.recv(Base64.encodeToString(b, Base64.NO_WRAP))) }
             },
             onClose = { scope.launch { apply(engine.online(false)) } },

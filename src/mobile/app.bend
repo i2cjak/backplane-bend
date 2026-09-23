@@ -8,6 +8,7 @@ import ../core/cbor.bend as CB
 import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
 import ./view.bend as VW
+import ../core/codec.bend as C
 
 # What bridge.js calls. The phone apps see only strings: server messages
 # in (binary CBOR frames, carried as base64); the screen, commands and
@@ -26,7 +27,7 @@ def recv.k(+seen: List<&2, N.Seen>, a: U.Act) -> Recv:
       Recv{U.Act{u, cmds}, J.Json.show(J.Json.arr(N.Note.alerts(U.Ui.threads(S.Mob.st(u)), seen, U.Ui.entries(S.Mob.st(u)))))}
 
 def recv.j(+u: U.Ui, +o: J.Json) -> Recv:
-  recv.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), U.Ui.recv_act(u, o))
+  recv.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), U.Ui.recv_act(VW.View.picked(u, o), o))
 
 # a frame from the hub: its bytes as base64, then CBOR
 def recv(+u: U.Ui, b64: String) -> Recv:
@@ -37,17 +38,26 @@ def recv(+u: U.Ui, b64: String) -> Recv:
 def wire(text: String) -> String:
   SH.B64.encode(CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
 
-def act.k(view: Bool, u: U.Ui, +action: String, value: String) -> U.Act:
-  match view:
-    case True{}:
+def act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
+  match i:
+    case 0n:
       VW.View.open(u, value)
-    case False{}:
+    case 1n:
+      VW.View.mention(u, value)
+    case 2n:
+      VW.View.pick(u, value)
+    case 3n:
+      U.Act{VW.Pick.clear(u), Nil{}}
+    case _:
       VW.View.sync(U.Ui.act(u, action, value))
 
-# an action; "view" opens or closes the board viewer, and any action that
-# moves to another project re-aims it
-def act(u: U.Ui, +action: String, value: String) -> U.Act:
-  act.k(String.eq(action, "view"), u, action, value)
+# an action; "view" opens or closes the board viewer ("board",
+# "schematic", "3d", ""), "view-pick" inspects a tap (what lies under
+# the finger), "view-unpick" closes the card, "view-mention" puts the
+# inspected item into the draft; any action that moves to another project
+# re-aims the viewer
+def act(+u: U.Ui, +action: String, +value: String) -> U.Act:
+  act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick"], action), u, action, value)
 
 def screen(+u: U.Ui) -> String:
   J.Json.show(S.Mob.screen(u))

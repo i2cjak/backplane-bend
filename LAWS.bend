@@ -1014,3 +1014,47 @@ law view_asks_once:
   for +cmds: List<&2, U.Cmd>
   for h: {String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")) == True{} : Bool}
   {MV.View.sync.u(u, cmds) == U.Act{u, cmds} : U.Act}
+
+# a plot goes to a phone as one binary frame, as every hub frame, whatever
+# its bytes (the hub never parses it again)
+law plot_frames_binary:
+  for +bs: List<&2, U32>
+  {List.head(&2, U32, WS.Ws.encode(2, bs)) == Some{130} : Maybe<&2, U32>}
+
+# Inspecting on a phone
+# ---------------------
+
+# a tap on nothing asks the hub nothing (and closes any card)
+law pick_nothing_there:
+  for +u: U.Ui
+  {U.Act.cmds(MV.View.pick(u, "[]")) == Nil{} : List<&2, U.Cmd>}
+
+# with no pick waiting, an answer changes nothing: a late one never shows
+# a stale card
+law pick_late_ignored:
+  for +u: U.Ui
+  for +o: J.Json
+  for h: {String.is_empty(U.Ui.scratch(u, "@pick.rid")) == True{} : Bool}
+  {MV.View.picked(u, o) == u : U.Ui}
+
+# a pad wins over the zone it sits in, whichever the phone found first
+law pick_pad_over_zone:
+  {MV.Pick.best([MV.Cand{"zone", 900, 12}, MV.Cand{"pad 1", 4, 12}], None{}) == Some{MV.Cand{"pad 1", 4, 12}} : Maybe<&2, MV.Cand>}
+
+law pick_pad_over_zone_after:
+  {MV.Pick.best([MV.Cand{"pad 1", 4, 12}, MV.Cand{"zone", 900, 12}], None{}) == Some{MV.Cand{"pad 1", 4, 12}} : Maybe<&2, MV.Cand>}
+
+# of two the same size, the one drawn on top wins
+law pick_top_on_tie:
+  {MV.Pick.best([MV.Cand{"F", 4, 12}, MV.Cand{"B", 4, 5}], None{}) == Some{MV.Cand{"F", 4, 12}} : Maybe<&2, MV.Cand>}
+
+# The 3D view
+# -----------
+
+# a 3D view lays the project's own board plot on the board's faces
+law view_3d_draws_board:
+  for +root: String
+  {MV.View.layers("3d", root) == MV.View.key("board", root) : String}
+
+law view_3d_key:
+  {MV.View.key("3d", "/p") == "2|/p|" : String}

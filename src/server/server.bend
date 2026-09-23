@@ -21,7 +21,6 @@ import ./git.bend as GT
 import ./gh.bend as GH
 import ./term.bend as TM
 import ./plot.bend as PV
-import ../core/plot.bend as PL
 import ../core/agent.bend as AG
 import ../core/tailnet.bend as TN
 import ../core/images.bend as IM
@@ -38,6 +37,8 @@ import ../core/sha1.bend as SH
 type Wire is Data:
   WText{text: String}
   WPong{payload: List<&2, U32>}
+  # a message already encoded (a board's plot: never parsed again)
+  WBin{cbor: List<&2, U32>}
   WClose{}
 
 type Msg is Data:
@@ -50,6 +51,8 @@ type Msg is Data:
   AgentGone{thread: String, code: U32, pid: U32}
   Tick{}
   Push{client: U32, text: String}
+  # a message for one client, already CBOR
+  PushBin{client: U32, cbor: List<&2, U32>}
   TermOut{thread: String, data: List<&2, U32>}
   # a line for a thread's agent built off the hub (a message with images)
   AgentWrite{thread: String, line: String}
@@ -344,19 +347,11 @@ def Conn.finish(s: Socket, bs: List<&2, U32>) -> IO(Unit):
     s2 : Socket <- Conn.send(s, bs)
     Socket.close(s2)
 
-def Conn.frame.plot(plot: Bool, t: String) -> List<&2, U32>:
-  match plot:
-    case True{}:
-      W.Ws.bin(t)
-    case False{}:
-      W.Ws.cbor(t)
-
-# a message as a frame: always binary, and CBOR (about 40% fewer bytes on
-# the air than JSON text; every client speaks it), except a phone's plot,
-# whose JSON text goes as it is: re-encoding megabytes of geometry would
-# cost the hub more than it saves (PL.Plot.is)
-def Conn.frame.out(+t: String) -> List<&2, U32>:
-  Conn.frame.plot(PL.Plot.is(t), t)
+# a message as a frame: always one binary CBOR frame (about 40% fewer
+# bytes on the air than JSON text; every client speaks it). A phone's plot
+# is CBOR already and goes as WBin, never through here
+def Conn.frame.out(t: String) -> List<&2, U32>:
+  W.Ws.cbor(t)
 
 def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit):
   match m:
@@ -364,6 +359,8 @@ def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit)
       IO.bind(Socket, Unit, Conn.send(s, Conn.frame.out(t)), k)
     case Some{WPong{p}}:
       IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(10, p)), k)
+    case Some{WBin{bs}}:
+      IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(2, bs)), k)
     case Some{WClose{}}:
       Conn.finish(s, W.Ws.encode(8, Nil{}))
     case None{}:
@@ -748,6 +745,13 @@ def Hub.push(h: Hub, +client: U32, text: String) -> IO(Hub):
     case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
       do IO<Hub>:
         Wire.send(Clients.get(cl, client), WText{text})
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.push.bin(h: Hub, +client: U32, bs: List<&2, U32>) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Wire.send(Clients.get(cl, client), WBin{bs})
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.note(h: Hub, +text: String) -> IO(Hub):
@@ -1895,6 +1899,10 @@ def Plot.fwd.got(m: Maybe<&1, PV.POut>, +inbox: Chan(Msg), k: Unit -> IO(Unit)) 
       do IO<Unit>:
         ok : Bool <- Chan.send(Msg, inbox, Push{client, text})
         k(Unit{})
+    case Some{PV.PBin{client, bs}}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, PushBin{client, bs})
+        k(Unit{})
     case None{}:
       IO.pure(Unit, Unit{})
 
@@ -1922,10 +1930,11 @@ def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
         Plot.put(Cfg.pv(cfg), PV.PStop{client})
         return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg, note}
 
-# kicad.watch: kind "board" or "schematic" shows it, anything else stops
+# kicad.watch: kind "board", "schematic" or "3d" shows it, anything else stops
 def Plot.watch(+client: U32, +kind: String, +root: String, +path: String) -> PV.PMsg:
   Bool.pick(PV.PMsg, String.eq(kind, "board"), PV.PWatch{client, 0, root, path},
-    Bool.pick(PV.PMsg, String.eq(kind, "schematic"), PV.PWatch{client, 1, root, path}, PV.PStop{client}))
+    Bool.pick(PV.PMsg, String.eq(kind, "schematic"), PV.PWatch{client, 1, root, path},
+      Bool.pick(PV.PMsg, String.eq(kind, "3d"), PV.PWatch{client, 2, root, path}, PV.PStop{client})))
 
 def Term.msg(+op: String, +thread: String, +cwd: String, data: List<&2, U32>, +cols: U32, +rows: U32) -> TM.TMsg:
   Bool.pick(TM.TMsg, String.eq(op, "open"), TM.TOpen{thread, cwd, cols, rows},
@@ -3035,6 +3044,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         Hub.agent_stop(Agents.get(as, thread))
         return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
+    case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.PlotInfo{+client, +id, +key, +at, +idx}:
+      do IO<Hub>:
+        Plot.put(Cfg.pv(cfg), PV.PInfo{client, id, key, at, idx})
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.Watch{+client, +kind, +root, +path}:
       do IO<Hub>:
         Plot.put(Cfg.pv(cfg), Plot.watch(client, kind, root, path))
@@ -3187,6 +3200,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.tick(h, now)
     case Push{client, text}:
       Hub.push(h, client, text)
+    case PushBin{client, bs}:
+      Hub.push.bin(h, client, bs)
     case TermOut{thread, data}:
       Hub.term_out(h, thread, data)
     case ModelsFound{ms, mt}:
@@ -3261,7 +3276,7 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
         IO.spawn(Unit, Term.fwd(Fuel.forever(), to, inbox))
         +vq : Chan(PV.PMsg) <- Chan.new(PV.PMsg, 1024)
         +vo : Chan(PV.POut) <- Chan.new(PV.POut, 1024)
-        IO.spawn(Unit, PV.Pv.loop(Fuel.forever(), vq, PV.Pv.empty(), vo))
+        IO.spawn(Unit, PV.Pv.loop(Fuel.forever(), vq, PV.Pv.empty(), vo, home ++ "/plot"))
         IO.spawn(Unit, Plot.fwd(Fuel.forever(), vo, inbox))
         +nt : Net = Net.with_pv(Net.with_tm(Net.with_pk(Net.with_br(nt0, bq), pq), tq), vq)
         l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(host, port)

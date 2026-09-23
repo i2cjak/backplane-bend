@@ -41,9 +41,18 @@ data class Entry(
 // the key its plots carry, the choices, and how to draw
 data class Choice(val label: String, val value: String, val on: Boolean)
 
+// a tapped item's card: its kind, then key = value rows, and the info
+// "Mention in chat" puts in the draft
+data class Card(val info: String, val title: String, val rows: List<Pair<String, String>>)
+
+// also: the key of the plot it draws layers from, how far a tap reaches
+// (dp), the layers a 3D view lays on the board's top and bottom faces, the
+// board's colour before its model arrives, the field of view, the piece
+// picked ("chunk,info" of the held chunks) and its card
 data class Viewer(
-    val open: String, val key: String, val choices: List<Choice>, val bg: Int, val fade: Float,
-    val margin: Float, val zmin: Float, val zmax: Float,
+    val open: String, val key: String, val layers: String, val choices: List<Choice>, val bg: Int, val fade: Float,
+    val margin: Float, val zmin: Float, val zmax: Float, val tap: Float, val top: IntArray, val bottom: IntArray,
+    val slab: Int, val fov: Float, val picked: String, val card: Card?,
 )
 
 data class ThreadView(
@@ -103,11 +112,18 @@ private fun thread(o: JSONObject) = ThreadView(
     strs(o.optJSONArray("sending")), o.optString("queued"), viewer(o.optJSONObject("viewer") ?: JSONObject()),
 )
 
+private fun ints(a: JSONArray?): IntArray = if (a == null) IntArray(0) else IntArray(a.length()) { a.optInt(it) }
+
 private fun viewer(o: JSONObject) = Viewer(
-    o.optString("open"), o.optString("key"),
+    o.optString("open"), o.optString("key"), o.optString("layers"),
     o.optJSONArray("choices").map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) },
     o.optInt("bg"), o.optDouble("fade", 220.0).toFloat(), o.optDouble("margin", 0.9).toFloat(),
-    o.optDouble("zmin", 0.5).toFloat(), o.optDouble("zmax", 0.5).toFloat(),
+    o.optDouble("zmin", 0.5).toFloat(), o.optDouble("zmax", 0.5).toFloat(), o.optDouble("tap", 14.0).toFloat(),
+    ints(o.optJSONArray("top")), ints(o.optJSONArray("bottom")), o.optInt("slab"), o.optDouble("fov", 35.0).toFloat(),
+    o.optString("picked"),
+    o.optJSONObject("card")?.let { c ->
+        Card(c.optString("info"), c.optString("title"), c.optJSONArray("rows").map { it.optString("k") to it.optString("v") })
+    },
 )
 
 private fun strs(a: JSONArray?): List<String> =
