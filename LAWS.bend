@@ -90,6 +90,91 @@ law sidebar_split_count:
   for ts: List<&2, M.Thread>
   {M.Shelves.count(M.Sidebar.split(ts)) == List.length(&2, M.Thread, ts) : Nat}
 
+# every thread lands on exactly one shelf with snoozes too: none lost,
+# none duplicated
+law sidebar_split_at_count:
+  for ts: List<&2, M.Thread>
+  for +navs: Map<&2, M.Nav>
+  for +now: Nat
+  {M.Shelves.count(M.Sidebar.split.at(ts, navs, now)) == List.length(&2, M.Thread, ts) : Nat}
+
+# Snooze
+# ------
+
+# a snoozed thread never auto-settles while its snooze lasts
+law settle_never_snoozed:
+  for +now: Nat
+  for +w: Nat
+  for t: M.Thread
+  for +until: Nat
+  for h: {Nat.is_ge(now, until) == False{} : Bool}
+  {M.Settle.auto.at(now, w, t, until) == False{} : Bool}
+
+# a snooze ends by the clock alone: once its time has come the thread is
+# awake, with no event needed
+law snooze_wakes:
+  for +now: Nat
+  for +until: Nat
+  for h: {Nat.is_ge(now, until) == True{} : Bool}
+  {M.Snooze.on(now, until) == False{} : Bool}
+
+# Manual order
+# ------------
+
+# past any place on a shelf there is a later one
+law key_after:
+  for s: List<&2, Bool>
+  {M.Key.lt(s, M.Key.after(s)) == True{} : Bool}
+
+# the key made between two places sorts after the first...
+law key_mid_above:
+  for a: List<&2, Bool>
+  for b: List<&2, Bool>
+  for h: {M.Key.lt(a, b) == True{} : Bool}
+  {M.Key.lt(a, M.Key.mid(a, b)) == True{} : Bool}
+
+# ...and before the second: a dragged thread lands strictly between its
+# neighbours, and they keep their keys
+law key_mid_below:
+  for a: List<&2, Bool>
+  for b: List<&2, Bool>
+  for h: {M.Key.lt(a, b) == True{} : Bool}
+  {M.Key.lt(M.Key.mid(a, b), b) == True{} : Bool}
+
+# Sidebar status
+# --------------
+
+# an approval waiting outranks everything on a thread's dot
+law status_approval_first:
+  for i: Bool
+  for t: M.TurnState
+  for q: Bool
+  {M.Status.of(True{}, i, t, q) == M.StApproval{} : M.Status}
+
+# then a question or plan waiting, even while a turn runs
+law status_input_before_work:
+  for t: M.TurnState
+  for q: Bool
+  {M.Status.of(False{}, True{}, t, q) == M.StInput{} : M.Status}
+
+# then a running turn, even with messages queued
+law status_working_before_queued:
+  for q: Bool
+  {M.Status.of(False{}, False{}, M.Running{}, q) == M.StWorking{} : M.Status}
+
+# a failed turn shows as failed even with messages queued
+law status_failed_before_queued:
+  for q: Bool
+  {M.Status.of(False{}, False{}, M.Failed{}, q) == M.StFailed{} : M.Status}
+
+# nothing on a thread outranks an approval
+law status_approval_top:
+  for a: Bool
+  for i: Bool
+  for t: M.TurnState
+  for q: Bool
+  {Nat.is_ge(M.Status.rank(M.StApproval{}), M.Status.rank(M.Status.of(a, i, t, q))) == True{} : Bool}
+
 # Board viewer
 # ------------
 

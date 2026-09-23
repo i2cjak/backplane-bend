@@ -222,9 +222,13 @@ def Change.encode(c: M.Change) -> J.Json:
       Change.obj("DeviceRegistered", [J.KV{"token", J.Str{token}}, J.KV{"platform", J.Str{platform}}, J.KV{"kind", J.Str{kind}}, J.KV{"thread", J.Str{thread}}, J.KV{"env", J.Str{env}}, J.KV{"bundle", J.Str{bundle}}, J.KV{"at", Codec.nat(at)}])
     case M.DeviceDropped{token, at}:
       Change.obj("DeviceDropped", [J.KV{"token", J.Str{token}}, J.KV{"at", Codec.nat(at)}])
+    case M.ThreadSnoozed{id, until, at}:
+      Change.obj("ThreadSnoozed", [J.KV{"id", J.Str{id}}, J.KV{"until", Codec.nat(until)}, J.KV{"at", Codec.nat(at)}])
+    case M.ThreadOrdered{id, section, key, at}:
+      Change.obj("ThreadOrdered", [J.KV{"id", J.Str{id}}, J.KV{"section", J.Str{section}}, J.KV{"key", J.Str{key}}, J.KV{"at", Codec.nat(at)}])
 
 def Change.tags() -> List<&2, String>:
-  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed", "DeviceRegistered", "DeviceDropped"]
+  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed", "DeviceRegistered", "DeviceDropped", "ThreadSnoozed", "ThreadOrdered"]
 
 def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
   match i:
@@ -280,6 +284,10 @@ def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
       Some{M.DeviceRegistered{J.Json.get_str(o, "token", ""), J.Json.get_str(o, "platform", ""), J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "env", ""), J.Json.get_str(o, "bundle", ""), J.Json.get_nat(o, "at", 0n)}}
     case 25n:
       Some{M.DeviceDropped{J.Json.get_str(o, "token", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 26n:
+      Some{M.ThreadSnoozed{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "until", 0n), J.Json.get_nat(o, "at", 0n)}}
+    case 27n:
+      Some{M.ThreadOrdered{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "section", ""), J.Json.get_str(o, "key", ""), J.Json.get_nat(o, "at", 0n)}}
     case _:
       None{}
 
@@ -349,6 +357,10 @@ def Change.wire(c: M.Change) -> J.Json:
       Change.encode(M.AskOpened{id, thread, kind, tool, detail, options, at})
     case M.AskClosed{id, answer, at}:
       Change.encode(M.AskClosed{id, answer, at})
+    case M.ThreadSnoozed{id, until, at}:
+      Change.encode(M.ThreadSnoozed{id, until, at})
+    case M.ThreadOrdered{id, section, key, at}:
+      Change.encode(M.ThreadOrdered{id, section, key, at})
 
 def Change.private(+tag: String) -> Bool:
   Bool.or(String.eq(tag, "DeviceRegistered"), String.eq(tag, "DeviceDropped"))

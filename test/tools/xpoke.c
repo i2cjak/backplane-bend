@@ -4,6 +4,7 @@
 //   xpoke key NAME         press a named key (Return, BackSpace, Escape...)
 //   xpoke ctrl KEY         ctrl+key (an upper-case letter adds shift)
 //   xpoke wheel X Y up|down
+//   xpoke drag X Y X2 Y2   press at X Y, move to X2 Y2, release there
 // Build: cc -I<x11 include> test/tools/xpoke.c -o build/xpoke -lX11
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -44,6 +45,21 @@ static void button(Display* d, Window w, int x, int y, unsigned b) {
   e.type = ButtonRelease; XSendEvent(d, w, True, ButtonReleaseMask, (XEvent*)&e);
 }
 
+static void drag(Display* d, Window w, int x, int y, int x2, int y2) {
+  XButtonEvent e = { 0 };
+  e.display = d; e.window = w; e.root = DefaultRootWindow(d);
+  e.same_screen = True; e.x = x; e.y = y; e.button = 1;
+  e.type = ButtonPress; XSendEvent(d, w, True, ButtonPressMask, (XEvent*)&e);
+  XFlush(d);
+  XMotionEvent m = { 0 };
+  m.display = d; m.window = w; m.root = DefaultRootWindow(d);
+  m.same_screen = True; m.x = x2; m.y = y2; m.state = Button1Mask;
+  m.type = MotionNotify; XSendEvent(d, w, True, PointerMotionMask | Button1MotionMask, (XEvent*)&m);
+  XFlush(d);
+  e.x = x2; e.y = y2; e.state = Button1Mask;
+  e.type = ButtonRelease; XSendEvent(d, w, True, ButtonReleaseMask, (XEvent*)&e);
+}
+
 int main(int argc, char** argv) {
   Display* d = XOpenDisplay(NULL);
   if (!d || argc < 2) return 1;
@@ -53,6 +69,8 @@ int main(int argc, char** argv) {
   if (!w) { fprintf(stderr, "no Backplane window\n"); return 1; }
   if (!strcmp(argv[1], "click") && argc == 4) {
     button(d, w, atoi(argv[2]), atoi(argv[3]), 1);
+  } else if (!strcmp(argv[1], "drag") && argc == 6) {
+    drag(d, w, atoi(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]));
   } else if (!strcmp(argv[1], "wheel") && argc == 5) {
     button(d, w, atoi(argv[2]), atoi(argv[3]), strcmp(argv[4], "up") ? 5 : 4);
   } else if (!strcmp(argv[1], "type") && argc == 3) {

@@ -35,6 +35,14 @@ def Th.warn() -> U32:
 def Th.bad() -> U32:
   15755882
 
+# a thread waiting on a question or plan (the sidebar's dot)
+def Th.input() -> U32:
+  11832575
+
+# a thread with messages queued
+def Th.queued() -> U32:
+  5226953
+
 # body text (the web's text at 80% over the background)
 def Th.soft() -> U32:
   11579834
