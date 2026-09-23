@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/mobile/notify.bend as Nt
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -222,3 +223,16 @@ law inbox_never_interrupts:
   for +text: String
   for h: {H.Hub.running(H.Hub.thread(s, to)) == True{} : Bool}
   {H.Step.outs_of(H.Hub.inbox(s, now, from, to, role, text)) == [] : List<&2, H.Out>}
+# Phone alerts
+# ------------
+
+# a phone alerts only for a turn it saw running: connecting, or a thread
+# that never ran, raises nothing
+law alert_needs_running:
+  for t: M.TurnState
+  {Nt.Note.kind(False{}, t) == "" : String}
+
+# a turn still running never alerts
+law alert_never_running:
+  for b: Bool
+  {Nt.Note.kind(b, M.Running{}) == "" : String}

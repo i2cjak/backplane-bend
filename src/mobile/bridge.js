@@ -30,10 +30,11 @@ function* each(list) {
 }
 
 const secs = (n) => BigInt(Math.floor(Number(n)));
-let ui = App.init(secs(Date.now() / 1000));
+let ui = null;
 
-// every call answers {"screen": <screen>, "cmds": [...]} as one string
-function out(cmds, quiet) {
+// every call answers {"screen": <screen>, "cmds": [...]} as one string;
+// alerts ride along as {"type": "notify", ...} commands
+function out(cmds, quiet, alerts) {
   const cs = [];
   for (const c of each(cmds)) {
     if (c.$ === "Send") cs.push({ type: "send", text: c.text });
@@ -41,16 +42,32 @@ function out(cmds, quiet) {
     else if (c.$ === "Focus") cs.push({ type: "focus", id: c.id });
     else if (c.$ === "Scroll") cs.push({ type: "scroll" });
   }
+  for (const a of alerts ?? []) cs.push({ type: "notify", ...a });
   return '{"screen":' + (quiet ? "null" : App.screen(ui)) + ',"cmds":' + JSON.stringify(cs) + "}";
 }
 
 globalThis.Backplane = {
+  // cid: this phone's id, part of every message id (a resend is stored once)
+  start(cid) {
+    ui = App.init(secs(Date.now() / 1000), cid);
+    return out(null);
+  },
+  // the socket's query: resume from what this app already holds
+  resume() {
+    return JSON.stringify({ since: App.seq(ui), origin: App.origin(ui) });
+  },
   screen() {
     return out(null);
   },
   recv(text) {
-    ui = App.recv(ui, toJson(JSON.parse(text)));
-    return out(null);
+    const r = App.recv(ui, toJson(JSON.parse(text)));
+    ui = r.act.ui;
+    return out(r.act.cmds, false, JSON.parse(r.alerts));
+  },
+  register(platform, token, kind, thread, env, bundle) {
+    const r = App.register(ui, platform, token, kind, thread, env, bundle);
+    ui = r.ui;
+    return out(r.cmds, true);
   },
   act(action, value) {
     const r = App.act(ui, action, value);
