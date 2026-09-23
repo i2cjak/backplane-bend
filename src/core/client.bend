@@ -24,7 +24,8 @@ type Ui is Data:
     rid: Nat,
     want_new: Bool,
     error: String,
-    note: String
+    note: String,
+    info: Map<&2, String>
   }
 
 type Cmd is Data:
@@ -37,7 +38,7 @@ type Act is Data:
   Act{ui: Ui, cmds: List<&2, Cmd>}
 
 def Ui.init(now: Nat) -> Ui:
-  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", ""}
+  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "", Map.new(&2, String)}
 
 def Str.get.k(r: Map<&2, String> & String) -> String:
   (_, v) = r
@@ -120,16 +121,16 @@ def Ui.decode(xs: List<&2, J.Json>) -> List<&2, M.Change>:
 # asked for gets selected; a finished reply ends its live text
 def Ui.see(u: Ui, c: M.Change) -> Ui:
   match u c:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note} M.ThreadCreated{+id, _, _, _, _, _, _, _, _}:
-      Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, False{}, er, note}
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note} M.MessagePosted{+thread, _, M.Assistant{}, _, _}:
-      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note}
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note} M.TurnChanged{+thread, M.Completed{}, _}:
-      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note}
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note} M.TurnChanged{+thread, M.Failed{}, _}:
-      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note}
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note} M.TurnChanged{+thread, M.Interrupted{}, _}:
-      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note, nf} M.ThreadCreated{+id, _, _, _, _, _, _, _, _}:
+      Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, False{}, er, note, nf}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf} M.MessagePosted{+thread, _, M.Assistant{}, _, _}:
+      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note, nf}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf} M.TurnChanged{+thread, M.Completed{}, _}:
+      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note, nf}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf} M.TurnChanged{+thread, M.Failed{}, _}:
+      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note, nf}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf} M.TurnChanged{+thread, M.Interrupted{}, _}:
+      Ui{st, sel, dr, Map.set(&2, String, live, thread, ""), op, on, now, ad, pa, v, rid, w, er, note, nf}
     case _ _:
       u
 
@@ -137,24 +138,41 @@ def Ui.fold(cs: List<&2, M.Change>, u: Ui) -> Ui:
   match cs u:
     case Nil{} _:
       u
-    case +c <> t Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Ui.fold(t, Ui.see(Ui{M.State.apply(st, c), sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}, c))
+    case +c <> t Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui.fold(t, Ui.see(Ui{M.State.apply(st, c), sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}, c))
+
+def Info.fields(fs: J.Json, m: Map<&2, String>) -> Map<&2, String>:
+  match fs:
+    case J.Field{k, J.Str{v}, t}:
+      Info.fields(t, Map.set(&2, String, m, k, v))
+    case J.Field{_, _, t}:
+      Info.fields(t, m)
+    case _:
+      m
+
+# the machine's info (strings only) from the log message
+def Info.of(o: J.Json) -> Map<&2, String>:
+  match o:
+    case J.Obj{fs}:
+      Info.fields(fs, Map.new(&2, String))
+    case _:
+      Map.new(&2, String)
 
 def Ui.reset(u: Ui, +o: J.Json) -> Ui:
   match u:
-    case Ui{_, sel, dr, live, op, _, now, ad, pa, _, rid, w, er, note}:
+    case Ui{_, sel, dr, live, op, _, now, ad, pa, _, rid, w, er, note, _}:
       Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))),
-        Ui{M.State.empty(), sel, dr, live, op, True{}, now, ad, pa, J.Json.get_str(o, "version", ""), rid, w, er, note})
+        Ui{M.State.empty(), sel, dr, live, op, True{}, now, ad, pa, J.Json.get_str(o, "version", ""), rid, w, er, note, Info.of(J.Json.get_obj(o, "info"))})
 
 def Ui.delta(u: Ui, +thread: String, text: String) -> Ui:
   match u:
-    case Ui{st, sel, dr, +live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Ui{st, sel, dr, Map.set(&2, String, live, thread, Str.get(live, thread) ++ text), op, on, now, ad, pa, v, rid, w, er, note}
+    case Ui{st, sel, dr, +live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui{st, sel, dr, Map.set(&2, String, live, thread, Str.get(live, thread) ++ text), op, on, now, ad, pa, v, rid, w, er, note, nf}
 
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, J.Json.get_str(o, "error", ""), note}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, J.Json.get_str(o, "error", ""), note, nf}
 
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
@@ -162,9 +180,9 @@ def Ui.update.note(+ver: String, +state: String) -> String:
 # an update notice: a version to offer, or the progress of one being applied
 def Ui.update(u: Ui, +o: J.Json) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, _}:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, _, nf}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w,
-        J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", ""))}
+        J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", "")), nf}
 
 def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
   match i:
@@ -187,13 +205,13 @@ def Ui.recv(u: Ui, +o: J.Json) -> Ui:
 
 def Ui.online(u: Ui, b: Bool) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, _, now, ad, pa, v, rid, w, er, note}:
-      Ui{st, sel, dr, live, op, b, now, ad, pa, v, rid, w, er, note}
+    case Ui{st, sel, dr, live, op, _, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui{st, sel, dr, live, op, b, now, ad, pa, v, rid, w, er, note, nf}
 
 def Ui.tick(u: Ui, now: Nat) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}
+    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note, nf}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}
 
 # Acting
 # ------
@@ -204,23 +222,23 @@ def Rpc.text(+rid: Nat, m: String, p: List<&2, J.KV>) -> String:
 # send method m with params p, counting the request
 def Ui.rpc(u: Ui, m: String, p: List<&2, J.KV>) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, +rid, w, er, note}:
-      Act{Ui{st, sel, dr, live, op, on, now, ad, pa, v, 1n+rid, w, er, note}, [Send{Rpc.text(rid, m, p)}]}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, +rid, w, er, note, nf}:
+      Act{Ui{st, sel, dr, live, op, on, now, ad, pa, v, 1n+rid, w, er, note, nf}, [Send{Rpc.text(rid, m, p)}]}
 
 def Ui.on_thread(u: Ui, m: String) -> Act:
   match u:
-    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}, m, [J.KV{"thread", J.Str{sel}}])
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}, m, [J.KV{"thread", J.Str{sel}}])
 
 def Ui.select(u: Ui, +id: String) -> Act:
   match u:
-    case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Act{Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, w, er, note}, [Focus{"composer"}, Scroll{}]}
+    case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Act{Ui{st, id, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}, [Focus{"composer"}, Scroll{}]}
 
 def Ui.draft(u: Ui, text: String) -> Act:
   match u:
-    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Act{Ui{st, sel, Map.set(&2, String, dr, sel, text), live, op, on, now, ad, pa, v, rid, w, er, note}, Nil{}}
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Act{Ui{st, sel, Map.set(&2, String, dr, sel, text), live, op, on, now, ad, pa, v, rid, w, er, note, nf}, Nil{}}
 
 def Ui.also(a: Act, more: List<&2, Cmd>) -> Act:
   match a:
@@ -231,48 +249,81 @@ def Ui.send.k(empty: Bool, u: Ui, text: String) -> Act:
   match empty u:
     case True{} _:
       Act{u, Nil{}}
-    case False{} Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Ui.also(Ui.rpc(Ui{st, sel, Map.set(&2, String, dr, sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note},
+    case False{} Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui.also(Ui.rpc(Ui{st, sel, Map.set(&2, String, dr, sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf},
         "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}]), [Scroll{}])
 
 def Ui.send(u: Ui) -> Act:
   match u:
-    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Ui.send.k(String.is_empty(String.trim(Str.get(dr, sel))), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}, String.trim(Str.get(dr, sel)))
+    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui.send.k(String.is_empty(String.trim(Str.get(dr, sel))), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}, String.trim(Str.get(dr, sel)))
 
 def Ui.new_thread(u: Ui, +pid: String) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, _, er, note}:
-      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note}, "thread.create", [J.KV{"project", J.Str{pid}}, J.KV{"title", J.Str{"New thread"}}])
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, _, er, note, nf}:
+      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note, nf}, "thread.create", [J.KV{"project", J.Str{pid}}, J.KV{"title", J.Str{"New thread"}}])
 
 def Ui.add_project(u: Ui, +path: String) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, _, pa, v, rid, w, er, note}:
-      Ui.rpc(Ui{st, sel, dr, live, op, on, now, False{}, pa, v, rid, w, er, note}, "project.add", [J.KV{"path", J.Str{path}}])
+    case Ui{st, sel, dr, live, op, on, now, _, pa, v, rid, w, er, note, nf}:
+      Ui.rpc(Ui{st, sel, dr, live, op, on, now, False{}, pa, v, rid, w, er, note, nf}, "project.add", [J.KV{"path", J.Str{path}}])
 
 def Ui.toggle_add(u: Ui) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Act{Ui{st, sel, dr, live, op, on, now, Bool.not(ad), pa, v, rid, w, er, note}, [Focus{"project-path"}]}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Act{Ui{st, sel, dr, live, op, on, now, Bool.not(ad), pa, v, rid, w, er, note, nf}, [Focus{"project-path"}]}
 
 def Ui.toggle_panel(u: Ui) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note}:
-      Act{Ui{st, sel, dr, live, op, on, now, ad, Bool.not(pa), v, rid, w, er, note}, Nil{}}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Act{Ui{st, sel, dr, live, op, on, now, ad, Bool.not(pa), v, rid, w, er, note, nf}, Nil{}}
 
 def Ui.toggle_settled(u: Ui, +pid: String) -> Act:
   match u:
-    case Ui{st, sel, dr, live, +op, on, now, ad, pa, v, rid, w, er, note}:
-      Act{Ui{st, sel, dr, live, Map.set(&2, Bool, op, pid, Bool.not(Flag.get(op, pid))), on, now, ad, pa, v, rid, w, er, note}, Nil{}}
+    case Ui{st, sel, dr, live, +op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Act{Ui{st, sel, dr, live, Map.set(&2, Bool, op, pid, Bool.not(Flag.get(op, pid))), on, now, ad, pa, v, rid, w, er, note, nf}, Nil{}}
+
+def Ui.setting.k(ps: List<&2, String>) -> List<&2, J.KV>:
+  match ps:
+    case k <> t:
+      [J.KV{"key", J.Str{k}}, J.KV{"value", J.Str{String.join(t, "=")}}]
+    case Nil{}:
+      Nil{}
+
+# "key=value" -> setting.set
+def Ui.setting(u: Ui, kv: String) -> Act:
+  Ui.rpc(u, "setting.set", Ui.setting.k(String.split(kv, '=')))
+
+def Ui.close(u: Ui, +key: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, +op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui{st, sel, dr, live, Map.set(&2, Bool, op, key, False{}), on, now, ad, pa, v, rid, w, er, note, nf}
+
+# the selected thread's model (the picker closes)
+def Ui.model(u: Ui, +model: String) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}:
+      Ui.rpc(Ui.close(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf}, "models"), "thread.modes", [J.KV{"thread", J.Str{sel}}, J.KV{"model", J.Str{model}}])
+
+def Ui.info(u: Ui, +k: String) -> String:
+  match u:
+    case Ui{_, _, _, _, _, _, _, _, _, _, _, _, _, _, nf}:
+      Str.get(nf, k)
+
+def Ui.flag(u: Ui, +k: String) -> Bool:
+  match u:
+    case Ui{_, _, _, _, op, _, _, _, _, _, _, _, _, _, _}:
+      Flag.get(op, k)
 
 def Ui.dismiss(u: Ui) -> Act:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note}:
-      Act{Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, "", note}, Nil{}}
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf}:
+      Act{Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, "", note, nf}, Nil{}}
 
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
-   "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update"]
+   "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
+   "flag", "setting", "model", "kicad-install"]
 
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
@@ -312,6 +363,14 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.on_thread(u, "thread.delete")
     case 17n:
       Ui.rpc(u, "app.update", Nil{})
+    case 18n:
+      Ui.toggle_settled(u, value)
+    case 19n:
+      Ui.setting(u, value)
+    case 20n:
+      Ui.model(u, value)
+    case 21n:
+      Ui.rpc(u, "kicad.install", Nil{})
     case _:
       Act{u, Nil{}}
 
@@ -324,13 +383,13 @@ def Ui.act(u: Ui, +action: String, +value: String) -> Act:
 
 def Ui.sel(u: Ui) -> String:
   match u:
-    case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _, nf}:
       sel
 
 # the selected thread's draft
 def Ui.draft_text(u: Ui) -> String:
   match u:
-    case Ui{_, +sel, drafts, _, _, _, _, _, _, _, _, _, _, _}:
+    case Ui{_, +sel, drafts, _, _, _, _, _, _, _, _, _, _, _, nf}:
       Str.get(drafts, sel)
 
 def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
@@ -352,5 +411,5 @@ def Ui.thread_project(t: M.Thread) -> String:
 # the selected thread's project directory ("" with nothing selected)
 def Ui.root(u: Ui) -> String:
   match u:
-    case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, nf}:
       Bool.pick(String, String.is_empty(sel), "", Ui.project_root(st, Ui.thread_project(Ui.thread(st, sel))))

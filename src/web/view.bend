@@ -106,7 +106,7 @@ def View.add(adding: Bool) -> List<&2, D.Node>:
 
 def View.sidebar(u: U.Ui) -> D.Node:
   match u:
-    case U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _, _}:
+    case U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _, _, _}:
       D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
@@ -205,7 +205,7 @@ def View.composer(+draft: String, running: Bool) -> D.Node:
 
 def View.thread(u: U.Ui, t: M.Thread) -> D.Node:
   match u t:
-    case U.Ui{st, +sel, drafts, +live, _, _, _, _, panel, _, _, _, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}:
+    case U.Ui{st, +sel, drafts, +live, _, _, _, _, panel, _, _, _, _, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", "thread-view"}], [
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
@@ -220,8 +220,8 @@ def View.main.k(none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
   match none u:
     case True{} _:
       View.empty(n)
-    case False{} U.Ui{+st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note}:
-      View.thread(U.Ui{st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note}, U.Ui.thread(st, sel))
+    case False{} U.Ui{+st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}:
+      View.thread(U.Ui{st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}, U.Ui.thread(st, sel))
 
 def View.error(e: String) -> List<&2, D.Node>:
   match e:
@@ -233,9 +233,9 @@ def View.error(e: String) -> List<&2, D.Node>:
 # the whole page
 def View.page(u: U.Ui) -> D.Node:
   match u:
-    case U.Ui{+st, +sel, +d, +l, +o, +on, +now, +ad, +pa, +v, +r, +w, +e, +note}:
+    case U.Ui{+st, +sel, +d, +l, +o, +on, +now, +ad, +pa, +v, +r, +w, +e, +note, +nf}:
       D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app")}],
-        D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note}),
-          View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
+        D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}),
+          View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
           D.Dom.cat(D.Dom.when(pa, D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}),
             View.error(e)))}

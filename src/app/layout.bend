@@ -508,7 +508,7 @@ def Lay.thread.k(t: M.Thread, +draft: String, +st: M.State, +sel: String, +live:
 
 def Lay.thread(+n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, +live, _, _, _, _, pa, _, _, _, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, +live, _, _, _, _, pa, _, _, _, _, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
       Lay.thread.k(U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, String.eq(focus, "composer"), x0, x1, h, sc, pa)
 
 def Lay.empty(+x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
@@ -517,7 +517,7 @@ def Lay.empty(+x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
 
 def Lay.main(+n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
       Bool.pick(Out, String.is_empty(sel), Lay.empty(x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(n, x0, x1))
 
 # the viewer's header strip; the board below it is drawn by the viewer
@@ -562,13 +562,13 @@ def Lay.note(+note: String) -> Out:
 
 def Lay.sidebar(+n: S.Nui, +h: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _, note}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
+    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _, note, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Out.cat(Lay.sidebar.k(D.Clip{0, 40, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h), Lay.note(note))
 
 # the whole window, topmost first
 def Lay.frame(+n: S.Nui) -> Out:
   match n:
-    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
         Lay.main(n, 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
         Bool.pick(Out, pa, Lay.viewer((264 + U32.shr((w - 264 : U32)) : U32), w, h, "", List.is_empty(&2, V.Seen, Lay.scene(n))), Out.none()),

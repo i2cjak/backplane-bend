@@ -21,6 +21,7 @@ type Out is Data:
   Watch{client: U32, path: String}
   # install the latest release and restart
   Upgrade{}
+  KiCadInstall{}
   # run one Codex turn (a process per turn; `session` resumes)
   CodexTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
 
@@ -163,17 +164,24 @@ def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.J
   +project = J.Json.get_str(p, "project", "")
   +title = J.Json.get_str(p, "title", "New thread")
   Step.reply(client, id, [M.ThreadCreated{Hub.id("t", now, Hub.seq(s)), project, title,
-    C.Env.of(J.Json.get_str(p, "env", "local")), "", "", J.Json.get_str(p, "provider", "claude"),
-    J.Json.get_str(p, "model", ""), now}])
+    C.Env.of(J.Json.get_str(p, "env", "local")), "", "", J.Json.get_str(p, "provider", M.Setting.get(s, "agent.provider", "claude")),
+    J.Json.get_str(p, "model", M.Setting.get(s, "agent.model", "")), now}])
 
 def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   +root = J.Json.get_str(p, "path", "")
   Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), root, now}])
 
+# change a thread's modes; what the request leaves out stays as it is
+def Hub.modes(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, t: M.Thread) -> Step:
+  match t:
+    case M.Thread{+th, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, mo, rt, im, _, _}:
+      Step.reply(client, id, [M.ModesSet{th, C.Runtime.of(J.Json.get_str(p, "runtime", C.Runtime.name(rt))),
+        C.Interaction.of(J.Json.get_str(p, "interaction", C.Interaction.name(im))), J.Json.get_str(p, "model", mo), now}])
+
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
-   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set"]
+   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install"]
 
 def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   match i:
@@ -206,12 +214,13 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 13n:
       Step.outs([Reply.ok(client, id), Watch{client, J.Json.get_str(p, "path", "")}])
     case 14n:
-      Step.reply(client, id, [M.ModesSet{J.Json.get_str(p, "thread", ""), C.Runtime.of(J.Json.get_str(p, "runtime", "full-access")),
-        C.Interaction.of(J.Json.get_str(p, "interaction", "default")), J.Json.get_str(p, "model", ""), now}])
+      Hub.modes(s, now, client, id, p, Hub.thread(s, J.Json.get_str(p, "thread", "")))
     case 15n:
       Step.outs([Reply.ok(client, id), Upgrade{}])
     case 16n:
       Step.reply(client, id, [M.SettingSet{J.Json.get_str(p, "key", ""), J.Json.get_str(p, "value", ""), now}])
+    case 17n:
+      Step.outs([Reply.ok(client, id), KiCadInstall{}])
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 

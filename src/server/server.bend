@@ -597,8 +597,21 @@ type Hub is Type:
 def Hub.changes_msg(ls: List<&2, String>) -> String:
   "{\"t\":\"changes\",\"items\":[" ++ String.join(ls, ",") ++ "]}"
 
-def Hub.log_msg(+ls: List<&2, String>, version: String) -> String:
-  "{\"t\":\"log\",\"version\":" ++ J.Json.show(J.Str{version}) ++ ",\"items\":[" ++ String.join(List.reverse(&2, String, ls), ",") ++ "]}"
+def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
+  match rt:
+    case K.Rt{cli, fork, v, c}:
+      [J.KV{"kicad.cli", J.Str{cli}}, J.KV{"kicad.fork", J.Str{Bool.pick(String, fork, v, "")}}, J.KV{"kicad.commit", J.Str{c}}]
+
+def Info.net(n: Net) -> List<&2, J.KV>:
+  match n:
+    case Net{tn, hs, _, ms, _, rt}:
+      List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
+
+# what this machine runs, for the settings screen and the model picker
+def Hub.info(c: Cfg) -> J.Json:
+  match c:
+    case Cfg{home, _, host, port, _, _, _, net}:
+      J.Json.obj(List.append(&2, J.KV, [J.KV{"home", J.Str{home}}, J.KV{"listen", J.Str{host ++ ":" ++ U32.show(port)}}], Info.net(net)))
 
 def Hub.commit.wrote(r: File & Result<&1, &1, U32 & String, Unit>, st: M.State, +line: String, ls: List<&2, String>, cl: List<&2, Client>,
     as: List<&2, Agent>, +inbox: Chan(Msg), cfg: Cfg, note: String, fresh: List<&2, String>, k: Hub -> List<&2, String> -> IO(Hub & List<&2, String>)) -> IO(Hub & List<&2, String>):
@@ -693,6 +706,9 @@ def Cfg.version(c: Cfg) -> String:
     case Cfg{_, _, _, _, _, _, v, nt}:
       v
 
+def Hub.log_msg(+ls: List<&2, String>, +cfg: Cfg) -> String:
+  "{\"t\":\"log\",\"version\":" ++ J.Json.show(J.Str{Cfg.version(cfg)}) ++ ",\"info\":" ++ J.Json.show(Hub.info(cfg)) ++ ",\"items\":[" ++ String.join(List.reverse(&2, String, ls), ",") ++ "]}"
+
 def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
   match empty:
     case True{}:
@@ -709,7 +725,7 @@ def Hub.join(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
   match h:
     case Hub{st, f, +ls, cl, as, inbox, +cfg, +note}:
       do IO<Hub>:
-        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, Cfg.version(cfg))})
+        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, cfg)})
         Hub.join.note(out, note)
         return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg, note}
 
@@ -1107,6 +1123,13 @@ def Upgrade.done.k(ok: Bool, +err: String, +inbox: Chan(Msg)) -> IO(Unit):
 def Upgrade.done(+err: String, +inbox: Chan(Msg)) -> IO(Unit):
   Upgrade.done.k(String.is_empty(err), err, inbox)
 
+# install Backplane KiCad beside our data and restart to pick it up
+def Install.go(+home: String, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    Upgrade.say(inbox, Upgrade.note([J.KV{"state", J.Str{"installing Backplane KiCad"}}]))
+    err : String <- K.KiCad.install(home)
+    Upgrade.done(err, inbox)
+
 # install the latest release and restart into it
 def Upgrade.go(+home: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
@@ -1141,6 +1164,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
         IO.spawn(Unit, Codex.run(Codex.args(cfg, thread, model, session, r, text, Hub.prompt(cfg, st, thread, cwd, fs)), cwd, thread, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.KiCadInstall{}:
+      do IO<Hub>:
+        IO.spawn(Unit, Install.go(Cfg.home(cfg), inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
