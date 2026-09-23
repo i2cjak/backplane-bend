@@ -60,12 +60,12 @@ def Flag.get(m: Map<&2, Bool>, +k: String) -> Bool:
 
 def Ui.threads(s: M.State) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _}:
       Map.values(&2, M.Thread, ts)
 
 def Ui.projects(s: M.State) -> List<&2, M.Project>:
   match s:
-    case M.State{ps, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _}:
       Map.values(&2, M.Project, ps)
 
 def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -74,12 +74,12 @@ def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Ui.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _}:
       Ui.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Ui.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _}:
       es
 
 # Time
@@ -429,60 +429,7 @@ def Ui.dismiss(u: Ui) -> Act:
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
-   "flag", "setting", "model", "kicad-install"]
-
-def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
-  match i:
-    case 0n:
-      Ui.select(u, value)
-    case 1n:
-      Ui.new_thread(u, value)
-    case 2n:
-      Ui.draft(u, value)
-    case 3n:
-      Ui.send(u)
-    case 4n:
-      Ui.add_project(u, value)
-    case 5n:
-      Ui.toggle_add(u)
-    case 6n:
-      Ui.on_thread(u, "thread.settle")
-    case 7n:
-      Ui.on_thread(u, "thread.unsettle")
-    case 8n:
-      Ui.on_thread(u, "thread.pin")
-    case 9n:
-      Ui.on_thread(u, "thread.unpin")
-    case 10n:
-      Ui.on_thread(u, "thread.archive")
-    case 11n:
-      Ui.on_thread(u, "turn.interrupt")
-    case 12n:
-      Ui.toggle_settled(u, value)
-    case 13n:
-      Act{u, [Copy{value}]}
-    case 14n:
-      Ui.toggle_panel(u)
-    case 15n:
-      Ui.dismiss(u)
-    case 16n:
-      Ui.on_thread(u, "thread.delete")
-    case 17n:
-      Ui.rpc(u, "app.update", Nil{})
-    case 18n:
-      Ui.toggle_settled(u, value)
-    case 19n:
-      Ui.setting(u, value)
-    case 20n:
-      Ui.model(u, value)
-    case 21n:
-      Ui.rpc(u, "kicad.install", Nil{})
-    case _:
-      Act{u, Nil{}}
-
-# a user action with its value
-def Ui.act(u: Ui, +action: String, +value: String) -> Act:
-  Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
+   "flag", "setting", "model", "kicad-install", "answer"]
 
 # Reading the client state
 # ------------------------
@@ -506,7 +453,7 @@ def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
 
 def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
-    case M.State{ps, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:
@@ -535,7 +482,7 @@ def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
 
 def Kids.set(s: M.State) -> Map<&2, Bool>:
   match s:
-    case M.State{_, _, _, _, tk, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _}:
       Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
 
 def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
@@ -583,7 +530,7 @@ def Tasks.mine(ts: List<&2, M.Task>, +parent: String) -> List<&2, M.Task>:
 
 def Tasks.of(s: M.State, +parent: String) -> List<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _}:
       Tasks.mine(Map.values(&2, M.Task, tk), parent)
 
 def Tasks.title.k(t: M.Thread) -> String:
@@ -603,7 +550,7 @@ def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
 
 def Tasks.parent(+st: M.State, +thread: String) -> String:
   match st:
-    case M.State{_, _, _, _, tk, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _}:
       Tasks.parent.find(Map.values(&2, M.Task, tk), thread)
 
 def Task.word(s: M.TaskState) -> String:
@@ -618,3 +565,94 @@ def Task.word(s: M.TaskState) -> String:
       "failed"
     case M.TaskCancelled{}:
       "cancelled"
+
+# Asks
+# ----
+
+# "askid|answer" -> ask.answer
+def Ui.answer.k(ps: List<&2, String>) -> List<&2, J.KV>:
+  match ps:
+    case id <> t:
+      [J.KV{"id", J.Str{id}}, J.KV{"answer", J.Str{String.join(t, "|")}}]
+    case Nil{}:
+      Nil{}
+
+def Ui.answer(u: Ui, v: String) -> Act:
+  Ui.rpc(u, "ask.answer", Ui.answer.k(String.split(v, '|')))
+
+def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
+  match i:
+    case 0n:
+      Ui.select(u, value)
+    case 1n:
+      Ui.new_thread(u, value)
+    case 2n:
+      Ui.draft(u, value)
+    case 3n:
+      Ui.send(u)
+    case 4n:
+      Ui.add_project(u, value)
+    case 5n:
+      Ui.toggle_add(u)
+    case 6n:
+      Ui.on_thread(u, "thread.settle")
+    case 7n:
+      Ui.on_thread(u, "thread.unsettle")
+    case 8n:
+      Ui.on_thread(u, "thread.pin")
+    case 9n:
+      Ui.on_thread(u, "thread.unpin")
+    case 10n:
+      Ui.on_thread(u, "thread.archive")
+    case 11n:
+      Ui.on_thread(u, "turn.interrupt")
+    case 12n:
+      Ui.toggle_settled(u, value)
+    case 13n:
+      Act{u, [Copy{value}]}
+    case 14n:
+      Ui.toggle_panel(u)
+    case 15n:
+      Ui.dismiss(u)
+    case 16n:
+      Ui.on_thread(u, "thread.delete")
+    case 17n:
+      Ui.rpc(u, "app.update", Nil{})
+    case 18n:
+      Ui.toggle_settled(u, value)
+    case 19n:
+      Ui.setting(u, value)
+    case 20n:
+      Ui.model(u, value)
+    case 21n:
+      Ui.rpc(u, "kicad.install", Nil{})
+    case 22n:
+      Ui.answer(u, value)
+    case _:
+      Act{u, Nil{}}
+
+# a user action with its value
+def Ui.act(u: Ui, +action: String, +value: String) -> Act:
+  Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
+
+def Asks.open.k(keep: Bool, a: M.Ask, rest: List<&2, M.Ask>) -> List<&2, M.Ask>:
+  match keep:
+    case True{}:
+      a <> rest
+    case False{}:
+      rest
+
+def Asks.open.go(as: List<&2, M.Ask>, +thread: String) -> List<&2, M.Ask>:
+  match as:
+    case Nil{}:
+      Nil{}
+    case M.Ask{i, +th, k, t, d, o, +op, an} <> rest:
+      Asks.open.k(Bool.and(op, String.eq(th, thread)), M.Ask{i, th, k, t, d, o, op, an}, Asks.open.go(rest, thread))
+
+# what a thread's agent waits on the user for
+def Asks.open(s: M.State, +thread: String) -> List<&2, M.Ask>:
+  Asks.open.go(M.Asks.all(s), thread)
+
+# the sidebar marks a thread that waits on the user
+def Asks.waiting(s: M.State, +thread: String) -> Bool:
+  Bool.not(List.is_empty(&2, M.Ask, Asks.open(s, thread)))

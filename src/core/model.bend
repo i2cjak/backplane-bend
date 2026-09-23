@@ -175,6 +175,8 @@ type Change is Data:
   SettingSet{key: String, value: String, at: Nat}
   TurnQueued{thread: String, msg: String, text: String, at: Nat}
   QueueTaken{thread: String, at: Nat}
+  AskOpened{id: String, thread: String, kind: String, tool: String, detail: String, options: String, at: Nat}
+  AskClosed{id: String, answer: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -241,37 +243,11 @@ def Shelf.of(t: Thread) -> Shelf:
   Thread{_, _, _, _, _, _, _, archived, override, +settled_at, +unsettled_at, pinned, _, _, _, _, _, _, _, _, deleted} = t
   Shelf.of.k(deleted, archived, pinned, override, Nat.is_gt(settled_at, unsettled_at))
 
-# Projection
-# ----------
-
-type State is Data:
-  State{
-    projects: Map<&2, Project>,
-    threads: Map<&2, Thread>,
-    entries: List<&2, Entry>,
-    seq: Nat,
-    tasks: Map<&2, Task>,
-    settings: Map<&2, String>,
-    queued: Map<&2, String>
-  }
-
-def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, String)}
-
 def Thread.blank(id: String) -> Thread:
   Thread{id, "", "", 0n, 0n, Idle{}, 0n, True{}, NoOverride{}, 0n, 0n, False{}, Local{}, "", "", "", "", FullAccess{}, DefaultMode{}, "", True{}}
 
 def Project.blank(id: String) -> Project:
   Project{id, "", "", 0n, True{}}
-
-# apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, id: String, r: Map<&2, Thread> & Thread) -> State:
-  (ts, t) = r
-  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu}
-
-def State.thread(f: Thread -> Thread, s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State.thread.fin(f, ps, es, n, tk, sg, qu, id, Map.get(Thread, Thread.blank(id), ts, id))
 
 def Thread.renamed(+title: String, t: Thread) -> Thread:
   Thread{id, p, _, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
@@ -331,32 +307,68 @@ def Thread.modes_set(r: RuntimeMode, i: InteractionMode, m: String, t: Thread) -
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, _, _, _, se, de} = t
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, m, r, i, se, de}
 
+# Asks
+# ----
+# What an agent waits on the user for: a tool approval ("approval"), a
+# question ("input", options one per line) or a proposed plan ("plan").
+# Opened by the agent, closed once by the user's answer.
+
+type Ask is Data:
+  Ask{id: String, thread: String, kind: String, tool: String, detail: String, options: String, open: Bool, answer: String}
+
+# Projection
+# ----------
+
+type State is Data:
+  State{
+    projects: Map<&2, Project>,
+    threads: Map<&2, Thread>,
+    entries: List<&2, Entry>,
+    seq: Nat,
+    tasks: Map<&2, Task>,
+    settings: Map<&2, String>,
+    queued: Map<&2, String>,
+    asks: Map<&2, Ask>
+  }
+
+def State.empty() -> State:
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, String), Map.new(&2, Ask)}
+
+# apply f to the thread at `id` (a blank, hidden thread when absent)
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Thread> & Thread) -> State:
+  (ts, t) = r
+  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu, ak}
+
+def State.thread(f: Thread -> Thread, s: State, +id: String) -> State:
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State.thread.fin(f, ps, es, n, tk, sg, qu, ak, id, Map.get(Thread, Thread.blank(id), ts, id))
+
 def State.put_thread(s: State, t: Thread) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
   Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n, tk, sg, qu}
+  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n, tk, sg, qu, ak}
 
 def State.put_project(s: State, p: Project) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
   Project{+id, ti, r, c, rm} = p
-  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu}
+  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu, ak}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
-  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu}
+  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu, ak}
 
 def State.remove_project(s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State.remove_project.fin(ts, es, n, tk, sg, qu, id, Map.get(Project, Project.blank(id), ps, id))
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State.remove_project.fin(ts, es, n, tk, sg, qu, ak, id, Map.get(Project, Project.blank(id), ps, id))
 
 def State.post(s: State, e: Entry) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State{ps, ts, e <> es, n, tk, sg, qu}
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, e <> es, n, tk, sg, qu, ak}
 
 def State.tick(s: State) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State{ps, ts, es, 1n+n, tk, sg, qu}
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, 1n+n, tk, sg, qu, ak}
 
 def State.message(s: State, +thread: String, msg: String, role: Role, text: String, +at: Nat) -> State:
   match role:
@@ -365,23 +377,52 @@ def State.message(s: State, +thread: String, msg: String, role: Role, text: Stri
     case _:
       State.post(s, Msg{msg, thread, role, text, at})
 
-def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, String>, id: String, r: Map<&2, Task> & Task) -> State:
+def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, id: String, r: Map<&2, Task> & Task) -> State:
   (tk, t) = r
-  State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu}
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu, ak}
 
 # apply f to the task at `id` (a blank, settled task when absent)
 def State.task(f: Task -> Task, s: State, +id: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State.task.fin(f, ps, ts, es, n, sg, qu, id, Map.get(Task, Task.blank(id), tk, id))
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State.task.fin(f, ps, ts, es, n, sg, qu, ak, id, Map.get(Task, Task.blank(id), tk, id))
 
 def State.put_task(s: State, t: Task) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
   Task{+id, p, c, d, st, su, dl, pr, mo} = t
-  State{ps, ts, es, n, Map.set(&2, Task, tk, id, Task{id, p, c, d, st, su, dl, pr, mo}), sg, qu}
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, Task{id, p, c, d, st, su, dl, pr, mo}), sg, qu, ak}
 
 def State.setting(s: State, k: String, v: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State{ps, ts, es, n, tk, Map.set(&2, String, sg, k, v), qu}
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, Map.set(&2, String, sg, k, v), qu, ak}
+
+def Ask.blank(id: String) -> Ask:
+  Ask{id, "", "", "", "", "", False{}, ""}
+
+def State.ask(s: State, a: Ask) -> State:
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  Ask{+id, th, k, tool, d, o, op, an} = a
+  State{ps, ts, es, n, tk, sg, qu, Map.set(&2, Ask, ak, id, Ask{id, th, k, tool, d, o, op, an})}
+
+def Ask.close.set(m: Map<&2, Ask>, +id: String, x: Ask, a: String) -> Map<&2, Ask>:
+  match x:
+    case Ask{i, th, k, tool, d, o, True{}, _}:
+      Map.set(&2, Ask, m, id, Ask{i, th, k, tool, d, o, False{}, a})
+    case Ask{_, _, _, _, _, _, False{}, _}:
+      m
+
+def Ask.close.k(r: Map<&2, Ask> & Ask, +id: String, a: String) -> Map<&2, Ask>:
+  (m, x) = r
+  Ask.close.set(m, id, x, a)
+
+# the answer closes an ask for good (a second answer changes nothing)
+def State.ask.close(s: State, +id: String, a: String) -> State:
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, qu, Ask.close.k(Map.get(Ask, Ask.blank(id), ak, id), id, a)}
+
+def Asks.all(s: State) -> List<&2, Ask>:
+  match s:
+    case State{_, _, _, _, _, _, _, ak}:
+      Map.values(&2, Ask, ak)
 
 # Queued turns
 # ------------
@@ -396,12 +437,12 @@ def State.enqueue.k(r: Map<&2, String> & String, +th: String, +text: String) -> 
   Map.set(&2, String, m, th, Queue.join(cur, text))
 
 def State.enqueue(s: State, +th: String, +text: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State{ps, ts, es, n, tk, sg, State.enqueue.k(Map.get(String, "", qu, th), th, text)}
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, State.enqueue.k(Map.get(String, "", qu, th), th, text), ak}
 
 def State.take(s: State, +th: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu} = s
-  State{ps, ts, es, n, tk, sg, Map.set(&2, String, qu, th, "")}
+  State{ps, ts, es, n, tk, sg, qu, ak} = s
+  State{ps, ts, es, n, tk, sg, Map.set(&2, String, qu, th, ""), ak}
 
 # a setting's value, or d when unset
 def State.get.k(r: Map<&2, String> & String) -> String:
@@ -411,12 +452,12 @@ def State.get.k(r: Map<&2, String> & String) -> String:
 # what waits to be sent in a thread ("" for nothing)
 def Queue.of(s: State, +th: String) -> String:
   match s:
-    case State{_, _, _, _, _, _, qu}:
+    case State{_, _, _, _, _, _, qu, ak}:
       State.get.k(Map.get(String, "", qu, th))
 
 def Setting.get(s: State, +k: String, d: String) -> String:
   match s:
-    case State{_, _, _, _, _, sg, qu}:
+    case State{_, _, _, _, _, sg, qu, ak}:
       State.get.k(Map.get(String, d, sg, k))
 
 def State.apply.go(s: State, e: Change) -> State:
@@ -465,6 +506,10 @@ def State.apply.go(s: State, e: Change) -> State:
       State.enqueue(s, th, text)
     case QueueTaken{th, _}:
       State.take(s, th)
+    case AskOpened{id, th, k, tool, d, o, _}:
+      State.ask(s, Ask{id, th, k, tool, d, o, True{}, ""})
+    case AskClosed{+id, a, _}:
+      State.ask.close(s, id, a)
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:
@@ -549,5 +594,5 @@ def Thread.filter_project(ts: List<&2, Thread>, +pid: String) -> List<&2, Thread
 # how many changes have been folded in
 def State.seq(s: State) -> Nat:
   match s:
-    case State{_, _, _, n, _, _, _}:
+    case State{_, _, _, n, _, _, _, ak}:
       n

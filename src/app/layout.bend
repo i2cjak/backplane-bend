@@ -753,6 +753,73 @@ def TL.sending(+ty: Ty, ps: List<&2, String>, +px: U32) -> List<&2, TLine>:
     case +p <> t:
       List.concat(&2, TLine, [TL.bubble(ty, Ty.wrap(ty, 3n, p, U32.min((px * 7 / 10 : U32), 560)), p), [TLine{"sending…", T.Th.faint(), 3, "", 0}], TL.sending(ty, t, px)])
 
+# Asks: what the agent waits on the user for
+# ------------------------------------------
+
+def Ask.plan_lines(+ty: Ty, +text: String, +px: U32) -> List<&2, String>:
+  List.take(&2, String, Ty.wrap(ty, 4n, text, px), 8n)
+
+def Ask.h(+ty: Ty, a: M.Ask, +px: U32) -> U32:
+  match a:
+    case M.Ask{_, _, +k, _, +d, _, _, _}:
+      Bool.pick(U32, String.eq(k, "plan"), (U32.from_nat(List.length(&2, String, Ask.plan_lines(ty, d, px))) * 21 + 76 : U32), 76)
+
+def Asks.h(+ty: Ty, as: List<&2, M.Ask>, +px: U32) -> U32:
+  match as:
+    case Nil{}:
+      0
+    case a <> t:
+      (Ask.h(ty, a, px) + 8 + Asks.h(ty, t, px) : U32)
+
+def Ask.buttons(+ty: Ty, bs: List<&2, S.Hit>, +y: U32, +x: U32) -> Out:
+  match bs:
+    case Nil{}:
+      Out.none()
+    case S.Hit{_, _, _, _, +label, +value} <> t:
+      Out.cat(Lay.button(ty, D.Clip.all(), (x - Lay.button.w(ty, label) : U32), y, label, T.Th.soft(), "answer", value),
+        Ask.buttons(ty, t, y, (x - Lay.button.w(ty, label) - 8 : U32)))
+
+def Ask.opts(ls: List<&2, String>, +id: String) -> List<&2, S.Hit>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> t:
+      S.Hit{0, 0, 0, 0, l, id ++ "|" ++ l} <> Ask.opts(t, id)
+
+def Lay.plan.lines(+ty: Ty, ls: List<&2, String>, +x0: U32, +y: U32) -> Out:
+  match ls:
+    case Nil{}:
+      Out.none()
+    case l <> t:
+      Out.cat(Out.ops(Ty.text(ty, 3n, l, D.Clip.all(), (x0 + 14 : U32), y, 21, T.Th.soft())), Lay.plan.lines(ty, t, x0, (y + 21 : U32)))
+
+# the buttons of an ask, right to left
+def Ask.choices(+k: String, +id: String, +o: String, +draft: String) -> List<&2, S.Hit>:
+  Bool.pick(List<&2, S.Hit>, String.eq(k, "plan"), [S.Hit{0, 0, 0, 0, "Implement", id ++ "|implement"}, S.Hit{0, 0, 0, 0, "Dismiss", id ++ "|dismiss"}],
+    Bool.pick(List<&2, S.Hit>, String.eq(k, "input"),
+      List.append(&2, S.Hit, Bool.pick(List<&2, S.Hit>, String.is_empty(String.trim(draft)), [S.Hit{0, 0, 0, 0, "Dismiss", id ++ "|"}], [S.Hit{0, 0, 0, 0, "Answer with draft", id ++ "|" ++ String.trim(draft)}]),
+        List.reverse(&2, S.Hit, Ask.opts(String.split(o, '\n'), id))),
+      [S.Hit{0, 0, 0, 0, "Allow", id ++ "|accept"}, S.Hit{0, 0, 0, 0, "Allow for session", id ++ "|session"}, S.Hit{0, 0, 0, 0, "Deny", id ++ "|decline"}]))
+
+def Ask.card(+ty: Ty, a: M.Ask, +draft: String, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match a:
+    case M.Ask{+id, _, +k, +tool, +d, +o, _, _}:
+      +h = Ask.h(ty, M.Ask{id, "", k, tool, d, o, True{}, ""}, (x1 - x0 - 32 : U32))
+      +head = Bool.pick(String, String.eq(k, "plan"), "Proposed plan", Bool.pick(String, String.eq(k, "input"), "The agent asks", "Allow " ++ tool ++ "?"))
+      Out.all([
+        Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), h, 0, T.Th.panel(), T.Th.warn())),
+        Out.ops(Ty.text(ty, 2n, head, D.Clip.all(), (x0 + 14 : U32), (y + 4 : U32), 22, T.Th.warn())),
+        Bool.pick(Out, String.eq(k, "plan"), Lay.plan.lines(ty, Ask.plan_lines(ty, d, (x1 - x0 - 32 : U32)), x0, (y + 28 : U32)),
+          Out.ops(Ty.text(ty, Bool.pick(Nat, String.eq(k, "approval"), 4n, 3n), Ty.fit(ty, 4n, d, (x1 - x0 - 28 : U32)), D.Clip.all(), (x0 + 14 : U32), (y + 26 : U32), 22, T.Th.text()))),
+        Ask.buttons(ty, Ask.choices(k, id, o, draft), (y + h - 36 : U32), (x1 - 12 : U32))])
+
+def Lay.asks(+ty: Ty, as: List<&2, M.Ask>, +draft: String, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match as:
+    case Nil{}:
+      Out.none()
+    case +a <> t:
+      Out.cat(Ask.card(ty, a, draft, x0, x1, y), Lay.asks(ty, t, draft, x0, x1, (y + Ask.h(ty, a, (x1 - x0 - 32 : U32)) + 8 : U32)))
+
 # messages waiting for the running turn (stored on the server)
 def Lay.queued(+ty: Ty, +q: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   +label = "Queued: " ++ Ty.fit(ty, 2n, String.join(String.split(q, '\n'), " "), (x1 - x0 - 260 : U32)) ++ " · sends when this turn ends"
@@ -770,15 +837,19 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
       +ts = U.Tasks.of(st, sel)
       +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
       +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
+      +asks = U.Asks.open(st, sel)
+      +ah = Asks.h(ty, asks, (cw - 32 : U32))
+      +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
       Lay.timeline(ty,
         List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), cw), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
-        cx0, cx1, top, h, sc,
+        cx0, cx1, top, (h - ah - qh : U32), sc,
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
           Lay.composer(ty, draft, caret, focused, cx0, cx1, h, Lay.running(turn), U.Models.label(pr, mo), picking, U.Models.list(info, pr), mo),
-          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h)]))
+          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
+          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
 
 def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:

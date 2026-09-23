@@ -191,8 +191,17 @@ def Claude.dirs(ds: List<&2, String>) -> List<&2, String>:
       "--add-dir" <> d <> Claude.dirs(t)
 
 # `claude` flags for a long-lived stream-json session
-def Claude.args(+model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode, prompt: String, +dirs: List<&2, String>) -> List<&2, String>:
+# outside full access, Claude asks Backplane (the user) before a tool runs
+def Claude.ask(r: M.RuntimeMode, i: M.InteractionMode, rest: List<&2, String>) -> List<&2, String>:
+  match r i:
+    case M.FullAccess{} M.DefaultMode{}:
+      rest
+    case _ _:
+      List.append(&2, String, ["--permission-prompt-tool", "mcp__backplane__permission_prompt"], rest)
+
+def Claude.args(+model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String, +dirs: List<&2, String>) -> List<&2, String>:
   List.append(&2, String, ["-p", "--verbose", "--input-format", "stream-json", "--output-format", "stream-json",
     "--include-partial-messages", "--permission-mode", Claude.permission(r, i),
     "--append-system-prompt", prompt],
-    Claude.opt("--model", model, Claude.opt("--resume", session, Claude.dirs(dirs))))
+    Claude.ask(r, i,
+    Claude.opt("--model", model, Claude.opt("--resume", session, Claude.dirs(dirs)))))

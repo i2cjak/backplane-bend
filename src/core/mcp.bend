@@ -12,7 +12,7 @@ import ./hub.bend as B
 # model.bend (bounded depth, forward-only task states, one delivery).
 
 type McpOut is Data:
-  McpOut{reply: String, step: B.Step}
+  McpOut{reply: String, step: B.Step, park: String}
 
 def Mcp.result(+id: J.Json, r: J.Json) -> String:
   J.Json.show(J.Json.obj([J.KV{"jsonrpc", J.Str{"2.0"}}, J.KV{"id", id}, J.KV{"result", r}]))
@@ -96,7 +96,8 @@ def Mcp.tools() -> J.Json:
     Tool.def("viewer_show",
       "Show a file in the user's Backplane viewer panel: a .kicad_pcb (board), .kicad_sch (schematic), .step/.stp or .glb (3D). Use it after changing a design so the user sees the result; the viewer also follows the file live.",
       [Tool.prop("path", "string", "Absolute path of the file."), Tool.prop("kind", "string", "board, schematic, 3d or step (default: from the extension).")], ["path"])]
-    , Mcp.preview_tools()))}])
+    , List.append(&2, J.Json, Mcp.preview_tools(), [Tool.def("permission_prompt", "Internal to Backplane: asks the user before a tool runs. Do not call it yourself.",
+      [Tool.prop("tool_name", "string", "The tool."), Tool.prop("input", "object", "Its input."), Tool.prop("tool_use_id", "string", "The call.")], ["tool_name", "input"])])))}])
 
 def Mcp.thread_json(t: M.Thread) -> J.Json:
   match t:
@@ -150,7 +151,7 @@ def Mcp.task.k(+ts: List<&2, M.Task>, +id: String, +thread: String) -> Maybe<&2,
 # a task this thread delegated (other threads' tasks are not its business)
 def Mcp.task(s: M.State, +id: String, +thread: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _}:
       Mcp.task.k(Map.values(&2, M.Task, tk), id, thread)
 
 def Mcp.status(m: Maybe<&2, M.Task>) -> Res:
@@ -237,7 +238,7 @@ def Mcp.threads(ts: List<&2, M.Thread>, +project: String) -> List<&2, J.Json>:
 
 def Mcp.list(+s: M.State, +thread: String) -> Res:
   match s:
-    case M.State{_, ts, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _}:
       Res.ok(J.Json.obj([J.KV{"threads", J.Json.arr(Mcp.threads(Map.values(&2, M.Thread, ts), Mcp.project_of(B.Hub.thread(s, thread))))}]))
 
 def Mcp.entry(e: M.Entry) -> J.Json:
@@ -275,7 +276,7 @@ def Mcp.read.last(+xs: List<&2, J.Json>, +limit: Nat, +target: String) -> Res:
 
 def Mcp.read.k(ok: Bool, +s: M.State, +target: String, +limit: Nat) -> Res:
   match ok s:
-    case True{} M.State{_, _, es, _, _, _, _}:
+    case True{} M.State{_, _, es, _, _, _, _, _}:
       Mcp.read.last(Mcp.mine(es, target, Nil{}), limit, target)
     case False{} _:
       Res.fail("that thread is not in this project")
@@ -317,27 +318,127 @@ def Mcp.call.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json,
     case _:
       Res.fail("unknown tool")
 
+# Permission prompts (Claude's --permission-prompt-tool)
+# -----------------------------------------------------
+# Claude asks before a tool runs outside full access. The request becomes
+# an ask the user answers; the MCP reply waits (the server parks it) until
+# then. AskUserQuestion becomes a question; ExitPlanMode's plan becomes a
+# proposed plan, and Claude is told to stop and wait.
+
+def Perm.text(+verdict: J.Json) -> J.Json:
+  J.Json.obj([J.KV{"content", J.Json.arr([J.Json.obj([J.KV{"type", J.Str{"text"}}, J.KV{"text", J.Str{J.Json.show(verdict)}}])])}])
+
+def Perm.allow(+input: J.Json) -> J.Json:
+  J.Json.obj([J.KV{"behavior", J.Str{"allow"}}, J.KV{"updatedInput", input}])
+
+def Perm.deny(+msg: String) -> J.Json:
+  J.Json.obj([J.KV{"behavior", J.Str{"deny"}}, J.KV{"message", J.Str{msg}}])
+
+def Perm.plan_note() -> String:
+  "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request."
+
+def Perm.detail.k(+short: String, +input: J.Json) -> String:
+  Bool.pick(String, String.is_empty(short), String.take(J.Json.show(input), 400n), short)
+
+# what the approval card says the tool will do
+def Perm.detail(+tool: String, +input: J.Json) -> String:
+  Perm.detail.k(J.Json.get_str(input, "command", J.Json.get_str(input, "file_path", J.Json.get_str(input, "url", J.Json.get_str(input, "pattern", "")))), input)
+
+def Perm.first_q(+input: J.Json) -> J.Json:
+  Maybe.default(&2, J.Json, List.head(&2, J.Json, J.Json.elems(J.Json.get_obj(input, "questions"))), J.Null{})
+
+def Perm.labels(os: List<&2, J.Json>) -> List<&2, String>:
+  match os:
+    case Nil{}:
+      Nil{}
+    case +o <> t:
+      J.Json.get_str(o, "label", J.Json.show(o)) <> Perm.labels(t)
+
+def Perm.question(+input: J.Json) -> String:
+  J.Json.get_str(Perm.first_q(input), "question", J.Json.get_str(input, "question", ""))
+
+def Perm.options(+input: J.Json) -> String:
+  String.join(Perm.labels(J.Json.elems(J.Json.get_obj(Perm.first_q(input), "options"))), "\n")
+
+def Perm.session_ok(as: List<&2, M.Ask>, +thread: String, +tool: String) -> Bool:
+  match as:
+    case Nil{}:
+      False{}
+    case M.Ask{_, th, k, t, _, _, _, an} <> rest:
+      Bool.or(Bool.and(Bool.and(String.eq(th, thread), String.eq(t, tool)), Bool.and(String.eq(k, "approval"), String.eq(an, "session"))), Perm.session_ok(rest, thread, tool))
+
+def Perm.approve(ok: Bool, +ask: String, +s: M.State, +now: Nat, +thread: String, +id: J.Json, +tool: String, +input: J.Json) -> McpOut:
+  match ok:
+    case True{}:
+      McpOut{Mcp.result(id, Perm.text(Perm.allow(input))), B.Step.none(), ""}
+    case False{}:
+      McpOut{"", B.Step{[M.AskOpened{ask, thread, "approval", tool, Perm.detail(tool, input), "", now}], Nil{}}, ask}
+
+def Perm.k(i: Nat, +ask: String, +s: M.State, +now: Nat, +thread: String, +id: J.Json, +tool: String, +input: J.Json) -> McpOut:
+  match i:
+    case 0n:
+      McpOut{"", B.Step{[M.AskOpened{ask, thread, "input", tool, Perm.question(input), Perm.options(input), now}], Nil{}}, ask}
+    case 1n:
+      McpOut{Mcp.result(id, Perm.text(Perm.deny(Perm.plan_note()))), B.Step{[M.AskOpened{ask, thread, "plan", tool, J.Json.get_str(input, "plan", ""), "", now}], Nil{}}, ""}
+    case _:
+      Perm.approve(Perm.session_ok(M.Asks.all(s), thread, tool), ask, s, now, thread, id, tool, input)
+
+def Mcp.permit(+s: M.State, +now: Nat, +thread: String, +id: J.Json, +a: J.Json) -> McpOut:
+  Perm.k(C.Codec.pos(["AskUserQuestion", "ExitPlanMode"], J.Json.get_str(a, "tool_name", "")), B.Hub.id("q", now, B.Hub.seq(s)), s, now, thread, id, J.Json.get_str(a, "tool_name", ""), J.Json.get_obj(a, "input"))
+
+def Perm.answers.k(input: J.Json, extra: J.Json) -> J.Json:
+  match input extra:
+    case J.Obj{fs} J.Obj{J.Field{k, v, _}}:
+      J.Obj{J.Field{k, v, fs}}
+    case _ _:
+      input
+
+def Perm.answers(+input: J.Json, +answer: String) -> J.Json:
+  Perm.answers.k(input, J.Json.obj([J.KV{"answers", J.Json.obj([J.KV{Perm.question(input), J.Str{answer}}])}]))
+
+def Perm.verdict.k(i: Nat, +tool: String, +input: J.Json, +answer: String) -> J.Json:
+  match i:
+    case 0n:
+      Bool.pick(J.Json, String.is_empty(answer), Perm.deny("The user dismissed the question."), Perm.allow(Perm.answers(input, answer)))
+    case _:
+      Bool.pick(J.Json, Bool.or(String.eq(answer, "accept"), String.eq(answer, "session")), Perm.allow(input), Perm.deny("The user declined this tool call."))
+
+def Mcp.permission.reply.k(+o: J.Json, +answer: String) -> String:
+  Mcp.result(J.Json.get_obj(o, "id"), Perm.text(Perm.verdict.k(C.Codec.pos(["AskUserQuestion"], J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "tool_name", "")),
+    J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "tool_name", ""), J.Json.get_obj(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "input"), answer)))
+
+# the parked MCP reply for a request body, once the user answered
+def Mcp.permission.reply(+body: String, +answer: String) -> String:
+  Mcp.permission.reply.k(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), answer)
+
 def Mcp.reply(+id: J.Json, r: Res) -> McpOut:
   match r:
     case Res{ok, body, st}:
-      McpOut{Mcp.result(id, Mcp.content(ok, body)), st}
+      McpOut{Mcp.result(id, Mcp.content(ok, body)), st, ""}
+
+def Mcp.call.route(perm: Bool, +s: M.State, +now: Nat, +thread: String, +models: J.Json, +id: J.Json, +p: J.Json) -> McpOut:
+  match perm:
+    case True{}:
+      Mcp.permit(s, now, thread, id, J.Json.get_obj(p, "arguments"))
+    case False{}:
+      Mcp.reply(id, Mcp.call.k(C.Codec.pos(Mcp.names(), J.Json.get_str(p, "name", "")), s, now, thread, models, J.Json.get_obj(p, "arguments")))
 
 def Mcp.method.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String, +id: J.Json, +p: J.Json) -> McpOut:
   match i:
     case 0n:
       McpOut{Mcp.result(id, J.Json.obj([J.KV{"protocolVersion", J.Str{Mcp.or(J.Json.get_str(p, "protocolVersion", ""), "2025-06-18")}},
         J.KV{"capabilities", J.Json.obj([J.KV{"tools", J.Json.obj(Nil{})}])},
-        J.KV{"serverInfo", J.Json.obj([J.KV{"name", J.Str{"backplane"}}, J.KV{"version", J.Str{version}}])}])), B.Step.none()}
+        J.KV{"serverInfo", J.Json.obj([J.KV{"name", J.Str{"backplane"}}, J.KV{"version", J.Str{version}}])}])), B.Step.none(), ""}
     case 1n:
-      McpOut{Mcp.result(id, Mcp.tools()), B.Step.none()}
+      McpOut{Mcp.result(id, Mcp.tools()), B.Step.none(), ""}
     case 2n:
-      Mcp.reply(id, Mcp.call.k(C.Codec.pos(Mcp.names(), J.Json.get_str(p, "name", "")), s, now, thread, models, J.Json.get_obj(p, "arguments")))
+      Mcp.call.route(String.eq(J.Json.get_str(p, "name", ""), "permission_prompt"), s, now, thread, models, id, p)
     case 3n:
-      McpOut{Mcp.result(id, J.Json.obj(Nil{})), B.Step.none()}
+      McpOut{Mcp.result(id, J.Json.obj(Nil{})), B.Step.none(), ""}
     case 4n:
-      McpOut{"", B.Step.none()}
+      McpOut{"", B.Step.none(), ""}
     case _:
-      McpOut{Mcp.error(id, "-32601", "method not found"), B.Step.none()}
+      McpOut{Mcp.error(id, "-32601", "method not found"), B.Step.none(), ""}
 
 def Mcp.method.pos.k(note: Bool, +m: String) -> Nat:
   match note:
@@ -358,7 +459,7 @@ def Mcp.text.k(m: Maybe<&2, J.Json>, +s: M.State, +now: Nat, +thread: String, +m
     case Some{+o}:
       Mcp.handle(s, now, thread, models, version, o)
     case None{}:
-      McpOut{Mcp.error(J.Null{}, "-32700", "parse error"), B.Step.none()}
+      McpOut{Mcp.error(J.Null{}, "-32700", "parse error"), B.Step.none(), ""}
 
 def Mcp.text(+s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String, body: String) -> McpOut:
   Mcp.text.k(J.Json.parse(body), s, now, thread, models, version)

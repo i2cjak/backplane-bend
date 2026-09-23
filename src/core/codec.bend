@@ -214,9 +214,13 @@ def Change.encode(c: M.Change) -> J.Json:
       Change.obj("TurnQueued", [J.KV{"thread", J.Str{thread}}, J.KV{"msg", J.Str{msg}}, J.KV{"text", J.Str{text}}, J.KV{"at", Codec.nat(at)}])
     case M.QueueTaken{thread, at}:
       Change.obj("QueueTaken", [J.KV{"thread", J.Str{thread}}, J.KV{"at", Codec.nat(at)}])
+    case M.AskOpened{id, thread, kind, tool, detail, options, at}:
+      Change.obj("AskOpened", [J.KV{"id", J.Str{id}}, J.KV{"thread", J.Str{thread}}, J.KV{"kind", J.Str{kind}}, J.KV{"tool", J.Str{tool}}, J.KV{"detail", J.Str{detail}}, J.KV{"options", J.Str{options}}, J.KV{"at", Codec.nat(at)}])
+    case M.AskClosed{id, answer, at}:
+      Change.obj("AskClosed", [J.KV{"id", J.Str{id}}, J.KV{"answer", J.Str{answer}}, J.KV{"at", Codec.nat(at)}])
 
 def Change.tags() -> List<&2, String>:
-  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken"]
+  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed"]
 
 def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
   match i:
@@ -264,6 +268,10 @@ def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
       Some{M.TurnQueued{J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "msg", ""), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "at", 0n)}}
     case 21n:
       Some{M.QueueTaken{J.Json.get_str(o, "thread", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 22n:
+      Some{M.AskOpened{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "tool", ""), J.Json.get_str(o, "detail", ""), J.Json.get_str(o, "options", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 23n:
+      Some{M.AskClosed{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "answer", ""), J.Json.get_nat(o, "at", 0n)}}
     case _:
       None{}
 

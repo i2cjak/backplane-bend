@@ -26,6 +26,7 @@ type Out is Data:
   CodexTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
   GrokTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
   TurnEnded{thread: String, state: String}
+  AskAnswered{id: String, answer: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -57,7 +58,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, n, _, _, _}:
+    case M.State{_, _, _, n, _, _, _, _}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -69,7 +70,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -78,7 +79,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -179,7 +180,7 @@ def Hub.has_msg(es: List<&2, M.Entry>, +id: String) -> Bool:
 
 def Hub.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _}:
       es
 
 def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
@@ -197,13 +198,32 @@ def Hub.project_add(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
 def Hub.modes(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, t: M.Thread) -> Step:
   match t:
     case M.Thread{+th, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, mo, rt, im, _, _}:
-      Step.reply(client, id, [M.ModesSet{th, C.Runtime.of(J.Json.get_str(p, "runtime", C.Runtime.name(rt))),
-        C.Interaction.of(J.Json.get_str(p, "interaction", C.Interaction.name(im))), J.Json.get_str(p, "model", mo), now}])
+      Step.before([M.ModesSet{th, C.Runtime.of(J.Json.get_str(p, "runtime", C.Runtime.name(rt))),
+        C.Interaction.of(J.Json.get_str(p, "interaction", C.Interaction.name(im))), J.Json.get_str(p, "model", mo), now}], [Reply.ok(client, id)], Step.none())
+
+# Answering asks
+# --------------
+
+def Ask.find(as: List<&2, M.Ask>, +id: String) -> M.Ask:
+  match as:
+    case Nil{}:
+      M.Ask.blank(id)
+    case M.Ask{+i, th, k, t, d, o, op, an} <> rest:
+      Bool.pick(M.Ask, String.eq(i, id), M.Ask{i, th, k, t, d, o, op, an}, Ask.find(rest, id))
+
+def Hub.implement.k(t: M.Thread, +now: Nat) -> List<&2, M.Change>:
+  match t:
+    case M.Thread{+th, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, mo, rt, _, _, _}:
+      [M.ModesSet{th, rt, M.DefaultMode{}, mo, now}]
+
+# the state the implementing turn starts from: the plan is out of the way
+def Hub.impl.state(+s: M.State, +th: String, +now: Nat) -> M.State:
+  M.State.replay(Hub.implement.k(Hub.thread(s, th), now), s)
 
 def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
-   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install"]
+   "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install", "ask.answer"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -321,6 +341,27 @@ def Hub.post(+s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role
   Hub.post.go(Bool.and(Hub.running(Hub.thread(s, thread)), Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude"))),
     Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread, msg, role, text)
 
+def Hub.answer.plan(impl: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, +answer: String, +th: String) -> Step:
+  match impl:
+    case True{}:
+      Step.before(M.AskClosed{ask, answer, now} <> Hub.implement.k(Hub.thread(s, th), now), [Reply.ok(client, id)],
+        Hub.post(Hub.impl.state(s, th, now), now, th, Hub.id("m", now, Hub.seq(s)), M.User{}, "Implement the proposed plan."))
+    case False{}:
+      Step{[M.AskClosed{ask, answer, now}], [Reply.ok(client, id), AskAnswered{ask, answer}]}
+
+# the user's answer: the ask closes (once; law ask_closes_once), a parked
+# agent request gets its reply, and implementing a plan leaves plan mode
+# and asks the agent to carry it out
+def Hub.answer.k(a: M.Ask, +s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, +answer: String) -> Step:
+  match a:
+    case M.Ask{_, +th, +k, _, _, _, True{}, _}:
+      Hub.answer.plan(Bool.and(String.eq(k, "plan"), String.eq(answer, "implement")), s, now, client, id, ask, answer, th)
+    case M.Ask{_, _, _, _, _, _, False{}, _}:
+      Step.outs([Reply.ok(client, id)])
+
+def Hub.answer(+s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, +answer: String) -> Step:
+  Hub.answer.k(Ask.find(M.Asks.all(s), ask), s, now, client, id, ask, answer)
+
 def Hub.turn.go(+s: M.State, +t: M.Thread, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
   match t:
     case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
@@ -379,6 +420,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
       Step.reply(client, id, [M.SettingSet{J.Json.get_str(p, "key", ""), J.Json.get_str(p, "value", ""), now}])
     case 17n:
       Step.outs([Reply.ok(client, id), KiCadInstall{}])
+    case 18n:
+      Hub.answer(s, now, client, id, J.Json.get_str(p, "id", ""), J.Json.get_str(p, "answer", ""))
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 
@@ -429,7 +472,7 @@ def Hub.settle.window(+s: M.State) -> Nat:
 # every thread that should settle now, settled
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{_, ts, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _}:
       Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, Hub.settle.window(s)), Nil{}}
 
 # Codex (codex exec --json)
@@ -563,7 +606,7 @@ def Task.of_child.k(+ts: List<&2, M.Task>, +child: String) -> Maybe<&2, M.Task>:
 # the task a child thread is working on, if any
 def Task.of_child(s: M.State, +child: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _}:
       Task.of_child.k(Map.values(&2, M.Task, tk), child)
 
 def Task.depth.k(m: Maybe<&2, M.Task>) -> Nat:
@@ -603,7 +646,7 @@ def Task.last.go(es: List<&2, M.Entry>, hit: Bool, +th: String) -> String:
 
 def Task.last(s: M.State, +th: String) -> String:
   match s:
-    case M.State{_, _, +es, _, _, _, _}:
+    case M.State{_, _, +es, _, _, _, _, _}:
       Task.last.go(es, Task.last.hit(es, th), th)
 
 # the turn outcome a step reports for a thread, if it ended one

@@ -248,6 +248,37 @@ def View.sending(ps: List<&2, String>) -> List<&2, D.Node>:
     case p <> t:
       D.El{"div", "", [D.At{"class", "msg user sending"}], [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{p}]}, D.Dom.span("note", "sending…")]} <> View.sending(t)
 
+# Asks: what the agent waits on the user for
+
+def View.ask.opts(ls: List<&2, String>, +id: String) -> List<&2, D.Node>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> t:
+      D.Dom.button("", "answer", id ++ "|" ++ l, l, l) <> View.ask.opts(t, id)
+
+def View.ask.btns(+k: String, +id: String, +o: String, +draft: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, String.eq(k, "plan"), [D.Dom.button("primary", "answer", id ++ "|implement", "Implement the plan", "Implement"), D.Dom.button("", "answer", id ++ "|dismiss", "Dismiss", "Dismiss")],
+    Bool.pick(List<&2, D.Node>, String.eq(k, "input"),
+      List.append(&2, D.Node, View.ask.opts(String.split(o, '\n'), id),
+        Bool.pick(List<&2, D.Node>, String.is_empty(String.trim(draft)), [D.Dom.button("", "answer", id ++ "|", "Dismiss", "Dismiss")], [D.Dom.button("primary", "answer", id ++ "|" ++ String.trim(draft), "Answer with your draft", "Answer with draft")])),
+      [D.Dom.button("primary", "answer", id ++ "|accept", "Allow once", "Allow"), D.Dom.button("", "answer", id ++ "|session", "Allow this tool for the session", "Allow for session"), D.Dom.button("", "answer", id ++ "|decline", "Deny", "Deny")]))
+
+def View.ask(a: M.Ask, +draft: String) -> D.Node:
+  match a:
+    case M.Ask{+id, _, +k, +tool, +d, +o, _, _}:
+      D.El{"div", id, [D.At{"class", "ask " ++ k}], [
+        D.Dom.span("ask-head", Bool.pick(String, String.eq(k, "plan"), "Proposed plan", Bool.pick(String, String.eq(k, "input"), "The agent asks", "Allow " ++ tool ++ "?"))),
+        Bool.pick(D.Node, String.eq(k, "plan"), D.El{"div", "", [D.At{"class", "body"}], D.Md.render(d)}, D.El{"div", "", [D.At{"class", "ask-detail"}], [D.Txt{d}]}),
+        D.El{"div", "", [D.At{"class", "ask-btns"}], View.ask.btns(k, id, o, draft)}]}
+
+def View.asks(as: List<&2, M.Ask>, +draft: String) -> List<&2, D.Node>:
+  match as:
+    case Nil{}:
+      Nil{}
+    case a <> t:
+      View.ask(a, draft) <> View.asks(t, draft)
+
 # what waits for the running turn (already stored on the server)
 def View.queued(+q: String) -> D.Node:
   Bool.pick(D.Node, String.is_empty(q), D.El{"div", "", [D.At{"class", "queued none"}], Nil{}},
@@ -255,13 +286,14 @@ def View.queued(+q: String) -> D.Node:
 
 def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
   match u t:
-    case U.Ui{+st, +sel, drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
+    case U.Ui{+st, +sel, +drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", "thread-view"}], [
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{})), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
+        D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
         View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo)]}
 

@@ -141,3 +141,16 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
   .composer textarea { min-height: 48px; }
   .msg .copy { opacity: 1; position: static; float: right; margin: 0 0 4px 8px; }
 }
+
+/* Asks: approvals, questions, proposed plans */
+.asks { display: flex; flex-direction: column; gap: 8px; padding: 0 16px; }
+.asks:empty { display: none; }
+.ask { border: 1px solid var(--warn); background: var(--panel); padding: 8px 12px; display: flex; flex-direction: column; gap: 6px; max-width: 860px; }
+.ask-head { color: var(--warn); font-size: 12px; }
+.ask-detail { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
+.ask .body { max-height: 40vh; overflow: auto; }
+.ask-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.queued { display: flex; gap: 8px; align-items: baseline; margin: 0 16px; padding: 6px 10px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; }
+.queued.none { display: none; }
+.queued .label { color: var(--warn); } .queued .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .queued .note { color: var(--faint); }
+.msg.sending { opacity: 0.6; } .msg .note { color: var(--faint); font-size: 11px; }
