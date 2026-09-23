@@ -62,12 +62,12 @@ def Flag.get(m: Map<&2, Bool>, +k: String) -> Bool:
 
 def Ui.threads(s: M.State) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Thread, ts)
 
 def Ui.projects(s: M.State) -> List<&2, M.Project>:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Project, ps)
 
 def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -76,12 +76,12 @@ def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Ui.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _}:
       Ui.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Ui.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _}:
       es
 
 # Time
@@ -213,9 +213,33 @@ def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
     case False{}:
       Ui.reply.k(u, o)
 
-# an answer: its request leaves the outbox; a diff opens the diff view
+def Files.strs(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case J.Str{x} <> t:
+      x <> Files.strs(t)
+    case _ <> t:
+      Files.strs(t)
+
+def Ui.files(u: Ui, +r: J.Json) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note,
+        Map.set(&2, String, Map.set(&2, String, nf, "files", String.join(Files.strs(J.Json.elems(J.Json.get_obj(r, "files"))), "\n")), "files.thread", J.Json.get_str(r, "thread", "")), ob, tr}
+
+def Ui.reply.files(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.files(u, J.Json.get_obj(o, "result"))
+    case False{}:
+      u
+
+# an answer: its request leaves the outbox; a diff opens the diff view; a
+# file list (files.list) is kept for the file picker
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o)
+  Ui.reply.files(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "files"), J.Null{})), "null")),
+    Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o), o)
 
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
@@ -432,7 +456,8 @@ def Ui.dismiss(u: Ui) -> Act:
 def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
-   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert"]
+   "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert",
+   "snooze", "unarchive", "reorder", "move", "mention", "files"]
 
 # Reading the client state
 # ------------------------
@@ -456,7 +481,7 @@ def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
 
 def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:
@@ -485,7 +510,7 @@ def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
 
 def Kids.set(s: M.State) -> Map<&2, Bool>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _}:
       Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
 
 def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
@@ -533,7 +558,7 @@ def Tasks.mine(ts: List<&2, M.Task>, +parent: String) -> List<&2, M.Task>:
 
 def Tasks.of(s: M.State, +parent: String) -> List<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _}:
       Tasks.mine(Map.values(&2, M.Task, tk), parent)
 
 def Tasks.title.k(t: M.Thread) -> String:
@@ -553,7 +578,7 @@ def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
 
 def Tasks.parent(+st: M.State, +thread: String) -> String:
   match st:
-    case M.State{_, _, _, _, tk, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _}:
       Tasks.parent.find(Map.values(&2, M.Task, tk), thread)
 
 def Task.word(s: M.TaskState) -> String:
@@ -582,6 +607,190 @@ def Ui.answer.k(ps: List<&2, String>) -> List<&2, J.KV>:
 
 def Ui.answer(u: Ui, v: String) -> Act:
   Ui.rpc(u, "ask.answer", Ui.answer.k(String.split(v, '|')))
+
+# Sidebar model
+# -------------
+# Both clients draw the sidebar from these: projects by latest activity,
+# each with its threads on shelves (M.Sidebar.at: keys and snoozes), and the
+# visible order ctrl+1..9 counts in.
+
+type SRow is Data:
+  SRow{rank: Nat, project: M.Project, shelves: M.Shelves}
+
+def SRow.before(a: SRow, b: SRow) -> Bool:
+  match a b:
+    case SRow{ra, _, _} SRow{rb, _, _}:
+      Nat.is_ge(ra, rb)
+
+def Side.latest(ts: List<&2, M.Thread>, +acc: Nat) -> Nat:
+  match ts:
+    case Nil{}:
+      acc
+    case M.Thread{_, _, _, _, +a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
+      Side.latest(t, M.Time.max(acc, a))
+
+def Side.rows.k(removed: Bool, p: M.Project, +mine: List<&2, M.Thread>, +c: Nat, +navs: Map<&2, M.Nav>, +now: Nat, rest: List<&2, SRow>) -> List<&2, SRow>:
+  match removed:
+    case True{}:
+      rest
+    case False{}:
+      SRow{Side.latest(mine, c), p, M.Sidebar.at(mine, navs, now)} <> rest
+
+def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat) -> List<&2, SRow>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case M.Project{+id, ti, r, +c, +rm} <> t:
+      Side.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, navs, now, Side.rows.go(t, ts, navs, now))
+
+# the sidebar's projects in order, their threads on shelves (delegated
+# child threads live under their parent instead)
+def Side.rows(+st: M.State, +now: Nat) -> List<&2, SRow>:
+  List.sort(~SRow, ~SRow.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now))
+
+def Side.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case t <> rest:
+      M.Thread.id(t) <> Side.ids(rest)
+
+def Side.when(on: Bool, xs: List<&2, String>) -> List<&2, String>:
+  match on:
+    case True{}:
+      xs
+    case False{}:
+      Nil{}
+
+def Side.visible.go(rs: List<&2, SRow>, +open: Map<&2, Bool>) -> List<&2, String>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case SRow{_, M.Project{+id, _, _, _, _}, M.Shelves{p, a, st, h, sn}} <> t:
+      List.concat(&2, String, [Side.ids(p), Side.ids(a), Side.ids(sn), Side.when(Flag.get(open, id), Side.ids(st)),
+        Side.when(Flag.get(open, "arch:" ++ id), Side.ids(M.Archive.of(h))), Side.visible.go(t, open)])
+
+# the threads the sidebar shows, top to bottom (collapsed shelves left out)
+def Side.visible(u: Ui) -> List<&2, String>:
+  match u:
+    case Ui{+st, _, _, _, +op, _, +now, _, _, _, _, _, _, _, _, _, _}:
+      Side.visible.go(Side.rows(st, now), op)
+
+def Side.nth(xs: List<&2, String>, i: Nat) -> String:
+  match xs i:
+    case x <> _ 0n:
+      x
+    case _ <> t 1n+j:
+      Side.nth(t, j)
+    case Nil{} _:
+      ""
+
+type Sect is Data:
+  Sect{name: String, ids: List<&2, String>}
+
+def Side.has(xs: List<&2, String>, +x: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case h <> t:
+      Bool.or(String.eq(h, x), Side.has(t, x))
+
+def Side.section.k(s: M.Shelves, +id: String) -> Sect:
+  match s:
+    case M.Shelves{+p, +a, _, _, _}:
+      Bool.pick(Sect, Side.has(Side.ids(p), id), Sect{"pinned", Side.ids(p)},
+        Bool.pick(Sect, Side.has(Side.ids(a), id), Sect{"active", Side.ids(a)}, Sect{"", Nil{}}))
+
+# the shelf a thread can be dragged within, with its threads in order
+# ("" for a shelf without manual order)
+def Side.section(+st: M.State, +now: Nat, +id: String) -> Sect:
+  Side.section.k(M.Sidebar.at(M.Thread.filter_project(Kids.keep(Ui.threads(st), Kids.set(st)), Ui.thread_project(Ui.thread(st, id))), M.State.navs(st), now), id)
+
+# Reordering, snoozing, mentions
+# ------------------------------
+
+def Side.st(u: Ui) -> M.State:
+  match u:
+    case Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      st
+
+def Side.now(u: Ui) -> Nat:
+  match u:
+    case Ui{_, _, _, _, _, _, now, _, _, _, _, _, _, _, _, _, _}:
+      now
+
+def Side.pair(ps: List<&2, String>) -> Sect:
+  match ps:
+    case a <> t:
+      Sect{a, t}
+    case Nil{}:
+      Sect{"", Nil{}}
+
+def Side.first(xs: List<&2, String>) -> String:
+  Maybe.default(&2, String, List.head(&2, String, xs), "")
+
+def Side.strs(xs: List<&2, String>) -> List<&2, J.Json>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      J.Str{x} <> Side.strs(t)
+
+def Ui.reorder.k(ok: Bool, +u: Ui, s: Sect, +id: String, +to: Nat) -> Act:
+  match ok s:
+    case True{} Sect{+name, +ids}:
+      Ui.rpc(u, "thread.reorder", [J.KV{"section", J.Str{name}}, J.KV{"thread", J.Str{id}}, J.KV{"ids", J.Json.arr(Side.strs(M.Order.move(ids, id, to)))}])
+    case False{} _:
+      Act{u, Nil{}}
+
+def Ui.reorder.s(+u: Ui, +s: Sect, +id: String, +target: String) -> Act:
+  match s:
+    case Sect{+name, +ids}:
+      Ui.reorder.k(Bool.and(Bool.and(Bool.not(String.is_empty(name)), Bool.not(String.eq(id, target))), Side.has(ids, target)), u, Sect{name, ids}, id, M.Order.index(ids, target, 0n))
+
+# drop thread `id` where `target` sits on the same shelf
+def Ui.reorder.to(+u: Ui, +id: String, +target: String) -> Act:
+  Ui.reorder.s(u, Side.section(Side.st(u), Side.now(u), id), id, target)
+
+def Ui.reorder.pair(+u: Ui, s: Sect) -> Act:
+  match s:
+    case Sect{+id, t}:
+      Ui.reorder.to(u, id, Side.first(t))
+
+# "id|target"
+def Ui.reorder(+u: Ui, v: String) -> Act:
+  Ui.reorder.pair(u, Side.pair(String.split(v, '|')))
+
+def Ui.move.go(+u: Ui, +id: String, +up: Bool, +ids: List<&2, String>) -> Act:
+  +i = M.Order.index(ids, id, 0n)
+  Ui.reorder.to(u, id, Bool.pick(String, up, Bool.pick(String, Nat.is_eq(i, 0n), "", Side.nth(ids, Nat.sub(i, 1n))), Side.nth(ids, 1n+i)))
+
+def Ui.move.s(+u: Ui, s: Sect, +id: String, +up: Bool) -> Act:
+  match s:
+    case Sect{_, +ids}:
+      Ui.move.go(u, id, up, ids)
+
+def Ui.move.k(+u: Ui, s: Sect) -> Act:
+  match s:
+    case Sect{+id, t}:
+      Ui.move.s(u, Side.section(Side.st(u), Side.now(u), id), id, String.eq(Side.first(t), "up"))
+
+# "id|up" or "id|down": one place up or down its shelf
+def Ui.move(+u: Ui, v: String) -> Act:
+  Ui.move.k(u, Side.pair(String.split(v, '|')))
+
+# snooze the selected thread ("1h", "tomorrow", "1w"; "off" wakes it)
+def Ui.snooze(u: Ui, v: String) -> Act:
+  Ui.on_thread.p(Ui.close(u, "snooze"), "thread.snooze", [J.KV{"for", J.Str{v}}])
+
+def Ui.mention.sep(+d: String) -> String:
+  Bool.pick(String, Bool.or(String.is_empty(d), Bool.or(String.ends_with(d, " "), String.ends_with(d, "\n"))), "", " ")
+
+# "@path " added to the selected thread's draft
+def Ui.mention(u: Ui, +path: String) -> Act:
+  match u:
+    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Act{Ui{st, sel, Map.set(&2, String, dr, sel, Str.get(dr, sel) ++ Ui.mention.sep(Str.get(dr, sel)) ++ "@" ++ path ++ " "), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}]}
 
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
@@ -637,6 +846,18 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
     case 25n:
       Ui.on_thread.p(u, "git.revert", [J.KV{"turn", J.Num{Bool.pick(String, String.is_empty(value), "0", value)}}])
+    case 26n:
+      Ui.snooze(u, value)
+    case 27n:
+      Ui.on_thread(u, "thread.unarchive")
+    case 28n:
+      Ui.reorder(u, value)
+    case 29n:
+      Ui.move(u, value)
+    case 30n:
+      Ui.mention(u, value)
+    case 31n:
+      Ui.on_thread(u, "files.list")
     case _:
       Act{u, Nil{}}
 
@@ -827,6 +1048,17 @@ def Palette.index(u: Ui) -> Nat:
     case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       Maybe.default(&2, Nat, Nat.read(Str.get(dr, "@palette.i")), 0n)
 
+# "" (commands), "search" (threads and messages) or "files"
+def Palette.mode(u: Ui) -> String:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(dr, "@palette.mode")
+
+def Palette.open(u: Ui, +mode: String) -> Ui:
+  match u:
+    case Ui{st, sel, +dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui.flag_on(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@palette", ""), "@palette.i", "0"), "@palette.mode", mode), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}, "palette")
+
 def Palette.set(u: Ui, +q: String, +i: Nat) -> Ui:
   match u:
     case Ui{st, sel, +dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
@@ -842,7 +1074,9 @@ def Palette.threads(ts: List<&2, M.Thread>) -> List<&2, PItem>:
 def Palette.actions(+pid: String) -> List<&2, PItem>:
   [PItem{"New thread", "new-thread", pid}, PItem{"Diff: what this thread changed", "diff", ""}, PItem{"Terminal", "key:term", ""},
    PItem{"Commit & push", "git", "commit_push"}, PItem{"Open pull request", "git", "commit_push_pr"}, PItem{"Revert thread", "revert", "0"},
-   PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""},
+   PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""},
+   PItem{"Snooze 1 hour", "snooze", "1h"}, PItem{"Snooze until tomorrow 9:00", "snooze", "tomorrow"}, PItem{"Snooze 1 week", "snooze", "1w"}, PItem{"Unsnooze", "snooze", "off"},
+   PItem{"Search threads", "key:search", ""}, PItem{"Find file", "key:files", ""},
    PItem{"Viewer", "panel", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
 
 def Palette.words(ws: List<&2, String>, +l: String) -> Bool:
@@ -870,8 +1104,8 @@ def Palette.filter(ps: List<&2, PItem>, +q: String) -> List<&2, PItem>:
     case PItem{+l, a, v} <> t:
       Palette.filter.k(Palette.hit(q, l), PItem{l, a, v}, Palette.filter(t, q))
 
-# what the palette offers for this query, actions first
-def Palette.items(+u: Ui) -> List<&2, PItem>:
+# what the command palette offers for this query, actions first
+def Palette.cmds(+u: Ui) -> List<&2, PItem>:
   Palette.filter(List.append(&2, PItem, Palette.actions(Ui.thread_project(Ui.thread(Ui.state(u), Ui.sel(u)))),
     Palette.threads(Kids.keep(Ui.threads(Ui.state(u)), Kids.set(Ui.state(u))))), Palette.query(u))
 
@@ -888,3 +1122,149 @@ def Ui.flag_off(u: Ui, +k: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, +op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, dr, live, Map.set(&2, Bool, op, k, False{}), on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
+# Thread search (ctrl+shift+f)
+# ----------------------------
+# Titles and message text of every thread; a thread shows once, with the
+# newest message line that matches when its title does not.
+
+def Search.line(ls: List<&2, String>, +q: String) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case +l <> t:
+      Bool.pick(String, Palette.hit(q, l), String.trim(l), Search.line(t, q))
+
+def Search.put.k(r: Map<&2, String> & String, +th: String, +text: String, +q: String) -> Map<&2, String>:
+  (+m, +cur) = r
+  Bool.pick(Map<&2, String>, String.is_empty(cur), Map.set(&2, String, m, th, Search.line(String.lines(text), q)), m)
+
+def Search.put(hit: Bool, m: Map<&2, String>, +th: String, +text: String, +q: String) -> Map<&2, String>:
+  match hit:
+    case True{}:
+      Search.put.k(Map.get(String, "", m, th), th, text, q)
+    case False{}:
+      m
+
+# thread -> the newest matching line of its messages
+def Search.snips(es: List<&2, M.Entry>, +q: String, m: Map<&2, String>) -> Map<&2, String>:
+  match es:
+    case Nil{}:
+      m
+    case M.Msg{_, +th, _, +text, _} <> t:
+      Search.snips(t, q, Search.put(Palette.hit(q, text), m, th, text, q))
+    case M.Act{_, _, _, _, _, _} <> t:
+      Search.snips(t, q, m)
+
+def Search.one(t: M.Thread, +q: String, +snips: Map<&2, String>, +rest: List<&2, PItem>) -> List<&2, PItem>:
+  match t:
+    case M.Thread{+id, _, +ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, +de}:
+      Bool.pick(List<&2, PItem>, de, rest,
+        Bool.pick(List<&2, PItem>, Palette.hit(q, ti), PItem{ti, "select", id} <> rest,
+          Bool.pick(List<&2, PItem>, String.is_empty(Str.get(snips, id)), rest, PItem{ti ++ "  ·  " ++ Str.get(snips, id), "select", id} <> rest)))
+
+def Search.all(ts: List<&2, M.Thread>, +q: String, +snips: Map<&2, String>) -> List<&2, PItem>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case t <> rest:
+      Search.one(t, q, snips, Search.all(rest, q, snips))
+
+def Search.newer(a: M.Thread, b: M.Thread) -> Bool:
+  match a b:
+    case M.Thread{_, _, _, _, +x, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} M.Thread{_, _, _, _, +y, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Nat.is_ge(x, y)
+
+def Search.items.k(empty: Bool, +q: String, +st: M.State) -> List<&2, PItem>:
+  match empty:
+    case True{}:
+      Nil{}
+    case False{}:
+      Search.all(List.sort(~M.Thread, ~Search.newer, Ui.threads(st)), q, Search.snips(Ui.entries(st), q, Map.new(&2, String)))
+
+# threads whose title or messages hold every word of the query, newest first
+def Search.items(+u: Ui) -> List<&2, PItem>:
+  Search.items.k(String.is_empty(String.trim(Palette.query(u))), Palette.query(u), Ui.state(u))
+
+# File picker (ctrl+p)
+# --------------------
+# The selected thread's files (files.list: git ls-files, else a bounded
+# walk); picking one mentions it in the draft as @path.
+
+def Files.pick.k(keep: Bool, +p: String, rest: List<&2, PItem>) -> List<&2, PItem>:
+  match keep:
+    case True{}:
+      PItem{p, "mention", p} <> rest
+    case False{}:
+      rest
+
+def Files.pick(ps: List<&2, String>, +q: String) -> List<&2, PItem>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      Files.pick.k(Bool.and(Bool.not(String.is_empty(p)), Palette.hit(q, p)), p, Files.pick(t, q))
+
+def Files.items.k(same: Bool, +files: String, +q: String) -> List<&2, PItem>:
+  match same:
+    case True{}:
+      List.take(&2, PItem, Files.pick(String.lines(files), q), 200n)
+    case False{}:
+      Nil{}
+
+def Files.items(+u: Ui) -> List<&2, PItem>:
+  Files.items.k(String.eq(Ui.info(u, "files.thread"), Ui.sel(u)), Ui.info(u, "files"), Palette.query(u))
+
+# what the palette offers in its mode
+def Palette.items.k(i: Nat, +u: Ui) -> List<&2, PItem>:
+  match i:
+    case 0n:
+      Search.items(u)
+    case 1n:
+      Files.items(u)
+    case _:
+      Palette.cmds(u)
+
+def Palette.items(+u: Ui) -> List<&2, PItem>:
+  Palette.items.k(Keys.pos(["search", "files"], Palette.mode(u)), u)
+
+# the kind of a row, shown at its right
+def Palette.kind(+a: String) -> String:
+  Bool.pick(String, String.eq(a, "select"), "thread", Bool.pick(String, String.eq(a, "mention"), "file", "action"))
+
+# Row status
+# ----------
+
+def Asks.kind(as: List<&2, M.Ask>, +k: String) -> Bool:
+  match as:
+    case Nil{}:
+      False{}
+    case M.Ask{_, _, +x, _, _, _, _, _} <> t:
+      Bool.or(String.eq(x, k), Asks.kind(t, k))
+
+# what a thread's dot shows (M.Status.of has the order)
+def Side.status(+st: M.State, t: M.Thread) -> M.Status:
+  match t:
+    case M.Thread{+id, _, _, _, _, turn, +pending, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      M.Status.of(Bool.or(Nat.is_gt(pending, 0n), Asks.kind(Asks.open(st, id), "approval")),
+        Bool.or(Asks.kind(Asks.open(st, id), "input"), Asks.kind(Asks.open(st, id), "plan")), turn,
+        Bool.not(String.is_empty(M.Queue.of(st, id))))
+
+# when a thread's snooze ends (0: not snoozed)
+def Side.until(+st: M.State, +id: String) -> Nat:
+  M.Nav.until(M.Nav.get(M.State.navs(st), id))
+
+# Scratch state
+# -------------
+# Small client-only values (a drag in progress) kept in the drafts map
+# under "@" keys, which no thread id takes.
+
+def Ui.scratch(u: Ui, +k: String) -> String:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(dr, k)
+
+def Ui.scratch_set(u: Ui, +k: String, v: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, dr, k, v), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}

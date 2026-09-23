@@ -60,7 +60,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, n, _, _, _, _, _}:
+    case M.State{_, _, _, n, _, _, _, _, _, _}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -72,7 +72,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -81,7 +81,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -182,7 +182,7 @@ def Hub.has_msg(es: List<&2, M.Entry>, +id: String) -> Bool:
 
 def Hub.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _}:
       es
 
 def Hub.thread_create(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
@@ -301,7 +301,54 @@ def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
 
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
-  []
+  ["thread.snooze", "thread.reorder", "files.list"]
+
+# snooze a thread: {thread, for: "1h" | "1w" | "tomorrow" | "off"} or
+# {thread, until}. Tomorrow 9:00 is local time, which the server knows:
+# it answers with the time (thread.snooze {thread, until})
+def Hub.snooze.k(i: Nat, +now: Nat, +client: U32, +id: String, +th: String, +p: J.Json) -> Step:
+  match i:
+    case 0n:
+      Step.reply(client, id, [M.ThreadSnoozed{th, Nat.add(now, M.Snooze.hour()), now}])
+    case 1n:
+      Step.reply(client, id, [M.ThreadSnoozed{th, Nat.add(now, M.Snooze.week()), now}])
+    case 2n:
+      Step.reply(client, id, [M.ThreadSnoozed{th, 0n, now}])
+    case 3n:
+      Step.outs([Git{client, id, "snooze", th, "", Nat.show(now), ""}])
+    case _:
+      Step.reply(client, id, [M.ThreadSnoozed{th, J.Json.get_nat(p, "until", 0n), now}])
+
+def Hub.snooze(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  Hub.snooze.k(C.Codec.pos(["1h", "1w", "off", "tomorrow"], J.Json.get_str(p, "for", "")), now, client, id, J.Json.get_str(p, "thread", ""), p)
+
+def Reorder.okeys(xs: List<&2, J.Json>, +navs: Map<&2, M.Nav>, +section: String) -> List<&2, M.OKey>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case J.Str{+i} <> t:
+      M.OKey{i, M.Nav.key(M.Nav.get(navs, i), section)} <> Reorder.okeys(t, navs, section)
+    case _ <> t:
+      Reorder.okeys(t, navs, section)
+
+def Reorder.changes(ks: List<&2, M.OKey>, +section: String, +now: Nat) -> List<&2, M.Change>:
+  match ks:
+    case Nil{}:
+      Nil{}
+    case M.OKey{i, k} <> t:
+      M.ThreadOrdered{i, section, k, now} <> Reorder.changes(t, section, now)
+
+def Hub.reorder.k(ok: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +section: String, +p: J.Json) -> Step:
+  match ok:
+    case True{}:
+      Step.reply(client, id, Reorder.changes(M.Order.plan(Reorder.okeys(J.Json.elems(J.Json.get_obj(p, "ids")), M.State.navs(s), section), J.Json.get_str(p, "thread", "")), section, now))
+    case False{}:
+      Step.outs([Reply.err(client, id, "only pinned and active threads reorder")])
+
+# a shelf's new order after a drag: {section: "pinned" | "active", thread:
+# the one moved, ids: the shelf's threads in their new order}
+def Hub.reorder(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  Hub.reorder.k(Bool.or(String.eq(J.Json.get_str(p, "section", ""), "pinned"), String.eq(J.Json.get_str(p, "section", ""), "active")), s, now, client, id, J.Json.get_str(p, "section", ""), p)
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
@@ -323,6 +370,12 @@ def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.
 
 def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
+    case 0n:
+      Hub.snooze(now, client, id, p)
+    case 1n:
+      Hub.reorder(s, now, client, id, p)
+    case 2n:
+      Step.outs([Git{client, id, "files", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
     case _:
       Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
 
@@ -601,22 +654,22 @@ def Hub.settle.k(auto: Bool, sh: M.Shelf, t: M.Thread, +now: Nat, rest: List<&2,
 # Settle tick
 # -----------
 
-def Hub.settle.go(ts: List<&2, M.Thread>, +now: Nat, +w: Nat) -> List<&2, M.Change>:
+def Hub.settle.go(ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat, +w: Nat) -> List<&2, M.Change>:
   match ts:
     case Nil{}:
       Nil{}
     case +t <> rest:
-      Hub.settle.k(M.Settle.auto(now, w, t), M.Shelf.of(t), t, now, Hub.settle.go(rest, now, w))
+      Hub.settle.k(M.Settle.auto.at(now, w, t, M.Nav.until(M.Nav.get(navs, M.Thread.id(t)))), M.Shelf.of(t), t, now, Hub.settle.go(rest, navs, now, w))
 
 # the settle window in seconds: the "settle.days" setting (1..90), else 3 days
 def Hub.settle.window(+s: M.State) -> Nat:
   Nat.mul(Nat.max(1n, Nat.min(90n, Maybe.default(&2, Nat, Nat.read(M.Setting.get(s, "settle.days", "3")), 3n))), 86400n)
 
-# every thread that should settle now, settled
+# every thread that should settle now, settled (a snoozed one never is)
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _}:
-      Step{Hub.settle.go(Map.values(&2, M.Thread, ts), now, Hub.settle.window(s)), Nil{}}
+    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+      Step{Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), now, Hub.settle.window(s)), Nil{}}
 
 # Codex (codex exec --json)
 # -------------------------
@@ -749,7 +802,7 @@ def Task.of_child.k(+ts: List<&2, M.Task>, +child: String) -> Maybe<&2, M.Task>:
 # the task a child thread is working on, if any
 def Task.of_child(s: M.State, +child: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _}:
       Task.of_child.k(Map.values(&2, M.Task, tk), child)
 
 def Task.depth.k(m: Maybe<&2, M.Task>) -> Nat:
@@ -789,7 +842,7 @@ def Task.last.go(es: List<&2, M.Entry>, hit: Bool, +th: String) -> String:
 
 def Task.last(s: M.State, +th: String) -> String:
   match s:
-    case M.State{_, _, +es, _, _, _, _, _, _}:
+    case M.State{_, _, +es, _, _, _, _, _, _, _}:
       Task.last.go(es, Task.last.hit(es, th), th)
 
 # the turn outcome a step reports for a thread, if it ended one

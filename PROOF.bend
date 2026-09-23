@@ -134,6 +134,18 @@ def add_succ_r(a, b):
       %add_succ_r(p, b) : {1n+Nat.add(p, 1n+b) == 1n+_ : Nat}
       {==}
 
+# x + y is one more than x + z when y is one more than z
+law add_lift:
+  for x: Nat
+  for y: Nat
+  for z: Nat
+  for h: {y == 1n+z : Nat}
+  {Nat.add(x, y) == 1n+Nat.add(x, z) : Nat}
+
+def add_lift(x, y, z, h):
+  %Equal.sym(Nat, y, 1n+z, h) : {Nat.add(x, _) == 1n+Nat.add(x, z) : Nat}
+  add_succ_r(x, z)
+
 # one put adds exactly one thread to the shelves
 law put_count:
   for sh: M.Shelf
@@ -143,17 +155,16 @@ law put_count:
 
 def put_count(sh, t, s):
   match sh s:
-    case M.Pinned{} M.Shelves{p, a, st, h}:
+    case M.Pinned{} M.Shelves{+p, +a, +st, +h, +sn}:
       {==}
-    case M.Active{} M.Shelves{p, a, st, h}:
-      add_succ_r(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))))
-    case M.Settled{} M.Shelves{p, a, st, h}:
-      %Equal.sym(Nat, Nat.add(List.length(&2, M.Thread, a), 1n+Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))), 1n+Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))), add_succ_r(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)))) : {Nat.add(List.length(&2, M.Thread, p), _) == 1n+Nat.add(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)))) : Nat}
-      add_succ_r(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))))
-    case M.Hidden{} M.Shelves{p, a, st, h}:
-      %Equal.sym(Nat, Nat.add(List.length(&2, M.Thread, st), 1n+List.length(&2, M.Thread, h)), 1n+Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)), add_succ_r(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))) : {Nat.add(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), _)) == 1n+Nat.add(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)))) : Nat}
-      %Equal.sym(Nat, Nat.add(List.length(&2, M.Thread, a), 1n+Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))), 1n+Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))), add_succ_r(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)))) : {Nat.add(List.length(&2, M.Thread, p), _) == 1n+Nat.add(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h)))) : Nat}
-      add_succ_r(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), List.length(&2, M.Thread, h))))
+    case M.Active{} M.Shelves{+p, +a, +st, +h, +sn}:
+      add_lift(List.length(&2, M.Thread, p), Nat.add(1n+List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), {==})
+    case M.Settled{} M.Shelves{+p, +a, +st, +h, +sn}:
+      add_lift(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(1n+List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), add_lift(List.length(&2, M.Thread, a), Nat.add(1n+List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn))), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn))), {==}))
+    case M.Hidden{} M.Shelves{+p, +a, +st, +h, +sn}:
+      add_lift(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(1n+List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), add_lift(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(1n+List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn))), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn))), add_lift(List.length(&2, M.Thread, st), Nat.add(1n+List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)), {==})))
+    case M.Snoozed{} M.Shelves{+p, +a, +st, +h, +sn}:
+      add_lift(List.length(&2, M.Thread, p), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), 1n+List.length(&2, M.Thread, sn)))), Nat.add(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))), add_lift(List.length(&2, M.Thread, a), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), 1n+List.length(&2, M.Thread, sn))), Nat.add(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn))), add_lift(List.length(&2, M.Thread, st), Nat.add(List.length(&2, M.Thread, h), 1n+List.length(&2, M.Thread, sn)), Nat.add(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)), add_succ_r(List.length(&2, M.Thread, h), List.length(&2, M.Thread, sn)))))
 
 # Laws
 # ----
@@ -205,6 +216,25 @@ def Laws.settle_respects_unsettle(busy, archived, stale):
       {==}
     case True{} True{}:
       {==}
+
+def Laws.sidebar_split_at_count(ts, navs, now):
+  match ts:
+    case Nil{}:
+      {==}
+    case +t <> +rest:
+      Equal.trans(Nat, M.Shelves.count(M.Shelves.put(M.Shelf.at(t, M.Nav.until(M.Nav.get(navs, M.Thread.id(t))), now), t, M.Sidebar.split.at(rest, navs, now))),
+        1n+M.Shelves.count(M.Sidebar.split.at(rest, navs, now)), 1n+List.length(&2, M.Thread, rest),
+        put_count(M.Shelf.at(t, M.Nav.until(M.Nav.get(navs, M.Thread.id(t))), now), t, M.Sidebar.split.at(rest, navs, now)),
+        Equal.cong(Nat, Nat, x => 1n+x, M.Shelves.count(M.Sidebar.split.at(rest, navs, now)), List.length(&2, M.Thread, rest),
+          Laws.sidebar_split_at_count(rest, navs, now)))
+
+def Laws.settle_never_snoozed(now, w, t, until, h):
+  %Equal.sym(Bool, Nat.is_ge(now, until), False{}, h) : {M.Settle.auto.s(Bool.not(_), now, w, t, until) == False{} : Bool}
+  {==}
+
+def Laws.snooze_wakes(now, until, h):
+  %Equal.sym(Bool, Nat.is_ge(now, until), True{}, h) : {Bool.not(_) == False{} : Bool}
+  {==}
 
 def Laws.replay_snoc(es, s, e):
   match es:
@@ -491,7 +521,7 @@ def Laws.device_drop_never_sent(tok, at):
 
 def Laws.device_blank_ignored(s, p, k, th, e, b, at):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
       {==}
 
 def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, at2):
@@ -502,3 +532,154 @@ def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, a
     case SCon{+c, +t}:
       %Equal.sym((String & String) & Cmp, String.cmp(SCon{c, t}, SCon{c, t}), ((SCon{c, t}, SCon{c, t}), EQ{}), string_cmp_refl(SCon{c, t})) : {Map.size(&2, M.Device, Map.set.fin.go(&2, M.Device, MLeaf{SCon{c, t}, M.Device{SCon{c, t}, p, k, th, e, b, at}}, SCon{c, t}, M.Device{SCon{c, t}, p2, k2, th2, e2, b2, at2}, _)) == 1n : Nat}
       {==}
+
+# Order keys
+# ----------
+
+law cmpz_r_not_lt:
+  for s: List<&2, Bool>
+  {Cmp.is_lt(M.Key.cmpz_r(s)) == False{} : Bool}
+
+def cmpz_r_not_lt(s):
+  match s:
+    case Nil{}:
+      {==}
+    case x <> r:
+      match x:
+        case False{}:
+          cmpz_r_not_lt(r)
+        case True{}:
+          {==}
+
+def Laws.key_after(s):
+  match s:
+    case Nil{}:
+      {==}
+    case x <> r:
+      match x:
+        case False{}:
+          {==}
+        case True{}:
+          Laws.key_after(r)
+
+law midz_above:
+  for t: List<&2, Bool>
+  for h: {Cmp.is_lt(M.Key.cmpz(t)) == True{} : Bool}
+  {Cmp.is_lt(M.Key.cmpz(M.Key.midz(t))) == True{} : Bool}
+
+def midz_above(t, h):
+  match t:
+    case Nil{}:
+      Empty.absurd({Cmp.is_lt(M.Key.cmpz(M.Key.midz(Nil{}))) == True{} : Bool}, false_ne_true(h))
+    case x <> r:
+      match x:
+        case False{}:
+          midz_above(r, h)
+        case True{}:
+          {==}
+
+law midz_below:
+  for t: List<&2, Bool>
+  for h: {Cmp.is_lt(M.Key.cmpz(t)) == True{} : Bool}
+  {M.Key.lt(M.Key.midz(t), t) == True{} : Bool}
+
+def midz_below(t, h):
+  match t:
+    case Nil{}:
+      Empty.absurd({M.Key.lt(M.Key.midz(Nil{}), Nil{}) == True{} : Bool}, false_ne_true(h))
+    case x <> r:
+      match x:
+        case False{}:
+          midz_below(r, h)
+        case True{}:
+          {==}
+
+def Laws.key_mid_above(a, b, h):
+  match a:
+    case Nil{}:
+      midz_above(b, h)
+    case x <> s:
+      match x b:
+        case False{} Nil{}:
+          Empty.absurd({M.Key.lt(False{} <> s, M.Key.mid(False{} <> s, Nil{})) == True{} : Bool},
+            false_ne_true(Equal.trans(Bool, False{}, Cmp.is_lt(M.Key.cmpz_r(s)), True{}, Equal.sym(Bool, Cmp.is_lt(M.Key.cmpz_r(s)), False{}, cmpz_r_not_lt(s)), h)))
+        case True{} Nil{}:
+          Empty.absurd({M.Key.lt(True{} <> s, M.Key.mid(True{} <> s, Nil{})) == True{} : Bool}, false_ne_true(h))
+        case False{} y <> t:
+          match y:
+            case False{}:
+              Laws.key_mid_above(s, t, h)
+            case True{}:
+              Laws.key_after(s)
+        case True{} y <> t:
+          match y:
+            case False{}:
+              Empty.absurd({M.Key.lt(True{} <> s, M.Key.mid(True{} <> s, False{} <> t)) == True{} : Bool}, false_ne_true(h))
+            case True{}:
+              Laws.key_mid_above(s, t, h)
+
+def Laws.key_mid_below(a, b, h):
+  match a:
+    case Nil{}:
+      midz_below(b, h)
+    case x <> s:
+      match x b:
+        case False{} Nil{}:
+          Empty.absurd({M.Key.lt(M.Key.mid(False{} <> s, Nil{}), Nil{}) == True{} : Bool},
+            false_ne_true(Equal.trans(Bool, False{}, Cmp.is_lt(M.Key.cmpz_r(s)), True{}, Equal.sym(Bool, Cmp.is_lt(M.Key.cmpz_r(s)), False{}, cmpz_r_not_lt(s)), h)))
+        case True{} Nil{}:
+          Empty.absurd({M.Key.lt(M.Key.mid(True{} <> s, Nil{}), Nil{}) == True{} : Bool}, false_ne_true(h))
+        case False{} y <> t:
+          match y:
+            case False{}:
+              Laws.key_mid_below(s, t, h)
+            case True{}:
+              {==}
+        case True{} y <> t:
+          match y:
+            case False{}:
+              Empty.absurd({M.Key.lt(M.Key.mid(True{} <> s, False{} <> t), False{} <> t) == True{} : Bool}, false_ne_true(h))
+            case True{}:
+              Laws.key_mid_below(s, t, h)
+
+# Sidebar status
+# --------------
+
+def Laws.status_approval_first(i, t, q):
+  {==}
+
+def Laws.status_input_before_work(t, q):
+  {==}
+
+def Laws.status_working_before_queued(q):
+  {==}
+
+def Laws.status_failed_before_queued(q):
+  {==}
+
+def Laws.status_approval_top(a, i, t, q):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      match i:
+        case True{}:
+          {==}
+        case False{}:
+          match t q:
+            case M.Running{} _:
+              {==}
+            case M.Failed{} _:
+              {==}
+            case M.Idle{} True{}:
+              {==}
+            case M.Idle{} False{}:
+              {==}
+            case M.Completed{} True{}:
+              {==}
+            case M.Completed{} False{}:
+              {==}
+            case M.Interrupted{} True{}:
+              {==}
+            case M.Interrupted{} False{}:
+              {==}

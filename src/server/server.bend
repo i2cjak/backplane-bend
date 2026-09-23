@@ -996,11 +996,74 @@ def GitJob.repo(ok: Bool, +job: String, +inbox: Chan(Msg), +client: U32, +id: St
 
 # one git job; nothing happens outside a git repository (checkpoints are
 # skipped, requests answer why)
-def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+def GitJob.run.git(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   do IO<Unit>:
     ok : Bool <- GT.Git.is_repo(cwd)
     t : U32 <- H.Clock.epoch()
     GitJob.repo(ok, job, inbox, client, id, thread, cwd, a, b, home, U32.to_nat(t))
+
+# Sidebar jobs
+# ------------
+# A thread's files for the file picker (git's view of the tree in a
+# repository, else a bounded walk; at most 3000), and 9:00 tomorrow in the
+# machine's time zone for a snooze.
+
+def Files.limit() -> String:
+  "3000"
+
+def Files.cmd(repo: Bool) -> String:
+  match repo:
+    case True{}:
+      "git ls-files --cached --others --exclude-standard | head -n " ++ Files.limit()
+    case False{}:
+      "find . -maxdepth 8 -type f -not -path '*/.*' -not -path '*/node_modules/*' 2>/dev/null | head -n " ++ Files.limit() ++ " | sed 's|^\\./||'"
+
+def Files.strs(ls: List<&2, String>) -> List<&2, J.Json>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> +t:
+      Bool.pick(List<&2, J.Json>, String.is_empty(String.trim(l)), Files.strs(t), J.Str{l} <> Files.strs(t))
+
+def Files.sent(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, out}:
+      GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"files", J.Json.arr(Files.strs(String.lines(out)))}, J.KV{"thread", J.Str{thread}}]))
+    case P.Ran{_, out}:
+      GitJob.reply(inbox, client, id, False{}, J.Json.obj([J.KV{"text", J.Str{out}}]))
+
+def Files.list(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    repo : Bool <- GT.Git.is_repo(cwd)
+    r : P.Ran <- P.Proc.run("sh", ["-c", Files.cmd(repo)], cwd)
+    Files.sent(r, inbox, client, id, thread)
+
+def Snooze.tz(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, out}:
+      String.trim(out)
+    case _:
+      "+0000"
+
+# snooze until 9:00 tomorrow here: the hub hears the time as thread.snooze
+def Snooze.tomorrow(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +now: String) -> IO(Unit):
+  do IO<Unit>:
+    r : P.Ran <- P.Proc.run("date", ["+%z"], "/")
+    GitJob.say(inbox, "thread.snooze", [J.KV{"thread", J.Str{thread}}, J.KV{"until", J.Num{Nat.show(M.Snooze.tomorrow(Maybe.default(&2, Nat, Nat.read(now), 0n), Snooze.tz(r)))}}])
+    GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"thread", J.Str{thread}}]))
+
+def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  match i:
+    case 0n:
+      Files.list(inbox, client, id, thread, cwd)
+    case 1n:
+      Snooze.tomorrow(inbox, client, id, thread, a)
+    case _:
+      GitJob.run.git(job, inbox, client, id, thread, cwd, a, b, home)
+
+# a job the hub asked for: a git job, or one of the sidebar's
+def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  GitJob.run.k(C.Codec.pos(["files", "snooze"], job), job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------

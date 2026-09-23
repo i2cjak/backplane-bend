@@ -474,8 +474,9 @@ def Nui.with_ui(n: Nui, u: U.Ui) -> Nui:
     case Nui{_, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
-def Pal.open(+n: Nui) -> Step:
-  Nui.focus(Nui.with_ui(n, U.Palette.set(U.Ui.flag_on(Nui.ui(n), "palette"), "", 0n)), "palette")
+# open the palette in a mode ("" commands, "search", "files") with a query
+def Pal.open(+n: Nui, +mode: String, +q: String) -> Step:
+  Nui.focus(Nui.with_ui(n, U.Palette.set(U.Palette.open(Nui.ui(n), mode), q, 0n)), "palette")
 
 def Pal.close(+n: Nui) -> Step:
   Nui.focus(Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "palette")), "composer")
@@ -500,13 +501,14 @@ def Keys.shift(+mods: U32) -> Bool:
 def Keys.name.k(ctrl: Bool, shift: Bool, term: Bool, +c: U32) -> String:
   match ctrl shift term:
     case True{} False{} False{}:
-      Bool.pick(String, U32.is_eq(c, 106), "term", Bool.pick(String, U32.is_eq(c, 100), "diff", Bool.pick(String, U32.is_eq(c, 110), "new", Bool.pick(String, U32.is_eq(c, 107), "palette", ""))))
+      Bool.pick(String, U32.is_eq(c, 106), "term", Bool.pick(String, U32.is_eq(c, 100), "diff", Bool.pick(String, U32.is_eq(c, 110), "new", Bool.pick(String, U32.is_eq(c, 107), "palette",
+        Bool.pick(String, U32.is_eq(c, 112), "files", Bool.pick(String, Bool.and(U32.is_ge(c, 49), U32.is_le(c, 57)), "jump", ""))))))
     case True{} False{} True{}:
       Bool.pick(String, U32.is_eq(c, 106), "term", "")
     case True{} True{} _:
       Bool.pick(String, U32.is_eq(c, 123), "prev", Bool.pick(String, U32.is_eq(c, 125), "next", Bool.pick(String, U32.is_eq(c, 91), "prev",
         Bool.pick(String, U32.is_eq(c, 93), "next", Bool.pick(String, U32.is_eq(c, 115), "settle", Bool.pick(String, U32.is_eq(c, 112), "pin",
-          Bool.pick(String, U32.is_eq(c, 118), "paste", "")))))))
+          Bool.pick(String, U32.is_eq(c, 118), "paste", Bool.pick(String, U32.is_eq(c, 102), "search", ""))))))))
     case _ _ _:
       ""
 
@@ -690,7 +692,18 @@ def Nui.term.toggle(open: Bool, +n: Nui) -> Step:
     case False{}:
       Nui.focus.step(Nui.act.k(U.Ui.term_open(U.Ui.flag_on(Nui.ui(n), "term"), Term.cols(n), Term.rows(n)), n), "terminal")
 
-def Nui.shortcut.k(i: Nat, +n: Nui) -> Step:
+# the file picker asks the server for the thread's files as it opens
+def Pal.files(+n: Nui) -> Step:
+  Nui.focus.step(Nui.act.k(U.Ui.act(U.Palette.open(Nui.ui(n), "files"), "files", ""), n), "palette")
+
+# ctrl+1..9: the Nth thread the sidebar shows
+def Nui.jump(+n: Nui, +id: String) -> Step:
+  Bool.pick(Step, String.is_empty(id), Step{n, Nil{}, False{}}, Nui.act(n, "select", id))
+
+def Keys.list() -> List<&2, String>:
+  ["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette", "jump", "search", "files"]
+
+def Nui.shortcut.k(i: Nat, +n: Nui, +code: U32) -> Step:
   match i:
     case 0n:
       Nui.term.toggle(U.Ui.flag(Nui.ui(n), "term"), n)
@@ -706,15 +719,35 @@ def Nui.shortcut.k(i: Nat, +n: Nui) -> Step:
       Nui.act(n, "settle", "")
     case 6n:
       Nui.act(n, "pin", "")
+    case 8n:
+      Pal.open(n, "", "")
+    case 9n:
+      Nui.jump(n, U.Side.nth(U.Side.visible(Nui.ui(n)), U32.to_nat((U32.or(code, 32) - 49 : U32))))
+    case 10n:
+      Pal.open(n, "search", "")
+    case 11n:
+      Pal.files(n)
     case _:
       Step{n, [NPaste{}], False{}}
+
+def Step.caret_end(s: Step) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Nui.with_caret(n, String.length(U.Ui.draft_text(Nui.ui(n)))), cs, d}
+
+def Pal.act(mention: Bool, +n: Nui, +a: String, +v: String) -> Step:
+  match mention:
+    case True{}:
+      Step.caret_end(Nui.act(n, a, v))
+    case False{}:
+      Nui.act(n, a, v)
 
 def Pal.run.k(key: Bool, +n: Nui, +a: String, +v: String) -> Step:
   match key:
     case True{}:
-      Nui.shortcut.k(U.Keys.pos(["term"], String.drop(a, 4n)), n)
+      Nui.shortcut.k(U.Keys.pos(Keys.list(), String.drop(a, 4n)), n, 0)
     case False{}:
-      Nui.act(n, a, v)
+      Pal.act(String.eq(a, "mention"), n, a, v)
 
 def Pal.run(it: U.PItem, +n: Nui) -> Step:
   match it:
@@ -751,12 +784,14 @@ def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
       Pal.click(n, value)
     case 3n:
       Pal.close(n)
+    case 4n:
+      Pal.open(n, "", value)
     case _:
       Step{n, Nil{}, False{}}
 
-# the viewer's own actions (they never reach the client state)
+# the window's own actions (they never reach the client state)
 def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
-  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx"], action, 0n), n, value)
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-find"], action, 0n), n, value)
 
 def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
   match focus:
@@ -789,7 +824,7 @@ def Nui.key.term(term: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Ste
 def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match none:
     case False{}:
-      Nui.shortcut.k(U.Keys.pos(["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette"], name), n)
+      Nui.shortcut.k(U.Keys.pos(Keys.list(), name), n, code)
     case True{}:
       Nui.key.term(String.eq(Nui.focus_of(n), "terminal"), n, code, text, mods)
 
@@ -901,12 +936,78 @@ def Nui.nohit(m: Maybe<&2, Hit>) -> Bool:
     case None{}:
       True{}
 
+# Dragging a sidebar row
+# ----------------------
+# A press on a row selects it and arms a drag (the thread and where the
+# press was, in the client's scratch state); a release far enough away
+# over another row of the same shelf reorders (client action "reorder").
+
+def Row.arm(s: Step, +id: String, +y: U32) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@drag", id), "@drag.y", U32.show(y))), cs, d}
+
+def Row.press.k(row: Bool, s: Step, +id: String, +y: U32) -> Step:
+  match row:
+    case True{}:
+      Row.arm(s, id, y)
+    case False{}:
+      s
+
+def Row.press(m: Maybe<&2, Hit>, +n: Nui, +x: U32, +y: U32) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +action, +value}}:
+      Row.press.k(Bool.and(String.eq(action, "select"), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value), value, y)
+    case None{}:
+      Step{n, Nil{}, False{}}
+
+def Row.id(+n: Nui) -> String:
+  U.Ui.scratch(Nui.ui(n), "@drag")
+
+def Row.y(+n: Nui) -> U32:
+  Maybe.default(&2, U32, U32.read(U.Ui.scratch(Nui.ui(n), "@drag.y")), 0)
+
+# whether the pointer went far enough from the press to be a drag
+def Row.far(+y0: U32, +y: U32) -> Bool:
+  U32.is_ge((U32.max(y, y0) - U32.min(y, y0) : U32), 6)
+
+def Row.drop(m: Maybe<&2, Hit>, +n: Nui, +id: String) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +a, +v}}:
+      Bool.pick(Step, String.eq(a, "select"), Nui.act(n, "reorder", id ++ "|" ++ v), Step{n, Nil{}, True{}})
+    case None{}:
+      Step{n, Nil{}, True{}}
+
+def Row.release.k(far: Bool, +n: Nui, +id: String, +y: U32) -> Step:
+  match far:
+    case True{}:
+      Row.drop(Hit.find(Nui.hits(n), 10, y), n, id)
+    case False{}:
+      Step{n, Nil{}, True{}}
+
+def Row.clear(+n: Nui) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@drag", ""), "@drag.y", ""))
+
+def Row.release(on: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match on:
+    case True{}:
+      Row.release.k(Row.far(Row.y(n), y), Row.clear(n), Row.id(n), y)
+    case False{}:
+      Nui.view_press(n, x, y, False{})
+
+def Row.move(on: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match on:
+    case True{}:
+      Step{Step.nui(Nui.moved(n, x, y)), Nil{}, True{}}
+    case False{}:
+      Nui.moved(n, x, y)
+
 def Nui.press.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   match drag:
     case True{}:
       Nui.view_press(n, x, y, True{})
     case False{}:
-      Nui.click(n, x, y)
+      Row.press(Hit.find(Nui.hits(n), x, y), n, x, y)
 
 # a press on the viewer's own buttons is a click, elsewhere in it a drag
 def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
@@ -917,7 +1018,7 @@ def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
     case True{}:
       Nui.view_move(n, x, y)
     case False{}:
-      Nui.moved(n, x, y)
+      Row.move(Bool.not(String.is_empty(Row.id(n))), n, x, y)
 
 def Nui.spin(viewer: Bool, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
   match viewer:
@@ -936,7 +1037,7 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
     case W.WButton{+x, +y, 1, True{}}:
       Nui.press(Nui.in_viewer(n, x), n, x, y)
     case W.WButton{+x, +y, 1, False{}}:
-      Nui.view_press(n, x, y, False{})
+      Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y)
     case W.WButton{_, _, _, _}:
       Step{n, Nil{}, False{}}
     case W.WMove{+x, +y}:

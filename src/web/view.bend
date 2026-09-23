@@ -40,60 +40,71 @@ def View.rows(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>) -> List<&2, PRow
     case M.Project{+id, ti, r, +c, +rm} <> t:
       View.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, View.rows(t, ts))
 
-def View.dot(t: M.TurnState) -> String:
-  match t:
-    case M.Running{}:
-      "dot run"
-    case M.Failed{}:
-      "dot fail"
-    case M.Interrupted{}:
-      "dot stop"
-    case _:
-      "dot"
+# a sidebar row: its status dot, title and age (a snoozed row: the time
+# left); rows of a shelf with manual order get move buttons on hover
+def View.row.k(+id: String, +title: String, +ago: String, +dot: String, +sel: String, +movable: Bool) -> D.Node:
+  D.El{"div", id, [D.At{"class", Bool.pick(String, String.eq(id, sel), "thread on", "thread")}, D.At{"data-value", id}, D.On{"click", "select"}],
+    D.Dom.cat([D.Dom.span("dot " ++ dot, ""), D.Dom.span("title", title)],
+      D.Dom.cat(Bool.pick(List<&2, D.Node>, movable, [D.El{"span", "", [D.At{"class", "moves"}], [D.Dom.button("move", "move", id ++ "|up", "Move up", "↑"), D.Dom.button("move", "move", id ++ "|down", "Move down", "↓")]}], Nil{}),
+        [D.Dom.span("ago", ago)]))}
 
-def View.row(t: M.Thread, +sel: String, +now: Nat) -> D.Node:
+def View.row(+t: M.Thread, +st: M.State, +sel: String, +now: Nat, +movable: Bool, +snoozed: Bool) -> D.Node:
   match t:
-    case M.Thread{+id, _, title, _, +a, turn, _, _, _, _, _, pinned, _, _, _, _, _, _, _, _, _}:
-      D.El{"div", id, [D.At{"class", Bool.pick(String, String.eq(id, sel), "thread on", "thread")}, D.At{"data-value", id}, D.On{"click", "select"}],
-        [D.Dom.span(View.dot(turn), ""), D.Dom.span("title", title), D.Dom.span("ago", U.Time.ago(now, a))]}
+    case M.Thread{+id, _, +title, _, +a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      View.row.k(id, title, Bool.pick(String, snoozed, U.Time.ago(U.Side.until(st, id), now), U.Time.ago(now, a)), M.Status.name(U.Side.status(st, t)), sel, movable)
 
-def View.rows_of(ts: List<&2, M.Thread>, +sel: String, +now: Nat) -> List<&2, D.Node>:
+def View.rows_in(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat, +movable: Bool, +snoozed: Bool) -> List<&2, D.Node>:
   match ts:
     case Nil{}:
       Nil{}
-    case t <> rest:
-      View.row(t, sel, now) <> View.rows_of(rest, sel, now)
+    case +t <> rest:
+      View.row(t, st, sel, now, movable, snoozed) <> View.rows_in(rest, st, sel, now, movable, snoozed)
 
-def View.settled.k(open: Bool, +pid: String, n: Nat, ts: List<&2, M.Thread>, +sel: String, +now: Nat) -> List<&2, D.Node>:
+def View.rows_of(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
+  View.rows_in(ts, st, sel, now, False{}, False{})
+
+def View.shelf.k(open: Bool, +key: String, +label: String, ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
   match open:
     case True{}:
-      D.Dom.button("shelf open", "toggle-settled", pid, "Hide settled threads", "Settled " ++ Nat.show(n)) <> View.rows_of(ts, sel, now)
+      D.Dom.button("shelf open", "toggle-settled", key, "Hide", label) <> View.rows_of(ts, st, sel, now)
     case False{}:
-      [D.Dom.button("shelf", "toggle-settled", pid, "Show settled threads", "Settled " ++ Nat.show(n))]
+      [D.Dom.button("shelf", "toggle-settled", key, "Show", label)]
 
-def View.settled(open: Bool, +pid: String, st: List<&2, M.Thread>, +sel: String, +now: Nat) -> List<&2, D.Node>:
-  match st:
+# a collapsible shelf (Settled, Archived): its label and count, then its
+# rows when open; nothing when empty
+def View.shelf(open: Bool, +key: String, +name: String, ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
+  match ts:
     case Nil{}:
       Nil{}
     case +t <> +rest:
-      View.settled.k(open, pid, List.length(&2, M.Thread, t <> rest), t <> rest, sel, now)
+      View.shelf.k(open, key, name ++ " " ++ Nat.show(List.length(&2, M.Thread, t <> rest)), t <> rest, st, sel, now)
 
-def View.project(r: PRow, +open: Map<&2, Bool>, +sel: String, +now: Nat) -> D.Node:
+# snoozed threads, soonest to wake first
+def View.snoozed(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> +rest:
+      D.Dom.span("shelf-label", "Snoozed") <> View.rows_in(t <> rest, st, sel, now, False{}, True{})
+
+def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat) -> D.Node:
   match r:
-    case PRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, _}}:
+    case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
       D.El{"section", id, [D.At{"class", "project"}],
-        D.Dom.cat([D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}],
+        List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}],
             [D.Dom.span("name", title), D.Dom.button("icon", "new-thread", id, "New thread", "+")]}],
-          D.Dom.cat(View.rows_of(pinned, sel, now),
-            D.Dom.cat(View.rows_of(active, sel, now),
-              View.settled(U.Flag.get(open, id), id, settled, sel, now))))}
+          View.rows_in(pinned, st, sel, now, True{}, False{}),
+          View.rows_in(active, st, sel, now, True{}, False{}),
+          View.snoozed(snoozed, st, sel, now),
+          View.shelf(U.Flag.get(open, id), id, "Settled", settled, st, sel, now),
+          View.shelf(U.Flag.get(open, "arch:" ++ id), "arch:" ++ id, "Archived", M.Archive.of(hidden), st, sel, now)])}
 
-def View.projects(rs: List<&2, PRow>, +open: Map<&2, Bool>, +sel: String, +now: Nat) -> List<&2, D.Node>:
+def View.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
   match rs:
     case Nil{}:
       Nil{}
     case r <> t:
-      View.project(r, open, sel, now) <> View.projects(t, open, sel, now)
+      View.project(r, open, st, sel, now) <> View.projects(t, open, st, sel, now)
 
 def View.add(adding: Bool) -> List<&2, D.Node>:
   match adding:
@@ -113,7 +124,7 @@ def View.sidebar(u: U.Ui) -> D.Node:
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
             D.Dom.button("icon", "toggle-add", "", "Add project", "+")]}],
           D.Dom.cat(View.add(adding),
-            D.Dom.cat(View.projects(List.sort(~PRow, ~PRow.before, View.rows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now),
+            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now),
             [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")])))}
 
 # Thread
@@ -222,16 +233,34 @@ def View.settle(o: M.Override, auto: Bool) -> D.Node:
     case _ _:
       D.Dom.button("", "settle", "", "Settle thread", "Settle")
 
-def View.header(t: M.Thread, panel: Bool) -> D.Node:
+def View.archive(a: Bool) -> D.Node:
+  match a:
+    case True{}:
+      D.Dom.button("on", "unarchive", "", "Bring back from the archive", "Archived")
+    case False{}:
+      D.Dom.button("", "archive", "", "Archive thread", "Archive")
+
+# snoozed: the button wakes it; else it opens the snooze choices
+def View.snooze(snoozed: Bool, picking: Bool) -> List<&2, D.Node>:
+  match snoozed picking:
+    case True{} _:
+      [D.Dom.button("on", "snooze", "off", "Wake it now", "Snoozed")]
+    case False{} False{}:
+      [D.Dom.button("", "flag", "snooze", "Snooze", "Snooze")]
+    case False{} True{}:
+      [D.Dom.button("", "snooze", "1h", "Snooze for an hour", "1 hour"), D.Dom.button("", "snooze", "tomorrow", "Snooze until 9:00 tomorrow", "Tomorrow"),
+       D.Dom.button("", "snooze", "1w", "Snooze for a week", "1 week"), D.Dom.button("on", "flag", "snooze", "Cancel", "Snooze")]
+
+def View.header(t: M.Thread, panel: Bool, snoozed: Bool, picking: Bool) -> D.Node:
   match t:
-    case M.Thread{_, _, title, _, _, turn, _, _, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
+    case M.Thread{_, _, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
       D.El{"header", "", [D.At{"class", "thread-head"}], [
         D.Dom.button("back", "select", "", "Threads", "‹"),
         D.Dom.span("title", title),
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
-        D.El{"div", "", [D.At{"class", "tools"}], D.Dom.cat(D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
-          [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua)), D.Dom.button("", "archive", "", "Archive thread", "Archive"),
-           D.Dom.button(Bool.pick(String, panel, "on", ""), "panel", "", "Board viewer", "Board")])}]}
+        D.El{"div", "", [D.At{"class", "tools"}], List.concat(&2, D.Node, [D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
+          [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua))], View.snooze(snoozed, picking), [View.archive(archived),
+           D.Dom.button(Bool.pick(String, panel, "on", ""), "panel", "", "Board viewer", "Board")]])}]}
 
 def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
   match ms:
@@ -319,9 +348,9 @@ def View.queued(+q: String) -> D.Node:
 
 def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
   match u t:
-    case U.Ui{+st, +sel, +drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
+    case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", "thread-view"}], [
-        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
+        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze")),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id), D.Dom.cat(View.sending(pend),

@@ -51,9 +51,15 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .thread .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread .ago { color: var(--faint); font-size: 11px; }
 .dot { width: 6px; height: 6px; background: var(--faint); flex: none; }
-.dot.run { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
-.dot.fail { background: var(--bad); }
-.dot.stop { background: var(--warn); }
+.dot.run, .dot.working { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.dot.fail, .dot.failed { background: var(--bad); }
+.dot.stop, .dot.approval { background: var(--warn); }
+.dot.input { background: #b48cff; }
+.dot.queued { background: #4fc1c9; }
+.thread .moves { display: none; gap: 2px; }
+.thread:hover .moves { display: flex; }
+.thread .move { padding: 0 5px; font-size: 11px; line-height: 16px; background: none; }
+.shelf-label { display: block; color: var(--faint); padding: 6px 12px 2px; font-size: 11px; }
 @keyframes pulse { 50% { opacity: 0.35; } }
 .shelf { display: block; width: 100%; text-align: left; background: none; border: 0; color: var(--faint); padding: 4px 12px; font-size: 11px; }
 .shelf:hover { color: var(--dim); }

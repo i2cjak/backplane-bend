@@ -41,7 +41,7 @@ def Mob.rows(ts: List<&2, M.Thread>, +now: Nat) -> List<&2, J.Json>:
 
 def Mob.project(r: V.PRow, +open: Map<&2, Bool>, +now: Nat) -> J.Json:
   match r:
-    case V.PRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, +settled, _}}:
+    case V.PRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, +settled, _, _}}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"root", J.Json.str(root)},
         J.KV{"open", J.Json.bool(U.Flag.get(open, id))},
         J.KV{"threads", J.Json.arr(Mob.rows(List.append(&2, M.Thread, pinned, active), now))},
