@@ -81,7 +81,7 @@ def Mcp.tools() -> J.Json:
     Tool.def("delegate_task",
       "Delegate one task to a child agent of THIS thread, on any provider/model (see orchestrator_capabilities). The child sees only `prompt` (no conversation history) and works in this thread's directory. Its result arrives in this thread as a message when it finishes, so end your turn instead of polling; use task_status only when you need it mid-turn. Delegation is limited in depth; children of children are allowed up to the limit.",
       [Tool.prop("prompt", "string", "The complete task for the child, with every detail it needs."),
-       Tool.prop("provider", "string", "claude or codex (default: this thread's)."),
+       Tool.prop("provider", "string", "claude, codex or grok (default: this thread's)."),
        Tool.prop("model", "string", "Model for the child (default: this thread's)."),
        Tool.prop("title", "string", "Short title for the child thread.")], ["prompt"]),
     Tool.def("task_status", "Read a delegated task: state (queued, running, done, failed, cancelled), the child's thread, and its result summary once finished.",

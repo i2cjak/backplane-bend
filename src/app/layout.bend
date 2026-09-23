@@ -117,17 +117,11 @@ def Ty.load() -> IO(Ty):
 def Lay.hit(+x: U32, +y: U32, +w: U32, +h: U32, action: String, value: String) -> S.Hit:
   S.Hit{x, y, (x + w : U32), (y + h : U32), action, value}
 
-# a filled rectangle with rounded corners: two rects and four discs
+# a filled box; corners stay square (house rule), r is kept for callers
 def Lay.round(+c: D.Clip, +x: U32, +y: U32, +w: U32, +h: U32, +r: U32, +color: U32) -> List<&2, R.Op>:
-  +fr = U32.to_f32(r)
-  [D.Draw.rect(c, (x + r : U32), y, (w - r - r : U32), h, color, 255),
-   D.Draw.rect(c, x, (y + r : U32), w, (h - r - r : U32), color, 255),
-   D.Draw.disc(c, U32.to_f32((x + r : U32)), U32.to_f32((y + r : U32)), fr, color, 255),
-   D.Draw.disc(c, U32.to_f32((x + w - r : U32)), U32.to_f32((y + r : U32)), fr, color, 255),
-   D.Draw.disc(c, U32.to_f32((x + r : U32)), U32.to_f32((y + h - r : U32)), fr, color, 255),
-   D.Draw.disc(c, U32.to_f32((x + w - r : U32)), U32.to_f32((y + h - r : U32)), fr, color, 255)]
+  [D.Draw.rect(c, x, y, w, h, color, 255)]
 
-# a rounded box with a 1px border
+# a box with a 1px border
 def Lay.box(+c: D.Clip, +x: U32, +y: U32, +w: U32, +h: U32, +r: U32, +fill: U32, +line: U32) -> List<&2, R.Op>:
   List.append(&2, R.Op, Lay.round(c, x, y, w, h, r, line), Lay.round(c, (x + 1 : U32), (y + 1 : U32), (w - 2 : U32), (h - 2 : U32), (r - 1 : U32), fill))
 
@@ -258,33 +252,6 @@ def Lay.prows(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>) -> List<&2, PRow
     case M.Project{+id, ti, r, +c, +rm} <> t:
       Lay.prows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, Lay.prows(t, ts))
 
-# delegated (child) threads live under their parent, not in the sidebar
-def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
-  match ts:
-    case Nil{}:
-      m
-    case M.Task{_, _, child, _, _, _, _, _, _} <> t:
-      Kids.of(t, Map.set(&2, Bool, m, child, True{}))
-
-def Kids.set(s: M.State) -> Map<&2, Bool>:
-  match s:
-    case M.State{_, _, _, _, tk, _}:
-      Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
-
-def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
-  match kid:
-    case True{}:
-      rest
-    case False{}:
-      t <> rest
-
-def Kids.keep(ts: List<&2, M.Thread>, +kids: Map<&2, Bool>) -> List<&2, M.Thread>:
-  match ts:
-    case Nil{}:
-      Nil{}
-    case M.Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
-      Kids.keep.k(U.Flag.get(kids, id), M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, Kids.keep(t, kids))
-
 def Lay.field(+ty: Ty, +c: D.Clip, +x: U32, +y: U32, +w: U32, +text: String, +focused: Bool, +caret: Nat, +placeholder: String, +id: String) -> Out:
   +vis = Ty.fit(ty, 2n, text, (w - 16 : U32))
   Out{List.concat(&2, R.Op, [
@@ -319,7 +286,7 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
     Out{Ty.text(ty, 0n, "+", top, 238, 0, 52, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "toggle-add", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret),
-    Lay.col.out(Lay.projects(ty, List.sort(~PRow, ~PRow.before, Lay.prows(U.Ui.projects(st), Kids.keep(U.Ui.threads(st), Kids.set(st)))), open, sel, now,
+    Lay.col.out(Lay.projects(ty, List.sort(~PRow, ~PRow.before, Lay.prows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now,
       D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
         Ty.text(ty, 2n, "Settings", D.Clip.all(), 16, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim()))),
@@ -642,22 +609,6 @@ def Lay.lines(+ty: Ty, ls: List<&2, String>, +c: D.Clip, +x: U32, +y: U32) -> Ou
     case l <> t:
       Out.cat(Out.ops(Ty.text(ty, 3n, l, c, x, y, 23, T.Th.text())), Lay.lines(ty, t, c, x, (y + 23 : U32)))
 
-# Models: the machine's {"provider": [model, ...]} and the picker
-def Models.strs(xs: List<&2, J.Json>) -> List<&2, String>:
-  match xs:
-    case Nil{}:
-      Nil{}
-    case J.Str{s} <> t:
-      s <> Models.strs(t)
-    case _ <> t:
-      Models.strs(t)
-
-def Models.list(+info: String, +provider: String) -> List<&2, String>:
-  Models.strs(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), provider)))
-
-def Models.label(+provider: String, +model: String) -> String:
-  provider ++ " · " ++ Bool.pick(String, String.is_empty(model), "default", model)
-
 def Picker.rows(+ty: Ty, ms: List<&2, String>, +cur: String, +x: U32, +y: U32, +w: U32) -> Out:
   match ms:
     case Nil{}:
@@ -750,58 +701,17 @@ def Task.color(s: M.TaskState) -> U32:
     case M.TaskCancelled{}:
       T.Th.warn()
 
-def Task.word(s: M.TaskState) -> String:
-  match s:
-    case M.TaskQueued{}:
-      "queued"
-    case M.TaskRunning{}:
-      "running"
-    case M.TaskDone{}:
-      "done"
-    case M.TaskFailed{}:
-      "failed"
-    case M.TaskCancelled{}:
-      "cancelled"
-
-def Tasks.mine.k(keep: Bool, t: M.Task, rest: List<&2, M.Task>) -> List<&2, M.Task>:
-  match keep:
-    case True{}:
-      t <> rest
-    case False{}:
-      rest
-
-def Tasks.mine(ts: List<&2, M.Task>, +parent: String) -> List<&2, M.Task>:
-  match ts:
-    case Nil{}:
-      Nil{}
-    case M.Task{i, +p, c, d, st, su, dl, pr, mo} <> t:
-      Tasks.mine.k(String.eq(p, parent), M.Task{i, p, c, d, st, su, dl, pr, mo}, Tasks.mine(t, parent))
-
-# the tasks this thread delegated
-def Tasks.of(s: M.State, +parent: String) -> List<&2, M.Task>:
-  match s:
-    case M.State{_, _, _, _, tk, _}:
-      Tasks.mine(Map.values(&2, M.Task, tk), parent)
-
-def Tasks.title.k(t: M.Thread) -> String:
-  match t:
-    case M.Thread{_, _, ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
-      ti
-
-def Tasks.title(s: M.State, +id: String) -> String:
-  Tasks.title.k(U.Ui.thread(s, id))
-
 def Tasks.row(+ty: Ty, t: M.Task, +st: M.State, +x0: U32, +x1: U32, +y: U32) -> Out:
   match t:
     case M.Task{_, _, +child, _, +s, _, _, +pr, +mo}:
-      +word = Task.word(s)
-      +who = Models.label(pr, mo)
+      +word = U.Task.word(s)
+      +who = U.Models.label(pr, mo)
       +ww = Ty.width(ty, 2n, word)
       +whw = Ty.width(ty, 2n, who)
       Out{List.concat(&2, R.Op, [
           [D.Draw.disc(D.Clip.all(), U32.to_f32((x0 + 14 : U32)), U32.to_f32((y + 14 : U32)), 3.0, Task.color(s), 255)],
           Ty.text(ty, 2n, who, D.Clip.all(), (x0 + 26 : U32), y, 28, T.Th.dim()),
-          Ty.text(ty, 0n, Ty.fit(ty, 0n, Tasks.title(st, child), (x1 - x0 - whw - ww - 64 : U32)), D.Clip.all(), (x0 + 38 + whw : U32), y, 28, T.Th.soft()),
+          Ty.text(ty, 0n, Ty.fit(ty, 0n, U.Tasks.title(st, child), (x1 - x0 - whw - ww - 64 : U32)), D.Clip.all(), (x0 + 38 + whw : U32), y, 28, T.Th.soft()),
           Ty.text(ty, 2n, word, D.Clip.all(), (x1 - ww - 12 : U32), y, 28, Task.color(s))]),
         [Lay.hit(x0, y, (x1 - x0 : U32), 28, "select", child)]}
 
@@ -826,26 +736,14 @@ def Tasks.height(+ts: List<&2, M.Task>) -> U32:
   +n = {U32.from_nat(List.length(&2, M.Task, ts)) : U32}
   Bool.pick(U32, U32.is_eq(n, 0), 0, (n * 28 + 48 : U32))
 
-def Lay.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
-  match ts:
-    case Nil{}:
-      ""
-    case M.Task{_, p, +c, _, _, _, _, _, _} <> t:
-      Bool.pick(String, String.eq(c, thread), p, Lay.parent.find(t, thread))
-
-def Lay.parent.of(+st: M.State, +thread: String) -> String:
-  match st:
-    case M.State{_, _, _, _, tk, _}:
-      Lay.parent.find(Map.values(&2, M.Task, tk), thread)
-
 def Lay.parent.k(+ty: Ty, +p: String, +st: M.State, +x0: U32, +y: U32) -> Out:
-  +label = "← delegated by " ++ Tasks.title(st, p)
+  +label = "← delegated by " ++ U.Tasks.title(st, p)
   Out.when(Bool.not(String.is_empty(p)),
     Out{Ty.text(ty, 2n, label, D.Clip.all(), x0, y, 28, T.Th.accent()), [Lay.hit(x0, y, (Ty.width(ty, 2n, label) + 8 : U32), 28, "select", p)]})
 
 # a child thread links back to its parent
 def Lay.parent(+ty: Ty, +st: M.State, +thread: String, +x0: U32, +y: U32) -> Out:
-  Lay.parent.k(ty, Lay.parent.of(st, thread), st, x0, y)
+  Lay.parent.k(ty, U.Tasks.parent(st, thread), st, x0, y)
 
 def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focused: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool) -> Out:
@@ -854,8 +752,8 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
       +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
       +cx1 = {(cx0 + cw : U32) : U32}
-      +ts = Tasks.of(st, sel)
-      +pl = {Bool.pick(U32, String.is_empty(Lay.parent.of(st, sel)), 0, 32) : U32}
+      +ts = U.Tasks.of(st, sel)
+      +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
       +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
       Lay.timeline(ty,
         List.append(&2, TLine, TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), cw),
@@ -864,7 +762,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
-          Lay.composer(ty, draft, caret, focused, cx0, cx1, h, Lay.running(turn), Models.label(pr, mo), picking, Models.list(info, pr), mo)]))
+          Lay.composer(ty, draft, caret, focused, cx0, cx1, h, Lay.running(turn), U.Models.label(pr, mo), picking, U.Models.list(info, pr), mo)]))
 
 def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
@@ -937,7 +835,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
   +x = {(x0 + U32.shr((x1 - x0 - w : U32)) : U32) : U32}
   +prov = M.Setting.get(st, "agent.provider", "claude")
   +ipc = M.Setting.get(st, "kicad.ipc", "on")
-  +ms = {"" <> Models.list(U.Str.get(info, "models"), prov) : List<&2, String>}
+  +ms = {"" <> U.Models.list(U.Str.get(info, "models"), prov) : List<&2, String>}
   +dy = {(Set.rows(ty, ms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   Out.all([
     Out.ops([D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)]),
@@ -950,7 +848,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
     Set.head(ty, "Agents", x, 192),
     Set.card(x, 224, w, (124 + dy : U32)),
     Set.row(ty, "Provider and model for new threads", "Each thread keeps its own; change it from the composer.", x, 226, w),
-    Set.chips(ty, ["claude", "codex"], prov, "agent.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), 274),
+    Set.chips(ty, ["claude", "codex", "grok"], prov, "agent.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), 274),
     Set.chips(ty, ms, M.Setting.get(st, "agent.model", ""), "agent.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), 308),
     Set.head(ty, "KiCad", x, (368 + dy : U32)),
     Set.card(x, (400 + dy : U32), w, 150),

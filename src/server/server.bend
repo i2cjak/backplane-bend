@@ -13,6 +13,7 @@ import ./update.bend as UP
 import ../core/version.bend as VR
 import ./kicad.bend as K
 import ./browser.bend as BR
+import ../core/acp.bend as AC
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -827,6 +828,144 @@ def Codex.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +thread: String
 def Codex.run(+args: List<&2, String>, +cwd: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Unit, H.Proc.spawn("codex", args, cwd, 0), r => Codex.started(r, thread, inbox))
 
+# Grok (grok agent stdio, ACP)
+# ----------------------------
+# One process per turn. Acp.line decides what to write back and what to
+# report; the reports are Codex-shaped lines for the hub.
+
+def Grok.perm(r: M.RuntimeMode) -> List<&2, String>:
+  match r:
+    case M.Supervised{}:
+      ["--permission-mode", "default", "agent"]
+    case M.AcceptEdits{}:
+      ["--permission-mode", "acceptEdits", "agent"]
+    case M.AutoMode{}:
+      ["--permission-mode", "auto", "agent"]
+    case M.FullAccess{}:
+      ["agent", "--always-approve"]
+
+def Grok.args(r: M.RuntimeMode, +model: String) -> List<&2, String>:
+  List.concat(&2, String, [Grok.perm(r), Codex.opt("-m", model), ["stdio"]])
+
+def Grok.report(ls: List<&2, String>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match ls:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case l <> t:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, l})
+        Grok.report(t, thread, inbox)
+
+def Grok.write(ls: List<&2, String>, +input: Chan(String)) -> IO(Unit):
+  match ls:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case l <> t:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(String, input, l)
+        Grok.write(t, input)
+
+def Grok.acp(o: AC.AcpOut) -> AC.Acp:
+  match o:
+    case AC.AcpOut{a, _, _}:
+      a
+
+def Grok.done(a: AC.Acp) -> Bool:
+  match a:
+    case AC.Acp{_, _, d}:
+      d
+
+def Grok.out(o: AC.AcpOut, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(AC.Acp):
+  match o:
+    case AC.AcpOut{a, send, emit}:
+      do IO<AC.Acp>:
+        Grok.write(send, input)
+        Grok.report(emit, thread, inbox)
+        return a
+
+# every line of a chunk, in order, through the ACP state
+def Grok.lines(ls: List<&2, String>, a: AC.Acp, +t: AC.AcpTurn, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(AC.Acp):
+  match ls:
+    case Nil{}:
+      IO.pure(AC.Acp, a)
+    case l <> rest:
+      IO.bind(AC.Acp, AC.Acp, Grok.out(AC.Acp.line(a, t, l), thread, input, inbox), a2 => Grok.lines(rest, a2, t, thread, input, inbox))
+
+def Grok.stop(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    H.Proc.kill(pid, 15)
+    Agent.end(s, pid, thread, inbox)
+
+def Grok.next(done: Bool, s: Socket, carry: U.Lines, a: AC.Acp, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
+  match done:
+    case True{}:
+      Grok.stop(s, pid, thread, inbox)
+    case False{}:
+      k(s, carry, a)
+
+def Grok.after(+a: AC.Acp, s: Socket, carry: U.Lines, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
+  Grok.next(Grok.done(a), s, carry, a, pid, thread, inbox, k)
+
+def Grok.fed(r: U.Lines & List<&2, String>, s: Socket, a: AC.Acp, +t: AC.AcpTurn, +pid: U32, +thread: String, +input: Chan(String), +inbox: Chan(Msg),
+    k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
+  (carry, ls) = r
+  IO.bind(AC.Acp, Unit, Grok.lines(ls, a, t, thread, input, inbox), a2 => Grok.after(a2, s, carry, pid, thread, inbox, k))
+
+# the agent closed its output before the turn ended
+def Grok.gone(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    Grok.report([AC.Acp.failed("grok exited before the turn ended (is it signed in? run `grok login`)")], thread, inbox)
+    Agent.end(s, pid, thread, inbox)
+
+def Grok.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, carry: U.Lines, a: AC.Acp, +t: AC.AcpTurn, +pid: U32, +thread: String, +input: Chan(String), +inbox: Chan(Msg),
+    k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
+  (s, res) = r
+  match res:
+    case Done{Nil{}}:
+      Grok.gone(s, pid, thread, inbox)
+    case Done{bs}:
+      Grok.fed(U.Lines.feed(carry, bs), s, a, t, pid, thread, input, inbox, k)
+    case Fail{_}:
+      Grok.gone(s, pid, thread, inbox)
+
+def Grok.reader(fuel: Nat, s: Socket, carry: U.Lines, a: AC.Acp, +t: AC.AcpTurn, +pid: U32, +thread: String, +input: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Agent.end(s, pid, thread, inbox)
+    case 1n+f:
+      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536),
+        r => Grok.got(r, carry, a, t, pid, thread, input, inbox, s2 => c2 => a2 => Grok.reader(f, s2, c2, a2, t, pid, thread, input, inbox)))
+
+def Grok.duped(r: Socket & Result<&1, &1, U32 & String, Socket>, +pid: U32, +t: AC.AcpTurn, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (rd, res) = r
+  match res:
+    case Done{wr}:
+      do IO<Unit>:
+        +input : Chan(String) <- Chan.new(String, 64)
+        IO.spawn(Unit, Agent.writer(Fuel.forever(), wr, input))
+        ok : Bool <- Chan.send(String, input, AC.Acp.init())
+        Grok.reader(Fuel.forever(), rd, U.Lines.new(), AC.Acp.new(), t, pid, thread, input, inbox)
+    case Fail{_}:
+      Socket.close(rd)
+
+def Grok.started.ok(started: U32 & Socket, +t: AC.AcpTurn, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (+pid, s) = started
+  IO.bind(Socket & Result<&1, &1, U32 & String, Socket>, Unit, H.Sock.dup(s), r => Grok.duped(r, pid, t, thread, inbox))
+
+def Grok.failed(e: U32 & String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (_, msg) = e
+  Grok.report([AC.Acp.failed("could not start grok: " ++ msg ++ ". Install Grok Build with `curl -fsSL https://x.ai/cli/install.sh | bash`, then `grok login`.")], thread, inbox)
+
+def Grok.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +t: AC.AcpTurn, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match r:
+    case Done{started}:
+      Grok.started.ok(started, t, thread, inbox)
+    case Fail{e}:
+      Grok.failed(e, thread, inbox)
+
+def Grok.run(+args: List<&2, String>, +t: AC.AcpTurn, +cwd: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Unit, H.Proc.spawn("grok", args, cwd, 0), r => Grok.started(r, t, thread, inbox))
+
 # Updates
 # -------
 
@@ -1171,6 +1310,11 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.KiCadInstall{}:
       do IO<Hub>:
         IO.spawn(Unit, Install.go(Cfg.home(cfg), inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.GrokTurn{+thread, +cwd, +model, +session, r, +text}:
+      do IO<Hub>:
+        fs : K.Files <- K.Files.read(cwd)
+        IO.spawn(Unit, Grok.run(Grok.args(r, model), AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs), text, session}, cwd, thread, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
@@ -1563,9 +1707,37 @@ def Models.join(+a: String, +b: String) -> String:
 def Models.text(+cl: List<&2, String>, +cx: List<&2, String>) -> String:
   Models.join(Models.line("claude", cl), Models.line("codex", cx))
 
-def Models.boot(ks: String & List<&2, Q.Skill>, +rt: K.Rt, +cl: List<&2, String>, +cx: List<&2, String>) -> Boot:
+def Models.text3(+cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>) -> String:
+  Models.join(Models.text(cl, cx), Models.line("grok", gk))
+
+def Models.boot(ks: String & List<&2, Q.Skill>, +rt: K.Rt, +cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>) -> Boot:
   (kdir, skills) = ks
-  Boot{kdir, skills, rt, J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}])), Models.text(cl, cx)}
+  Boot{kdir, skills, rt, J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}, J.KV{"grok", Models.strs(gk)}])), Models.text3(cl, cx, gk)}
+
+def Models.grok.k(bullet: Bool, +l: String, rest: List<&2, String>) -> List<&2, String>:
+  match bullet:
+    case True{}:
+      Maybe.default(&2, String, List.head(&2, String, String.split(String.drop(String.trim(l), 2n), ' ')), "") <> rest
+    case False{}:
+      rest
+
+def Models.grok.line(+l: String, rest: List<&2, String>) -> List<&2, String>:
+  Models.grok.k(Bool.or(String.starts_with(String.trim(l), "* "), String.starts_with(String.trim(l), "- ")), l, rest)
+
+def Models.grok.go(ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      Models.grok.line(l, Models.grok.go(t))
+
+# `grok models`: "  * grok-4.6 (default)" / "  - grok-4.5" lines
+def Models.grok(r: P.Ran) -> List<&2, String>:
+  match r:
+    case P.Ran{0, out}:
+      Models.grok.go(String.lines(out))
+    case _:
+      Nil{}
 
 def Main.has(r: P.Ran) -> Bool:
   match r:
@@ -1585,7 +1757,8 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
     cl : P.Ran <- P.Proc.run("sh", ["-c", "command -v claude"], "/")
     cx : P.Ran <- P.Proc.run("sh", ["-c", "command -v codex"], "/")
     cache : String <- K.Io.text(user ++ "/.codex/models_cache.json")
-    return Models.boot(ks, rt, Models.on(Main.has(cl), Models.claude()), Models.on(Main.has(cx), Models.codex(cache)))
+    gk : P.Ran <- P.Proc.run("sh", ["-c", "command -v grok >/dev/null && timeout 15 grok models"], "/")
+    return Models.boot(ks, rt, Models.on(Main.has(cl), Models.claude()), Models.on(Main.has(cx), Models.codex(cache)), Models.grok(gk))
 
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b

@@ -424,3 +424,102 @@ def Ui.root(u: Ui) -> String:
   match u:
     case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _, _, nf}:
       Bool.pick(String, String.is_empty(sel), "", Ui.project_root(st, Ui.thread_project(Ui.thread(st, sel))))
+
+# Views both clients share
+# ------------------------
+# Delegated child threads live under their parent, not in the sidebar; a
+# thread lists the tasks it delegated; the model list comes from the
+# machine's info ({"provider": [model, ...]}).
+
+def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
+  match ts:
+    case Nil{}:
+      m
+    case M.Task{_, _, child, _, _, _, _, _, _} <> t:
+      Kids.of(t, Map.set(&2, Bool, m, child, True{}))
+
+def Kids.set(s: M.State) -> Map<&2, Bool>:
+  match s:
+    case M.State{_, _, _, _, tk, _}:
+      Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
+
+def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
+  match kid:
+    case True{}:
+      rest
+    case False{}:
+      t <> rest
+
+def Kids.keep(ts: List<&2, M.Thread>, +kids: Map<&2, Bool>) -> List<&2, M.Thread>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case M.Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
+      Kids.keep.k(Flag.get(kids, id), M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, Kids.keep(t, kids))
+
+def Models.strs(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case J.Str{s} <> t:
+      s <> Models.strs(t)
+    case _ <> t:
+      Models.strs(t)
+
+def Models.list(+info: String, +provider: String) -> List<&2, String>:
+  Models.strs(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), provider)))
+
+def Models.label(+provider: String, +model: String) -> String:
+  provider ++ " · " ++ Bool.pick(String, String.is_empty(model), "default", model)
+
+def Tasks.mine.k(keep: Bool, t: M.Task, rest: List<&2, M.Task>) -> List<&2, M.Task>:
+  match keep:
+    case True{}:
+      t <> rest
+    case False{}:
+      rest
+
+def Tasks.mine(ts: List<&2, M.Task>, +parent: String) -> List<&2, M.Task>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case M.Task{i, +p, c, d, st, su, dl, pr, mo} <> t:
+      Tasks.mine.k(String.eq(p, parent), M.Task{i, p, c, d, st, su, dl, pr, mo}, Tasks.mine(t, parent))
+
+def Tasks.of(s: M.State, +parent: String) -> List<&2, M.Task>:
+  match s:
+    case M.State{_, _, _, _, tk, _}:
+      Tasks.mine(Map.values(&2, M.Task, tk), parent)
+
+def Tasks.title.k(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, _, ti, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      ti
+
+def Tasks.title(s: M.State, +id: String) -> String:
+  Tasks.title.k(Ui.thread(s, id))
+
+def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
+  match ts:
+    case Nil{}:
+      ""
+    case M.Task{_, p, +c, _, _, _, _, _, _} <> t:
+      Bool.pick(String, String.eq(c, thread), p, Tasks.parent.find(t, thread))
+
+def Tasks.parent(+st: M.State, +thread: String) -> String:
+  match st:
+    case M.State{_, _, _, _, tk, _}:
+      Tasks.parent.find(Map.values(&2, M.Task, tk), thread)
+
+def Task.word(s: M.TaskState) -> String:
+  match s:
+    case M.TaskQueued{}:
+      "queued"
+    case M.TaskRunning{}:
+      "running"
+    case M.TaskDone{}:
+      "done"
+    case M.TaskFailed{}:
+      "failed"
+    case M.TaskCancelled{}:
+      "cancelled"

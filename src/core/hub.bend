@@ -24,6 +24,7 @@ type Out is Data:
   KiCadInstall{}
   # run one Codex turn (a process per turn; `session` resumes)
   CodexTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
+  GrokTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -134,19 +135,22 @@ def Hub.title.k(fresh: Bool, +thread: String, +text: String, +now: Nat, rest: Li
       rest
 
 # the effects that run one turn of a thread's agent, by provider: Claude
-# keeps one process per thread fed with stream-json; Codex runs a process
-# per turn, resuming its session
-def Hub.run.k(codex: Bool, +thread: String, +cwd: String, +provider: String, +model: String, +session: String, runtime: M.RuntimeMode, interaction: M.InteractionMode, +text: String) -> List<&2, Out>:
-  match codex:
-    case True{}:
+# keeps one process per thread fed with stream-json; Codex and Grok run a
+# process per turn, resuming their session (Grok over ACP, reported in
+# Codex's event shapes)
+def Hub.run.k(i: Nat, +thread: String, +cwd: String, +provider: String, +model: String, +session: String, runtime: M.RuntimeMode, interaction: M.InteractionMode, +text: String) -> List<&2, Out>:
+  match i:
+    case 1n:
       [CodexTurn{thread, cwd, model, session, runtime, text}]
-    case False{}:
+    case 2n:
+      [GrokTurn{thread, cwd, model, session, runtime, text}]
+    case _:
       [AgentStart{thread, cwd, provider, model, session, runtime, interaction}, AgentSend{thread, Claude.user(text)}]
 
 def Hub.run(t: M.Thread, +cwd: String, +text: String) -> List<&2, Out>:
   match t:
     case M.Thread{+id, _, _, _, _, _, _, _, _, _, _, _, _, _, _, +provider, model, runtime, interaction, session, _}:
-      Hub.run.k(String.eq(provider, "codex"), id, cwd, provider, model, session, runtime, interaction, text)
+      Hub.run.k(C.Codec.pos(["claude", "codex", "grok"], provider), id, cwd, provider, model, session, runtime, interaction, text)
 
 def Hub.turn.k(+t: M.Thread, cwd: String, +seq: Nat, +now: Nat, +client: U32, +id: String, +thread: String, +text: String) -> Step:
   match t:
@@ -405,15 +409,17 @@ def Codex.line.k(i: Nat, +s: M.State, +thread: String, +now: Nat, +o: J.Json) ->
       Codex.item.k(C.Codec.pos(["agent_message", "command_execution", "file_change"], J.Json.get_str(J.Json.get_obj(o, "item"), "type", "")), thread, now, Hub.seq(s), J.Json.get_obj(o, "item"))
     case 2n:
       Step{[M.TurnChanged{thread, M.Completed{}, now}], Nil{}}
+    case 4n:
+      Step.outs([Delta.push(thread, J.Json.get_str(o, "text", ""))])
     case 3n:
-      Step{[M.ActivityLogged{thread, Hub.id("e", now, Hub.seq(s)), "error", "codex", J.Json.get_str(J.Json.get_obj(o, "error"), "message", J.Json.get_str(o, "message", "turn failed")), now}, M.TurnChanged{thread, M.Failed{}, now}], Nil{}}
+      Step{[M.ActivityLogged{thread, Hub.id("e", now, Hub.seq(s)), "error", Hub.provider(Hub.thread(s, thread)), J.Json.get_str(J.Json.get_obj(o, "error"), "message", J.Json.get_str(o, "message", "turn failed")), now}, M.TurnChanged{thread, M.Failed{}, now}], Nil{}}
     case _:
       Step.none()
 
 def Codex.line.parsed(m: Maybe<&2, J.Json>, +s: M.State, +thread: String, +now: Nat) -> Step:
   match m:
     case Some{+o}:
-      Codex.line.k(C.Codec.pos(["thread.started", "item.completed", "turn.completed", "turn.failed"], J.Json.get_str(o, "type", "")), s, thread, now, o)
+      Codex.line.k(C.Codec.pos(["thread.started", "item.completed", "turn.completed", "turn.failed", "item.delta"], J.Json.get_str(o, "type", "")), s, thread, now, o)
     case None{}:
       Step.none()
 
@@ -559,7 +565,7 @@ def Task.finish(+s: M.State, +now: Nat, +thread: String, st: Step) -> Step:
 
 # one line of an agent's stdout
 def Hub.agent_line(+s: M.State, +now: Nat, +thread: String, line: String) -> Step:
-  Task.finish(s, now, thread, Hub.agent_line.k(String.eq(Hub.provider(Hub.thread(s, thread)), "codex"), s, now, thread, line))
+  Task.finish(s, now, thread, Hub.agent_line.k(Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude")), s, now, thread, line))
 
 # an agent process ended; a turn still running ends with it
 def Hub.agent_gone(+s: M.State, +now: Nat, +thread: String, +code: U32) -> Step:
