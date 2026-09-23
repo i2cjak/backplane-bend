@@ -2,6 +2,7 @@ import Base
 import ./json.bend as J
 import ./model.bend as M
 import ./codec.bend as C
+import ./attach.bend as AT
 import ./agent.bend as AG
 
 # The decider. Requests from clients and lines from agents come in; changes
@@ -118,6 +119,12 @@ def Claude.interrupt(+id: String) -> String:
     J.KV{"request_id", J.Str{id}},
     J.KV{"request", J.Json.obj([J.KV{"subtype", J.Str{"interrupt"}}])}]))
 
+# a user message for Claude: straight in, or, when it attaches images, by
+# the server, which reads them into image content blocks first
+def Claude.send(+thread: String, +cwd: String, +text: String) -> Out:
+  Bool.pick(Out, List.is_empty(&2, String, AT.Att.images(text)), AgentSend{thread, Claude.user(text)},
+    Git{0, "", "attach.claude", thread, cwd, text, ""})
+
 def Hub.title.cut(long: Bool, +line: String) -> String:
   match long:
     case True{}:
@@ -151,7 +158,7 @@ def Hub.run.k(i: Nat, +thread: String, +cwd: String, +provider: String, +model: 
     case 2n:
       [GrokTurn{thread, cwd, model, session, runtime, text}]
     case _:
-      [AgentStart{thread, cwd, provider, model, session, runtime, interaction}, AgentSend{thread, Claude.user(text)}]
+      [AgentStart{thread, cwd, provider, model, session, runtime, interaction}, Claude.send(thread, cwd, text)]
 
 def Hub.run(t: M.Thread, +cwd: String, +text: String) -> List<&2, Out>:
   match t:
@@ -418,10 +425,34 @@ def Hub.act(+s: M.State, +client: U32, +id: String, +thread: String, +action: St
 
 # attachments, files and the web client's panes
 def Hub.methods.media() -> List<&2, String>:
-  []
+  ["attach.put", "attach.file", "update.check"]
 
+# one piece of an upload: "<index>|<1 when last>|<stored name>"
+def Attach.piece(+p: J.Json) -> String:
+  Nat.show(J.Json.get_nat(p, "i", 0n)) ++ "|" ++ Bool.pick(String, J.Json.get_bool(p, "last", True{}), "1", "0") ++ "|" ++
+    AT.Att.stored(J.Json.get_str(p, "key", "u"), J.Json.get_str(p, "name", "file"))
+
+# uploads are stored per thread; a thread must be named
+def Attach.go(ok: Bool, +client: U32, +id: String, o: Out) -> Step:
+  match ok:
+    case True{}:
+      Step.outs([o])
+    case False{}:
+      Step.outs([Reply.err(client, id, "no thread to attach to")])
+
+# attach.put: a piece of an uploaded file (base64); attach.file: a file on
+# this machine, copied in; update.check: look for a release now
 def Hub.media(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
+    case 0n:
+      Attach.go(Bool.not(String.is_empty(J.Json.get_str(p, "thread", ""))), client, id,
+        Git{client, id, "attach.put", J.Json.get_str(p, "thread", ""), "", Attach.piece(p), J.Json.get_str(p, "data", "")})
+    case 1n:
+      Attach.go(Bool.not(String.is_empty(J.Json.get_str(p, "thread", ""))), client, id,
+        Git{client, id, "attach.file", J.Json.get_str(p, "thread", ""), "", AT.Att.from_uri(J.Json.get_str(p, "path", "")),
+          AT.Att.stored(Hub.id("a", now, Hub.seq(s)), AT.Att.base(AT.Att.from_uri(J.Json.get_str(p, "path", ""))))})
+    case 2n:
+      Step.outs([Git{client, id, "update.check", "", "", M.Setting.get(s, "update.channel", "stable"), ""}])
     case _:
       Step.outs([Reply.err(client, id, "unknown method")])
 

@@ -135,6 +135,45 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .viewer { border-left: 1px solid var(--line); background: #08090b; position: relative; min-width: 0; }
 .viewer canvas { width: 100%; height: 100%; display: block; }
 
+/* Attachments */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.msg .chips { margin-top: 6px; }
+.chip { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; padding: 1px 8px; border: 1px solid var(--line); background: var(--panel); color: var(--dim); }
+.chip.image { border-color: var(--accent); color: var(--accent); }
+.chip.up { border-style: dashed; color: var(--faint); }
+button.chip:hover { border-color: var(--bad); color: var(--bad); }
+.composer-foot .attach { margin-left: auto; margin-right: 8px; border: 1px solid var(--line); background: var(--raise); padding: 3px 9px; cursor: pointer; color: var(--dim); }
+.composer-foot .attach:hover { color: var(--text); border-color: var(--faint); }
+.composer-foot .attach input { display: none; }
+
+/* Terminal */
+.term-pane { flex: none; height: 40vh; display: flex; flex-direction: column; border-top: 1px solid var(--line); min-height: 0; }
+.term-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 2px 12px; color: var(--faint); font-size: 12px; }
+.screen { position: relative; flex: 1; overflow: auto; padding: 4px 12px; font: 12px/17px var(--mono); white-space: pre; min-height: 0; }
+.screen .tl { height: 17px; }
+.screen .cur { position: absolute; width: 1ch; height: 17px; background: var(--accent); opacity: 0.55; margin-left: 12px; margin-top: 4px; pointer-events: none; }
+.term-in { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; resize: none; border: 0; padding: 0; background: transparent; color: transparent; caret-color: transparent; cursor: text; }
+.screen:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
+.term-probe { position: absolute; visibility: hidden; font: 12px/17px var(--mono); white-space: pre; }
+
+/* Diff */
+.viewer.diff { display: flex; flex-direction: column; background: var(--bg); min-height: 0; height: 100%; }
+.diff-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.diff-head .summary { color: var(--dim); }
+.diff-btns { display: flex; gap: 6px; flex-wrap: wrap; }
+.diff-body { flex: 1; overflow: auto; font: 12px/18px var(--mono); padding-bottom: 24px; }
+.dfile { border-bottom: 1px solid var(--line); }
+.dhead { position: sticky; top: 0; display: flex; gap: 10px; padding: 6px 12px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.dhead .name { color: var(--text); overflow-wrap: anywhere; } .dhead .status { color: var(--faint); }
+.dhunk { display: block; padding: 2px 12px; color: var(--faint); background: var(--raise); }
+.dl { display: flex; white-space: pre; }
+.dl .no { flex: none; width: 4ch; text-align: right; color: var(--faint); padding-right: 6px; user-select: none; }
+.dl .sign { flex: none; width: 2ch; text-align: center; user-select: none; }
+.dl .code { flex: 1; min-width: 0; }
+.dl.add { background: #11331f; } .dl.add .sign { color: var(--ok); }
+.dl.del { background: #32131a; } .dl.del .sign { color: var(--bad); }
+.dl.meta { color: var(--faint); }
+
 .toast { position: fixed; right: 16px; bottom: 16px; background: var(--raise); border: 1px solid var(--bad); color: var(--bad); padding: 8px 12px; cursor: pointer; }
 
 /* Phones: one pane at a time; the sidebar until a thread is picked */
@@ -153,6 +192,13 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
   .composer { padding: 8px 10px 10px; }
   .composer textarea { min-height: 48px; }
   .msg .copy { opacity: 1; position: static; float: right; margin: 0 0 4px 8px; }
+  .app .viewer.diff { display: flex; position: fixed; inset: 0; z-index: 5; }
+  .diff-head { padding: 8px 10px; }
+  .dl .no { display: none; }
+  .term-pane { height: 45vh; }
+  .screen { padding: 4px 6px; font-size: 11px; }
+  .screen .cur { margin-left: 6px; }
+  .chip { max-width: 70vw; }
 }
 
 /* Asks: approvals, questions, proposed plans */

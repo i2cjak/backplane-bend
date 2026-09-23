@@ -13,6 +13,12 @@ import ../core/glb.bend as G
 import ../gfx/bitmap.bend as BM
 import ../core/diff.bend as DF
 import ../core/vt.bend as VT
+import ../core/attach.bend as AT
+
+# Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
+# order) and reversed once into the topmost-first order the rasterizer
+# wants; hits likewise. Text is measured and drawn in the system's fonts
+# (Ty), the same faces and sizes as the Backplane web app.
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -483,34 +489,12 @@ def TL.bubble(+ty: Ty, +ls: List<&2, String>, +text: String) -> List<&2, TLine>:
 def TL.first_line(+text: String) -> String:
   Maybe.default(&2, String, List.head(&2, String, String.split(text, '\n')), "")
 
-def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
-  match e:
-    case M.Msg{_, _, M.User{}, +text, _}:
-      TL.bubble(ty, Ty.wrap(ty, 3n, text, U32.min((px * 7 / 10 : U32), 560)), text)
-    case M.Msg{_, _, _, +text, _}:
-      List.append(&2, TLine, TL.blocks(ty, N.Md.render(text), px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}])
-    case M.Act{_, _, +tone, kind, summary, _}:
-      [TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}]
-
 def TL.from.k(none: Bool, +from: String, +st: M.State, +px: U32, +ty: Ty) -> List<&2, TLine>:
   match none:
     case True{}:
       Nil{}
     case False{}:
       [TLine{Ty.fit(ty, 2n, "← from " ++ U.Tasks.title(st, from), px), T.Th.accent(), 11, from, 0}]
-
-# an entry of this thread (headed by the thread it came from, if another
-# thread sent it) or one this thread sent elsewhere (a link line)
-def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32) -> List<&2, TLine>:
-  match mine e:
-    case True{} M.Msg{+id, t, r, x, at}:
-      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px))
-    case True{} _:
-      TL.entry.own(ty, e, px)
-    case False{} M.Msg{_, +t, _, +x, _}:
-      [TLine{Ty.fit(ty, 2n, "→ " ++ U.Tasks.title(st, t) ++ ":  " ++ TL.first_line(x), px), T.Th.accent(), 10, t, 0}]
-    case False{} _:
-      Nil{}
 
 def TL.id_of(e: M.Entry) -> String:
   match e:
@@ -533,9 +517,6 @@ def TL.thread_of(e: M.Entry) -> String:
     case M.Act{_, t, _, _, _, _}:
       t
 
-def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
-  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px)
-
 # a thread's entries and the messages it sent to other threads, oldest first
 def TL.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<&2, M.Entry>:
   match es:
@@ -543,13 +524,6 @@ def TL.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<
       acc
     case +e <> t:
       TL.mine(t, th, TL.mine.k(Bool.or(String.eq(TL.thread_of(e), th), String.eq(M.Link.from(TL.id_of(e)), th)), e, acc))
-
-def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
-  match es:
-    case Nil{}:
-      Nil{}
-    case e <> t:
-      List.append(&2, TLine, TL.entry(ty, e, st, sel, px), TL.entries(ty, t, st, sel, px))
 
 def TL.height(ls: List<&2, TLine>, +acc: U32) -> U32:
   match ls:
@@ -770,7 +744,6 @@ def Lay.skills(+ty: Ty, +rs: List<&2, U.SkillRow>, +x0: U32, +x1: U32, +bottom: 
     Out.cat(Out.ops(Lay.box(D.Clip.all(), x0, (bottom - h : U32), (x1 - x0 : U32), h, 8, T.Th.panel(), T.Th.line())),
       Skills.rows(ty, rs, x0, (bottom - h + 4 : U32), (x1 - x0 : U32), True{})))
 
-# the draft's last lines and where the caret sits among them
 def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String,
     +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>) -> Out:
   +tw = {(x1 - x0 - 40 : U32) : U32}
@@ -915,14 +888,6 @@ def Lay.parent.k(+ty: Ty, +p: String, +st: M.State, +x0: U32, +y: U32) -> Out:
 def Lay.parent(+ty: Ty, +st: M.State, +thread: String, +x0: U32, +y: U32) -> Out:
   Lay.parent.k(ty, U.Tasks.parent(st, thread), st, x0, y)
 
-# messages the server has not stored yet, marked as sending
-def TL.sending(+ty: Ty, ps: List<&2, String>, +px: U32) -> List<&2, TLine>:
-  match ps:
-    case Nil{}:
-      Nil{}
-    case +p <> t:
-      List.concat(&2, TLine, [TL.bubble(ty, Ty.wrap(ty, 3n, p, U32.min((px * 7 / 10 : U32), 560)), p), [TLine{"sending…", T.Th.faint(), 3, "", 0}], TL.sending(ty, t, px)])
-
 # Asks: what the agent waits on the user for
 # ------------------------------------------
 
@@ -996,37 +961,6 @@ def Lay.queued(+ty: Ty, +q: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   Out.when(Bool.not(String.is_empty(q)),
     Out.ops(List.append(&2, R.Op, Lay.box(D.Clip.all(), x0, (h - 150 : U32), (x1 - x0 : U32), 26, 0, T.Th.raise(), T.Th.line()),
       Ty.text(ty, 2n, label, D.Clip.all(), (x0 + 12 : U32), (h - 150 : U32), 26, T.Th.dim()))))
-
-def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focused: Bool, +blink: Bool,
-    +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat) -> Out:
-  match t:
-    case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
-      +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
-      +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
-      +cx1 = {(cx0 + cw : U32) : U32}
-      +ts = U.Tasks.of(st, sel)
-      +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
-      +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
-      +asks = U.Asks.open(st, sel)
-      +ah = Asks.h(ty, asks, (cw - 32 : U32))
-      +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
-      Lay.timeline(ty,
-        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw), TL.sending(ty, pend, cw),
-          TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
-        cx0, cx1, top, (h - ah - qh : U32), sc,
-        Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel))),
-          Lay.parent(ty, st, sel, cx0, 58),
-          Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
-          Lay.composer(ty, draft, caret, focused, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo, info, pr,
-            U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), rs),
-          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
-          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
-
-def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
-  match n:
-    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
-      Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, String.eq(focus, "composer"), S.Blink.on(n), x0, x1, h, sc, pa,
-        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)))
 
 def Lay.empty(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
   +msg = Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")
@@ -1125,16 +1059,14 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
     Lay.chip(ty, (x + w - 120 : U32), (500 + dy : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
     Lay.chip(ty, (x + w - 70 : U32), (500 + dy : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
     Set.head(ty, "Network and updates", x, (570 + dy : U32)),
-    Set.card(x, (602 + dy : U32), w, 112),
+    Set.card(x, (602 + dy : U32), w, 164),
     Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), "Listening on " ++ U.Str.get(info, "listen") ++ ". Start with --tailscale to serve your tailnet.", x, (604 + dy : U32), w),
-    Set.row(ty, "Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note), x, (656 + dy : U32), w),
-    Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (666 + dy : U32), "Install update", T.Th.accent(), "update", ""), Out.none())])
-
-def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
-  match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
-      Bool.pick(Out, U.Flag.get(op, "settings"), Lay.settings(ty, st, nf, v, note, x0, x1, h),
-        Bool.pick(Out, String.is_empty(sel), Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(ty, n, x0, x1)))
+    Set.row.r(ty, "Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note), x, (656 + dy : U32), w, 150),
+    Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (666 + dy : U32), "Install update", T.Th.accent(), "update", ""),
+      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (666 + dy : U32), "Check now", T.Th.soft(), "update-check", "")),
+    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (708 + dy : U32), w, 190),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (722 + dy : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (722 + dy : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly")])
 
 # Terminal
 # --------
@@ -1507,6 +1439,141 @@ def Hover.rect(xs: List<&2, U32>, +alpha: U32) -> Out:
 # the region under the pointer, lit (big regions like panels are skipped)
 def Lay.hover(+key: String, +alpha: U32) -> Out:
   Bool.pick(Out, String.is_empty(key), Out.none(), Hover.rect(Hover.nums(String.split(key, ',')), alpha))
+
+# a message's attachments, as the lines closing its bubble
+def TL.chip(+p: String) -> String:
+  Bool.pick(String, AT.Att.image(p), "▣ ", "▤ ") ++ AT.Att.label(p)
+
+def TL.chips.texts(ps: List<&2, String>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      TL.chip(p) <> TL.chips.texts(t)
+
+def TL.chips(ps: List<&2, String>, +w: U32) -> List<&2, TLine>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      TLine{TL.chip(p), Bool.pick(U32, AT.Att.image(p), T.Th.accent(), T.Th.soft()), 2, "", w} <> TL.chips(t, w)
+
+# a user message: its text (wrapped), then its attachments
+def TL.bubble.a(+ty: Ty, +text: String, +px: U32) -> List<&2, TLine>:
+  +ls = Ty.wrap(ty, 3n, AT.Att.body(text), U32.min((px * 7 / 10 : U32), 560))
+  +ps = AT.Att.paths(text)
+  +w = {(TL.widest(ty, List.append(&2, String, ls, TL.chips.texts(ps)), 0) + 40 : U32) : U32}
+  List.concat(&2, TLine, [[TLine{"", 0, 6, "", w}], TL.user(ls, AT.Att.body(text), True{}, w), TL.chips(ps, w), [TLine{"", 0, 6, "", w}, TLine{"", 0, 4, "", 0}]])
+
+def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
+  match e:
+    case M.Msg{_, _, M.User{}, +text, _}:
+      TL.bubble.a(ty, text, px)
+    case M.Msg{_, _, _, +text, _}:
+      List.append(&2, TLine, TL.blocks(ty, N.Md.render(text), px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}])
+    case M.Act{_, _, +tone, kind, summary, _}:
+      [TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}]
+
+# an entry of this thread (headed by the thread it came from, if another
+# thread sent it) or one this thread sent elsewhere (a link line)
+def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32) -> List<&2, TLine>:
+  match mine e:
+    case True{} M.Msg{+id, t, r, x, at}:
+      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px))
+    case True{} _:
+      TL.entry.own(ty, e, px)
+    case False{} M.Msg{_, +t, _, +x, _}:
+      [TLine{Ty.fit(ty, 2n, "→ " ++ U.Tasks.title(st, t) ++ ":  " ++ TL.first_line(x), px), T.Th.accent(), 10, t, 0}]
+    case False{} _:
+      Nil{}
+
+def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
+  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px)
+
+def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case e <> t:
+      List.append(&2, TLine, TL.entry(ty, e, st, sel, px), TL.entries(ty, t, st, sel, px))
+
+# messages the server has not stored yet, marked as sending
+def TL.sending(+ty: Ty, ps: List<&2, String>, +px: U32) -> List<&2, TLine>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      List.concat(&2, TLine, [TL.bubble.a(ty, p, px), [TLine{"sending…", T.Th.faint(), 3, "", 0}], TL.sending(ty, t, px)])
+
+# the draft's last lines and where the caret sits among them
+# the next message's attachments, as chips from x (a click removes one),
+# then the file still uploading
+def Lay.atts(+ty: Ty, ps: List<&2, String>, +up: String, +x: U32, +y: U32) -> Out:
+  match ps:
+    case Nil{}:
+      Out.when(Bool.not(String.is_empty(up)), Out.ops(Ty.text(ty, 2n, up ++ " …", D.Clip.all(), x, y, 28, T.Th.faint())))
+    case +p <> t:
+      Out.cat(Lay.chip(ty, x, y, TL.chip(p) ++ "  ×", AT.Att.image(p), "detach", p),
+        Lay.atts(ty, t, up, (x + Lay.button.w(ty, TL.chip(p) ++ "  ×") + 6 : U32), y))
+
+# the path field "Attach" opens above the composer (Enter attaches)
+def Lay.attach_field(+ty: Ty, on: Bool, +path: String, +caret: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match on:
+    case True{}:
+      Out.cat(Lay.field(ty, D.Clip.all(), x0, y, (x1 - x0 - 12 - Lay.button.w(ty, "Attach") : U32), path, True{}, True{}, caret, "/path/to/a/file, or paste one (Enter attaches, Esc closes)", "attach-path"),
+        Lay.button(ty, D.Clip.all(), (x1 - Lay.button.w(ty, "Attach") : U32), y, "Attach", T.Th.accent(), "attach-file", path))
+    case False{}:
+      Out.none()
+
+# the composer with its attachments
+def Lay.composer.a(+ty: Ty, +draft: String, +caret: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String,
+    +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>, +atts: List<&2, String>, +up: String, +path: String) -> Out:
+  +send = Bool.pick(String, running, "Queue", "Send")
+  +y = {(h - 120 : U32) : U32}
+  Out.all([
+    Lay.composer(ty, draft, caret, String.eq(focus, "composer"), blink, x0, x1, h, running, models, picking, ms, model, info, prov, es, effort, rs),
+    Lay.atts(ty, atts, up, (x0 + 24 + Ty.width(ty, 2n, models) + 36 : U32), (y + 64 : U32)),
+    Lay.button(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - Lay.button.w(ty, "Attach") : U32), (y + 64 : U32), "Attach", T.Th.soft(), "focus", "attach-path"),
+    Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, x0, x1, (y - 36 : U32))])
+
+def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focus: String, +blink: Bool,
+    +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
+    +atts: List<&2, String>, +up: String, +path: String) -> Out:
+  match t:
+    case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
+      +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
+      +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
+      +cx1 = {(cx0 + cw : U32) : U32}
+      +ts = U.Tasks.of(st, sel)
+      +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
+      +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
+      +asks = U.Asks.open(st, sel)
+      +ah = Asks.h(ty, asks, (cw - 32 : U32))
+      +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
+      Lay.timeline(ty,
+        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw), TL.sending(ty, pend, cw),
+          TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
+        cx0, cx1, top, (h - ah - qh : U32), sc,
+        Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel))),
+          Lay.parent(ty, st, sel, cx0, 58),
+          Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
+          Lay.composer.a(ty, draft, caret, focus, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo, info, pr,
+            U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), rs, atts, up, path),
+          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
+          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
+
+def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  match n:
+    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
+      Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
+        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path)
+
+def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  match n:
+    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
+      Bool.pick(Out, U.Flag.get(op, "settings"), Lay.settings(ty, st, nf, v, note, x0, x1, h),
+        Bool.pick(Out, String.is_empty(sel), Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(ty, n, x0, x1)))
 
 # the whole window, topmost first
 def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:

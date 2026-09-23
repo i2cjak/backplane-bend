@@ -5,6 +5,13 @@ import ./codec.bend as C
 import ./vt.bend as VT
 import ./fuzzy.bend as FZ
 import ./agent.bend as AG
+import ./attach.bend as AT
+
+# The client state, Elm-style, shared by the native window and the web
+# page: a host feeds server messages to Ui.recv and user actions to Ui.act,
+# then draws the result. The read model is folded by the same State.apply
+# the server uses (law replay_snoc), so what a client shows is exactly what
+# the server stored.
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -249,11 +256,6 @@ def Ui.reply.files(has: Bool, u: Ui, +o: J.Json) -> Ui:
 def Skills.has(+o: J.Json) -> Bool:
   Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "skills"), J.Null{})), "null"))
 
-# a file list (files.list) is kept for the file picker
-def Ui.reply.body(u: Ui, +o: J.Json) -> Ui:
-  Ui.reply.files(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "files"), J.Null{})), "null")),
-    Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o), o)
-
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
 
@@ -396,13 +398,8 @@ def Ui.send.k(empty: Bool, u: Ui, text: String) -> Act:
     case True{} _:
       Act{u, Nil{}}
     case False{} Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
-      Ui.also(Ui.rpc.keep(Ui{st, sel, Map.set(&2, String, dr, sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
+      Ui.also(Ui.rpc.keep(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@att:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
         "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}]), [Scroll{}])
-
-def Ui.send(u: Ui) -> Act:
-  match u:
-    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Ui.send.k(String.is_empty(String.trim(Str.get(dr, sel))), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, String.trim(Str.get(dr, sel)))
 
 def Ui.new_thread(u: Ui, +pid: String) -> Act:
   match u:
@@ -470,7 +467,9 @@ def Ui.actions() -> List<&2, String>:
   ["select", "new-thread", "draft", "send", "add-project", "toggle-add", "settle", "unsettle",
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
-   "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files"]
+   "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
+   "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49",
+   "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check"]
 
 # Reading the client state
 # ------------------------
@@ -1093,7 +1092,7 @@ def Palette.threads(ts: List<&2, M.Thread>) -> List<&2, PItem>:
 
 def Palette.actions(+pid: String) -> List<&2, PItem>:
   [PItem{"New thread", "new-thread", pid}, PItem{"Diff: what this thread changed", "diff", ""}, PItem{"Terminal", "key:term", ""},
-   PItem{"Commit & push", "git", "commit_push"}, PItem{"Open pull request", "git", "commit_push_pr"}, PItem{"Revert thread", "revert", "0"},
+   PItem{"Attach a file", "key:attach", ""}, PItem{"Commit & push", "git", "commit_push"}, PItem{"Open pull request", "git", "commit_push_pr"}, PItem{"Revert thread", "revert", "0"},
    PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""},
    PItem{"Snooze 1 hour", "snooze", "1h"}, PItem{"Snooze until tomorrow 9:00", "snooze", "tomorrow"}, PItem{"Snooze 1 week", "snooze", "1w"}, PItem{"Unsnooze", "snooze", "off"},
    PItem{"Search threads", "key:search", ""}, PItem{"Find file", "key:files", ""},
@@ -1304,6 +1303,7 @@ def Ui.scratch_set(u: Ui, +k: String, v: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, Map.set(&2, String, dr, k, v), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
 def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, +nf, ob, tr}:
@@ -1315,11 +1315,6 @@ def Skills.got(has: Bool, u: Ui, +o: J.Json) -> Ui:
       Ui.info_set(Ui.info_set(u, "skills", J.Json.show(J.Json.get_obj(J.Json.get_obj(o, "result"), "skills"))), "skills.for", J.Json.get_str(J.Json.get_obj(o, "result"), "thread", ""))
     case False{}:
       u
-
-# an answer: its request leaves the outbox; a diff opens the diff view; a
-# skills list is kept for the composer
-def Ui.reply.skills(u: Ui, +o: J.Json) -> Ui:
-  Skills.got(Skills.has(o), Ui.reply.body(u, o), o)
 
 def Skills.fetch(need: Bool, a: Act) -> Act:
   match need a:
@@ -1411,41 +1406,6 @@ def Proj.reply(has: Bool, u: Ui, +o: J.Json) -> Ui:
         J.Json.show(J.Json.get_obj(J.Json.get_obj(o, "result"), "entries"))), "proj.err", "")
     case False{}:
       Ui.info_set(u, "proj.err", J.Json.get_str(J.Json.get_obj(o, "result"), "error", ""))
-
-# an answer: its request leaves the outbox; a diff opens the diff view
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Proj.reply(Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", ""))), Ui.reply.skills(u, o), o)
-
-def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
-  match i:
-    case 0n:
-      Ui.reset(u, o)
-    case 1n:
-      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
-    case 2n:
-      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
-    case 3n:
-      Ui.reply(u, o)
-    case 4n:
-      Ui.update(u, o)
-    case 5n:
-      Ui.view(u, o)
-    case 6n:
-      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
-    case 7n:
-      Ui.info_merge(u, J.Json.get_obj(o, "info"))
-    case _:
-      u
-
-# a message from the server
-def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)
-
-# a message from the server, with what to send: a (re)connection (the
-# server's log arrives first on each) sends the outbox again, so nothing
-# the user sent is lost to a dropped link
-def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
-  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
 
 def Proj.join(+dir: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
@@ -1551,6 +1511,270 @@ def Proj.run(it: PItem, u: Ui) -> Act:
 def Proj.enter(+u: Ui) -> Act:
   Proj.run(Palette.at(Proj.items(u), Proj.index(u)), u)
 
+# Attachments
+# -----------
+# A thread's attachments wait in the drafts map under "@att:<thread>" (a
+# path per line) until its message is sent; "@att.up:<thread>" names a file
+# still uploading. No thread id starts with '@'.
+
+def Att.keep(skip: Bool, +x: String, rest: List<&2, String>) -> List<&2, String>:
+  match skip:
+    case True{}:
+      rest
+    case False{}:
+      x <> rest
+
+def Att.nonblank(ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +l <> t:
+      Att.keep(String.is_empty(String.trim(l)), String.trim(l), Att.nonblank(t))
+
+# the draft, then a line per attachment (attach.bend's format)
+def Ui.send(u: Ui) -> Act:
+  match u:
+    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
+      Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text)
+
+def Att.drop(ps: List<&2, String>, +p: String) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Att.keep(String.eq(x, p), x, Att.drop(t, p))
+
+# what a thread's next message attaches
+def Ui.atts(u: Ui, +thread: String) -> List<&2, String>:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Att.nonblank(String.lines(Str.get(dr, "@att:" ++ thread)))
+
+# the file a thread is still uploading ("" for none)
+def Ui.uploading(u: Ui, +thread: String) -> String:
+  match u:
+    case Ui{_, _, dr, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(dr, "@att.up:" ++ thread)
+
+def Ui.atts_set(u: Ui, +thread: String, ps: List<&2, String>) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, dr, "@att:" ++ thread, String.join(ps, "\n")), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+
+def Ui.up_set(u: Ui, +thread: String, name: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, dr, "@att.up:" ++ thread, name), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+
+# an upload finished: its path joins the thread's attachments
+def Ui.attached(+u: Ui, +thread: String, +path: String) -> Ui:
+  Ui.up_set(Ui.atts_set(u, thread, List.append(&2, String, Att.drop(Ui.atts(u, thread), path), [path])), thread, "")
+
+def Ui.reply.att.k(done: Bool, failed: Bool, +thread: String, +path: String, u: Ui) -> Ui:
+  match done failed:
+    case True{} _:
+      Ui.attached(u, thread, path)
+    case False{} True{}:
+      Ui.up_set(u, thread, "")
+    case False{} False{}:
+      u
+
+def Ui.reply.att(+r: J.Json, +ok: Bool, u: Ui) -> Ui:
+  Ui.reply.att.k(Bool.not(String.is_empty(J.Json.get_str(r, "attached", ""))), Bool.and(Bool.not(ok), J.Json.get_bool(r, "upload", False{})),
+    J.Json.get_str(r, "thread", ""), J.Json.get_str(r, "attached", ""), u)
+
+# a diff opens the diff view; a file list (files.list) is kept for the
+# file picker; a finished upload becomes an attachment of its thread
+def Ui.reply.body(u: Ui, +o: J.Json) -> Ui:
+  Ui.reply.att(J.Json.get_obj(o, "result"), J.Json.get_bool(o, "ok", True{}),
+    Ui.reply.files(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "files"), J.Null{})), "null")),
+      Ui.reply.diff(Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "diff"), J.Null{})), "null")), u, o), o))
+
+# an answer: its request leaves the outbox; a diff opens the diff view; a
+# skills list is kept for the composer
+def Ui.reply.skills(u: Ui, +o: J.Json) -> Ui:
+  Skills.got(Skills.has(o), Ui.reply.body(u, o), o)
+
+# an answer: its request leaves the outbox; a diff opens the diff view
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Proj.reply(Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", ""))), Ui.reply.skills(u, o), o)
+
+def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 0n:
+      Ui.reset(u, o)
+    case 1n:
+      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
+    case 2n:
+      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
+    case 3n:
+      Ui.reply(u, o)
+    case 4n:
+      Ui.update(u, o)
+    case 5n:
+      Ui.view(u, o)
+    case 6n:
+      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
+    case 7n:
+      Ui.info_merge(u, J.Json.get_obj(o, "info"))
+    case _:
+      u
+
+# a message from the server
+def Ui.recv(u: Ui, +o: J.Json) -> Ui:
+  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)
+
+# a message from the server, with what to send: a (re)connection (the
+# server's log arrives first on each) sends the outbox again, so nothing
+# the user sent is lost to a dropped link
+def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
+
+def Ui.error_set(u: Ui, e: String) -> Ui:
+  match u:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, e, note, nf, ob, tr}
+
+def Ui.attach.k(big: Bool, first: Bool, +u: Ui, +o: J.Json) -> Act:
+  match big first:
+    case True{} True{}:
+      Act{Ui.error_set(u, "attachments are limited to " ++ Nat.show(Nat.div(AT.Att.cap(), 1048576n)) ++ " MB"), Nil{}}
+    case True{} False{}:
+      Act{u, Nil{}}
+    case False{} _:
+      Ui.on_thread.p(Bool.pick(Ui, first, Ui.up_set(u, Ui.sel(u), J.Json.get_str(o, "name", "file")), u), "attach.put",
+        [J.KV{"key", J.Str{J.Json.get_str(o, "key", "u")}}, J.KV{"name", J.Str{J.Json.get_str(o, "name", "file")}},
+         J.KV{"i", J.Num{Nat.show(J.Json.get_nat(o, "i", 0n))}}, J.KV{"last", J.Flag{J.Json.get_bool(o, "last", True{})}},
+         J.KV{"data", J.Str{J.Json.get_str(o, "data", "")}}])
+
+# a piece of a file the page read ({key, name, size, i, last, data} with
+# data base64): sent to the selected thread's attachments; a file over the
+# cap is refused here, before any of it is sent
+def Ui.attach.o(+u: Ui, +o: J.Json) -> Act:
+  Ui.attach.k(Nat.is_gt(J.Json.get_nat(o, "size", 0n), AT.Att.cap()), Nat.is_eq(J.Json.get_nat(o, "i", 0n), 0n), u, o)
+
+def Ui.attach(+u: Ui, v: String) -> Act:
+  Ui.attach.o(u, Maybe.default(&2, J.Json, J.Json.parse(v), J.Null{}))
+
+# a file on the machine the hub runs on (the native window), copied in
+def Ui.attach_file(+u: Ui, +path: String) -> Act:
+  Ui.on_thread.p(Ui.up_set(u, Ui.sel(u), AT.Att.base(AT.Att.from_uri(path))), "attach.file", [J.KV{"path", J.Str{path}}])
+
+def Ui.detach(+u: Ui, +path: String) -> Act:
+  Act{Ui.atts_set(u, Ui.sel(u), Att.drop(Ui.atts(u, Ui.sel(u)), path)), Nil{}}
+
+# "120x30" -> (120, 30), else the default screen
+def Term.size.k(ps: List<&2, String>) -> U32 & U32:
+  match ps:
+    case +c <> +r <> _:
+      (U32.from_nat(Maybe.default(&2, Nat, Nat.read(c), 100n)), U32.from_nat(Maybe.default(&2, Nat, Nat.read(r), 24n)))
+    case _:
+      (100, 24)
+
+# DOM key names and their X keysyms (what VT.Vt.key reads)
+def Keys.dom.names() -> List<&2, String>:
+  ["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowUp", "ArrowRight", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Delete", "Insert",
+   "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12"]
+
+def Keys.dom.syms() -> List<&2, U32>:
+  [65293, 65288, 65289, 65307, 65361, 65362, 65363, 65364, 65360, 65367, 65365, 65366, 65535, 65379,
+   65470, 65471, 65472, 65473, 65474, 65475, 65476, 65477, 65478, 65479, 65480, 65481]
+
+def Keys.at(xs: List<&2, U32>, i: Nat) -> U32:
+  match xs i:
+    case x <> _ 0n:
+      x
+    case _ <> t 1n+j:
+      Keys.at(t, j)
+    case Nil{} _:
+      0
+
+def Keys.char.k(one: Bool, +cp: U32) -> U32 & U32:
+  match one:
+    case True{}:
+      (Bool.pick(U32, U32.is_lt(cp, 256), cp, (cp + 16777216 : U32)), cp)
+    case False{}:
+      (0, 0)
+
+def Keys.dom.k(named: Bool, +i: Nat, +k: String) -> U32 & U32:
+  match named:
+    case True{}:
+      (Keys.at(Keys.dom.syms(), i), 0)
+    case False{}:
+      Keys.char.k(Nat.is_eq(String.length(k), 1n), Char.to_u32(Maybe.default(&2, Char, List.head(&2, Char, String.to_list(k)), ' ')))
+
+# a DOM key name as (keysym, the code point it types); (0, 0) for keys a
+# terminal ignores (Shift alone, Meta, ...)
+def Keys.dom(+k: String) -> U32 & U32:
+  Keys.dom.k(Nat.is_lt(C.Codec.pos(Keys.dom.names(), k), List.length(&2, String, Keys.dom.names())), C.Codec.pos(Keys.dom.names(), k), k)
+
+# the shortcuts a page takes for itself (the rest reach the focused field;
+# in the terminal only ctrl+j, so ctrl+d still ends a shell's input)
+def Ui.keys(term: Bool) -> List<&2, String>:
+  match term:
+    case True{}:
+      ["ctrl+j"]
+    case False{}:
+      ["ctrl+j", "ctrl+d"]
+
+def Term.key.k(ks: U32 & U32, +u: Ui, +mods: U32) -> Act:
+  (+sym, +cp) = ks
+  Bool.pick(Act, U32.is_eq(sym, 0), Act{u, Nil{}}, Ui.term_keys(u, VT.Vt.key(Ui.term(u, Ui.sel(u)), sym, cp, mods)))
+
+def Term.key.p(ps: List<&2, String>, +u: Ui) -> Act:
+  match ps:
+    case +k <> +m <> _:
+      Term.key.k(Keys.dom(k), u, U32.from_nat(Maybe.default(&2, Nat, Nat.read(m), 0n)))
+    case _:
+      Act{u, Nil{}}
+
+# a key typed into the web page's terminal: "<DOM key>\t<mods>" (mods: 1
+# shift, 4 ctrl, 8 alt, as xterm counts them)
+def Ui.term_key(+u: Ui, v: String) -> Act:
+  Term.key.p(String.split(v, '\t'), u)
+
+def Ui.term_paste(+u: Ui, text: String) -> Act:
+  Ui.term_keys(u, VT.Vt.paste(Ui.term(u, Ui.sel(u)), text))
+
+def Term.toggle.k(open: Bool, +u: Ui, +c: U32, +r: U32) -> Act:
+  match open:
+    case True{}:
+      Act{Ui.flag_off(u, "term"), [Focus{"composer"}]}
+    case False{}:
+      Ui.also(Ui.term_open(Ui.flag_on(u, "term"), U32.max(c, 20), U32.max(r, 5)), [Focus{"term"}])
+
+def Term.toggle.s(sz: U32 & U32, open: Bool, +u: Ui) -> Act:
+  (+c, +r) = sz
+  Term.toggle.k(open, u, c, r)
+
+# open or close the selected thread's terminal (the web page's ctrl+j and
+# button; value "<cols>x<rows>" is the size it has room for)
+def Ui.term_toggle(+u: Ui, +size: String) -> Act:
+  Term.toggle.s(Term.size.k(String.split(size, 'x')), Ui.flag(u, "term"), u)
+
+def Ui.key.k(i: Nat, +u: Ui, +size: String) -> Act:
+  match i:
+    case 0n:
+      Ui.term_toggle(u, size)
+    case 1n:
+      Ui.on_thread.p(u, "git.diff", [J.KV{"from", J.Num{"0"}}, J.KV{"to", J.Num{"-1"}}])
+    case _:
+      Act{u, Nil{}}
+
+def Ui.key.p(ps: List<&2, String>, +u: Ui) -> Act:
+  match ps:
+    case +k <> +sz <> _:
+      Ui.key.k(C.Codec.pos(["ctrl+j", "ctrl+d"], k), u, sz)
+    case +k <> Nil{}:
+      Ui.key.k(C.Codec.pos(["ctrl+j", "ctrl+d"], k), u, "")
+    case Nil{}:
+      Act{u, Nil{}}
+
+# a page shortcut: "<combo>\t<terminal size>"
+def Ui.key(+u: Ui, v: String) -> Act:
+  Ui.key.p(String.split(v, '\t'), u)
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -1635,6 +1859,22 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.mention(u, value)
     case 40n:
       Ui.on_thread(u, "files.list")
+    case 50n:
+      Ui.attach(u, value)
+    case 51n:
+      Ui.attach_file(u, value)
+    case 52n:
+      Ui.detach(u, value)
+    case 53n:
+      Ui.term_toggle(u, value)
+    case 54n:
+      Ui.term_key(u, value)
+    case 55n:
+      Ui.term_paste(u, value)
+    case 56n:
+      Ui.key(u, value)
+    case 57n:
+      Ui.rpc(u, "update.check", Nil{})
     case _:
       Act{u, Nil{}}
 
