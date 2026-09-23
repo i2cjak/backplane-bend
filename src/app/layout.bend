@@ -7,6 +7,7 @@ import ../web/dom.bend as N
 import ./theme.bend as T
 import ./text.bend as X
 import ./nui.bend as S
+import ./viewer.bend as V
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -208,7 +209,7 @@ def Lay.sidebar.k(+c: D.Clip, +st: M.State, +sel: String, +open: Map<&2, Bool>, 
 
 def Lay.sidebar(+n: S.Nui, +h: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, v, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Lay.sidebar.k(D.Clip{0, 40, 264, h}, st, sel, open, on, now, adding, v, sd, caret, focus, path, h)
 
 # Timeline
@@ -512,7 +513,7 @@ def Lay.thread.k(t: M.Thread, +draft: String, +st: M.State, +sel: String, +live:
 
 def Lay.thread(+n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, +live, _, _, _, _, pa, _, _, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, +live, _, _, _, _, pa, _, _, _, _}, _, +h, _, _, _, +sc, +caret, +focus, _, _, _, _}:
       Lay.thread.k(U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, String.eq(focus, "composer"), x0, x1, h, sc, pa)
 
 def Lay.empty(+x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
@@ -521,12 +522,16 @@ def Lay.empty(+x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
 
 def Lay.main(+n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _}, _, +h, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
       Bool.pick(Out, String.is_empty(sel), Lay.empty(x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st))), Lay.thread(n, x0, x1))
 
-def Lay.viewer(+x0: U32, +x1: U32, +h: U32) -> Out:
-  Out.ops(List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), h, 526603, 255), D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)],
-    D.Draw.text("Board", D.Clip.all(), (x0 + 16 : U32), 12, T.Th.dim())))
+# the viewer's header strip; the board below it is drawn by the viewer
+def Lay.viewer(+x0: U32, +x1: U32, +h: U32, +root: String, +empty: Bool) -> Out:
+  Out.ops(List.concat(&2, R.Op, [
+    [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 40, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 39, (x1 - x0 : U32), 1, T.Th.line(), 255),
+     D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)],
+    D.Draw.text(Bool.pick(String, empty, "Board: none yet", "Board"), D.Clip.all(), (x0 + 16 : U32), 12, T.Th.dim()),
+    D.Draw.text("wheel zoom  drag pan  f fit", D.Clip.all(), (x1 - 232 : U32), 12, T.Th.faint())]))
 
 def Lay.toast(+e: String, +w: U32, +h: U32) -> Out:
   Bool.pick(Out, String.is_empty(e), Out.none(),
@@ -540,12 +545,17 @@ def Lay.rev(o: Out) -> Out:
     case Out{os, hs}:
       Out{List.reverse(&2, R.Op, os), List.reverse(&2, S.Hit, hs)}
 
+def Lay.scene(n: S.Nui) -> List<&2, V.Seen>:
+  match n:
+    case S.Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{ss, _, _, _, _, _, _, _, _, _}}:
+      ss
+
 # the whole window, topmost first
 def Lay.frame(+n: S.Nui) -> Out:
   match n:
-    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err}, +w, +h, _, _, _, _, _, _, _, _, _}:
+    case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
         Lay.main(n, 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
-        Bool.pick(Out, pa, Lay.viewer((264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
+        Bool.pick(Out, pa, Lay.viewer((264 + U32.shr((w - 264 : U32)) : U32), w, h, "", List.is_empty(&2, V.Seen, Lay.scene(n))), Out.none()),
         Lay.sidebar(n, h),
         Lay.toast(err, w, h)]))

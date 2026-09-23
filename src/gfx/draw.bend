@@ -93,3 +93,56 @@ def Snap.go(n: Nat, +img: Image, +d: Nat, +w: U32, acc: List<&2, U32>) -> List<&
 def Snap.ppm(+img: Image, +w: U32, +h: U32) -> List<&2, U32>:
   List.append(&2, U32, Snap.ascii("P6\n" ++ U32.show(w) ++ " " ++ U32.show(h) ++ "\n255\n"),
     Snap.go(U32.to_nat((w * h : U32)), img, R.Frame.depth(w, h), w, Nil{}))
+
+# Polygons
+# --------
+
+type P2 is Data:
+  P2{x: F32, y: F32}
+
+# vertices move off the pixel grid by a fixed hair, so no vertex sits
+# exactly on a region boundary or a pixel centre (where the crossing rules
+# would be ambiguous)
+def Poly.jit(+v: F32) -> F32:
+  F32.add(v, 0.00173)
+
+def Poly.close(+ax: F32, +ay: F32, first: P2) -> List<&2, R.Edge>:
+  match first:
+    case P2{+bx, +by}:
+      [R.Edge{Poly.jit(ax), Poly.jit(ay), Poly.jit(bx), Poly.jit(by)}]
+
+def Poly.edges(ps: List<&2, P2>, +first: P2) -> List<&2, R.Edge>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case P2{+ax, +ay} <> Nil{}:
+      Poly.close(ax, ay, first)
+    case P2{+ax, +ay} <> P2{+bx, +by} <> t:
+      R.Edge{Poly.jit(ax), Poly.jit(ay), Poly.jit(bx), Poly.jit(by)} <> Poly.edges(P2{bx, by} <> t, first)
+
+type Box is Data:
+  Box{x0: F32, y0: F32, x1: F32, y1: F32}
+
+def Poly.box(ps: List<&2, P2>, b: Box) -> Box:
+  match ps b:
+    case Nil{} _:
+      b
+    case P2{+x, +y} <> t Box{+x0, +y0, +x1, +y1}:
+      Poly.box(t, Box{F32.min(x0, x), F32.min(y0, y), F32.max(x1, x), F32.max(y1, y)})
+
+def Poly.first(ps: List<&2, P2>) -> P2:
+  match ps:
+    case p <> _:
+      p
+    case Nil{}:
+      P2{0.0, 0.0}
+
+def Poly.op(+c: Clip, b: Box, +es: List<&2, R.Edge>, +color: U32, +alpha: U32) -> R.Op:
+  match b:
+    case Box{x0, y0, x1, y1}:
+      Clip.cut(c, Draw.floor(x0), Draw.floor(y0), Draw.ceil(F32.add(x1, 1.0)), Draw.ceil(F32.add(y1, 1.0)), color, alpha,
+        R.SPoly{R.Cross.h(es, 0.0, F32.neg(1000000.0), 0.0, False{}), es})
+
+# a filled even-odd polygon through the points (pixels)
+def Draw.poly(+c: Clip, +ps: List<&2, P2>, +color: U32, +alpha: U32) -> R.Op:
+  Poly.op(c, Poly.box(ps, Box{1000000.0, 1000000.0, F32.neg(1000000.0), F32.neg(1000000.0)}), Poly.edges(ps, Poly.first(ps)), color, alpha)

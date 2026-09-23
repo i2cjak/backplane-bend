@@ -10,8 +10,16 @@ import ./font.bend as F
 
 # Colours are 0xRRGGBB; alpha is 0..255.
 
+# a polygon edge, in pixels
+type Edge is Data:
+  Edge{ax: F32, ay: F32, bx: F32, by: F32}
+
+# SPoly is an even-odd polygon cut to the region at hand: `inside` says
+# whether the region's top-left corner is inside, `edges` are the edges
+# that reach the region. With no edges left the region is all in or out.
 type Shape is Data:
   SRect{}
+  SPoly{inside: Bool, edges: List<&2, Edge>}
   SGlyph{gx: U32, gy: U32, glyph: F.Glyph}
   SSeg{ax: F32, ay: F32, bx: F32, by: F32, hw: F32}
   SDisc{cx: F32, cy: F32, r: F32}
@@ -66,6 +74,57 @@ def Cov.tri(+ax: F32, +ay: F32, +bx: F32, +by: F32, +cx: F32, +cy: F32, +px: F32
 def Cov.glyph(g: F.Glyph, +gx: U32, +gy: U32, +x: U32, +y: U32) -> U32:
   Bool.pick(U32, F.Font.bit(g, (x - gx : U32), (y - gy : U32)), 255, 0)
 
+def Cross.within(+v: F32, +a: F32, +b: F32) -> Bool:
+  Bool.and(F32.is_ge(v, a), F32.is_lt(v, b))
+
+def Cross.h1.k(spans: Bool, +ax: F32, +ay: F32, +bx: F32, +by: F32, +y: F32, +xa: F32, +xb: F32) -> Bool:
+  match spans:
+    case True{}:
+      Cross.within(F32.add(ax, F32.div(F32.mul(F32.sub(y, ay), F32.sub(bx, ax)), F32.sub(by, ay))), xa, xb)
+    case False{}:
+      False{}
+
+# Polygons
+# --------
+
+# does the edge cross the horizontal segment at y from xa (in) to xb (out)?
+def Cross.h1(e: Edge, +y: F32, +xa: F32, +xb: F32) -> Bool:
+  match e:
+    case Edge{+ax, +ay, +bx, +by}:
+      Cross.h1.k(Bool.xor(F32.is_gt(ay, y), F32.is_gt(by, y)), ax, ay, bx, by, y, xa, xb)
+
+def Cross.v1.k(spans: Bool, +ax: F32, +ay: F32, +bx: F32, +by: F32, +x: F32, +ya: F32, +yb: F32) -> Bool:
+  match spans:
+    case True{}:
+      Cross.within(F32.add(ay, F32.div(F32.mul(F32.sub(x, ax), F32.sub(by, ay)), F32.sub(bx, ax))), ya, yb)
+    case False{}:
+      False{}
+
+def Cross.v1(e: Edge, +x: F32, +ya: F32, +yb: F32) -> Bool:
+  match e:
+    case Edge{+ax, +ay, +bx, +by}:
+      Cross.v1.k(Bool.xor(F32.is_gt(ax, x), F32.is_gt(bx, x)), ax, ay, bx, by, x, ya, yb)
+
+# parity of edges crossing the horizontal / vertical segment
+def Cross.h(es: List<&2, Edge>, +y: F32, +xa: F32, +xb: F32, acc: Bool) -> Bool:
+  match es:
+    case Nil{}:
+      acc
+    case e <> t:
+      Cross.h(t, y, xa, xb, Bool.xor(acc, Cross.h1(e, y, xa, xb)))
+
+def Cross.v(es: List<&2, Edge>, +x: F32, +ya: F32, +yb: F32, acc: Bool) -> Bool:
+  match es:
+    case Nil{}:
+      acc
+    case e <> t:
+      Cross.v(t, x, ya, yb, Bool.xor(acc, Cross.v1(e, x, ya, yb)))
+
+# the parity at (qx, qy) from the parity at (px, py) (px <= qx, py <= qy),
+# walking down then right
+def Cross.walk(+es: List<&2, Edge>, inside: Bool, +px: F32, +py: F32, +qx: F32, +qy: F32) -> Bool:
+  Cross.h(es, qy, px, qx, Cross.v(es, px, py, qy, inside))
+
 def Cov.at(s: Shape, +x: U32, +y: U32, +px: F32, +py: F32) -> U32:
   match s:
     case SRect{}:
@@ -78,6 +137,29 @@ def Cov.at(s: Shape, +x: U32, +y: U32, +px: F32, +py: F32) -> U32:
       Cov.disc(cx, cy, r, px, py)
     case STri{ax, ay, bx, by, cx, cy}:
       Cov.tri(ax, ay, bx, by, cx, cy, px, py)
+    case SPoly{inside, +es}:
+      Bool.pick(U32, Cross.walk(es, inside, U32.to_f32(x), U32.to_f32(y), px, py), 255, 0)
+
+def Cross.meets(e: Edge, +x0: F32, +y0: F32, +x1: F32, +y1: F32) -> Bool:
+  match e:
+    case Edge{+ax, +ay, +bx, +by}:
+      Bool.and(Bool.and(F32.is_le(F32.min(ax, bx), x1), F32.is_ge(F32.max(ax, bx), x0)),
+        Bool.and(F32.is_le(F32.min(ay, by), y1), F32.is_ge(F32.max(ay, by), y0)))
+
+def Cross.keep.k(hit: Bool, e: Edge, rest: List<&2, Edge>) -> List<&2, Edge>:
+  match hit:
+    case True{}:
+      e <> rest
+    case False{}:
+      rest
+
+# the edges whose boxes meet the box
+def Cross.keep(es: List<&2, Edge>, +x0: F32, +y0: F32, +x1: F32, +y1: F32) -> List<&2, Edge>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      Cross.keep.k(Cross.meets(e, x0, y0, x1, y1), e, Cross.keep(t, x0, y0, x1, y1))
 
 # how much of pixel (x, y) the shape covers, 0..255
 def Cov.of(s: Shape, +x: U32, +y: U32) -> U32:
@@ -114,20 +196,101 @@ def Region.keep.k(hit: Bool, o: Op, rest: List<&2, Op>) -> List<&2, Op>:
     case False{}:
       rest
 
-# the ops that reach the n x n region at (rx, ry), order kept
-def Region.keep(ops: List<&2, Op>, +rx: U32, +ry: U32, +n: U32) -> List<&2, Op>:
+# a polygon moved from the parent region (corner px, py) to a child: its
+# corner parity walks to the child's corner, its edges shrink to the child
+def Region.poly(+inside: Bool, +es: List<&2, Edge>, +px: U32, +py: U32, +rx: U32, +ry: U32, +n: U32) -> Shape:
+  SPoly{Cross.walk(es, inside, U32.to_f32(px), U32.to_f32(py), U32.to_f32(rx), U32.to_f32(ry)),
+    Cross.keep(es, U32.to_f32(rx), U32.to_f32(ry), U32.to_f32((rx + n : U32)), U32.to_f32((ry + n : U32)))}
+
+# a polygon with no edges and outside draws nothing here
+def Region.empty(s: Shape) -> Bool:
+  match s:
+    case SPoly{False{}, Nil{}}:
+      True{}
+    case _:
+      False{}
+
+def Region.move(s: Shape, +px: U32, +py: U32, +rx: U32, +ry: U32, +n: U32) -> Shape:
+  match s:
+    case SPoly{+inside, +es}:
+      Region.poly(inside, es, px, py, rx, ry, n)
+    case _:
+      s
+
+def Region.keep.m(+s2: Shape, +x0: U32, +y0: U32, +x1: U32, +y1: U32, +c: U32, +a: U32, rest: List<&2, Op>) -> List<&2, Op>:
+  Region.keep.k(Bool.not(Region.empty(s2)), Op{x0, y0, x1, y1, c, a, s2}, rest)
+
+def Region.keep.op(hit: Bool, o: Op, +px: U32, +py: U32, +rx: U32, +ry: U32, +n: U32, rest: List<&2, Op>) -> List<&2, Op>:
+  match hit o:
+    case True{} Op{+x0, +y0, +x1, +y1, +c, +a, s}:
+      Region.keep.m(Region.move(s, px, py, rx, ry, n), x0, y0, x1, y1, c, a, rest)
+    case False{} _:
+      rest
+
+# the ops that reach the n x n region at (rx, ry), order kept; (px, py) is
+# the parent region's corner
+def Region.keep(ops: List<&2, Op>, +px: U32, +py: U32, +rx: U32, +ry: U32, +n: U32) -> List<&2, Op>:
   match ops:
     case Nil{}:
       Nil{}
-    case Op{+x0, +y0, +x1, +y1, c, a, s} <> t:
-      Region.keep.k(Region.hits(x0, y0, x1, y1, rx, ry, n), Op{x0, y0, x1, y1, c, a, s}, Region.keep(t, rx, ry, n))
+    case Op{+x0, +y0, +x1, +y1, c, a, +s} <> t:
+      Region.keep.op(Region.hits(x0, y0, x1, y1, rx, ry, n), Op{x0, y0, x1, y1, c, a, s}, px, py, rx, ry, n, Region.keep(t, px, py, rx, ry, n))
+
+# the ops for the four children of the region at (rx, ry), one pass
+type Four is Data:
+  Four{a: List<&2, Op>, b: List<&2, Op>, c: List<&2, Op>, d: List<&2, Op>}
+
+def Four.put(+o: Op, +px: U32, +py: U32, +h: U32, f: Four) -> Four:
+  match o f:
+    case Op{+x0, +y0, +x1, +y1, _, _, _} Four{a, b, c, d}:
+      Four{Region.keep.op(Region.hits(x0, y0, x1, y1, px, py, h), o, px, py, px, py, h, a),
+        Region.keep.op(Region.hits(x0, y0, x1, y1, (px + h : U32), py, h), o, px, py, (px + h : U32), py, h, b),
+        Region.keep.op(Region.hits(x0, y0, x1, y1, px, (py + h : U32), h), o, px, py, px, (py + h : U32), h, c),
+        Region.keep.op(Region.hits(x0, y0, x1, y1, (px + h : U32), (py + h : U32), h), o, px, py, (px + h : U32), (py + h : U32), h, d)}
+
+def Four.go(ops: List<&2, Op>, +px: U32, +py: U32, +h: U32) -> Four:
+  match ops:
+    case Nil{}:
+      Four{Nil{}, Nil{}, Nil{}, Nil{}}
+    case +o <> t:
+      Four.put(o, px, py, h, Four.go(t, px, py, h))
+
+def Four.split.k(f: Four, k: List<&2, Op> -> List<&2, Op> -> List<&2, Op> -> List<&2, Op> -> Image) -> Image:
+  match f:
+    case Four{a, b, c, d}:
+      k(a, b, c, d)
+
+# split ops over the children (halves h) and hand the four lists to k
+def Four.split(+ops: List<&2, Op>, +px: U32, +py: U32, +h: U32, k: List<&2, Op> -> List<&2, Op> -> List<&2, Op> -> List<&2, Op> -> Image) -> Image:
+  Four.split.k(Four.go(ops, px, py, h), k)
+
+# a base image's four quadrants (a solid one is four of itself)
+def Four.base(+img: Image, k: Image -> Image -> Image -> Image -> Image) -> Image:
+  match img:
+    case Pix{+c}:
+      k(Pix{c}, Pix{c}, Pix{c}, Pix{c})
+    case Qua{a, b, c, d}:
+      k(a, b, c, d)
+
+# the colour of a region's base (a region at a leaf is one pixel)
+def Four.top(img: Image) -> U32:
+  match img:
+    case Pix{c}:
+      c
+    case Qua{a, _, _, _}:
+      Four.top(a)
 
 # the topmost op is an opaque rectangle over the whole region
+def Region.covers(+x0: U32, +y0: U32, +x1: U32, +y1: U32, +a: U32, +rx: U32, +ry: U32, +n: U32) -> Bool:
+  Bool.and(Bool.and(U32.is_eq(a, 255), Bool.and(U32.is_le(x0, rx), U32.is_le(y0, ry))),
+    Bool.and(U32.is_ge(x1, (rx + n : U32)), U32.is_ge(y1, (ry + n : U32))))
+
 def Region.solid(ops: List<&2, Op>, +rx: U32, +ry: U32, +n: U32) -> Bool:
   match ops:
     case Op{x0, y0, x1, y1, _, a, SRect{}} <> _:
-      Bool.and(Bool.and(U32.is_eq(a, 255), Bool.and(U32.is_le(x0, rx), U32.is_le(y0, ry))),
-        Bool.and(U32.is_ge(x1, (rx + n : U32)), U32.is_ge(y1, (ry + n : U32))))
+      Region.covers(x0, y0, x1, y1, a, rx, ry, n)
+    case Op{x0, y0, x1, y1, _, a, SPoly{True{}, Nil{}}} <> _:
+      Region.covers(x0, y0, x1, y1, a, rx, ry, n)
     case _:
       False{}
 
@@ -158,35 +321,41 @@ def Region.leaf.k(empty: Bool, solid: Bool, one: Bool) -> Leaf:
 def Region.leaf(+ops: List<&2, Op>, +rx: U32, +ry: U32, +n: U32) -> Leaf:
   Region.leaf.k(List.is_empty(&2, Op, ops), Region.solid(ops, rx, ry, n), U32.is_eq(n, 1))
 
-# the image of the n x n region at (rx, ry); d counts levels left (n = 2^d)
-def Region.node(d: Nat, l: Leaf, +ops: List<&2, Op>, +rx: U32, +ry: U32, +n: U32, +bg: U32) -> Image:
+# the image of the n x n region at (rx, ry) over the base image's same
+# region; d counts levels left (n = 2^d)
+def Region.node(d: Nat, l: Leaf, +ops: List<&2, Op>, +rx: U32, +ry: U32, +n: U32, +base: Image) -> Image:
   match d l:
     case _ LEmpty{}:
-      Pix{bg}
+      base
     case _ LSolid{}:
       Pix{Region.top(ops)}
     case _ LPixel{}:
-      Pix{Shade.px(ops, rx, ry, bg)}
+      Pix{Shade.px(ops, rx, ry, Four.top(base))}
     case 0n LSplit{}:
-      Pix{Shade.px(ops, rx, ry, bg)}
+      Pix{Shade.px(ops, rx, ry, Four.top(base))}
     case 1n+e0 LSplit{}:
       +e = e0
       +h = U32.shr(n)
-      +ta = Region.keep(ops, rx, ry, h)
-      +tb = Region.keep(ops, (rx + h : U32), ry, h)
-      +tc = Region.keep(ops, rx, (ry + h : U32), h)
-      +td = Region.keep(ops, (rx + h : U32), (ry + h : U32), h)
-      a b c dd = Region.node(e, Region.leaf(ta, rx, ry, h), ta, rx, ry, h, bg) Region.node(e, Region.leaf(tb, (rx + h : U32), ry, h), tb, (rx + h : U32), ry, h, bg) Region.node(e, Region.leaf(tc, rx, (ry + h : U32), h), tc, rx, (ry + h : U32), h, bg) Region.node(e, Region.leaf(td, (rx + h : U32), (ry + h : U32), h), td, (rx + h : U32), (ry + h : U32), h, bg)
-      Qua{a, b, c, dd}
+      +x2 = (rx + h : U32)
+      +y2 = (ry + h : U32)
+      Four.base(base, ba => bb => bc => bd =>
+        Four.split(ops, rx, ry, h, +ta => +tb => +tc => +td => (
+          a b c dd = Region.node(e, Region.leaf(ta, rx, ry, h), ta, rx, ry, h, ba) Region.node(e, Region.leaf(tb, x2, ry, h), tb, x2, ry, h, bb) Region.node(e, Region.leaf(tc, rx, y2, h), tc, rx, y2, h, bc) Region.node(e, Region.leaf(td, x2, y2, h), td, x2, y2, h, bd)
+          Qua{a, b, c, dd})))
 
 # the exponent of the smallest power of two covering w and h
 def Frame.depth(+w: U32, +h: U32) -> Nat:
   1n+U32.log2((U32.max(U32.max(w, h), 2) - 1 : U32))
 
-# a w x h frame of ops (topmost first) over bg
-def Frame.render(+w: U32, +h: U32, +ops: List<&2, Op>, +bg: U32) -> Image:
+# a w x h frame of ops (topmost first) over a base frame of the same size:
+# only regions the ops reach are drawn, the rest is the base's
+def Frame.over(+w: U32, +h: U32, +ops: List<&2, Op>, +base: Image) -> Image:
   +d = Frame.depth(w, h)
-  Region.node(d, Region.leaf(ops, 0, 0, U32.shln(1, d)), ops, 0, 0, U32.shln(1, d), bg)
+  Region.node(d, Region.leaf(ops, 0, 0, U32.shln(1, d)), ops, 0, 0, U32.shln(1, d), base)
+
+# a w x h frame of ops (topmost first) over a solid background
+def Frame.render(+w: U32, +h: U32, +ops: List<&2, Op>, +bg: U32) -> Image:
+  Frame.over(w, h, ops, Pix{bg})
 
 # Reading pixels back (snapshots, tests)
 # --------------------------------------

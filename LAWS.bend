@@ -1,5 +1,6 @@
 import Base
 import ./src/core/model.bend as M
+import ./src/app/viewer.bend as V
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -80,3 +81,24 @@ law replay_snoc:
 law sidebar_split_count:
   for ts: List<&2, M.Thread>
   {M.Shelves.count(M.Sidebar.split(ts)) == List.length(&2, M.Thread, ts) : Nat}
+
+# Board viewer
+# ------------
+
+# re-reading an unchanged board changes nothing: every item keeps its birth
+# time, so nothing re-fades or flickers (the viewer's no-jitter promise)
+law scene_merge_self:
+  for ss: List<&2, V.Seen>
+  for +now: Nat
+  {V.Scene.update(ss, V.Scene.items(ss), now) == ss : List<&2, V.Seen>}
+
+# a new item starts invisible
+law fade_start:
+  for +born: Nat
+  {V.Fade.alpha(born, born) == 0 : U32}
+
+# and is fully drawn once its fade time has passed, at any later time
+law fade_done:
+  for +born: Nat
+  for +k: Nat
+  {V.Fade.alpha(Nat.add(Nat.add(born, V.Fade.ms()), k), born) == 255 : U32}

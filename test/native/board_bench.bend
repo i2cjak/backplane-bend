@@ -1,19 +1,12 @@
 import Base
 import ../../src/core/board.bend as B
 
-def bytes(xs: List<&2, B.Item>, +acc: Nat) -> Nat:
-  match xs:
-    case Nil{}:
-      acc
-    case B.Item{_, j} <> t:
-      bytes(t, Nat.add(acc, String.length(j)))
-
 def count(m: Maybe<&2, List<&2, B.Item>>) -> String:
   match m:
     case None{}:
       "incomplete"
     case Some{+xs}:
-      Nat.show(List.length(&2, B.Item, xs)) ++ " items, " ++ Nat.show(bytes(xs, 0n)) ++ " json bytes"
+      Nat.show(List.length(&2, B.Item, xs)) ++ " items"
 
 def go(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Unit):
   (f, res) = r

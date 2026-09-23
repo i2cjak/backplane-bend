@@ -36,13 +36,30 @@ def ops(o: L.Out) -> List<&2, R.Op>:
     case L.Out{os, _}:
       os
 
+def leaves(i: Image) -> Nat:
+  match i:
+    case Pix{_}:
+      1n
+    case Qua{a, b, c, d}:
+      Nat.add(Nat.add(leaves(a), leaves(b)), Nat.add(leaves(c), leaves(d)))
+
 def go(r: File & Result<&1, &1, U32 & String, List<&2, U32>>, +sel: String, +path: String) -> IO(Unit):
   (f, res) = r
   do IO<Unit>:
     File.close(f)
     bs : List<&2, U32> <- IO.pass(List<&2, U32>, res)
+    t0 : Nat <- IO.now()
     +n : S.Nui = S.Nui.init(ui_of(bs, sel), 1400, 860)
-    +img : Image = R.Frame.render(1400, 860, ops(L.Lay.frame(n)), T.Th.bg())
+    +k : Nat = List.length(&2, R.Op, ops(L.Lay.frame(n)))
+    IO.print("state from log + layout: " ++ Nat.show(k) ++ " ops")
+    +t1 : Nat <- IO.now()
+    +os : List<&2, R.Op> = ops(L.Lay.frame(n))
+    +k2 : Nat = List.length(&2, R.Op, os)
+    +t2 : Nat <- IO.now()
+    +img : Image = R.Frame.render(1400, 860, os, T.Th.bg())
+    +lv : Nat = leaves(img)
+    t3 : Nat <- IO.now()
+    IO.print("setup " ++ Nat.show(Nat.sub(t1, t0)) ++ " ms; layout " ++ Nat.show(Nat.sub(t2, t1)) ++ " ms (" ++ Nat.show(k2) ++ " ops); raster " ++ Nat.show(Nat.sub(t3, t2)) ++ " ms (" ++ Nat.show(lv) ++ " leaves)")
     g : File <- IO.try(File, File.open(path, "w"))
     w : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(g, D.Snap.ppm(img, 1400, 860))
     IO.print("wrote " ++ path)

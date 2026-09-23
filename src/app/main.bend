@@ -9,6 +9,9 @@ import ./win.bend as W
 import ./nui.bend as N
 import ./layout.bend as L
 import ./theme.bend as T
+import ./viewer.bend as V
+import ../core/board.bend as B
+import ../gfx/draw.bend as D
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -19,9 +22,10 @@ type ShellMsg is Data:
   FromHub{text: String}
   Frame{}
   Gone{}
+  Board{root: String, items: List<&2, B.Item>}
 
 type Shell is Type:
-  Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg)}
+  Shell{nui: N.Nui, win: Window, dirty: Bool, queued: Bool, q: Chan(ShellMsg), inbox: Chan(S.Msg), watched: List<&2, String>}
 
 def Pump.got(r: Window & List<&2, U32>, +q: Chan(ShellMsg), k: Window -> IO(Unit)) -> IO(Unit):
   (w, ws) = r
@@ -71,57 +75,121 @@ def Timer.once(+q: Chan(ShellMsg)) -> IO(Unit):
 
 def Shell.later(a: Shell) -> IO(Shell):
   match a:
-    case Shell{n, w, _, True{}, +q, i}:
-      IO.pure(Shell, Shell{n, w, True{}, True{}, q, i})
-    case Shell{n, w, _, False{}, +q, i}:
+    case Shell{n, w, _, True{}, +q, i, wa}:
+      IO.pure(Shell, Shell{n, w, True{}, True{}, q, i, wa})
+    case Shell{n, w, _, False{}, +q, i, wa}:
       do IO<Shell>:
         IO.spawn(Unit, Timer.once(q))
-        return Shell{n, w, True{}, True{}, q, i}
+        return Shell{n, w, True{}, True{}, q, i, wa}
 
 def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Nui:
   match n:
-    case N.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, _, ms}:
-      N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms}
+    case N.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, _, ms, vw}:
+      N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms, vw}
 
-def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg)) -> IO(Shell):
+# a fade still running asks for the next frame
+def Shell.again(anim: Bool, a: Shell) -> IO(Shell):
+  match anim:
+    case True{}:
+      Shell.later(a)
+    case False{}:
+      IO.pure(Shell, a)
+
+def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, anim: Bool) -> IO(Shell):
   (w, img) = r
   do IO<Shell>:
     Unit <- IO.pure(Unit, Image.drop!(img))
-    return Shell{n, w, False{}, False{}, q, i}
+    Shell.again(anim, Shell{n, w, False{}, False{}, q, i, wa})
 
-def Shell.paint(n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), o: L.Out, +now: Nat) -> IO(Shell):
-  match n o:
-    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, ms} L.Out{ops, hs}:
-      IO.bind(Window & Image, Shell, W.Win.present(w, R.Frame.render(ww, hh, ops, T.Th.bg())),
-        r => Shell.shown(r, Shell.hits(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms}, hs, now), q, i))
+# the viewer's settled board, drawn once per scene/view (the frame's base)
+def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat) -> Image:
+  R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 40, (ww - x0 : U32), hh, 526603, 255)
+    <> V.Ops.scene(ss, v, D.Clip{x0, 40, ww, hh}, now, now, True{})), T.Th.bg())
+
+def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
+  match redraw vw:
+    case True{} V.Vw{+ss, +v, f, r, d, lx, ly, _, _, _}:
+      V.Vw{ss, v, f, r, d, lx, ly, Shell.base(ww, hh, x0, ss, v, now), True{}, now}
+    case False{} _:
+      vw
+
+# refresh the base if the scene or view changed, or fades ended since
+def Shell.vw(+vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
+  match vw:
+    case V.Vw{+ss, +v, f, r, d, lx, ly, b, +fr, +cut}:
+      Shell.vw.k(Bool.or(Bool.not(fr), V.Vw.late(ss, cut, now)), V.Vw{ss, v, f, r, d, lx, ly, b, fr, cut}, ww, hh, x0, now)
+
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
+  match vw:
+    case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut}:
+      R.Frame.over(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op, V.Ops.scene(ss, v, D.Clip{x0, 40, ww, hh}, now, cut, False{}))), b)
+
+# the frame: UI ops over the fading items over the base
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
+  match pa:
+    case True{}:
+      Shell.image.over(ops, vw, ww, hh, x0, now)
+    case False{}:
+      R.Frame.render(ww, hh, ops, T.Th.bg())
+
+def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
+  match vw:
+    case V.Vw{ss, _, _, _, _, _, _, _, _, _}:
+      V.Fade.busy(ss, now)
+
+def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  match o:
+    case L.Out{+ops, hs}:
+      IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms)),
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms))))
+
+def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(L.Lay.frame(n), n, w, q, i, wa, epoch, ms)
+
+def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat) -> V.Vw:
+  match open:
+    case True{}:
+      Shell.vw(vw, ww, hh, x0, ms)
+    case False{}:
+      vw
+
+def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  match n0:
+    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, _, vw0}:
+      Shell.paint.go(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
+        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
+
+def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.k(N.Nui.prepare(n), w, q, i, wa, epoch, ms)
 
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):
   match a:
-    case Shell{+n, w, True{}, _, q, i}:
+    case Shell{+n, w, True{}, _, q, i, wa}:
       do IO<Shell>:
         t : U32 <- H.Clock.epoch()
-        Shell.paint(n, w, q, i, L.Lay.frame(n), U32.to_nat(t))
-    case Shell{n, w, False{}, _, q, i}:
-      IO.pure(Shell, Shell{n, w, False{}, False{}, q, i})
+        ms : Nat <- IO.now()
+        Shell.paint(n, w, q, i, wa, U32.to_nat(t), ms)
+    case Shell{n, w, False{}, _, q, i, wa}:
+      IO.pure(Shell, Shell{n, w, False{}, False{}, q, i, wa})
 
 # Commands
 # --------
 
 def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
   match a c:
-    case Shell{n, w, d, qd, q, +i} N.NSend{t}:
+    case Shell{n, w, d, qd, q, +i, wa} N.NSend{t}:
       do IO<Shell>:
         ok : Bool <- Chan.send(S.Msg, i, S.Rpc{0, t})
-        return Shell{n, w, d, qd, q, i}
-    case Shell{n, w, d, qd, q, i} N.NCopy{t}:
+        return Shell{n, w, d, qd, q, i, wa}
+    case Shell{n, w, d, qd, q, i, wa} N.NCopy{t}:
       do IO<Shell>:
         w2 : Window <- W.Win.copy(w, t)
-        return Shell{n, w2, d, qd, q, i}
-    case Shell{n, w, d, qd, q, i} N.NPaste{}:
+        return Shell{n, w2, d, qd, q, i, wa}
+    case Shell{n, w, d, qd, q, i, wa} N.NPaste{}:
       do IO<Shell>:
         w2 : Window <- W.Win.paste(w)
-        return Shell{n, w2, d, qd, q, i}
+        return Shell{n, w2, d, qd, q, i, wa}
     case _ N.NQuit{}:
       IO.die(Shell, 0, "")
 
@@ -134,30 +202,30 @@ def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
 
 def Shell.dirty(a: Shell) -> IO(Shell):
   match a:
-    case Shell{n, w, True{}, qd, q, i}:
-      Shell.later(Shell{n, w, True{}, qd, q, i})
+    case Shell{n, w, True{}, qd, q, i, wa}:
+      Shell.later(Shell{n, w, True{}, qd, q, i, wa})
     case _:
       IO.pure(Shell, a)
 
 # fold a step into the app: its state, its commands, maybe a frame
 def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
   match a s:
-    case Shell{_, w, d, qd, q, i} N.Step{n, cs, dirty}:
-      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i}), Shell.dirty)
+    case Shell{_, w, d, qd, q, i, wa} N.Step{n, cs, dirty}:
+      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i, wa}), Shell.dirty)
 
 # Events
 # ------
 
-def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg)) -> IO(Shell):
+def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: List<&2, String>) -> IO(Shell):
   (w, text) = r
-  Shell.step(Shell{n, w, d, qd, q, i}, N.Nui.paste(n, text))
+  Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.paste(n, text))
 
 def Shell.event(a: Shell, e: W.WinEv) -> IO(Shell):
   match a e:
-    case Shell{n, w, d, qd, q, i} W.WPaste{_}:
-      IO.bind(Window & String, Shell, W.Win.pasted(w), r => Shell.pasted(r, n, d, qd, q, i))
-    case Shell{+n, w, d, qd, q, i} _:
-      Shell.step(Shell{n, w, d, qd, q, i}, N.Nui.event(n, e))
+    case Shell{n, w, d, qd, q, i, wa} W.WPaste{_}:
+      IO.bind(Window & String, Shell, W.Win.pasted(w), r => Shell.pasted(r, n, d, qd, q, i, wa))
+    case Shell{+n, w, d, qd, q, i, wa} _:
+      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.event(n, e))
 
 def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
   match es:
@@ -168,8 +236,153 @@ def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
 
 def Shell.recv(a: Shell, +text: String) -> IO(Shell):
   match a:
-    case Shell{n, w, _, qd, q, i}:
-      Shell.later(Shell{N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})), w, True{}, qd, q, i})
+    case Shell{n, w, _, qd, q, i, wa}:
+      Shell.later(Shell{N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})), w, True{}, qd, q, i, wa})
+
+def Shell.queue(a: Shell, k: Chan(ShellMsg) -> Shell -> IO(Unit)) -> IO(Unit):
+  match a:
+    case Shell{n, w, d, qd, +q, i, wa}:
+      k(q, Shell{n, w, d, qd, q, i, wa})
+
+# The board watcher
+# -----------------
+
+def Watch.first.hit(ns: List<&2, String>) -> Bool:
+  match ns:
+    case n <> _:
+      String.ends_with(n, ".kicad_pcb")
+    case Nil{}:
+      False{}
+
+def Watch.first(ns: List<&2, String>, hit: Bool, +root: String) -> String:
+  match ns hit:
+    case n <> _ True{}:
+      root ++ "/" ++ n
+    case _ <> +t False{}:
+      Watch.first(t, Watch.first.hit(t), root)
+    case Nil{} _:
+      ""
+
+# the project's board file ("" when it has none)
+def Watch.find(+root: String) -> IO(String):
+  do IO<String>:
+    +ns : List<&2, String> <- S.Names.of(root)
+    return Watch.first(ns, Watch.first.hit(ns), root)
+
+def Watch.items(m: Maybe<&2, List<&2, B.Item>>) -> Maybe<&2, List<&2, B.Item>>:
+  match m:
+    case Some{+xs}:
+      Some{V.Scene.sort(xs)}
+    case None{}:
+      None{}
+
+def Watch.sent(m: Maybe<&2, List<&2, B.Item>>, +root: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  match m:
+    case Some{xs}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(ShellMsg, q, Board{root, xs})
+        return Unit{}
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+# read, parse (in parallel) and send; a half-written file sends nothing
+def Watch.read(+path: String, +root: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    bs : List<&2, U32> <- S.Files.read(path)
+    Watch.sent(Watch.items(B.Board.items(bs)), root, q)
+
+def Watch.stat.k(v: U32 & U32 & U32) -> U32 & U32:
+  (_, sm) = v
+  sm
+
+def Watch.stat(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> U32 & U32:
+  match r:
+    case Done{v}:
+      Watch.stat.k(v)
+    case Fail{_}:
+      (0, 0)
+
+def Watch.step.k(changed: Bool, re: Nat, +s2: U32, +m2: U32, +root: String, +path: String, +q: Chan(ShellMsg), k: U32 -> U32 -> Nat -> IO(Unit)) -> IO(Unit):
+  match changed re:
+    case True{} _:
+      do IO<Unit>:
+        Watch.read(path, root, q)
+        k(s2, m2, 7n)
+    case False{} 1n:
+      do IO<Unit>:
+        Watch.read(path, root, q)
+        k(s2, m2, 0n)
+    case False{} 1n+r:
+      k(s2, m2, r)
+    case False{} 0n:
+      k(s2, m2, 0n)
+
+def Watch.step.two(+s2: U32, +m2: U32, +sz: U32, +mt: U32, re: Nat, +root: String, +path: String, +q: Chan(ShellMsg), k: U32 -> U32 -> Nat -> IO(Unit)) -> IO(Unit):
+  Watch.step.k(Bool.or(U32.is_ne(s2, sz), U32.is_ne(m2, mt)), re, s2, m2, root, path, q, k)
+
+def Watch.step(sm: U32 & U32, +sz: U32, +mt: U32, re: Nat, +root: String, +path: String, +q: Chan(ShellMsg), k: U32 -> U32 -> Nat -> IO(Unit)) -> IO(Unit):
+  (s2, m2) = sm
+  Watch.step.two(s2, m2, sz, mt, re, root, path, q, k)
+
+# every 150 ms: a changed size or mtime re-reads the board; one more read
+# ~1 s after a change catches a second save within the same second
+def Watch.loop(fuel: Nat, +root: String, +path: String, +sz: U32, +mt: U32, re: Nat, +q: Chan(ShellMsg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        IO.sleep(150)
+        st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
+        Watch.step(Watch.stat(st), sz, mt, re, root, path, q, s2 => m2 => r2 => Watch.loop(f, root, path, s2, m2, r2, q))
+
+def Watch.go(none: Bool, +root: String, +path: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  match none:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      Watch.loop(S.Fuel.forever(), root, path, 0, 0, 0n, q)
+
+def Watch.start(+root: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    +path : String <- Watch.find(root)
+    Watch.go(String.is_empty(path), root, path, q)
+
+def Shell.has(ws: List<&2, String>, +r: String) -> Bool:
+  match ws:
+    case Nil{}:
+      False{}
+    case w <> t:
+      Bool.or(String.eq(w, r), Shell.has(t, r))
+
+def Shell.watch.go(start: Bool, +root: String, a: Shell) -> IO(Shell):
+  match start a:
+    case True{} Shell{n, w, d, qd, +q, i, wa}:
+      do IO<Shell>:
+        IO.spawn(Unit, Watch.start(root, q))
+        return Shell{n, w, d, qd, q, i, root <> wa}
+    case False{} _:
+      IO.pure(Shell, a)
+
+def Shell.watch.k(open: Bool, +root: String, a: Shell) -> IO(Shell):
+  match open a:
+    case True{} Shell{n, w, d, qd, q, i, +wa}:
+      Shell.watch.go(Bool.and(Bool.not(String.is_empty(root)), Bool.not(Shell.has(wa, root))), root, Shell{n, w, d, qd, q, i, wa})
+    case False{} _:
+      IO.pure(Shell, a)
+
+# watch the selected project's board once the viewer is open
+def Shell.watch(a: Shell) -> IO(Shell):
+  match a:
+    case Shell{+n, w, d, qd, q, i, wa}:
+      Shell.watch.k(N.Nui.panel(n), U.Ui.root(N.Nui.ui(n)), Shell{n, w, d, qd, q, i, wa})
+
+def Shell.board(a: Shell, +root: String, +items: List<&2, B.Item>) -> IO(Shell):
+  match a:
+    case Shell{n, w, _, qd, q, i, wa}:
+      do IO<Shell>:
+        ms : Nat <- IO.now()
+        Shell.later(Shell{N.Nui.board(n, root, items, ms), w, True{}, qd, q, i, wa})
 
 def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
   match m:
@@ -181,16 +394,13 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.frame(a)
     case Gone{}:
       IO.die(Shell, 0, "")
-
-def Shell.queue(a: Shell, k: Chan(ShellMsg) -> Shell -> IO(Unit)) -> IO(Unit):
-  match a:
-    case Shell{n, w, d, qd, +q, i}:
-      k(q, Shell{n, w, d, qd, q, i})
+    case Board{root, items}:
+      Shell.board(a, root, items)
 
 def Shell.got(m: Maybe<&1, ShellMsg>, a: Shell, k: Shell -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{msg}:
-      IO.bind(Shell, Unit, Shell.handle(a, msg), k)
+      IO.bind(Shell, Unit, IO.bind(Shell, Shell, Shell.handle(a, msg), Shell.watch), k)
     case None{}:
       IO.pure(Unit, Unit{})
 
@@ -214,7 +424,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q))
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox})
+    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Nil{}})
     Shell.loop(S.Fuel.forever(), a)
 
 # no display: keep serving the web UI

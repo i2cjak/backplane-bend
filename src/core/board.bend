@@ -1,22 +1,27 @@
 import Base
 import ./sexpr.bend as S
 
-# A .kicad_pcb as drawable items. Each Item carries a stable key (KiCad's
-# uuid, or the footprint's uuid and the child's) and the exact JSON the
-# viewer draws, so "did this change?" is "did what we draw change?".
-#
-# Item JSON: {"k": key, "l": layer, "t": kind, "d": [numbers], "w": width, "f": filled}
-#   kind "s" segment [x1 y1 x2 y2], "l" polyline [x y ...], "c" circle [x y r],
-#   "p" polygon [x y ...]
-
-type Item is Data:
-  Item{key: String, json: String}
+# A .kicad_pcb as drawable items. Each Item has a stable key (KiCad's
+# uuid, or a footprint's uuid and its child's) and a signature: the hash of
+# the source form it came from. The viewer always draws the newest items;
+# the signature only decides what fades in, so an unchanged board never
+# flickers and a hash collision could at worst skip one fade.
 
 # Geometry
 # --------
 
 type Pt is Data:
   Pt{x: F32, y: F32}
+
+type Prim is Data:
+  PSeg{a: Pt, b: Pt, w: F32}
+  PLine{pts: List<&2, Pt>, w: F32}
+  PCirc{c: Pt, r: F32, w: F32, fill: Bool}
+  PPoly{pts: List<&2, Pt>, w: F32, fill: Bool}
+
+# layer is an index into Layer.names
+type Item is Data:
+  Item{key: String, sig: U32, layer: U32, prim: Prim}
 
 # a footprint's placement: origin and rotation (radians)
 type Place is Data:
@@ -46,49 +51,6 @@ def Geo.pt(+x: S.Sx) -> Pt:
 
 def Geo.at(+x: S.Sx, +name: String) -> Pt:
   Geo.pt(S.Sx.get(x, name))
-
-# Numbers and JSON
-# ----------------
-
-def Js.num(+f: F32) -> String:
-  F32.show(f)
-
-def Js.pt(p: Pt, rest: String) -> String:
-  match p:
-    case Pt{x, y}:
-      Js.num(x) ++ "," ++ Js.num(y) ++ rest
-
-def Js.pts(ps: List<&2, Pt>) -> String:
-  match ps:
-    case Nil{}:
-      ""
-    case p <> Nil{}:
-      Js.pt(p, "")
-    case p <> t:
-      Js.pt(p, "," ++ Js.pts(t))
-
-def Js.esc.k(q: Bool, b: Bool, c: Char, rest: String) -> String:
-  match q b:
-    case True{} _:
-      SCon{'\\', SCon{'"', rest}}
-    case _ True{}:
-      SCon{'\\', SCon{'\\', rest}}
-    case _ _:
-      SCon{c, rest}
-
-def Js.esc(s: String) -> String:
-  match s:
-    case SNil{}:
-      ""
-    case SCon{+c, t}:
-      Js.esc.k(Char.is_eq(c, '"'), Char.is_eq(c, '\\'), c, Js.esc(t))
-
-def Js.str(s: String) -> String:
-  "\"" ++ Js.esc(s) ++ "\""
-
-def Js.item(+key: String, layer: String, kind: String, d: String, +w: F32, fill: Bool) -> Item:
-  Item{key, "{\"k\":" ++ Js.str(key) ++ ",\"l\":" ++ Js.str(layer) ++ ",\"t\":\"" ++ kind ++ "\",\"d\":[" ++ d
-    ++ "],\"w\":" ++ Js.num(w) ++ ",\"f\":" ++ Bool.pick(String, fill, "1", "0") ++ "}"}
 
 # Arcs
 # ----
@@ -137,11 +99,40 @@ def Arc.points(+a: Pt, +b: Pt, +c: Pt) -> List<&2, Pt>:
     case Pt{+ax, +ay} Pt{+bx, +by} Pt{+cx, +cy}:
       Arc.points.d(F32.mul(2.0, F32.add(F32.mul(ax, F32.sub(by, cy)), F32.add(F32.mul(bx, F32.sub(cy, ay)), F32.mul(cx, F32.sub(ay, by))))), ax, ay, bx, by, cx, cy)
 
-def Board.width.k(+w: F32, +sw: F32) -> F32:
-  Bool.pick(F32, F32.is_gt(w, 0.0), w, sw)
+# Layers
+# ------
+
+# every layer the viewer knows, in its paint order (first is lowest)
+def Layer.names() -> List<&2, String>:
+  ["B.Fab", "B.CrtYd", "B.Paste", "B.SilkS", "B.Mask", "B.Cu", "In6.Cu", "In5.Cu", "In4.Cu", "In3.Cu",
+   "In2.Cu", "In1.Cu", "F.Cu", "*.Cu", "F.Mask", "F.Paste", "F.SilkS", "F.CrtYd", "F.Fab",
+   "Dwgs.User", "Cmts.User", "Margin", "Edge.Cuts", "via", "hole"]
+
+def Layer.pos.hit(ns: List<&2, String>, +s: String) -> Bool:
+  match ns:
+    case n <> _:
+      String.eq(n, s)
+    case Nil{}:
+      False{}
+
+def Layer.pos.go(ns: List<&2, String>, hit: Bool, +s: String, +i: U32) -> U32:
+  match ns hit:
+    case _ <> _ True{}:
+      i
+    case _ <> +t False{}:
+      Layer.pos.go(t, Layer.pos.hit(t, s), s, (i + 1 : U32))
+    case Nil{} _:
+      19
+
+# a layer's index (unknown layers draw with Dwgs.User)
+def Layer.id(+s: String) -> U32:
+  Layer.pos.go(Layer.names(), Layer.pos.hit(Layer.names(), s), s, 0)
 
 # Board-level forms
 # -----------------
+
+def Board.width.k(+w: F32, +sw: F32) -> F32:
+  Bool.pick(F32, F32.is_gt(w, 0.0), w, sw)
 
 def Board.width(+x: S.Sx) -> F32:
   Board.width.k(S.Sx.f(S.Sx.get(x, "width"), 0n), S.Sx.f(S.Sx.get(S.Sx.get(x, "stroke"), "width"), 0n))
@@ -173,29 +164,28 @@ def Board.pts(xs: List<&2, S.Sx>, +pl: Place) -> List<&2, Pt>:
 def Board.home() -> Place:
   Place{0.0, 0.0, 0.0}
 
-def Board.circle(+key: String, +layer: String, c: Pt, e: Pt, +w: F32, fill: Bool) -> Item:
-  match c e:
-    case Pt{+cx, +cy} Pt{ex, ey}:
-      Js.item(key, layer, "c", Js.pts([Pt{cx, cy}]) ++ "," ++ Js.num(F32.hypot(F32.sub(ex, cx), F32.sub(ey, cy))), w, fill)
+def Board.dist(a: Pt, b: Pt) -> F32:
+  match a b:
+    case Pt{ax, ay} Pt{bx, by}:
+      F32.hypot(F32.sub(bx, ax), F32.sub(by, ay))
 
-def Board.rect(+key: String, +layer: String, a: Pt, b: Pt, +pl: Place, +w: F32, fill: Bool) -> Item:
+def Board.rect(a: Pt, b: Pt, +pl: Place) -> List<&2, Pt>:
   match a b:
     case Pt{+ax, +ay} Pt{+bx, +by}:
-      Js.item(key, layer, "p", Js.pts([Geo.place(pl, Pt{ax, ay}), Geo.place(pl, Pt{bx, ay}), Geo.place(pl, Pt{bx, by}), Geo.place(pl, Pt{ax, by})]), w, fill)
+      [Geo.place(pl, Pt{ax, ay}), Geo.place(pl, Pt{bx, ay}), Geo.place(pl, Pt{bx, by}), Geo.place(pl, Pt{ax, by})]
 
-# a graphic form (segment, gr_*, fp_*) placed by pl
-def Board.graphic.k(i: Nat, +x: S.Sx, +key: String, +layer: String, +pl: Place) -> List<&2, Item>:
+def Board.graphic.k(i: Nat, +x: S.Sx, +key: String, +sig: U32, +layer: U32, +pl: Place) -> List<&2, Item>:
   match i:
     case 0n:
-      [Js.item(key, layer, "s", Js.pts([Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "end"))]), Board.width(x), False{})]
+      [Item{key, sig, layer, PSeg{Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "end")), Board.width(x)}}]
     case 1n:
-      [Js.item(key, layer, "l", Js.pts(Arc.points(Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "mid")), Geo.place(pl, Geo.at(x, "end")))), Board.width(x), False{})]
+      [Item{key, sig, layer, PLine{Arc.points(Geo.place(pl, Geo.at(x, "start")), Geo.place(pl, Geo.at(x, "mid")), Geo.place(pl, Geo.at(x, "end"))), Board.width(x)}}]
     case 2n:
-      [Board.circle(key, layer, Geo.place(pl, Geo.at(x, "center")), Geo.place(pl, Geo.at(x, "end")), Board.width(x), Board.filled(x))]
+      [Item{key, sig, layer, PCirc{Geo.place(pl, Geo.at(x, "center")), Board.dist(Geo.at(x, "center"), Geo.at(x, "end")), Board.width(x), Board.filled(x)}}]
     case 3n:
-      [Board.rect(key, layer, Geo.at(x, "start"), Geo.at(x, "end"), pl, Board.width(x), Board.filled(x))]
+      [Item{key, sig, layer, PPoly{Board.rect(Geo.at(x, "start"), Geo.at(x, "end"), pl), Board.width(x), Board.filled(x)}}]
     case 4n:
-      [Js.item(key, layer, "p", Js.pts(Board.pts(S.Sx.args(S.Sx.get(x, "pts")), pl)), Board.width(x), Board.filled(x))]
+      [Item{key, sig, layer, PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), pl), Board.width(x), Board.filled(x)}}]
     case _:
       Nil{}
 
@@ -234,20 +224,20 @@ def Board.kind.k(gr: Bool, fp: Bool, seg: Bool, arc: Bool, +name: String) -> Nat
     case _ _ _ _:
       9n
 
-# "gr_line" -> "line", "fp_arc" -> "arc", "segment" -> "line", "arc" -> "arc"
+# "gr_line" -> line, "fp_arc" -> arc, "segment" -> line, "arc" -> arc
 def Board.kind(+name: String) -> Nat:
   Board.kind.k(String.starts_with(name, "gr_"), String.starts_with(name, "fp_"), String.eq(name, "segment"), String.eq(name, "arc"), name)
 
-def Board.graphic(+x: S.Sx, +key: String, +pl: Place) -> List<&2, Item>:
-  Board.graphic.k(Board.kind(S.Sx.name(x)), x, key, S.Sx.attr(x, "layer"), pl)
+def Board.graphic(+x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
+  Board.graphic.k(Board.kind(S.Sx.name(x)), x, key, sig, Layer.id(S.Sx.attr(x, "layer")), pl)
 
 # Vias and pads
 # -------------
 
-def Board.via(+x: S.Sx, +key: String) -> List<&2, Item>:
+def Board.via(+x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
   +c = Geo.at(x, "at")
-  [Js.item(key, "via", "c", Js.pts([c]) ++ "," ++ Js.num(F32.div(S.Sx.f(S.Sx.get(x, "size"), 0n), 2.0)), 0.0, True{}),
-   Js.item(key ++ "/h", "hole", "c", Js.pts([c]) ++ "," ++ Js.num(F32.div(S.Sx.f(S.Sx.get(x, "drill"), 0n), 2.0)), 0.0, True{})]
+  [Item{key, sig, 23, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "size"), 0n), 2.0), 0.0, True{}}},
+   Item{key ++ "/h", sig, 24, PCirc{c, F32.div(S.Sx.f(S.Sx.get(x, "drill"), 0n), 2.0), 0.0, True{}}}]
 
 def Pad.frame(c: Pt, +a: F32) -> Place:
   match c:
@@ -261,78 +251,78 @@ def Pad.corners(+c: Pt, +w: F32, +h: F32, +a: F32) -> List<&2, Pt>:
   [Geo.place(Pad.frame(c, a), Pt{F32.neg(hw), F32.neg(hh)}), Geo.place(Pad.frame(c, a), Pt{hw, F32.neg(hh)}),
    Geo.place(Pad.frame(c, a), Pt{hw, hh}), Geo.place(Pad.frame(c, a), Pt{F32.neg(hw), hh})]
 
-def Pad.oval(+key: String, +layer: String, +c: Pt, +w: F32, +h: F32, +a: F32) -> Item:
+def Pad.oval(+c: Pt, +w: F32, +h: F32, +a: F32) -> Prim:
   +horiz = F32.is_ge(w, h)
   +half = F32.div(F32.sub(Bool.pick(F32, horiz, w, h), Bool.pick(F32, horiz, h, w)), 2.0)
-  Js.item(key, layer, "s", Js.pts([Geo.place(Pad.frame(c, a), Bool.pick(Pt, horiz, Pt{F32.neg(half), 0.0}, Pt{0.0, F32.neg(half)})),
-    Geo.place(Pad.frame(c, a), Bool.pick(Pt, horiz, Pt{half, 0.0}, Pt{0.0, half}))]), Bool.pick(F32, horiz, h, w), True{})
+  PSeg{Geo.place(Pad.frame(c, a), Bool.pick(Pt, horiz, Pt{F32.neg(half), 0.0}, Pt{0.0, F32.neg(half)})),
+    Geo.place(Pad.frame(c, a), Bool.pick(Pt, horiz, Pt{half, 0.0}, Pt{0.0, half})), Bool.pick(F32, horiz, h, w)}
 
-def Pad.shape.k(circle: Bool, oval: Bool, +key: String, +layer: String, +c: Pt, +w: F32, +h: F32, +a: F32) -> Item:
+def Pad.shape.k(circle: Bool, oval: Bool, +c: Pt, +w: F32, +h: F32, +a: F32) -> Prim:
   match circle oval:
     case True{} _:
-      Js.item(key, layer, "c", Js.pts([c]) ++ "," ++ Js.num(F32.div(w, 2.0)), 0.0, True{})
+      PCirc{c, F32.div(w, 2.0), 0.0, True{}}
     case False{} True{}:
-      Pad.oval(key, layer, c, w, h, a)
+      Pad.oval(c, w, h, a)
     case False{} False{}:
-      Js.item(key, layer, "p", Js.pts(Pad.corners(c, w, h, a)), 0.0, True{})
+      PPoly{Pad.corners(c, w, h, a), 0.0, True{}}
 
-def Pad.hole.k(has: Bool, +key: String, +c: Pt, +d: F32) -> List<&2, Item>:
+def Pad.hole.k(has: Bool, +key: String, +sig: U32, +c: Pt, +d: F32) -> List<&2, Item>:
   match has:
     case True{}:
-      [Js.item(key ++ "/h", "hole", "c", Js.pts([c]) ++ "," ++ Js.num(F32.div(d, 2.0)), 0.0, True{})]
+      [Item{key ++ "/h", sig, 24, PCirc{c, F32.div(d, 2.0), 0.0, True{}}}]
     case False{}:
       Nil{}
 
 # a pad on its first listed layer ("*.Cu" draws on both sides), plus its hole
-def Board.pad(+x: S.Sx, +key: String, +pl: Place) -> List<&2, Item>:
+def Board.pad(+x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
   +at = S.Sx.get(x, "at")
   +c = Geo.place(pl, Geo.pt(at))
   +size = S.Sx.get(x, "size")
   +shape = S.Sx.arg(x, 1n)
   +drill = S.Sx.f(S.Sx.get(x, "drill"), 0n)
-  Pad.shape.k(String.eq(shape, "circle"), String.eq(shape, "oval"), key, S.Sx.arg(S.Sx.get(x, "layers"), 0n), c,
-    S.Sx.f(size, 0n), S.Sx.f(size, 1n), Geo.rad(F32.neg(S.Sx.f(at, 2n))))
-  <> Pad.hole.k(F32.is_gt(drill, 0.0), key, c, drill)
+  Item{key, sig, Layer.id(S.Sx.arg(S.Sx.get(x, "layers"), 0n)), Pad.shape.k(String.eq(shape, "circle"), String.eq(shape, "oval"), c,
+    S.Sx.f(size, 0n), S.Sx.f(size, 1n), Geo.rad(F32.neg(S.Sx.f(at, 2n))))}
+  <> Pad.hole.k(F32.is_gt(drill, 0.0), key, sig, c, drill)
 
 # Footprints
 # ----------
 
-def Fp.child.k(pad: Bool, +x: S.Sx, +key: String, +pl: Place) -> List<&2, Item>:
+def Fp.child.k(pad: Bool, +x: S.Sx, +key: String, +sig: U32, +pl: Place) -> List<&2, Item>:
   match pad:
     case True{}:
-      Board.pad(x, key, pl)
+      Board.pad(x, key, sig, pl)
     case False{}:
-      Board.graphic(x, key, pl)
+      Board.graphic(x, key, sig, pl)
 
-def Fp.children(xs: List<&2, S.Sx>, +fp: String, +pl: Place, +i: Nat) -> List<&2, Item>:
+def Fp.children(xs: List<&2, S.Sx>, +fp: String, +sig: U32, +pl: Place, +i: Nat) -> List<&2, Item>:
   match xs:
     case Nil{}:
       Nil{}
     case +x <> t:
       List.append(&2, Item,
-        Fp.child.k(String.eq(S.Sx.name(x), "pad"), x, fp ++ "/" ++ Board.key(x, Nat.show(i)), pl),
-        Fp.children(t, fp, pl, 1n+i))
+        Fp.child.k(String.eq(S.Sx.name(x), "pad"), x, fp ++ "/" ++ Board.key(x, Nat.show(i)), sig, pl),
+        Fp.children(t, fp, sig, pl, 1n+i))
 
-def Board.footprint(+x: S.Sx, +key: String) -> List<&2, Item>:
+def Board.footprint(+x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
   +at = S.Sx.get(x, "at")
-  Fp.children(S.Sx.args(x), key, Place{S.Sx.f(at, 0n), S.Sx.f(at, 1n), Geo.rad(S.Sx.f(at, 2n))}, 0n)
-
-def Zone.fill.k(hit: Bool, +x: S.Sx, +key: String, +i: Nat, rest: List<&2, Item>) -> List<&2, Item>:
-  match hit:
-    case True{}:
-      Js.item(key ++ "/f" ++ Nat.show(i), S.Sx.attr(x, "layer"), "p", Js.pts(Board.pts(S.Sx.args(S.Sx.get(x, "pts")), Board.home())), 0.0, True{}) <> rest
-    case False{}:
-      rest
+  Fp.children(S.Sx.args(x), key, sig, Place{S.Sx.f(at, 0n), S.Sx.f(at, 1n), Geo.rad(S.Sx.f(at, 2n))}, 0n)
 
 # Zones
 # -----
 
-def Zone.fills(xs: List<&2, S.Sx>, +key: String, +i: Nat) -> List<&2, Item>:
+def Zone.fill.k(hit: Bool, +x: S.Sx, +key: String, +sig: U32, +i: Nat, rest: List<&2, Item>) -> List<&2, Item>:
+  match hit:
+    case True{}:
+      Item{key ++ "/f" ++ Nat.show(i), sig, Layer.id(S.Sx.attr(x, "layer")), PPoly{Board.pts(S.Sx.args(S.Sx.get(x, "pts")), Board.home()), 0.0, True{}}} <> rest
+    case False{}:
+      rest
+
+def Zone.fills(xs: List<&2, S.Sx>, +key: String, +sig: U32, +i: Nat) -> List<&2, Item>:
   match xs:
     case Nil{}:
       Nil{}
     case +x <> t:
-      Zone.fill.k(String.eq(S.Sx.name(x), "filled_polygon"), x, key, i, Zone.fills(t, key, 1n+i))
+      Zone.fill.k(String.eq(S.Sx.name(x), "filled_polygon"), x, key, sig, i, Zone.fills(t, key, sig, 1n+i))
 
 # Forms
 # -----
@@ -340,25 +330,33 @@ def Zone.fills(xs: List<&2, S.Sx>, +key: String, +i: Nat) -> List<&2, Item>:
 def Board.forms() -> List<&2, String>:
   ["segment", "arc", "via", "footprint", "zone", "gr_line", "gr_arc", "gr_circle", "gr_rect", "gr_poly"]
 
-def Board.form.k(i: Nat, +x: S.Sx, +key: String) -> List<&2, Item>:
+def Board.form.k(i: Nat, +x: S.Sx, +key: String, +sig: U32) -> List<&2, Item>:
   match i:
     case 2n:
-      Board.via(x, key)
+      Board.via(x, key, sig)
     case 3n:
-      Board.footprint(x, key)
+      Board.footprint(x, key, sig)
     case 4n:
-      Zone.fills(S.Sx.args(x), key, 0n)
+      Zone.fills(S.Sx.args(x), key, sig, 0n)
     case 9n:
       Nil{}
     case _:
-      Board.graphic(x, key, Board.home())
+      Board.graphic(x, key, sig, Board.home())
 
 # the items one top-level form draws; unknown forms draw nothing
-def Board.form(+x: S.Sx, +i: Nat) -> List<&2, Item>:
-  Board.form.k(Board.index(Board.forms(), S.Sx.name(x)), x, Board.key(x, "n" ++ Nat.show(i)))
+def Board.form(+x: S.Sx, +i: Nat, +sig: U32) -> List<&2, Item>:
+  Board.form.k(Board.index(Board.forms(), S.Sx.name(x)), x, Board.key(x, "n" ++ Nat.show(i)), sig)
 
-def Board.one(bs: List<&2, U32>, +i: Nat) -> List<&2, Item>:
-  Board.form(S.Sx.parse(bs), i)
+# FNV-1a over the form's bytes: its signature
+def Board.hash(bs: List<&2, U32>, +h: U32) -> U32:
+  match bs:
+    case Nil{}:
+      h
+    case b <> t:
+      Board.hash(t, (U32.xor(h, b) * 16777619 : U32))
+
+def Board.one(+bs: List<&2, U32>, +i: Nat) -> List<&2, Item>:
+  Board.form(S.Sx.parse(bs), i, Board.hash(bs, 2166136261))
 
 # Parallel conversion
 # -------------------

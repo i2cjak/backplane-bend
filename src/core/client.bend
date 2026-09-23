@@ -317,3 +317,25 @@ def Ui.draft_text(u: Ui) -> String:
   match u:
     case Ui{_, +sel, drafts, _, _, _, _, _, _, _, _, _, _}:
       Str.get(drafts, sel)
+
+def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
+  (_, p) = r
+  match p:
+    case M.Project{_, _, root, _, _}:
+      root
+
+def Ui.project_root(s: M.State, +id: String) -> String:
+  match s:
+    case M.State{ps, _, _, _}:
+      Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
+
+def Ui.thread_project(t: M.Thread) -> String:
+  match t:
+    case M.Thread{_, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      p
+
+# the selected thread's project directory ("" with nothing selected)
+def Ui.root(u: Ui) -> String:
+  match u:
+    case Ui{+st, +sel, _, _, _, _, _, _, _, _, _, _, _}:
+      Bool.pick(String, String.is_empty(sel), "", Ui.project_root(st, Ui.thread_project(Ui.thread(st, sel))))

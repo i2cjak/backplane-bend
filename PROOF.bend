@@ -1,6 +1,8 @@
 import Base
 import ./LAWS.bend as Laws
 import ./src/core/model.bend as M
+import ./src/app/viewer.bend as V
+import ./src/core/board.bend as B
 
 # Lemmas
 # ------
@@ -215,3 +217,82 @@ def Laws.sidebar_split_count(ts):
         put_count(M.Shelf.of(t), t, M.Sidebar.split(rest)),
         Equal.cong(Nat, Nat, x => 1n+x, M.Shelves.count(M.Sidebar.split(rest)), List.length(&2, M.Thread, rest),
           Laws.sidebar_split_count(rest)))
+
+# Viewer lemmas
+# -------------
+
+law sub_self:
+  for a: Nat
+  {Nat.sub(a, a) == 0n : Nat}
+
+def sub_self(a):
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      sub_self(p)
+
+law key_fin_rec:
+  for -h1: Char
+  for -h2: Char
+  for r: (String & String) & Cmp
+  {V.Key.cmp.fin(String.cmp.rec(h1, h2, r)) == V.Key.cmp.fin(r) : Cmp}
+
+def key_fin_rec(h1, h2, r):
+  match r:
+    case (ab, c):
+      match ab:
+        case (a, b):
+          {==}
+
+# a key is in order with itself
+law key_cmp_refl:
+  for +s: String
+  {V.Key.cmp(s, s) == EQ{} : Cmp}
+
+def key_cmp_refl(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+h, +t}:
+      match h:
+        case Chr{+x}:
+          %Equal.sym(Cmp, U32.cmp(x, x), EQ{}, u32_cmp_refl(x)) : {V.Key.cmp.fin(String.cmp.fin(t, t, ((Chr{x}, Chr{x}), _))) == EQ{} : Cmp}
+          Equal.trans(Cmp, V.Key.cmp.fin(String.cmp.rec(Chr{x}, Chr{x}, String.cmp(t, t))),
+            V.Key.cmp.fin(String.cmp(t, t)), EQ{},
+            key_fin_rec(Chr{x}, Chr{x}, String.cmp(t, t)), key_cmp_refl(t))
+
+law u32_eq_refl:
+  for +x: U32
+  {U32.is_eq(x, x) == True{} : Bool}
+
+def u32_eq_refl(x):
+  %Equal.sym(Cmp, U32.cmp(x, x), EQ{}, u32_cmp_refl(x)) : {Cmp.is_eq(_) == True{} : Bool}
+  {==}
+
+# Viewer laws
+# -----------
+
+def Laws.fade_done(born, k):
+  %Equal.sym(Bool, Nat.is_ge(Nat.add(Nat.add(born, V.Fade.ms()), k), Nat.add(born, V.Fade.ms())), True{},
+    ge_add(Nat.add(born, V.Fade.ms()), Nat.add(born, V.Fade.ms()), k, Nat.ge_refl(Nat.add(born, V.Fade.ms()))))
+    : {V.Fade.alpha.k(_, Nat.sub(Nat.add(Nat.add(born, V.Fade.ms()), k), born)) == 255 : U32}
+  {==}
+
+def Laws.fade_start(born):
+  %Equal.sym(Bool, Nat.is_ge(born, Nat.add(born, V.Fade.ms())), False{}, ge_past(born, 219n))
+    : {V.Fade.alpha.k(_, Nat.sub(born, born)) == 0 : U32}
+  %Equal.sym(Nat, Nat.sub(born, born), 0n, sub_self(born)) : {V.Fade.alpha.k(False{}, _) == 0 : U32}
+  {==}
+
+def Laws.scene_merge_self(ss, now):
+  match ss:
+    case Nil{}:
+      {==}
+    case V.Seen{B.Item{+k, +s, +l, +p}, +b} <> +t:
+      %Equal.sym(Cmp, V.Key.cmp(k, k), EQ{}, key_cmp_refl(k))
+        : {V.Scene.merge(V.Seen{B.Item{k, s, l, p}, b} <> t, B.Item{k, s, l, p} <> V.Scene.items(t), _, now) == V.Seen{B.Item{k, s, l, p}, b} <> t : List<&2, V.Seen>}
+      %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s))
+        : {V.Scene.keep(_, B.Item{k, s, l, p}, b, now) <> V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now) == V.Seen{B.Item{k, s, l, p}, b} <> t : List<&2, V.Seen>}
+      Equal.cong(List<&2, V.Seen>, List<&2, V.Seen>, xs => V.Seen{B.Item{k, s, l, p}, b} <> xs,
+        V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now), t, Laws.scene_merge_self(t, now))
