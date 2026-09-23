@@ -38,11 +38,33 @@ static __attribute__((unused)) Term host_bytes(Env e, const uint8_t* p, u64 n) {
   return xs;
 }
 
+// Socket handles may also wrap a pty master (see pty.c): recv and send
+// answer ENOTSOCK there, so they fall back to read and write. A pty whose
+// other side has closed reads EIO, which means end of stream.
+static __attribute__((unused)) ssize_t host_read(int fd, void* p, size_t n) {
+  ssize_t r = recv(fd, p, n, 0);
+  if (r < 0 && errno == ENOTSOCK) {
+    r = read(fd, p, n);
+    if (r < 0 && errno == EIO) {
+      r = 0;
+    }
+  }
+  return r;
+}
+
+static __attribute__((unused)) ssize_t host_write(int fd, const void* p, size_t n) {
+  ssize_t r = send(fd, p, n, MSG_NOSIGNAL);
+  if (r < 0 && errno == ENOTSOCK) {
+    r = write(fd, p, n);
+  }
+  return r;
+}
+
 // Sends what is left of w->data; a full socket parks until writable.
 static __attribute__((unused)) Term host_send_more(Env e, IoWork* w) {
   int fd = (int)w->hand;
   while (w->code == 0 && (u64)w->made < w->size) {
-    ssize_t n = send(fd, w->data + w->made, w->size - (u64)w->made, MSG_NOSIGNAL);
+    ssize_t n = host_write(fd, w->data + w->made, w->size - (u64)w->made);
     if (n < 0 && errno == EAGAIN) {
       return io_wait_on(w, fd, POLLOUT, 0, host_send_more);
     }
@@ -75,7 +97,7 @@ static void __attribute__((constructor)) clock_epoch_use(void) {
 
 static Term sock_recv_bytes_more(Env e, IoWork* w) {
   int fd  = (int)w->hand;
-  w->size = io_sys_end(w, recv(fd, w->data, (size_t)w->made, 0));
+  w->size = io_sys_end(w, host_read(fd, w->data, (size_t)w->made));
   if (w->code == EAGAIN) {
     return io_wait_on(w, fd, POLLIN, 0, sock_recv_bytes_more);
   }
