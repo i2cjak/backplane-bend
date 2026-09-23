@@ -1,0 +1,72 @@
+import Base
+import ./json.bend as J
+
+# Machines on the tailnet. Every machine the same person owns may run a
+# Backplane hub; each hub finds the others (`tailscale status --json`,
+# then a GET /hello on each online peer) and lets its owner's devices in
+# without the pairing token: Tailscale has already said who they are
+# (`tailscale whois`). Anyone else still needs the token.
+
+# the login that owns a node, from `tailscale whois --json <ip>`
+def Tailnet.login(+whois: String) -> String:
+  J.Json.get_str(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(whois), J.Null{}), "UserProfile"), "LoginName", "")
+
+# a peer is let in when it has an owner and that owner is ours (tagged
+# devices have no person behind them)
+def Tailnet.trusts(+owner: String, +login: String) -> Bool:
+  Bool.and(Bool.and(Bool.not(String.is_empty(owner)), String.eq(owner, login)), Bool.not(String.eq(login, "tagged-devices")))
+
+# A machine a client can switch to
+type Machine is Data:
+  Machine{name: String, ip: String, online: Bool}
+
+def Tailnet.first_ip(ips: List<&2, J.Json>) -> String:
+  match ips:
+    case J.Str{s} <> _:
+      s
+    case _:
+      ""
+
+def Tailnet.host(+p: J.Json) -> String:
+  J.Json.get_str(p, "HostName", Maybe.default(&2, String, List.head(&2, String, String.split(J.Json.get_str(p, "DNSName", ""), '.')), ""))
+
+def Tailnet.peer.k(mine: Bool, +p: J.Json, rest: List<&2, Machine>) -> List<&2, Machine>:
+  match mine:
+    case True{}:
+      Machine{Tailnet.host(p), Tailnet.first_ip(J.Json.elems(J.Json.get_obj(p, "TailscaleIPs"))), J.Json.get_bool(p, "Online", False{})} <> rest
+    case False{}:
+      rest
+
+def Tailnet.peers.go(fs: J.Json, +uid: String, acc: List<&2, Machine>) -> List<&2, Machine>:
+  match fs:
+    case J.Field{_, +p, t}:
+      Tailnet.peers.go(t, uid, Tailnet.peer.k(Bool.and(Bool.not(String.is_empty(uid)), String.eq(J.Json.as_raw(J.Json.get(p, "UserID"), ""), uid)), p, acc))
+    case _:
+      acc
+
+def Tailnet.peers.of(o: J.Json, +uid: String) -> List<&2, Machine>:
+  match o:
+    case J.Obj{fs}:
+      List.reverse(&2, Machine, Tailnet.peers.go(fs, uid, Nil{}))
+    case _:
+      Nil{}
+
+# the owner's other machines, from `tailscale status --json`
+def Tailnet.peers(+status: String) -> List<&2, Machine>:
+  Tailnet.peers.of(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Peer"),
+    J.Json.as_raw(J.Json.get(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Self"), "UserID"), ""))
+
+def Tailnet.online.k(on: Bool, m: Machine, rest: List<&2, Machine>) -> List<&2, Machine>:
+  match on:
+    case True{}:
+      m <> rest
+    case False{}:
+      rest
+
+# only machines that are up (and have an address) are worth asking
+def Tailnet.online(ms: List<&2, Machine>) -> List<&2, Machine>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case Machine{n, +ip, +on} <> t:
+      Tailnet.online.k(Bool.and(on, Bool.not(String.is_empty(ip))), Machine{n, ip, on}, Tailnet.online(t))

@@ -28,6 +28,11 @@ def Sock.dup(sock: Socket) -> IO(Socket & Result<&1, &1, U32 & String, Socket>):
   import "./effects/host.c"
   import "./effects/host.js"
 
+# the peer's IP address ("" when unknown)
+def Sock.peer(sock: Socket) -> IO(Socket & String):
+  import "./effects/host.c"
+  import "./effects/host.js"
+
 # end our writing side; the peer reads EOF
 def Sock.shutdown(sock: Socket) -> IO(Socket):
   import "./effects/host.c"

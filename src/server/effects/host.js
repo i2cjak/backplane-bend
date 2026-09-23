@@ -91,6 +91,10 @@ function sock_dup(socket) {
   return io_tup(socket, got < 0 ? io_fail(io_sys().errno()) : io_done(got));
 }
 
+function sock_peer(socket) {
+  return io_tup(socket, "");
+}
+
 function sock_shutdown(socket) {
   host_libc().shutdown(socket, 1);
   return socket;

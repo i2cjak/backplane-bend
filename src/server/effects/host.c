@@ -193,6 +193,33 @@ static void __attribute__((constructor)) sock_dup_use(void) {
 
 #endif
 
+#ifdef CID_SOCK_PEER
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+
+// The peer's IP address as text ("" when it has none, e.g. a socketpair).
+Term sock_peer_run(Env e, Term* f, IoWork* w) {
+  int fd = (int)io_hand_v(f[0]);
+  struct sockaddr_storage a;
+  socklen_t n = sizeof a;
+  char buf[INET6_ADDRSTRLEN] = {0};
+  if (getpeername(fd, (struct sockaddr*)&a, &n) == 0) {
+    if (a.ss_family == AF_INET) {
+      inet_ntop(AF_INET, &((struct sockaddr_in*)&a)->sin_addr, buf, sizeof buf);
+    } else if (a.ss_family == AF_INET6) {
+      inet_ntop(AF_INET6, &((struct sockaddr_in6*)&a)->sin6_addr, buf, sizeof buf);
+    }
+  }
+  return io_tup(e, io_hand(fd), io_str(e, buf, strlen(buf)));
+}
+
+static void __attribute__((constructor)) sock_peer_use(void) {
+  io_eff(CID_SOCK_PEER, sock_peer_run, 0);
+}
+
+#endif
+
 #ifdef CID_SOCK_SHUTDOWN
 
 // Ends our writing side (the peer reads EOF); reading continues.
