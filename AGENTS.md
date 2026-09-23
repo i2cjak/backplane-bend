@@ -18,7 +18,10 @@ When using Bend:
 - `PROOF.bend`: a proof of every law. `bend PROOF.bend` must print "All terms check."
 - `src/core/`: pure Bend. JSON, S-expressions, the event-sourced thread model, the settle rule, sidebar order, KiCad parsing, scene diff and fade, semver, and the prompt/skills logic. No IO here.
 - `src/server/`: the Bend program that owns IO: HTTP/WebSocket, the event store, agent processes, git, file watching, and updates. Custom effects (`*.c` + `*.js` twins) are in `src/server/effects/`.
-- `src/web/`: the browser UI. View logic is Bend (`*.bend`); `host.js` only touches the DOM, canvas, and socket, and holds no product logic.
+- `src/app/`: the native app (the default `backplane`). A Bend window client in the same process as the hub: `nui.bend` (input → state, pure), `layout.bend` (state → draw ops + hit regions), `main.bend` (event loop), `effects/win.c` (X11 window, dlopen'd libX11).
+- `src/gfx/`: the rasterizer. Draw ops become Base's `Image` quadtree in parallel (`raster.bend`); `draw.bend` builds ops; `font.bend` is generated from Spleen 8x16.
+- `src/core/client.bend`: the client state and actions both UIs share.
+- `src/web/`: the web client for other devices (Tailscale, phone). View logic is Bend; `host.js` only touches the DOM, canvas and socket, and holds no product logic.
 - `test/`: Bend test programs (`bend test/x.bend`), run by `scripts/test.sh`.
 - `docs/reference/t3code-parity.md`: what the TS product did; `docs/parity.md`: what we match so far.
 
@@ -31,7 +34,9 @@ scripts/build.sh      # native server binary + web bundle into dist/
 dist/backplane        # run it (opens http://127.0.0.1:3773)
 ```
 
-Native builds need clang 19+. On a machine without it, `~/.local/bin/clang` may be a `zig cc` shim.
+Native builds need clang 19+ and X11 headers (`libx11-dev`). Without root, `~/.local/bin/clang` may be a `zig cc` shim, and `BACKPLANE_X11=~/.local/x11` points the build at headers extracted from the .deb.
+
+Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/snap.ppm build/backplane --home /tmp/bp-x`, drive it with `build/xpoke` (`test/tools/xpoke.c`: click/type/key/wheel), and view frames with `scripts/ppm-to-png.py`.
 
 ## Bend traps (learned here, keep adding)
 
@@ -51,6 +56,9 @@ Native builds need clang 19+. On a machine without it, `~/.local/bin/clang` may 
 - IO loops: a looping def passes a continuation lambda that calls itself with less fuel (`r => Helper(r, x2 => Loop(f, x2))`). The helper must never name the loop, or the two become mutually recursive.
 - Put the shrinking argument first even in IO loops (`Hub.commit(cs, h, …)`, not `(h, cs, …)`).
 - `where` is a keyword.
+- Constructor ids of module types are path-qualified in C (`CID__HOME_..._WKEY`), so an effect cannot build them. Effects return Base types (lists of U32, strings, tuples) and Bend decodes them (`Win.decode`).
+- Names Base already uses (`Event`, `App`, `Kind`) cannot be redeclared.
+- `Tools`: `scripts/bend-order.py FILE` fixes def order (and reports mutual-recursion cycles); `scripts/bend-reuse.sh FILE` marks binders reported as consumed twice.
 - Rewrites: `%e : P` with `e : {a == b}` turns a goal `P[_ := b]` into `P[_ := a]`. Use `Equal.sym` to flip direction and `Equal.trans` to chain.
 
 ## House rules

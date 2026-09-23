@@ -1,7 +1,7 @@
 import Base
 import ../core/json.bend as J
 import ./dom.bend as D
-import ./ui.bend as U
+import ../core/client.bend as U
 import ./view.bend as V
 
 # What host.js calls. Everything the page decides happens behind these.

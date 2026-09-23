@@ -1,13 +1,13 @@
 import Base
-import ../core/json.bend as J
-import ../core/model.bend as M
-import ../core/codec.bend as C
-import ./dom.bend as D
+import ./json.bend as J
+import ./model.bend as M
+import ./codec.bend as C
 
-# The browser app, Elm-style: the host feeds server messages to Ui.recv and
-# user actions to Ui.act, and renders Ui.view. The read model is folded by
-# the same State.apply the server uses (law replay_snoc), so what the page
-# shows is exactly what the server stored.
+# The client state, Elm-style, shared by the native window and the web
+# page: a host feeds server messages to Ui.recv and user actions to Ui.act,
+# then draws the result. The read model is folded by the same State.apply
+# the server uses (law replay_snoc), so what a client shows is exactly what
+# the server stored.
 
 type Ui is Data:
   Ui{
@@ -303,3 +303,17 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
 # a user action with its value
 def Ui.act(u: Ui, +action: String, +value: String) -> Act:
   Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
+
+# Reading the client state
+# ------------------------
+
+def Ui.sel(u: Ui) -> String:
+  match u:
+    case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _}:
+      sel
+
+# the selected thread's draft
+def Ui.draft_text(u: Ui) -> String:
+  match u:
+    case Ui{_, +sel, drafts, _, _, _, _, _, _, _, _, _, _}:
+      Str.get(drafts, sel)

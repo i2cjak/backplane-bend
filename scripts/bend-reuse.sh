@@ -12,7 +12,7 @@ for i in $(seq 1 40); do
 import sys, re
 line, var, p = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 L = open(p).read().split('\n'); s = L[line - 1]
-s2 = re.sub(r'(?<![\w+.])' + re.escape(var) + r'(?=[,}\s)])', '+' + var, s, count=1)
+s2 = re.sub(r'(?<![\w+.])' + re.escape(var) + r'(?=[,}\s):])', '+' + var, s, count=1)
 if s2 == s: sys.exit(1)
 L[line - 1] = s2; open(p, 'w').write('\n'.join(L)); print("marked +" + var + " at line", line)
 PY

@@ -1,0 +1,72 @@
+// xpoke: send synthetic input to the Backplane window (tests only).
+//   xpoke click X Y        left click
+//   xpoke type TEXT        type characters (ASCII)
+//   xpoke key NAME         press a named key (Return, BackSpace, Escape...)
+//   xpoke wheel X Y up|down
+// Build: cc -I<x11 include> test/tools/xpoke.c -o build/xpoke -lX11
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static Window find(Display* d, Window w, const char* name) {
+  char* n = NULL;
+  if (XFetchName(d, w, &n) && n) {
+    int hit = strcmp(n, name) == 0;
+    XFree(n);
+    if (hit) return w;
+  }
+  Window root, parent, *kids = NULL;
+  unsigned nk = 0;
+  if (!XQueryTree(d, w, &root, &parent, &kids, &nk)) return 0;
+  Window got = 0;
+  for (unsigned i = 0; i < nk && !got; i++) got = find(d, kids[i], name);
+  if (kids) XFree(kids);
+  return got;
+}
+
+static void key(Display* d, Window w, KeySym ks, unsigned state) {
+  XKeyEvent e = { 0 };
+  e.display = d; e.window = w; e.root = DefaultRootWindow(d);
+  e.same_screen = True; e.state = state;
+  e.keycode = XKeysymToKeycode(d, ks);
+  e.type = KeyPress; XSendEvent(d, w, True, KeyPressMask, (XEvent*)&e);
+  e.type = KeyRelease; XSendEvent(d, w, True, KeyReleaseMask, (XEvent*)&e);
+}
+
+static void button(Display* d, Window w, int x, int y, unsigned b) {
+  XButtonEvent e = { 0 };
+  e.display = d; e.window = w; e.root = DefaultRootWindow(d);
+  e.same_screen = True; e.x = x; e.y = y; e.button = b;
+  e.type = ButtonPress; XSendEvent(d, w, True, ButtonPressMask, (XEvent*)&e);
+  e.type = ButtonRelease; XSendEvent(d, w, True, ButtonReleaseMask, (XEvent*)&e);
+}
+
+int main(int argc, char** argv) {
+  Display* d = XOpenDisplay(NULL);
+  if (!d || argc < 2) return 1;
+  Window w = find(d, DefaultRootWindow(d), "Backplane");
+  if (!w) { fprintf(stderr, "no Backplane window\n"); return 1; }
+  if (!strcmp(argv[1], "click") && argc == 4) {
+    button(d, w, atoi(argv[2]), atoi(argv[3]), 1);
+  } else if (!strcmp(argv[1], "wheel") && argc == 5) {
+    button(d, w, atoi(argv[2]), atoi(argv[3]), strcmp(argv[4], "up") ? 5 : 4);
+  } else if (!strcmp(argv[1], "type") && argc == 3) {
+    for (const char* c = argv[2]; *c; c++) {
+      char name[2] = { *c, 0 };
+      KeySym ks = *c == ' ' ? XK_space : *c == '.' ? XK_period : *c == ',' ? XK_comma
+        : *c == '?' ? XK_question : *c == '!' ? XK_exclam : *c == '/' ? XK_slash
+        : *c == '-' ? XK_minus : XStringToKeysym(name);
+      unsigned shift = (*c >= 'A' && *c <= 'Z') || *c == '?' || *c == '!' ? ShiftMask : 0;
+      key(d, w, ks, shift);
+    }
+  } else if (!strcmp(argv[1], "key") && argc == 3) {
+    key(d, w, XStringToKeysym(argv[2]), 0);
+  } else {
+    return 2;
+  }
+  XFlush(d);
+  XCloseDisplay(d);
+  return 0;
+}

@@ -1,7 +1,7 @@
 import Base
 import ../core/model.bend as M
 import ./dom.bend as D
-import ./ui.bend as U
+import ../core/client.bend as U
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
