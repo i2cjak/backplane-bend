@@ -281,11 +281,11 @@ def Mcp.read.k(ok: Bool, +s: M.State, +target: String, +limit: Nat) -> Res:
     case False{} _:
       Res.fail("that thread is not in this project")
 
-def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +target: String, +text: String) -> Res:
+def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +thread: String, +target: String, +text: String) -> Res:
   match ok:
     case True{}:
       Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"sent"}}]),
-        B.Hub.post(s, now, target, B.Hub.id("m", now, B.Hub.seq(s)), M.User{}, text)}
+        B.Hub.inbox(s, now, thread, target, M.User{}, text)}
     case False{}:
       Res.fail("that thread is not in this project")
 
@@ -312,7 +312,7 @@ def Mcp.call.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json,
       Mcp.read.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, J.Json.get_str(a, "threadId", ""),
         Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(a, "limit"), "40")), 40n))
     case 6n:
-      Mcp.send.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, now, J.Json.get_str(a, "threadId", ""), J.Json.get_str(a, "text", ""))
+      Mcp.send.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, now, thread, J.Json.get_str(a, "threadId", ""), J.Json.get_str(a, "text", ""))
     case 7n:
       Mcp.view(J.Json.get_str(a, "path", ""), J.Json.get_str(a, "kind", ""))
     case _:

@@ -656,3 +656,29 @@ def Asks.open(s: M.State, +thread: String) -> List<&2, M.Ask>:
 # the sidebar marks a thread that waits on the user
 def Asks.waiting(s: M.State, +thread: String) -> Bool:
   Bool.not(List.is_empty(&2, M.Ask, Asks.open(s, thread)))
+
+# Links between threads
+# ---------------------
+
+type Link2 is Data:
+  Link2{from: String, to: String, at: Nat}
+
+def Links.recent.k(keep: Bool, +from: String, +to: String, +at: Nat, rest: List<&2, Link2>) -> List<&2, Link2>:
+  match keep:
+    case True{}:
+      Link2{from, to, at} <> rest
+    case False{}:
+      rest
+
+def Links.recent.go(es: List<&2, M.Entry>, +now: Nat) -> List<&2, Link2>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case M.Msg{+id, +to, _, _, +at} <> t:
+      Links.recent.k(Bool.and(Bool.not(String.is_empty(M.Link.from(id))), Nat.is_le(now, Nat.add(at, 900n))), M.Link.from(id), to, at, Links.recent.go(t, now))
+    case M.Act{_, _, _, _, _, _} <> t:
+      Links.recent.go(t, now)
+
+# messages between threads in the last 15 minutes (the sidebar draws them)
+def Links.recent(s: M.State, +now: Nat) -> List<&2, Link2>:
+  Links.recent.go(Ui.entries(s), now)

@@ -341,6 +341,14 @@ def Hub.post(+s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role
   Hub.post.go(Bool.and(Hub.running(Hub.thread(s, thread)), Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude"))),
     Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread, msg, role, text)
 
+# a message from another thread (thread_send, a delegated task's result):
+# it lands in the target's inbox and waits while the target works, for
+# every provider (it never interrupts a running turn, Claude's included);
+# its id names the sender, which is what the link visuals read
+def Hub.inbox(+s: M.State, +now: Nat, +from: String, +to: String, role: M.Role, +text: String) -> Step:
+  Hub.post.go(Hub.running(Hub.thread(s, to)), Hub.thread(s, to), Hub.cwd(s, Hub.thread(s, to)), M.Queue.of(s, to), now, to,
+    M.Link.id(from, Hub.id("m", now, Hub.seq(s))), role, text)
+
 def Hub.answer.plan(impl: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, +answer: String, +th: String) -> Step:
   match impl:
     case True{}:
@@ -685,11 +693,11 @@ def Task.word(e: Ended) -> String:
 def Task.note(+id: String, +provider: String, +model: String, +word: String, +summary: String) -> String:
   "[Backplane] Delegated task " ++ id ++ " (" ++ provider ++ Bool.pick(String, String.is_empty(model), "", "/" ++ model) ++ ") " ++ word ++ ":\n\n" ++ summary
 
-def Task.finish.go(deliver: Bool, +s: M.State, +now: Nat, +id: String, +parent: String, +provider: String, +model: String, +word: String, st: M.TaskState, +summary: String, cs: List<&2, M.Change>, os: List<&2, Out>) -> Step:
+def Task.finish.go(deliver: Bool, +s: M.State, +now: Nat, +id: String, +thread: String, +parent: String, +provider: String, +model: String, +word: String, st: M.TaskState, +summary: String, cs: List<&2, M.Change>, os: List<&2, Out>) -> Step:
   match deliver:
     case True{}:
       Step.before(List.append(&2, M.Change, cs, [M.TaskStateSet{id, st, summary, now}, M.TaskDelivered{id, now}]), os,
-        Hub.post(s, now, parent, Hub.id("n", now, Hub.seq(s)), M.System{}, Task.note(id, provider, model, word, summary)))
+        Hub.inbox(s, now, thread, parent, M.System{}, Task.note(id, provider, model, word, summary)))
     case False{}:
       Step{List.append(&2, M.Change, cs, [M.TaskStateSet{id, st, summary, now}]), os}
 
@@ -701,7 +709,7 @@ def Task.finish.k(e: Ended, m: Maybe<&2, M.Task>, +s: M.State, +now: Nat, +threa
       Step{cs, os}
     case +ended Some{M.Task{+id, +parent, _, _, +cur, _, +dl, +provider, +model}}:
       Task.finish.go(M.Task.pending(M.Task{id, parent, thread, 0n, M.TaskState.next(cur, Task.state_of(ended)), "", dl, provider, model}),
-        s, now, id, parent, provider, model, Task.word(ended), Task.state_of(ended), Task.last(s, thread), cs, os)
+        s, now, id, thread, parent, provider, model, Task.word(ended), Task.state_of(ended), Task.last(s, thread), cs, os)
 
 # when a child thread's turn ends, its task ends and the result goes to the
 # parent once (the pending check makes delivery exactly-once)

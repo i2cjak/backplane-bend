@@ -210,3 +210,15 @@ law resend_stored_once:
   for h1: {String.is_empty(msg) == False{} : Bool}
   for h2: {H.Hub.has_msg(H.Hub.entries(s), msg) == True{} : Bool}
   {H.Queue.changes(H.Hub.turn(s, now, client, id, th, text, msg)) == [] : List<&2, M.Change>}
+
+# a message from another thread never interrupts the target's running turn,
+# whatever its provider: it waits in the target's inbox
+law inbox_never_interrupts:
+  for +s: M.State
+  for +now: Nat
+  for +from: String
+  for +to: String
+  for role: M.Role
+  for +text: String
+  for h: {H.Hub.running(H.Hub.thread(s, to)) == True{} : Bool}
+  {H.Step.outs_of(H.Hub.inbox(s, now, from, to, role, text)) == [] : List<&2, H.Out>}

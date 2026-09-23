@@ -133,15 +133,7 @@ def View.entry_thread(e: M.Entry) -> String:
     case M.Act{_, t, _, _, _, _}:
       t
 
-# a thread's entries, oldest first (the state keeps them newest first)
-def View.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<&2, M.Entry>:
-  match es:
-    case Nil{}:
-      acc
-    case +e <> t:
-      View.mine(t, th, View.mine.k(String.eq(View.entry_thread(e), th), e, acc))
-
-def View.entry(e: M.Entry) -> D.Node:
+def View.entry.own(e: M.Entry) -> D.Node:
   match e:
     case M.Msg{id, _, M.User{}, +text, _}:
       D.El{"div", id, [D.At{"class", "msg user"}], [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{text}]}, D.Dom.copy(text)]}
@@ -150,12 +142,53 @@ def View.entry(e: M.Entry) -> D.Node:
     case M.Act{id, _, tone, kind, summary, _}:
       D.El{"div", id, [D.At{"class", "act " ++ tone}], [D.Dom.span("kind", kind), D.Dom.span("summary", summary)]}
 
-def View.entries(es: List<&2, M.Entry>) -> List<&2, D.Node>:
+def View.link(+cls: String, +label: String, +to: String) -> D.Node:
+  D.El{"button", "", [D.At{"class", "link " ++ cls}, D.At{"data-value", to}, D.On{"click", "select"}], [D.Txt{label}]}
+
+def View.from.k(none: Bool, +from: String, +st: M.State) -> List<&2, D.Node>:
+  match none:
+    case True{}:
+      Nil{}
+    case False{}:
+      [View.link("in", "← from " ++ U.Tasks.title(st, from), from)]
+
+# an entry of this thread (headed by the thread that sent it) or a message
+# this thread sent to another (a link)
+def View.entry.k(mine: Bool, e: M.Entry, +st: M.State) -> List<&2, D.Node>:
+  match mine e:
+    case True{} M.Msg{+id, t, r, x, at}:
+      List.append(&2, D.Node, View.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st), [View.entry.own(M.Msg{id, t, r, x, at})])
+    case True{} _:
+      [View.entry.own(e)]
+    case False{} M.Msg{_, +t, _, x, _}:
+      [View.link("out", "→ " ++ U.Tasks.title(st, t) ++ ": " ++ Maybe.default(&2, String, List.head(&2, String, String.split(x, '\n')), ""), t)]
+    case False{} _:
+      Nil{}
+
+def View.entry(+e: M.Entry, +st: M.State, +sel: String) -> List<&2, D.Node>:
+  View.entry.k(String.eq(View.entry_thread(e), sel), e, st)
+
+def View.entry_id(e: M.Entry) -> String:
+  match e:
+    case M.Msg{i, _, _, _, _}:
+      i
+    case M.Act{i, _, _, _, _, _}:
+      i
+
+# a thread's entries, oldest first (the state keeps them newest first)
+def View.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<&2, M.Entry>:
+  match es:
+    case Nil{}:
+      acc
+    case +e <> t:
+      View.mine(t, th, View.mine.k(Bool.or(String.eq(View.entry_thread(e), th), String.eq(M.Link.from(View.entry_id(e)), th)), e, acc))
+
+def View.entries(es: List<&2, M.Entry>, +st: M.State, +sel: String) -> List<&2, D.Node>:
   match es:
     case Nil{}:
       Nil{}
     case e <> t:
-      View.entry(e) <> View.entries(t)
+      List.append(&2, D.Node, View.entry(e, st, sel), View.entries(t, st, sel))
 
 def View.live.k(empty: Bool, running: Bool, text: String) -> List<&2, D.Node>:
   match empty running:
@@ -291,7 +324,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
-          D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{})), D.Dom.cat(View.sending(pend),
+          D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),

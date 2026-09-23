@@ -424,6 +424,25 @@ def Asks.all(s: State) -> List<&2, Ask>:
     case State{_, _, _, _, _, _, _, ak}:
       Map.values(&2, Ask, ak)
 
+# Links between threads
+# ---------------------
+# A message one thread sends another carries the sender in its id:
+# "t:<from>:<n>". Thread ids hold no ':'.
+
+def Link.id(+from: String, +n: String) -> String:
+  "t:" ++ from ++ ":" ++ n
+
+def Link.from.k(ps: List<&2, String>) -> String:
+  match ps:
+    case "t" <> f <> _ <> _:
+      f
+    case _:
+      ""
+
+# the thread a message came from ("" for the user's own)
+def Link.from(+id: String) -> String:
+  Link.from.k(String.split(id, ':'))
+
 # Queued turns
 # ------------
 # A message sent while its thread's turn is running is stored at once (the

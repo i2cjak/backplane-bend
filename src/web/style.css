@@ -154,3 +154,5 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .queued.none { display: none; }
 .queued .label { color: var(--warn); } .queued .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .queued .note { color: var(--faint); }
 .msg.sending { opacity: 0.6; } .msg .note { color: var(--faint); font-size: 11px; }
+.link { align-self: flex-start; background: none; border: 0; border-left: 2px solid var(--accent); color: var(--accent); padding: 2px 8px; font-size: 12px; max-width: 860px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link.in { align-self: flex-end; border-left: 0; border-right: 2px solid var(--accent); }

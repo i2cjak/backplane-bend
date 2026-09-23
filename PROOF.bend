@@ -420,3 +420,7 @@ def Laws.resend_stored_once(s, now, client, id, th, text, msg, h1, h2):
   %Equal.sym(Bool, String.is_empty(msg), False{}, h1) : {H.Queue.changes(H.Hub.turn.m(s, now, client, id, th, text, Bool.pick(String, _, H.Hub.id("m", now, H.Hub.seq(s)), msg), Bool.not(_))) == [] : List<&2, M.Change>}
   %Equal.sym(Bool, H.Hub.has_msg(H.Hub.entries(s), msg), True{}, h2) : {H.Queue.changes(H.Hub.turn.k(Bool.and(True{}, _), s, now, client, id, th, msg, text)) == [] : List<&2, M.Change>}
   {==}
+
+def Laws.inbox_never_interrupts(s, now, from, to, role, text, h):
+  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, to)), True{}, h) : {H.Step.outs_of(H.Hub.post.go(_, H.Hub.thread(s, to), H.Hub.cwd(s, H.Hub.thread(s, to)), M.Queue.of(s, to), now, to, M.Link.id(from, H.Hub.id("m", now, H.Hub.seq(s))), role, text)) == [] : List<&2, H.Out>}
+  {==}

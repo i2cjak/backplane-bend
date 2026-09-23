@@ -274,6 +274,66 @@ def Lay.col.out(c: Col) -> Out:
     case Col{o, _}:
       o
 
+def Links.row.k(sel: Bool, +v: String, +y: U32, m: Map<&2, U32>) -> Map<&2, U32>:
+  match sel:
+    case True{}:
+      Map.set(&2, U32, m, v, (y + 1 : U32))
+    case False{}:
+      m
+
+# Links in the sidebar
+# --------------------
+# A message between two threads draws a connector between their rows in
+# the sidebar gutter: bright while fresh, fading over 15 minutes.
+
+def Links.rows(hs: List<&2, S.Hit>, m: Map<&2, U32>) -> Map<&2, U32>:
+  match hs:
+    case Nil{}:
+      m
+    case S.Hit{_, +y0, _, _, +a, +v} <> t:
+      Links.rows(t, Links.row.k(String.eq(a, "select"), v, y0, m))
+
+def Links.y.k(r: Map<&2, U32> & U32) -> U32:
+  (_, y) = r
+  y
+
+# a row's y plus one (0: not on screen)
+def Links.y(+m: Map<&2, U32>, +id: String) -> U32:
+  Links.y.k(Map.get(U32, 0, m, id))
+
+def Links.alpha(+age: Nat) -> U32:
+  Bool.pick(U32, Nat.is_lt(age, 120n), 255, U32.from_nat(Nat.sub(255n, Nat.div(Nat.mul(Nat.sub(age, 120n), 185n), 780n))))
+
+def Links.one.k(ok: Bool, +ya: U32, +yb: U32, +x: U32, +alpha: U32, +c: D.Clip) -> List<&2, R.Op>:
+  match ok:
+    case True{}:
+      [D.Draw.rect(c, x, (U32.min(ya, yb) + 15 : U32), 2, (U32.max(ya, yb) - U32.min(ya, yb) + 2 : U32), T.Th.accent(), alpha),
+       D.Draw.rect(c, x, (ya + 15 : U32), (14 - x : U32), 2, T.Th.accent(), alpha),
+       D.Draw.rect(c, x, (yb + 15 : U32), (14 - x : U32), 2, T.Th.accent(), alpha),
+       D.Draw.disc(c, 15.0, U32.to_f32((yb + 16 : U32)), 2.5, T.Th.accent(), alpha)]
+    case False{}:
+      Nil{}
+
+def Links.one(l: U.Link2, +rows: Map<&2, U32>, +k: Nat, +now: Nat, +c: D.Clip) -> List<&2, R.Op>:
+  match l:
+    case U.Link2{+from, +to, +at}:
+      Links.one.k(Bool.and(Bool.and(U32.is_gt(Links.y(rows, from), 0), U32.is_gt(Links.y(rows, to), 0)), Bool.not(String.eq(from, to))),
+        (Links.y(rows, from) - 1 : U32), (Links.y(rows, to) - 1 : U32), U32.from_nat(Nat.sub(9n, Nat.mul(Nat.mod(k, 3n), 3n))),
+        Links.alpha(Nat.sub(now, at)), c)
+
+def Links.all(ls: List<&2, U.Link2>, +rows: Map<&2, U32>, +k: Nat, +now: Nat, +c: D.Clip) -> List<&2, R.Op>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      List.append(&2, R.Op, Links.one(l, rows, k, now, c), Links.all(t, rows, 1n+k, now, c))
+
+# the sidebar's rows with their links drawn over them
+def Links.over(o: Out, ls: List<&2, U.Link2>, +now: Nat, +c: D.Clip) -> Out:
+  match o:
+    case Out{os, +hs}:
+      Out{List.append(&2, R.Op, os, Links.all(ls, Links.rows(hs, Map.new(&2, U32)), 0n, now, c)), hs}
+
 def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, +adding: Bool, +v: String,
     +sd: U32, +caret: Nat, +focus: String, +path: String, +h: U32, +settings: Bool) -> Out:
   +top = {D.Clip{0, 0, 264, 52} : D.Clip}
@@ -286,8 +346,8 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
     Out{Ty.text(ty, 0n, "+", top, 238, 0, 52, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "toggle-add", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret),
-    Lay.col.out(Lay.projects(ty, List.sort(~PRow, ~PRow.before, Lay.prows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now,
-      D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))),
+    Links.over(Lay.col.out(Lay.projects(ty, List.sort(~PRow, ~PRow.before, Lay.prows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now,
+      D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
         Ty.text(ty, 2n, "Settings", D.Clip.all(), 16, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim()))),
       [Lay.hit(0, (h - 48 : U32), 263, 48, "flag", "settings")]}])
@@ -297,7 +357,8 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
 
 # one laid-out line. kind: 0 text, 1 code, 2 user, 3 activity, 4 gap,
 # 5 heading, 6 user padding, 7 footer with a Copy button, 8 code header,
-# 9 code bottom. w is a user bubble's width
+# 9 code bottom, 10 a message sent to another thread, 11 the thread a
+# message came from (copy holds the other thread). w is a user bubble's width
 type TLine is Data:
   TLine{text: String, color: U32, kind: U32, copy: String, w: U32}
 
@@ -321,6 +382,10 @@ def TL.h.k(k: Nat) -> U32:
       22
     case 8n:
       32
+    case 10n:
+      24
+    case 11n:
+      22
     case _:
       10
 
@@ -421,7 +486,10 @@ def TL.bubble(+ty: Ty, +ls: List<&2, String>, +text: String) -> List<&2, TLine>:
   +w = {(TL.widest(ty, ls, 0) + 40 : U32) : U32}
   List.concat(&2, TLine, [[TLine{"", 0, 6, "", w}], TL.user(ls, text, True{}, w), [TLine{"", 0, 6, "", w}, TLine{"", 0, 4, "", 0}]])
 
-def TL.entry(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
+def TL.first_line(+text: String) -> String:
+  Maybe.default(&2, String, List.head(&2, String, String.split(text, '\n')), "")
+
+def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
   match e:
     case M.Msg{_, _, M.User{}, +text, _}:
       TL.bubble(ty, Ty.wrap(ty, 3n, text, U32.min((px * 7 / 10 : U32), 560)), text)
@@ -429,6 +497,33 @@ def TL.entry(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
       List.append(&2, TLine, TL.blocks(ty, N.Md.render(text), px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}])
     case M.Act{_, _, +tone, kind, summary, _}:
       [TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}]
+
+def TL.from.k(none: Bool, +from: String, +st: M.State, +px: U32, +ty: Ty) -> List<&2, TLine>:
+  match none:
+    case True{}:
+      Nil{}
+    case False{}:
+      [TLine{Ty.fit(ty, 2n, "← from " ++ U.Tasks.title(st, from), px), T.Th.accent(), 11, from, 0}]
+
+# an entry of this thread (headed by the thread it came from, if another
+# thread sent it) or one this thread sent elsewhere (a link line)
+def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32) -> List<&2, TLine>:
+  match mine e:
+    case True{} M.Msg{+id, t, r, x, at}:
+      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px))
+    case True{} _:
+      TL.entry.own(ty, e, px)
+    case False{} M.Msg{_, +t, _, +x, _}:
+      [TLine{Ty.fit(ty, 2n, "→ " ++ U.Tasks.title(st, t) ++ ":  " ++ TL.first_line(x), px), T.Th.accent(), 10, t, 0}]
+    case False{} _:
+      Nil{}
+
+def TL.id_of(e: M.Entry) -> String:
+  match e:
+    case M.Msg{i, _, _, _, _}:
+      i
+    case M.Act{i, _, _, _, _, _}:
+      i
 
 def TL.mine.k(same: Bool, e: M.Entry, rest: List<&2, M.Entry>) -> List<&2, M.Entry>:
   match same:
@@ -444,20 +539,23 @@ def TL.thread_of(e: M.Entry) -> String:
     case M.Act{_, t, _, _, _, _}:
       t
 
-# a thread's entries, oldest first
+def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
+  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px)
+
+# a thread's entries and the messages it sent to other threads, oldest first
 def TL.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<&2, M.Entry>:
   match es:
     case Nil{}:
       acc
     case +e <> t:
-      TL.mine(t, th, TL.mine.k(String.eq(TL.thread_of(e), th), e, acc))
+      TL.mine(t, th, TL.mine.k(Bool.or(String.eq(TL.thread_of(e), th), String.eq(M.Link.from(TL.id_of(e)), th)), e, acc))
 
-def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +px: U32) -> List<&2, TLine>:
+def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
   match es:
     case Nil{}:
       Nil{}
     case e <> t:
-      List.append(&2, TLine, TL.entry(ty, e, px), TL.entries(ty, t, px))
+      List.append(&2, TLine, TL.entry(ty, e, st, sel, px), TL.entries(ty, t, st, sel, px))
 
 def TL.height(ls: List<&2, TLine>, +acc: U32) -> U32:
   match ls:
@@ -473,7 +571,7 @@ def TL.copy(+ty: Ty, +c: D.Clip, +x1: U32, +y: U32, +lh: U32, +copy: String) -> 
 def TL.sides(+c: D.Clip, +x0: U32, +x1: U32, +y: U32, +h: U32) -> List<&2, R.Op>:
   [D.Draw.rect(c, x0, y, 1, h, T.Th.line(), 255), D.Draw.rect(c, (x1 - 1 : U32), y, 1, h, T.Th.line(), 255)]
 
-def TL.draw.k(+ty: Ty, k: Nat, text: String, +color: U32, +copy: String, +bw: U32, +c: D.Clip, +x0: U32, +x1: U32, +y: U32) -> Out:
+def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U32, +c: D.Clip, +x0: U32, +x1: U32, +y: U32) -> Out:
   match k:
     case 1n:
       Out.ops(List.concat(&2, R.Op, [[D.Draw.rect(c, x0, y, (x1 - x0 : U32), 21, T.Th.code(), 255)], TL.sides(c, x0, x1, y, 21),
@@ -497,6 +595,11 @@ def TL.draw.k(+ty: Ty, k: Nat, text: String, +color: U32, +copy: String, +bw: U3
       Out.none()
     case 3n:
       Out.ops(Ty.text(ty, 2n, text, c, x0, y, 22, color))
+    case 10n:
+      Out{List.append(&2, R.Op, [D.Draw.rect(c, x0, (y + 4 : U32), 2, 16, color, 255)], Ty.text(ty, 2n, text, c, (x0 + 10 : U32), y, 24, color)),
+        [Lay.hit(x0, y, (Ty.width(ty, 2n, text) + 12 : U32), 24, "select", copy)]}
+    case 11n:
+      Out{Ty.text(ty, 2n, text, c, (x1 - Ty.width(ty, 2n, text) : U32), y, 22, color), [Lay.hit((x1 - Ty.width(ty, 2n, text) : U32), y, Ty.width(ty, 2n, text), 22, "select", copy)]}
     case 5n:
       Out.ops(Ty.text(ty, 1n, text, c, x0, y, 28, color))
     case _:
@@ -841,7 +944,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
       Lay.timeline(ty,
-        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), cw), TL.sending(ty, pend, cw),
+        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
         cx0, cx1, top, (h - ah - qh : U32), sc,
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa),
