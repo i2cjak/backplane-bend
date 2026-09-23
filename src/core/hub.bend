@@ -25,6 +25,7 @@ type Out is Data:
   # run one Codex turn (a process per turn; `session` resumes)
   CodexTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
   GrokTurn{thread: String, cwd: String, model: String, session: String, runtime: M.RuntimeMode, text: String}
+  TurnEnded{thread: String, state: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -508,6 +509,31 @@ def Queue.changes(st: Step) -> List<&2, M.Change>:
       cs
 
 # the turn ended with messages waiting: start the next turn with them
+def Ended.state(cs: List<&2, M.Change>, +thread: String) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case M.TurnChanged{+th, M.Completed{}, _} <> t:
+      Bool.pick(String, String.eq(th, thread), "completed", Ended.state(t, thread))
+    case M.TurnChanged{+th, M.Failed{}, _} <> t:
+      Bool.pick(String, String.eq(th, thread), "failed", Ended.state(t, thread))
+    case _ <> t:
+      Ended.state(t, thread)
+
+def Ended.out.k(none: Bool, +state: String, +thread: String, st: Step) -> Step:
+  match none st:
+    case True{} _:
+      st
+    case False{} Step{cs, os}:
+      Step{cs, List.append(&2, Out, os, [TurnEnded{thread, state}])}
+
+def Ended.out.s(+state: String, +thread: String, st: Step) -> Step:
+  Ended.out.k(String.is_empty(state), state, thread, st)
+
+# a turn that ends tells the server (phone notifications hang off this)
+def Ended.out(+thread: String, +st: Step) -> Step:
+  Ended.out.s(Ended.state(Queue.changes(st), thread), thread, st)
+
 def Queue.drain(+s: M.State, +now: Nat, +thread: String, +st: Step) -> Step:
   Queue.drain.k(Bool.and(Queue.ended(Queue.changes(st), thread), Bool.not(String.is_empty(M.Queue.of(s, thread)))), st,
     Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread)
@@ -643,11 +669,11 @@ def Task.finish(+s: M.State, +now: Nat, +thread: String, st: Step) -> Step:
 
 # one line of an agent's stdout
 def Hub.agent_line(+s: M.State, +now: Nat, +thread: String, line: String) -> Step:
-  Task.finish(s, now, thread, Queue.drain(s, now, thread, Hub.agent_line.k(Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude")), s, now, thread, line)))
+  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(thread, Hub.agent_line.k(Bool.not(String.eq(Hub.provider(Hub.thread(s, thread)), "claude")), s, now, thread, line))))
 
 # an agent process ended; a turn still running ends with it
 def Hub.agent_gone(+s: M.State, +now: Nat, +thread: String, +code: U32) -> Step:
-  Task.finish(s, now, thread, Queue.drain(s, now, thread, Hub.agent_gone.k(Hub.running(Hub.thread(s, thread)), thread, now, code)))
+  Task.finish(s, now, thread, Queue.drain(s, now, thread, Ended.out(thread, Hub.agent_gone.k(Hub.running(Hub.thread(s, thread)), thread, now, code))))
 
 def Step.outs_of(st: Step) -> List<&2, Out>:
   match st:

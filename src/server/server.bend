@@ -15,6 +15,7 @@ import ./kicad.bend as K
 import ./browser.bend as BR
 import ../core/acp.bend as AC
 import ../core/cbor.bend as CB
+import ./push.bend as PU
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -1426,6 +1427,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
         IO.spawn(Unit, Grok.run(Grok.args(r, model), AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs), text, session}, cwd, thread, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{+st, f, ls, cl, as, inbox, +cfg, note} B.TurnEnded{+thread, +state}:
+      do IO<Hub>:
+        IO.spawn(Unit, PU.Push.turn_ended(Cfg.home(cfg), st, thread, state))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
