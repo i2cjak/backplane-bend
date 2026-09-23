@@ -352,7 +352,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
         View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo,
-          U.Effort.chips(pr), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf))]}
+          U.Effort.chips(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf))]}
 
 # Settings
 # --------

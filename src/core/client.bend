@@ -163,6 +163,15 @@ def Info.of(o: J.Json) -> Map<&2, String>:
     case _:
       Map.new(&2, String)
 
+# the machine info changed while connected (new models): its fields replace
+# the old ones, the rest stays
+def Ui.info_merge(u: Ui, o: J.Json) -> Ui:
+  match u o:
+    case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr} J.Obj{fs}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Info.fields(fs, nf), ob, tr}
+    case _ _:
+      u
+
 def Ui.base(resume: Bool, st: M.State) -> M.State:
   match resume:
     case True{}:
@@ -680,8 +689,15 @@ def Ui.effort(u: Ui) -> String:
       Effort.of(st, sel)
 
 # the levels a provider offers, its default ("") first
-def Effort.chips(+provider: String) -> List<&2, String>:
-  Bool.pick(List<&2, String>, List.is_empty(&2, String, AG.Effort.levels(provider)), Nil{}, "" <> AG.Effort.levels(provider))
+def Effort.chips.of(+levels: List<&2, String>) -> List<&2, String>:
+  Bool.pick(List<&2, String>, List.is_empty(&2, String, levels), Nil{}, "" <> levels)
+
+def Effort.known(m: Maybe<&2, J.Json>, +provider: String) -> List<&2, String>:
+  match m:
+    case Some{+j}:
+      AG.Effort.keep(AG.Effort.levels(provider), Models.strs(J.Json.elems(j)))
+    case None{}:
+      AG.Effort.levels(provider)
 
 def Effort.name(+e: String) -> String:
   Bool.pick(String, String.is_empty(e), "auto", e)
@@ -944,6 +960,11 @@ def Ui.draft(u: Ui, text: String) -> Act:
 def Models.about(+info: String, +provider: String) -> J.Json:
   J.Json.get_obj(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), "about"), provider)
 
+# the effort chips for a thread's model: the levels its CLI says that model
+# takes (Claude reports them per model), else the provider's
+def Effort.chips(+info: String, +provider: String, +model: String) -> List<&2, String>:
+  Effort.chips.of(Effort.known(J.Json.get(J.Json.get_obj(Models.about(info, provider), "efforts"), Bool.pick(String, String.is_empty(model), "default", model)), provider))
+
 def Models.cli(+info: String, +provider: String) -> String:
   J.Json.get_str(Models.about(info, provider), "cli", "")
 
@@ -1029,12 +1050,14 @@ def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
       Ui.view(u, o)
     case 6n:
       Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
+    case 7n:
+      Ui.info_merge(u, J.Json.get_obj(o, "info"))
     case _:
       u
 
 # a message from the server
 def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term"], J.Json.get_str(o, "t", "")), u, o)
+  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)
 
 # a message from the server, with what to send: a (re)connection (the
 # server's log arrives first on each) sends the outbox again, so nothing

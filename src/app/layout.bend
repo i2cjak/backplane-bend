@@ -1022,7 +1022,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
           Lay.composer(ty, draft, caret, focused, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo, info, pr,
-            U.Effort.chips(pr), U.Effort.of(st, sel), rs),
+            U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), rs),
           Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
 

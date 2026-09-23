@@ -280,8 +280,9 @@ def Effort.key(+thread: String) -> String:
   "effort." ++ thread
 
 def Effort.levels(+provider: String) -> List<&2, String>:
-  Bool.pick(List<&2, String>, Bool.or(String.eq(provider, "claude"), String.eq(provider, "codex")), ["low", "medium", "high", "xhigh"],
-    Bool.pick(List<&2, String>, String.eq(provider, "grok"), ["low", "medium", "high"], Nil{}))
+  Bool.pick(List<&2, String>, String.eq(provider, "claude"), ["low", "medium", "high", "xhigh", "max"],
+    Bool.pick(List<&2, String>, String.eq(provider, "codex"), ["low", "medium", "high", "xhigh"],
+      Bool.pick(List<&2, String>, String.eq(provider, "grok"), ["low", "medium", "high"], Nil{})))
 
 def Effort.in(xs: List<&2, String>, +e: String) -> Bool:
   match xs:
@@ -289,6 +290,21 @@ def Effort.in(xs: List<&2, String>, +e: String) -> Bool:
       False{}
     case x <> t:
       Bool.or(String.eq(x, e), Effort.in(t, e))
+
+def Effort.keep.k(keep: Bool, +x: String, rest: List<&2, String>) -> List<&2, String>:
+  match keep:
+    case True{}:
+      x <> rest
+    case False{}:
+      rest
+
+# the levels in both lists (in the first one's order)
+def Effort.keep(xs: List<&2, String>, +ys: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Effort.keep.k(Effort.in(ys, x), x, Effort.keep(t, ys))
 
 # the effort a provider takes: e when it offers it, else its default ("")
 def Effort.of(+provider: String, +e: String) -> String:
