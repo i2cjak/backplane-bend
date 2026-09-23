@@ -14,6 +14,7 @@ import ../core/version.bend as VR
 import ./kicad.bend as K
 import ./browser.bend as BR
 import ../core/acp.bend as AC
+import ../core/cbor.bend as CB
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -308,10 +309,19 @@ def Conn.finish(s: Socket, bs: List<&2, U32>) -> IO(Unit):
     s2 : Socket <- Conn.send(s, bs)
     Socket.close(s2)
 
-def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit):
+# a message as a frame: JSON text, or, for a client that asked for it
+# (enc=cbor), one binary CBOR frame (about 40% fewer bytes on the air)
+def Conn.frame.out(cbor: Bool, t: String) -> List<&2, U32>:
+  match cbor:
+    case True{}:
+      W.Ws.encode(2, CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(t), J.Null{})))
+    case False{}:
+      W.Ws.text(t)
+
+def Conn.write(m: Maybe<&1, Wire>, s: Socket, +cbor: Bool, k: Socket -> IO(Unit)) -> IO(Unit):
   match m:
     case Some{WText{t}}:
-      IO.bind(Socket, Unit, Conn.send(s, W.Ws.text(t)), k)
+      IO.bind(Socket, Unit, Conn.send(s, Conn.frame.out(cbor, t)), k)
     case Some{WPong{p}}:
       IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(10, p)), k)
     case Some{WClose{}}:
@@ -320,12 +330,12 @@ def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit)
       Socket.close(s)
 
 # frames from the hub, until it closes our channel
-def Conn.writer(fuel: Nat, s: Socket, +out: Chan(Wire)) -> IO(Unit):
+def Conn.writer(fuel: Nat, s: Socket, +out: Chan(Wire), +cbor: Bool) -> IO(Unit):
   match fuel:
     case 0n:
       Socket.close(s)
     case 1n+f:
-      IO.bind(Maybe<&1, Wire>, Unit, Chan.recv(Wire, out), m => Conn.write(m, s, s2 => Conn.writer(f, s2, out)))
+      IO.bind(Maybe<&1, Wire>, Unit, Chan.recv(Wire, out), m => Conn.write(m, s, cbor, s2 => Conn.writer(f, s2, out, cbor)))
 
 def Conn.leave(s: Socket, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
@@ -348,11 +358,26 @@ def Conn.frame.k(text: Bool, close: Bool, ping: Bool, p: List<&2, U32>, +id: U32
     case False{} False{} False{}:
       IO.pure(Bool, True{})
 
+def Conn.cbor.json(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case Some{j}:
+      J.Json.show(j)
+    case None{}:
+      ""
+
 # a frame from the browser: text is a request; close ends; ping pongs
+# an incoming request as JSON text: a binary frame is CBOR
+def Conn.frame.text(bin: Bool, p: List<&2, U32>) -> List<&2, U32>:
+  match bin:
+    case True{}:
+      U.Utf8.encode(Conn.cbor.json(CB.Cbor.decode(p)))
+    case False{}:
+      p
+
 def Conn.frame(fr: W.Frame, +id: U32, +inbox: Chan(Msg), +out: Chan(Wire)) -> IO(Bool):
   match fr:
     case W.Frame{_, +op, p}:
-      Conn.frame.k(U32.is_eq(op, 1), U32.is_eq(op, 8), U32.is_eq(op, 9), p, id, inbox, out)
+      Conn.frame.k(Bool.or(U32.is_eq(op, 1), U32.is_eq(op, 2)), U32.is_eq(op, 8), U32.is_eq(op, 9), Conn.frame.text(U32.is_eq(op, 2), p), id, inbox, out)
 
 def Conn.more(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, buf: List<&2, U32>, +id: U32, +inbox: Chan(Msg),
     k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
@@ -390,23 +415,23 @@ def Conn.reader(fuel: Nat, s: Socket, +buf: List<&2, U32>, +id: U32, +inbox: Cha
       Conn.decoded(W.Ws.decode(buf), s, buf, id, inbox, out,
         s2 => b2 => Conn.reader(f, s2, b2, id, inbox, out))
 
-def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
+def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
   (rd, res) = r
   match res:
     case Done{wr}:
       do IO<Unit>:
         +out : Chan(Wire) <- Chan.new(Wire, 1024)
-        IO.spawn(Unit, Conn.writer(Fuel.forever(), wr, out))
+        IO.spawn(Unit, Conn.writer(Fuel.forever(), wr, out, cbor))
         ok : Bool <- Chan.send(Msg, inbox, Join{id, out, since, origin})
         Conn.reader(Fuel.forever(), rd, rest, id, inbox, out)
     case Fail{_}:
       Socket.close(rd)
 
-def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
+def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
   do IO<Unit>:
     s2 : Socket <- Conn.send(s, W.Ws.accept(key))
     r : Socket & Result<&1, &1, U32 & String, Socket> <- H.Sock.dup(s2)
-    Conn.ws.dup(r, rest, id, inbox, since, origin)
+    Conn.ws.dup(r, rest, id, inbox, since, origin, cbor)
 
 def Conn.safe(+p: String) -> Bool:
   Bool.and(Bool.not(String.contains(p, "..")), String.starts_with(p, "/"))
@@ -458,10 +483,10 @@ def Conn.allowed(+trusted: Bool, +hs: List<&2, W.Header>, +path: String, +token:
   Bool.or(Bool.and(trusted, String.is_empty(W.Http.header_of(hs, "tailscale-user-login"))),
     Bool.and(Bool.not(String.is_empty(token)), String.contains(path, "token=" ++ token)))
 
-def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
+def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String, +cbor: Bool) -> IO(Unit):
   match ok:
     case True{}:
-      Conn.ws(s, key, rest, id, inbox, since, origin)
+      Conn.ws(s, key, rest, id, inbox, since, origin, cbor)
     case False{}:
       Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
 
@@ -469,7 +494,7 @@ def Conn.route.k(ws: Bool, s: Socket, req: W.Request, rest: List<&2, U32>, +web:
   match ws req:
     case True{} W.Request{_, +p, +hs}:
       Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox,
-        Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"))
+        Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"), String.eq(W.Http.param(p, "enc"), "cbor"))
     case False{} W.Request{_, p, +hs}:
       Conn.static(s, web, W.Http.route(p), String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"))
 
@@ -845,21 +870,22 @@ def Codex.failed(e: U32 & String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit
     ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, "{\"type\":\"turn.failed\",\"message\":" ++ J.Json.show(J.Str{"could not start codex: " ++ msg}) ++ "}"})
     return Unit{}
 
-def Codex.read(started: U32 & Socket, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
-  (+pid, s) = started
-  do IO<Unit>:
-    s2 : Socket <- H.Sock.shutdown(s)
-    Agent.reader(Fuel.forever(), s2, U.Lines.new(), pid, thread, inbox)
+# whether a Codex event line ends the turn
+def Codex.ends(+l: String) -> Bool:
+  Bool.or(String.contains(l, "\"type\":\"turn.completed\""), String.contains(l, "\"type\":\"turn.failed\""))
 
-def Codex.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
-  match r:
-    case Done{started}:
-      Codex.read(started, thread, inbox)
-    case Fail{e}:
-      Codex.failed(e, thread, inbox)
+def Codex.lines(ls: List<&2, String>, +ended: Bool, +thread: String, +inbox: Chan(Msg)) -> IO(Bool):
+  match ls:
+    case Nil{}:
+      IO.pure(Bool, ended)
+    case +l <> t:
+      do IO<Bool>:
+        ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, l})
+        Codex.lines(t, Bool.or(ended, Codex.ends(l)), thread, inbox)
 
-def Codex.run(+args: List<&2, String>, +cwd: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
-  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Unit, H.Proc.spawn("codex", args, cwd, 0), r => Codex.started(r, thread, inbox))
+def Codex.fed(r: U.Lines & List<&2, String>, s: Socket, +ended: Bool, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> Bool -> IO(Unit)) -> IO(Unit):
+  (carry, ls) = r
+  IO.bind(Bool, Unit, Codex.lines(ls, ended, thread, inbox), e2 => k(s, carry, e2))
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------
@@ -924,10 +950,62 @@ def Grok.lines(ls: List<&2, String>, a: AC.Acp, +t: AC.AcpTurn, +thread: String,
     case l <> rest:
       IO.bind(AC.Acp, AC.Acp, Grok.out(AC.Acp.line(a, t, l), thread, input, inbox), a2 => Grok.lines(rest, a2, t, thread, input, inbox))
 
+# a per-turn process is done: its turn already ended through its own
+# events, so its exit tells the hub nothing (a queued turn may be running)
+def Turn.end(s: Socket, +pid: U32) -> IO(Unit):
+  do IO<Unit>:
+    Socket.close(s)
+    code : U32 <- H.Proc.wait(pid)
+    return Unit{}
+
+# output closed: a turn that never ended fails; the exit itself is not news
+def Codex.end(s: Socket, +pid: U32, ended: Bool, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match ended:
+    case True{}:
+      Turn.end(s, pid)
+    case False{}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, AC.Acp.failed("codex exited before the turn ended")})
+        Turn.end(s, pid)
+
+def Codex.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, carry: U.Lines, +ended: Bool, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> Bool -> IO(Unit)) -> IO(Unit):
+  (s, res) = r
+  match res:
+    case Done{Nil{}}:
+      Codex.end(s, pid, ended, thread, inbox)
+    case Done{bs}:
+      Codex.fed(U.Lines.feed(carry, bs), s, ended, thread, inbox, k)
+    case Fail{_}:
+      Codex.end(s, pid, ended, thread, inbox)
+
+def Codex.reader(fuel: Nat, s: Socket, carry: U.Lines, +ended: Bool, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Codex.end(s, pid, ended, thread, inbox)
+    case 1n+f:
+      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536),
+        r => Codex.got(r, carry, ended, pid, thread, inbox, s2 => c2 => e2 => Codex.reader(f, s2, c2, e2, pid, thread, inbox)))
+
+def Codex.read(started: U32 & Socket, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (+pid, s) = started
+  do IO<Unit>:
+    s2 : Socket <- H.Sock.shutdown(s)
+    Codex.reader(Fuel.forever(), s2, U.Lines.new(), False{}, pid, thread, inbox)
+
+def Codex.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match r:
+    case Done{started}:
+      Codex.read(started, thread, inbox)
+    case Fail{e}:
+      Codex.failed(e, thread, inbox)
+
+def Codex.run(+args: List<&2, String>, +cwd: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Unit, H.Proc.spawn("codex", args, cwd, 0), r => Codex.started(r, thread, inbox))
+
 def Grok.stop(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     H.Proc.kill(pid, 15)
-    Agent.end(s, pid, thread, inbox)
+    Turn.end(s, pid)
 
 def Grok.next(done: Bool, s: Socket, carry: U.Lines, a: AC.Acp, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
   match done:
@@ -948,7 +1026,7 @@ def Grok.fed(r: U.Lines & List<&2, String>, s: Socket, a: AC.Acp, +t: AC.AcpTurn
 def Grok.gone(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     Grok.report([AC.Acp.failed("grok exited before the turn ended (is it signed in? run `grok login`)")], thread, inbox)
-    Agent.end(s, pid, thread, inbox)
+    Turn.end(s, pid)
 
 def Grok.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, carry: U.Lines, a: AC.Acp, +t: AC.AcpTurn, +pid: U32, +thread: String, +input: Chan(String), +inbox: Chan(Msg),
     k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):

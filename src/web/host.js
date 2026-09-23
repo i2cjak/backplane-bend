@@ -28,6 +28,19 @@ function toJson(v) {
   return { $: "Obj", fields };
 }
 
+// bytes <-> Bend List<U32>
+function toList(u8) {
+  let xs = { $: "Nil" };
+  for (let i = u8.length - 1; i >= 0; i -= 1) xs = { $: "Con", head: u8[i], tail: xs };
+  return xs;
+}
+
+function fromList(xs) {
+  const out = [];
+  for (const b of each(xs)) out.push(b);
+  return new Uint8Array(out);
+}
+
 function* each(list) {
   for (let xs = list; xs && xs.$ === "Con"; xs = xs.tail) yield xs.head;
 }
@@ -178,7 +191,7 @@ function copy(text) {
 function run(cmds) {
   for (const c of each(cmds)) {
     if (c.$ === "Send") {
-      if (socket && socket.readyState === 1) socket.send(c.text);
+      if (socket && socket.readyState === 1) socket.send(fromList(App.wire_out(c.text)));
     } else if (c.$ === "Copy") {
       copy(c.text);
     } else if (c.$ === "Focus") {
@@ -272,7 +285,9 @@ function connect() {
   if (token) q.set("token", token);
   q.set("since", App.seq(ui));
   q.set("origin", App.origin(ui));
+  q.set("enc", "cbor");
   const s = new WebSocket(`${proto}//${location.host}/ws?${q}`);
+  s.binaryType = "arraybuffer";
   s.onopen = () => {
     socket = s;
     backoff = 250;
@@ -280,9 +295,10 @@ function connect() {
     later();
   };
   s.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    keep(msg);
-    const r = App.recv(ui, toJson(msg));
+    // CBOR frames (text frames still parse, for an older server)
+    const j = typeof e.data === "string" ? toJson(JSON.parse(e.data)) : App.wire_in(toList(new Uint8Array(e.data)));
+    keep(JSON.parse(App.show(j)));
+    const r = App.recv(ui, j);
     ui = r.ui;
     run(r.cmds);
     later();
