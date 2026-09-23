@@ -334,3 +334,57 @@ def Laws.semver_cmp_refl(v):
 def Laws.update_never_same(v):
   %Equal.sym(Cmp, SV.Ver.cmp(v, v), EQ{}, Laws.semver_cmp_refl(v)) : {Cmp.is_gt(_) == False{} : Bool}
   {==}
+
+# Orchestration laws
+# ------------------
+
+def Laws.task_terminal_absorbing(cur, want, h):
+  match cur:
+    case M.TaskQueued{}:
+      Empty.absurd({M.TaskState.next(M.TaskQueued{}, want) == M.TaskQueued{} : M.TaskState}, false_ne_true(h))
+    case M.TaskRunning{}:
+      Empty.absurd({M.TaskState.next(M.TaskRunning{}, want) == M.TaskRunning{} : M.TaskState}, false_ne_true(h))
+    case M.TaskDone{}:
+      {==}
+    case M.TaskFailed{}:
+      {==}
+    case M.TaskCancelled{}:
+      {==}
+
+def Laws.task_never_requeued():
+  {==}
+
+def Laws.task_delivered_once(t):
+  match t:
+    case M.Task{_, _, _, _, st, _, _, _, _}:
+      match st:
+        case M.TaskQueued{}:
+          {==}
+        case M.TaskRunning{}:
+          {==}
+        case M.TaskDone{}:
+          {==}
+        case M.TaskFailed{}:
+          {==}
+        case M.TaskCancelled{}:
+          {==}
+
+# n + k is never less than n
+law lt_add_self:
+  for n: Nat
+  for +k: Nat
+  {Nat.is_lt(Nat.add(n, k), n) == False{} : Bool}
+
+def lt_add_self(n, k):
+  match n:
+    case 0n:
+      match k:
+        case 0n:
+          {==}
+        case 1n+p:
+          {==}
+    case 1n+p:
+      lt_add_self(p, k)
+
+def Laws.delegation_bounded(k):
+  lt_add_self(M.Task.max_depth(), k)

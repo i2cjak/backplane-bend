@@ -133,6 +133,35 @@ def Interaction.name(i: M.InteractionMode) -> String:
 def Interaction.of(+s: String) -> M.InteractionMode:
   Bool.pick(M.InteractionMode, String.eq(s, "plan"), M.PlanMode{}, M.DefaultMode{})
 
+def TaskSt.name(t: M.TaskState) -> String:
+  match t:
+    case M.TaskQueued{}:
+      "queued"
+    case M.TaskRunning{}:
+      "running"
+    case M.TaskDone{}:
+      "done"
+    case M.TaskFailed{}:
+      "failed"
+    case M.TaskCancelled{}:
+      "cancelled"
+
+def TaskSt.of.k(i: Nat) -> M.TaskState:
+  match i:
+    case 0n:
+      M.TaskQueued{}
+    case 1n:
+      M.TaskRunning{}
+    case 2n:
+      M.TaskDone{}
+    case 3n:
+      M.TaskFailed{}
+    case _:
+      M.TaskCancelled{}
+
+def TaskSt.of(+s: String) -> M.TaskState:
+  TaskSt.of.k(Codec.pos(["queued", "running", "done", "failed", "cancelled"], s))
+
 # Changes
 # -------
 
@@ -173,9 +202,15 @@ def Change.encode(c: M.Change) -> J.Json:
       Change.obj("SessionSet", [J.KV{"id", J.Str{id}}, J.KV{"session", J.Str{session}}, J.KV{"at", Codec.nat(at)}])
     case M.ModesSet{id, runtime, interaction, model, at}:
       Change.obj("ModesSet", [J.KV{"id", J.Str{id}}, J.KV{"runtime", J.Str{Runtime.name(runtime)}}, J.KV{"interaction", J.Str{Interaction.name(interaction)}}, J.KV{"model", J.Str{model}}, J.KV{"at", Codec.nat(at)}])
+    case M.TaskDelegated{task, parent, child, depth, provider, model, at}:
+      Change.obj("TaskDelegated", [J.KV{"task", J.Str{task}}, J.KV{"parent", J.Str{parent}}, J.KV{"child", J.Str{child}}, J.KV{"depth", Codec.nat(depth)}, J.KV{"provider", J.Str{provider}}, J.KV{"model", J.Str{model}}, J.KV{"at", Codec.nat(at)}])
+    case M.TaskStateSet{task, state, summary, at}:
+      Change.obj("TaskStateSet", [J.KV{"task", J.Str{task}}, J.KV{"state", J.Str{TaskSt.name(state)}}, J.KV{"summary", J.Str{summary}}, J.KV{"at", Codec.nat(at)}])
+    case M.TaskDelivered{task, at}:
+      Change.obj("TaskDelivered", [J.KV{"task", J.Str{task}}, J.KV{"at", Codec.nat(at)}])
 
 def Change.tags() -> List<&2, String>:
-  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet"]
+  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered"]
 
 def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
   match i:
@@ -211,6 +246,12 @@ def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
       Some{M.SessionSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "session", ""), J.Json.get_nat(o, "at", 0n)}}
     case 15n:
       Some{M.ModesSet{J.Json.get_str(o, "id", ""), Runtime.of(J.Json.get_str(o, "runtime", "")), Interaction.of(J.Json.get_str(o, "interaction", "")), J.Json.get_str(o, "model", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 16n:
+      Some{M.TaskDelegated{J.Json.get_str(o, "task", ""), J.Json.get_str(o, "parent", ""), J.Json.get_str(o, "child", ""), J.Json.get_nat(o, "depth", 0n), J.Json.get_str(o, "provider", ""), J.Json.get_str(o, "model", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 17n:
+      Some{M.TaskStateSet{J.Json.get_str(o, "task", ""), TaskSt.of(J.Json.get_str(o, "state", "")), J.Json.get_str(o, "summary", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 18n:
+      Some{M.TaskDelivered{J.Json.get_str(o, "task", ""), J.Json.get_nat(o, "at", 0n)}}
     case _:
       None{}
 

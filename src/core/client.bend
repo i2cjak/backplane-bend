@@ -58,12 +58,12 @@ def Flag.get(m: Map<&2, Bool>, +k: String) -> Bool:
 
 def Ui.threads(s: M.State) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _}:
+    case M.State{_, ts, _, _, _}:
       Map.values(&2, M.Thread, ts)
 
 def Ui.projects(s: M.State) -> List<&2, M.Project>:
   match s:
-    case M.State{ps, _, _, _}:
+    case M.State{ps, _, _, _, _}:
       Map.values(&2, M.Project, ps)
 
 def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -72,12 +72,12 @@ def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Ui.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _}:
+    case M.State{_, ts, _, _, _}:
       Ui.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Ui.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _}:
+    case M.State{_, _, es, _, _}:
       es
 
 # Time
@@ -341,7 +341,7 @@ def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
 
 def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
-    case M.State{ps, _, _, _}:
+    case M.State{ps, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:

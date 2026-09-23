@@ -81,6 +81,77 @@ type Entry is Data:
 # Events
 # ------
 
+# Delegated tasks
+# ---------------
+# A thread (the parent) may delegate a task to a child thread that runs on
+# any provider and model. A task's state only moves forward: once done,
+# failed or cancelled it never changes again (law task_terminal_absorbing),
+# its result reaches the parent exactly once (law task_delivered_once), and
+# delegation stops at a fixed depth (law delegation_bounded), so models
+# cannot spawn each other without end.
+
+type TaskState is Data:
+  TaskQueued{}
+  TaskRunning{}
+  TaskDone{}
+  TaskFailed{}
+  TaskCancelled{}
+
+type Task is Data:
+  Task{id: String, parent: String, child: String, depth: Nat, state: TaskState, summary: String, delivered: Bool, provider: String, model: String}
+
+def TaskState.terminal(s: TaskState) -> Bool:
+  match s:
+    case TaskDone{}:
+      True{}
+    case TaskFailed{}:
+      True{}
+    case TaskCancelled{}:
+      True{}
+    case _:
+      False{}
+
+# the state after asking for `want`: terminal states stay; a running task
+# never goes back to queued
+def TaskState.next(cur: TaskState, want: TaskState) -> TaskState:
+  match cur want:
+    case TaskDone{} _:
+      TaskDone{}
+    case TaskFailed{} _:
+      TaskFailed{}
+    case TaskCancelled{} _:
+      TaskCancelled{}
+    case TaskRunning{} TaskQueued{}:
+      TaskRunning{}
+    case _ _:
+      want
+
+def Task.max_depth() -> Nat:
+  3n
+
+# whether a thread at this depth (0 for a top-level thread) may delegate
+def Task.may_delegate(+depth: Nat) -> Bool:
+  Nat.is_lt(depth, Task.max_depth())
+
+def Task.step(t: Task, want: TaskState, summary: String) -> Task:
+  match t:
+    case Task{i, p, c, d, cur, _, dl, pr, mo}:
+      Task{i, p, c, d, TaskState.next(cur, want), summary, dl, pr, mo}
+
+def Task.delivered_set(t: Task) -> Task:
+  match t:
+    case Task{i, p, c, d, st, su, _, pr, mo}:
+      Task{i, p, c, d, st, su, True{}, pr, mo}
+
+# a finished task whose result the parent has not received yet
+def Task.pending(t: Task) -> Bool:
+  match t:
+    case Task{_, _, _, _, st, _, dl, _, _}:
+      Bool.and(TaskState.terminal(st), Bool.not(dl))
+
+def Task.blank(id: String) -> Task:
+  Task{id, "", "", 0n, TaskCancelled{}, "", True{}, "", ""}
+
 type Change is Data:
   ProjectCreated{id: String, title: String, root: String, at: Nat}
   ProjectRemoved{id: String, at: Nat}
@@ -98,6 +169,9 @@ type Change is Data:
   WorktreeSet{id: String, branch: String, worktree: String, at: Nat}
   SessionSet{id: String, session: String, at: Nat}
   ModesSet{id: String, runtime: RuntimeMode, interaction: InteractionMode, model: String, at: Nat}
+  TaskDelegated{task: String, parent: String, child: String, depth: Nat, provider: String, model: String, at: Nat}
+  TaskStateSet{task: String, state: TaskState, summary: String, at: Nat}
+  TaskDelivered{task: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -172,11 +246,12 @@ type State is Data:
     projects: Map<&2, Project>,
     threads: Map<&2, Thread>,
     entries: List<&2, Entry>,
-    seq: Nat
+    seq: Nat,
+    tasks: Map<&2, Task>
   }
 
 def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n}
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task)}
 
 def Thread.blank(id: String) -> Thread:
   Thread{id, "", "", 0n, 0n, Idle{}, 0n, True{}, NoOverride{}, 0n, 0n, False{}, Local{}, "", "", "", "", FullAccess{}, DefaultMode{}, "", True{}}
@@ -185,13 +260,13 @@ def Project.blank(id: String) -> Project:
   Project{id, "", "", 0n, True{}}
 
 # apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, id: String, r: Map<&2, Thread> & Thread) -> State:
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, id: String, r: Map<&2, Thread> & Thread) -> State:
   (ts, t) = r
-  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n}
+  State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk}
 
 def State.thread(f: Thread -> Thread, s: State, +id: String) -> State:
-  State{ps, ts, es, n} = s
-  State.thread.fin(f, ps, es, n, id, Map.get(Thread, Thread.blank(id), ts, id))
+  State{ps, ts, es, n, tk} = s
+  State.thread.fin(f, ps, es, n, tk, id, Map.get(Thread, Thread.blank(id), ts, id))
 
 def Thread.renamed(+title: String, t: Thread) -> Thread:
   Thread{id, p, _, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
@@ -252,31 +327,31 @@ def Thread.modes_set(r: RuntimeMode, i: InteractionMode, m: String, t: Thread) -
   Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, m, r, i, se, de}
 
 def State.put_thread(s: State, t: Thread) -> State:
-  State{ps, ts, es, n} = s
+  State{ps, ts, es, n, tk} = s
   Thread{+id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} = t
-  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n}
+  State{ps, Map.set(&2, Thread, ts, id, Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}), es, n, tk}
 
 def State.put_project(s: State, p: Project) -> State:
-  State{ps, ts, es, n} = s
+  State{ps, ts, es, n, tk} = s
   Project{+id, ti, r, c, rm} = p
-  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n}
+  State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
-  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n}
+  State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk}
 
 def State.remove_project(s: State, +id: String) -> State:
-  State{ps, ts, es, n} = s
-  State.remove_project.fin(ts, es, n, id, Map.get(Project, Project.blank(id), ps, id))
+  State{ps, ts, es, n, tk} = s
+  State.remove_project.fin(ts, es, n, tk, id, Map.get(Project, Project.blank(id), ps, id))
 
 def State.post(s: State, e: Entry) -> State:
-  State{ps, ts, es, n} = s
-  State{ps, ts, e <> es, n}
+  State{ps, ts, es, n, tk} = s
+  State{ps, ts, e <> es, n, tk}
 
 def State.tick(s: State) -> State:
-  State{ps, ts, es, n} = s
-  State{ps, ts, es, 1n+n}
+  State{ps, ts, es, n, tk} = s
+  State{ps, ts, es, 1n+n, tk}
 
 def State.message(s: State, +thread: String, msg: String, role: Role, text: String, +at: Nat) -> State:
   match role:
@@ -284,6 +359,20 @@ def State.message(s: State, +thread: String, msg: String, role: Role, text: Stri
       State.post(State.thread((t => Thread.touched(at, t)), s, thread), Msg{msg, thread, User{}, text, at})
     case _:
       State.post(s, Msg{msg, thread, role, text, at})
+
+def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, id: String, r: Map<&2, Task> & Task) -> State:
+  (tk, t) = r
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t))}
+
+# apply f to the task at `id` (a blank, settled task when absent)
+def State.task(f: Task -> Task, s: State, +id: String) -> State:
+  State{ps, ts, es, n, tk} = s
+  State.task.fin(f, ps, ts, es, n, id, Map.get(Task, Task.blank(id), tk, id))
+
+def State.put_task(s: State, t: Task) -> State:
+  State{ps, ts, es, n, tk} = s
+  Task{+id, p, c, d, st, su, dl, pr, mo} = t
+  State{ps, ts, es, n, Map.set(&2, Task, tk, id, Task{id, p, c, d, st, su, dl, pr, mo})}
 
 def State.apply.go(s: State, e: Change) -> State:
   match e:
@@ -319,6 +408,12 @@ def State.apply.go(s: State, e: Change) -> State:
       State.thread((t => Thread.session_set(se, t)), s, id)
     case ModesSet{+id, r, i, m, _}:
       State.thread((t => Thread.modes_set(r, i, m, t)), s, id)
+    case TaskDelegated{id, parent, child, depth, provider, model, _}:
+      State.put_task(s, Task{id, parent, child, depth, TaskQueued{}, "", False{}, provider, model})
+    case TaskStateSet{+id, st, summary, _}:
+      State.task((t => Task.step(t, st, summary)), s, id)
+    case TaskDelivered{+id, _}:
+      State.task((t => Task.delivered_set(t)), s, id)
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:
@@ -399,4 +494,3 @@ def Thread.filter_project(ts: List<&2, Thread>, +pid: String) -> List<&2, Thread
       Nil{}
     case +t <> rest:
       Thread.filter_project.pick(Thread.in_project(pid, t), t, Thread.filter_project(rest, pid))
-

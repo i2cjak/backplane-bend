@@ -116,3 +116,28 @@ law semver_cmp_refl:
 law update_never_same:
   for +v: SV.Ver
   {SV.Ver.newer(v, v) == False{} : Bool}
+
+# Models working together
+# -----------------------
+
+# a finished, failed or cancelled task never changes state again
+law task_terminal_absorbing:
+  for cur: M.TaskState
+  for want: M.TaskState
+  for h: {M.TaskState.terminal(cur) == True{} : Bool}
+  {M.TaskState.next(cur, want) == cur : M.TaskState}
+
+# a running task never goes back to the queue
+law task_never_requeued:
+  {M.TaskState.next(M.TaskRunning{}, M.TaskQueued{}) == M.TaskRunning{} : M.TaskState}
+
+# once delivered to its parent, a task's result is never delivered again
+law task_delivered_once:
+  for t: M.Task
+  {M.Task.pending(M.Task.delivered_set(t)) == False{} : Bool}
+
+# delegation stops at the depth limit: no chain of models spawning models
+# grows without end
+law delegation_bounded:
+  for +k: Nat
+  {M.Task.may_delegate(Nat.add(M.Task.max_depth(), k)) == False{} : Bool}

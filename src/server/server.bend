@@ -8,6 +8,7 @@ import ../core/model.bend as M
 import ../core/codec.bend as C
 import ../core/hub.bend as B
 import ../core/prompt.bend as Q
+import ../core/mcp.bend as MC
 import ./update.bend as UP
 import ../core/version.bend as VR
 
@@ -24,6 +25,7 @@ type Wire is Data:
 
 type Msg is Data:
   Announce{text: String}
+  Mcp{thread: String, body: String, reply: Chan(String)}
   Join{client: U32, out: Chan(Wire)}
   Leave{client: U32}
   Rpc{client: U32, text: String}
@@ -35,7 +37,7 @@ type Msg is Data:
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String}
+  Net{tailnet: Bool, https: Bool, token: String, models: String}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -452,8 +454,79 @@ def Conn.is_ws(req: W.Request) -> Bool:
     case W.Request{_, p, +hs}:
       Bool.and(String.eq(W.Http.route(p), "/ws"), String.eq(String.to_lower(W.Http.header_of(hs, "upgrade")), "websocket"))
 
+def Conn.is_mcp(req: W.Request) -> Bool:
+  match req:
+    case W.Request{m, p, _}:
+      Bool.and(String.eq(m, "POST"), String.starts_with(W.Http.route(p), "/mcp/"))
+
+def Mcp.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, buf: List<&2, U32>, k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+  (s, res) = r
+  match res:
+    case Done{Nil{}}:
+      Socket.close(s)
+    case Done{bs}:
+      k(s, List.append(&2, U32, buf, bs))
+    case Fail{_}:
+      Socket.close(s)
+
+def Mcp.answer.k(empty: Bool, s: Socket, text: String) -> IO(Unit):
+  match empty:
+    case True{}:
+      Conn.finish(s, W.Http.response("202 Accepted", "application/json", Nil{}, ""))
+    case False{}:
+      Conn.finish(s, W.Http.response("200 OK", "application/json", U.Utf8.encode(text), ""))
+
+def Mcp.answer(m: Maybe<&1, String>, s: Socket) -> IO(Unit):
+  match m:
+    case Some{+text}:
+      Mcp.answer.k(String.is_empty(text), s, text)
+    case None{}:
+      Conn.finish(s, W.Http.text("503 Service Unavailable", "the hub is gone"))
+
+def Mcp.ask(s: Socket, +body: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +reply : Chan(String) <- Chan.new(String, 1)
+    ok : Bool <- Chan.send(Msg, inbox, Mcp{thread, body, reply})
+    m : Maybe<&1, String> <- Chan.recv(String, reply)
+    Mcp.answer(m, s)
+
+def Mcp.body.k(full: Bool, s: Socket, +buf: List<&2, U32>, +thread: String, +inbox: Chan(Msg), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+  match full:
+    case True{}:
+      Mcp.ask(s, U.Utf8.decode(buf), thread, inbox)
+    case False{}:
+      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536), r => Mcp.got(r, buf, k))
+
+# read until the body is complete
+def Mcp.body(fuel: Nat, s: Socket, +buf: List<&2, U32>, +len: Nat, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Conn.finish(s, W.Http.text("413 Payload Too Large", "too large"))
+    case 1n+f:
+      Mcp.body.k(Nat.is_ge(List.length(&2, U32, buf), len), s, buf, thread, inbox, s2 => b2 => Mcp.body(f, s2, b2, len, thread, inbox))
+
+# MCP over HTTP
+# -------------
+# One POST per JSON-RPC message; the reply is JSON (or 202 for a
+# notification). The hub answers on a channel made for this request.
+
+def Mcp.gate(ok: Bool, s: Socket, +thread: String, +len: Nat, rest: List<&2, U32>, +inbox: Chan(Msg)) -> IO(Unit):
+  match ok:
+    case True{}:
+      Mcp.body(64n, s, rest, len, thread, inbox)
+    case False{}:
+      Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
+
+def Conn.route.mcp(mcp: Bool, s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  match mcp req:
+    case True{} W.Request{_, +p, +hs}:
+      Mcp.gate(Conn.allowed(trusted, hs, p, token), s, String.drop(W.Http.route(p), 5n),
+        Maybe.default(&2, Nat, Nat.read(W.Http.header_of(hs, "content-length")), 0n), rest, inbox)
+    case False{} _:
+      Conn.route.k(Conn.is_ws(req), s, req, rest, web, id, inbox, trusted, token)
+
 def Conn.route(s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
-  Conn.route.k(Conn.is_ws(req), s, req, rest, web, id, inbox, trusted, token)
+  Conn.route.mcp(Conn.is_mcp(req), s, req, rest, web, id, inbox, trusted, token)
 
 def Conn.head.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, buf: List<&2, U32>, k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
   (s, res) = r
@@ -547,14 +620,6 @@ def Hub.announce(r: Hub & List<&2, String>) -> IO(Hub):
         Wire.all(cl, Hub.changes_msg(List.reverse(&2, String, l <> t)))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
-# Effects
-# -------
-
-def Hub.agent_args(+cfg: Cfg, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode) -> List<&2, String>:
-  match cfg:
-    case Cfg{_, _, _, _, prompt, dirs, _, _}:
-      Q.Claude.args(model, session, r, i, prompt, dirs)
-
 # persist changes, fold them in; answers the hub and the new lines (newest first)
 def Hub.commit(cs: List<&2, M.Change>, h: Hub, fresh: List<&2, String>) -> IO(Hub & List<&2, String>):
   match cs:
@@ -598,15 +663,6 @@ def Hub.spawned(r: Result<&1, &1, U32 & String, U32 & Socket>, h: Hub, +thread: 
       Hub.spawned.ok(started, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread)
     case Fail{e} _:
       Hub.spawned.fail(e, h, thread)
-
-def Hub.start.k(m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode) -> IO(Hub):
-  match m h:
-    case Some{_} _:
-      IO.pure(Hub, h)
-    case None{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
-      IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Hub,
-        H.Proc.spawn("claude", Hub.agent_args(cfg, model, session, r, i), cwd, 0),
-        res => Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread))
 
 def Hub.agent_send(m: Maybe<&2, Agent>, line: String) -> IO(Unit):
   match m:
@@ -695,6 +751,62 @@ def Hub.inbox(h: Hub, k: Chan(Msg) -> Hub -> IO(Unit)) -> IO(Unit):
     case Hub{st, f, ls, cl, as, +inbox, cfg, note}:
       k(inbox, Hub{st, f, ls, cl, as, inbox, cfg, note})
 
+# Codex
+# -----
+
+def Codex.sandbox(r: M.RuntimeMode) -> List<&2, String>:
+  match r:
+    case M.FullAccess{}:
+      ["--dangerously-bypass-approvals-and-sandbox"]
+    case M.Supervised{}:
+      ["-s", "read-only"]
+    case _:
+      ["-s", "workspace-write"]
+
+def Codex.opt.k(empty: Bool, flag: String, v: String) -> List<&2, String>:
+  match empty:
+    case True{}:
+      Nil{}
+    case False{}:
+      [flag, v]
+
+def Codex.opt(flag: String, +v: String) -> List<&2, String>:
+  Codex.opt.k(String.is_empty(v), flag, v)
+
+def Codex.head.k(fresh: Bool, +session: String) -> List<&2, String>:
+  match fresh:
+    case True{}:
+      ["exec", "--json", "--skip-git-repo-check"]
+    case False{}:
+      ["exec", "resume", session, "--json", "--skip-git-repo-check"]
+
+def Cfg.prompt(c: Cfg) -> String:
+  match c:
+    case Cfg{_, _, _, _, pr, _, _, _}:
+      pr
+
+def Codex.failed(e: U32 & String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (_, msg) = e
+  do IO<Unit>:
+    ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, "{\"type\":\"turn.failed\",\"message\":" ++ J.Json.show(J.Str{"could not start codex: " ++ msg}) ++ "}"})
+    return Unit{}
+
+def Codex.read(started: U32 & Socket, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  (+pid, s) = started
+  do IO<Unit>:
+    s2 : Socket <- H.Sock.shutdown(s)
+    Agent.reader(Fuel.forever(), s2, U.Lines.new(), pid, thread, inbox)
+
+def Codex.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match r:
+    case Done{started}:
+      Codex.read(started, thread, inbox)
+    case Fail{e}:
+      Codex.failed(e, thread, inbox)
+
+def Codex.run(+args: List<&2, String>, +cwd: String, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
+  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Unit, H.Proc.spawn("codex", args, cwd, 0), r => Codex.started(r, thread, inbox))
+
 # Updates
 # -------
 
@@ -769,8 +881,38 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t}:
+    case Net{_, _, t, _}:
       t
+
+# Effects
+# -------
+
+# the MCP endpoint of one thread's agent (token included, so the tailnet
+# rules never lock an agent out)
+def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
+  "http://127.0.0.1:" ++ U32.show(Cfg.port(cfg)) ++ "/mcp/" ++ thread ++ "?token=" ++ Net.token(Cfg.net(cfg))
+
+def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode) -> List<&2, String>:
+  match cfg:
+    case Cfg{_, _, _, _, prompt, dirs, _, _}:
+      List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, dirs),
+        ["--mcp-config", "{\"mcpServers\":{\"backplane\":{\"type\":\"http\",\"url\":\"" ++ Hub.mcp_url(cfg, thread) ++ "\"}}}"])
+
+def Hub.start.k(m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, r: M.RuntimeMode, i: M.InteractionMode) -> IO(Hub):
+  match m h:
+    case Some{_} _:
+      IO.pure(Hub, h)
+    case None{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, Hub,
+        H.Proc.spawn("claude", Hub.agent_args(cfg, thread, model, session, r, i), cwd, 0),
+        res => Hub.spawned(res, Hub{st, f, ls, cl, as, inbox, cfg, note}, thread))
+
+# `codex exec` for one turn, with this thread's MCP endpoint and the
+# Backplane instructions (the same runtime block Claude gets)
+def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String) -> List<&2, String>:
+  List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model),
+    ["-c", "mcp_servers.backplane.url=\"" ++ Hub.mcp_url(cfg, thread) ++ "\"",
+     "-c", "developer_instructions=" ++ J.Json.show(J.Str{Cfg.prompt(cfg)}), text]])
 
 def Tailnet.first(r: P.Ran) -> String:
   match r:
@@ -827,13 +969,13 @@ def Tailnet.https(on: Bool, +port: U32, +token: String) -> IO(Unit):
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token}:
+    case Net{True{}, https, +token, _}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _}:
+    case Net{False{}, _, _, _}:
       IO.pure(Unit, Unit{})
 
 def Token.digit(+d: U32) -> Char:
@@ -890,8 +1032,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms}}
 
 # Startup
 # -------
@@ -965,6 +1107,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
     case _ B.Watch{_, _}:
       IO.pure(Hub, h)
+    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
+      do IO<Hub>:
+        IO.spawn(Unit, Codex.run(Codex.args(cfg, thread, model, session, r, text), cwd, thread, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
         IO.spawn(Unit, Upgrade.go(Cfg.home(cfg), inbox))
@@ -1009,8 +1155,28 @@ def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
       Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.tick(st, now))
 
+def Cfg.models(c: Cfg) -> String:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms}}:
+      ms
+
+def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String)) -> IO(Hub):
+  match o:
+    case MC.McpOut{text, st}:
+      do IO<Hub>:
+        ok : Bool <- Chan.send(String, reply, text)
+        Hub.step(h, st)
+
+def Hub.mcp(h: Hub, +thread: String, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, +cfg, note}:
+      Hub.mcp.k(MC.Mcp.text(st, now, thread, Maybe.default(&2, J.Json, J.Json.parse(Cfg.models(cfg)), J.Null{}), Cfg.version(cfg), body),
+        Hub{st, f, ls, cl, as, inbox, cfg, note}, reply)
+
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
+    case Mcp{thread, body, reply}:
+      Hub.mcp(h, thread, body, reply, now)
     case Announce{text}:
       Hub.note(h, text)
     case Join{client, out}:
@@ -1108,10 +1274,10 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -1188,7 +1354,7 @@ def Main.boot(cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
 def Main.config(+user: String, +exe: String, args: List<String>, ks: String & List<&2, Q.Skill>, kicad: String) -> Cfg:
   (kdir, skills) = ks
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3773,
-    Q.Prompt.runtime("Claude Code", kicad, skills), [kdir], Main.version(), Net{False{}, False{}, ""}})
+    Q.Prompt.runtime("Claude Code", kicad, skills), [kdir], Main.version(), Net{False{}, False{}, "", ""}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
