@@ -1,7 +1,7 @@
 import Foundation
 
-// A pairing link as the desktop shows it (http://host:3773/#token=abc)
-// becomes the hub's socket address (ws://host:3773/ws?token=abc).
+// A pairing link as the desktop shows it (http://host:3787/#token=abc)
+// becomes the hub's socket address (ws://host:3787/ws?token=abc).
 enum Pairing {
     // the socket address, resuming from since/origin
     static func socket(_ link: String, since: String, origin: String) -> URL? {

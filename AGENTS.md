@@ -38,7 +38,7 @@ When using Bend:
 scripts/check.sh      # --check-only every .bend file, then bend PROOF.bend
 scripts/test.sh       # run every test/*_test.bend (JS target, via bun)
 scripts/build.sh      # native server binary + web bundle into dist/
-dist/backplane        # run it (opens http://127.0.0.1:3773)
+dist/backplane        # run it (opens http://127.0.0.1:3787)
 ```
 
 Native builds need clang 19+ and X11 headers (`libx11-dev`). Without root, `~/.local/bin/clang` may be a `zig cc` shim, and `BACKPLANE_X11=~/.local/x11` points the build at headers extracted from the .deb.

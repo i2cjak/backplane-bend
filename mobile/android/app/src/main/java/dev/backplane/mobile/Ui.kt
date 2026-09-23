@@ -103,7 +103,7 @@ private fun Pair(link: String, cancel: (() -> Unit)?, done: (String) -> Unit) {
             Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
                 style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
-                label = { Text("Pairing link") }, placeholder = { Text("http://host:3773/#token=…") })
+                label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
             Button(onClick = { done(text) }, enabled = text.isNotBlank()) { Text("Connect") }
         }
     }

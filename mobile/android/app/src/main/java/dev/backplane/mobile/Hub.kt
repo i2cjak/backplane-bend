@@ -13,8 +13,8 @@ import okhttp3.WebSocketListener
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-// A pairing link as the desktop shows it (http://host:3773/#token=abc)
-// becomes the hub's socket address (ws://host:3773/ws?token=abc).
+// A pairing link as the desktop shows it (http://host:3787/#token=abc)
+// becomes the hub's socket address (ws://host:3787/ws?token=abc).
 object Pairing {
     fun socket(link: String): String? {
         var s = link.trim()

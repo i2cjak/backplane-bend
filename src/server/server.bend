@@ -1944,7 +1944,7 @@ def Skills.kistack(+home: String) -> IO(String & List<&2, Q.Skill>):
 def Main.args(xs: List<String>, c: Cfg) -> Cfg:
   match xs c:
     case "--port" <> p <> t Cfg{h, w, ho, _, pr, ds, v, nt}:
-      Main.args(t, Cfg{h, w, ho, Maybe.default(&2, U32, U32.read(p), 3773), pr, ds, v, nt})
+      Main.args(t, Cfg{h, w, ho, Maybe.default(&2, U32, U32.read(p), 3787), pr, ds, v, nt})
     case "--host" <> x <> t Cfg{h, w, _, po, pr, ds, v, nt}:
       Main.args(t, Cfg{h, w, x, po, pr, ds, v, nt})
     case "--web" <> x <> t Cfg{h, _, ho, po, pr, ds, v, nt}:
@@ -2145,7 +2145,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
-  Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3773,
+  Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3787,
     Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{False{}, False{}, "", ms, mt, rt, None{}, None{}, None{}}})
 
 def Sys.exe_dir.io() -> IO(String):
