@@ -1381,6 +1381,26 @@ def Lay.shrink(n: S.Nui, +dh: U32) -> S.Nui:
     case S.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       S.Nui{u, w, (h - dh : U32), mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
+def Hover.nums(ps: List<&2, String>) -> List<&2, U32>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case p <> t:
+      Maybe.default(&2, U32, U32.read(p), 0) <> Hover.nums(t)
+
+def Hover.rect(xs: List<&2, U32>, +alpha: U32) -> Out:
+  match xs:
+    case +x0 <> +y0 <> +x1 <> +y1 <> _:
+      Out.when(Bool.and(U32.is_lt((y1 - y0 : U32), 90), U32.is_gt(x1, x0)),
+        Out.ops([D.Draw.rect(D.Clip.all(), x0, y0, (x1 - x0 : U32), (y1 - y0 : U32), T.Th.text(), ((alpha * 22 : U32) / 255 : U32)),
+          D.Draw.rect(D.Clip.all(), x0, (y1 - 1 : U32), (x1 - x0 : U32), 1, T.Th.accent(), ((alpha * 160 : U32) / 255 : U32))]))
+    case _:
+      Out.none()
+
+# the region under the pointer, lit (big regions like panels are skipped)
+def Lay.hover(+key: String, +alpha: U32) -> Out:
+  Bool.pick(Out, String.is_empty(key), Out.none(), Hover.rect(Hover.nums(String.split(key, ',')), alpha))
+
 # the whole window, topmost first
 def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
   match n:
@@ -1392,4 +1412,5 @@ def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
         Lay.term.of(ty, n, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w), h),
         Lay.sidebar(ty, n, h),
         Lay.toast(ty, err, w, h),
-        Out.when(U.Ui.flag(S.Nui.ui(n), "palette"), Lay.palette(ty, S.Nui.ui(n), w, h))]))
+        Out.when(U.Ui.flag(S.Nui.ui(n), "palette"), Lay.palette(ty, S.Nui.ui(n), w, h)),
+        Lay.hover(U.Ui.info(S.Nui.ui(n), "hover"), S.Hover.alpha(n, S.Nui.ms_of(n)))]))

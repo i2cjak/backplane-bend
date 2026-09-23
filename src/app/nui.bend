@@ -316,10 +316,28 @@ def Nui.resize(n: Nui, +w: U32, +h: U32) -> Step:
     case Nui{u, _, _, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Step{Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
 
-def Nui.moved(n: Nui, +x: U32, +y: U32) -> Step:
+# Hover
+# -----
+# The clickable region under the pointer lights up, fading in over
+# Hover.ms(); "hover.at" is "0" until the next frame stamps its start.
+
+def Hover.ms() -> Nat:
+  120n
+
+def Hover.key(m: Maybe<&2, Hit>) -> String:
+  match m:
+    case Some{Hit{x0, y0, x1, y1, _, _}}:
+      U32.show(x0) ++ "," ++ U32.show(y0) ++ "," ++ U32.show(x1) ++ "," ++ U32.show(y1)
+    case None{}:
+      ""
+
+def Hover.alpha.k(+at: Nat, +ms: Nat) -> U32:
+  Bool.pick(U32, Nat.is_ge(ms, Nat.add(at, Hover.ms())), 255, U32.from_nat(Nat.div(Nat.mul(Nat.sub(ms, at), 255n), Hover.ms())))
+
+def Nui.moved.k(n: Nui, +x: U32, +y: U32) -> Nui:
   match n:
     case Nui{u, w, h, _, _, sd, sc, ca, fo, pa, hi, ms, vw}:
-      Step{Nui{u, w, h, x, y, sd, sc, ca, fo, pa, hi, ms, vw}, Nil{}, False{}}
+      Nui{u, w, h, x, y, sd, sc, ca, fo, pa, hi, ms, vw}
 
 def Step.merge(a: Step, b: Step) -> Step:
   match a b:
@@ -330,6 +348,14 @@ def Nui.ui(n: Nui) -> U.Ui:
   match n:
     case Nui{u, _, _, _, _, _, _, _, _, _, _, _, vw}:
       u
+
+# how far the hover has faded in (0..255)
+def Hover.alpha(+n: Nui, +ms: Nat) -> U32:
+  Hover.alpha.k(Maybe.default(&2, Nat, Nat.read(U.Ui.info(Nui.ui(n), "hover.at")), 0n), ms)
+
+# still fading in (the loop asks for frames only then)
+def Hover.busy(+n: Nui, +ms: Nat) -> Bool:
+  Bool.and(Bool.not(String.is_empty(U.Ui.info(Nui.ui(n), "hover"))), U32.is_lt(Hover.alpha(n, ms), 255))
 
 # pasted text lands in the focused field at the caret
 def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
@@ -473,6 +499,23 @@ def Nui.with_ui(n: Nui, u: U.Ui) -> Nui:
   match n:
     case Nui{_, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
+
+def Hover.set.k(same: Bool, +n: Nui, +key: String) -> Step:
+  match same:
+    case True{}:
+      Step{n, Nil{}, False{}}
+    case False{}:
+      Step{Nui.with_ui(n, U.Ui.info_set(U.Ui.info_set(Nui.ui(n), "hover", key), "hover.at", "0")), Nil{}, True{}}
+
+def Hover.set(+n: Nui, +key: String) -> Step:
+  Hover.set.k(String.eq(U.Ui.info(Nui.ui(n), "hover"), key), n, key)
+
+# the frame stamps when a new hover began
+def Hover.stamp(+n: Nui, +ms: Nat) -> Nui:
+  Bool.pick(Nui, String.eq(U.Ui.info(Nui.ui(n), "hover.at"), "0"), Nui.with_ui(n, U.Ui.info_set(Nui.ui(n), "hover.at", Nat.show(ms))), n)
+
+def Nui.moved(+n: Nui, +x: U32, +y: U32) -> Step:
+  Hover.set(Nui.moved.k(n, x, y), Hover.key(Hit.find(Nui.hits(n), x, y)))
 
 def Pal.open(+n: Nui) -> Step:
   Nui.focus(Nui.with_ui(n, U.Palette.set(U.Ui.flag_on(Nui.ui(n), "palette"), "", 0n)), "palette")
@@ -959,3 +1002,8 @@ def Nui.events(es: List<&2, W.WinEv>, s: Step) -> Step:
       s
     case e <> t Step{+n, cs, d}:
       Nui.events(t, Step.merge(Step{n, cs, d}, Nui.event(n, e)))
+
+def Nui.ms_of(n: Nui) -> Nat:
+  match n:
+    case Nui{_, _, _, _, _, _, _, _, _, _, _, ms, _}:
+      ms

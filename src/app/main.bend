@@ -599,7 +599,7 @@ def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan
   match o:
     case L.Out{+ops, hs}:
       IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms)),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms))))
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms))))
 
 def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   Shell.paint.out(L.Lay.frame(Aux.ty(wa), n), n, w, q, i, wa, epoch, ms)
@@ -611,7 +611,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
         Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
 
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.k(N.Nui.prepare(n), w, q, i, wa, epoch, ms)
+  Shell.paint.k(N.Hover.stamp(N.Nui.prepare(n), ms), w, q, i, wa, epoch, ms)
 
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):
