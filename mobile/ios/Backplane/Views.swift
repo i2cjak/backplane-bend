@@ -1,0 +1,248 @@
+import SwiftUI
+
+struct RootView: View {
+    @Bindable var model: AppModel
+    @State private var pairing = false
+
+    var body: some View {
+        if model.link.isEmpty {
+            NavigationStack { PairView(link: "") { model.pair($0) } }
+        } else if let s = model.screen {
+            NavigationStack(path: Binding(
+                get: { s.thread.map { [$0.id] } ?? [] },
+                set: { model.act("select", $0.last ?? "") }
+            )) {
+                ProjectsView(model: model, screen: s, pairing: $pairing)
+                    .navigationDestination(for: String.self) { _ in
+                        if let t = model.screen?.thread { ThreadScreen(model: model, thread: t) }
+                    }
+            }
+            .alert(s.error, isPresented: Binding(get: { !s.error.isEmpty }, set: { if !$0 { model.act("dismiss") } })) {
+                Button("OK") { model.act("dismiss") }
+            }
+            .sheet(isPresented: $pairing) {
+                NavigationStack {
+                    PairView(link: model.link) { model.pair($0); pairing = false }
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { pairing = false } } }
+                }
+            }
+        } else {
+            ProgressView()
+        }
+    }
+}
+
+struct PairView: View {
+    @State var link: String
+    let done: (String) -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Pairing link", text: $link, prompt: Text(verbatim: "http://host:3773/#token=…"))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+            } header: {
+                Text("Pairing link")
+            } footer: {
+                Text("Paste the tailnet link Backplane shows under Settings, Remote access.")
+            }
+            Button("Connect") { done(link) }.disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+        .navigationTitle("Pair with a hub")
+    }
+}
+
+private struct Status: View {
+    let state: String
+
+    var body: some View {
+        switch state {
+        case "run": ProgressView().controlSize(.mini)
+        case "fail": Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+        case "stop": Image(systemName: "stop.circle").foregroundStyle(.orange)
+        default: Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.quaternary)
+        }
+    }
+}
+
+private struct ThreadRow: View {
+    let model: AppModel
+    let row: Row
+
+    var body: some View {
+        NavigationLink(value: row.id) {
+            HStack(spacing: 10) {
+                Status(state: row.state).frame(width: 18)
+                Text(row.title).lineLimit(1)
+                Spacer()
+                if row.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
+                Text(row.ago).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+struct ProjectsView: View {
+    let model: AppModel
+    let screen: Screen
+    @Binding var pairing: Bool
+    @State private var adding = false
+    @State private var path = ""
+
+    var body: some View {
+        List {
+            ForEach(screen.projects) { p in
+                Section {
+                    ForEach(p.threads) { ThreadRow(model: model, row: $0) }
+                    if !p.settled.isEmpty {
+                        Button { model.act("toggle-settled", p.id) } label: {
+                            HStack {
+                                Text(p.shelf).font(.subheadline)
+                                Spacer()
+                                Image(systemName: p.open ? "chevron.down" : "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .tint(.secondary)
+                        if p.open { ForEach(p.settled) { ThreadRow(model: model, row: $0) } }
+                    }
+                } header: {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(p.title)
+                            Text(p.root).font(.caption2).textCase(nil).lineLimit(1).truncationMode(.head)
+                        }
+                        Spacer()
+                        Button { model.act("new-thread", p.id) } label: { Image(systemName: "square.and.pencil") }
+                            .accessibilityLabel("New thread")
+                    }
+                }
+            }
+        }
+        .overlay {
+            if screen.projects.isEmpty { ContentUnavailableView(screen.empty, systemImage: "folder") }
+        }
+        .navigationTitle("Backplane")
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Label(screen.online ? "Connected" : "Connecting", systemImage: screen.online ? "circle.fill" : "circle.dotted")
+                    .labelStyle(.iconOnly)
+                    .foregroundStyle(screen.online ? .green : .secondary)
+                    .font(.caption)
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button { adding = true } label: { Image(systemName: "folder.badge.plus") }.accessibilityLabel("Add project")
+                Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Pairing")
+            }
+        }
+        .alert("Add project", isPresented: $adding) {
+            TextField("/path/to/project", text: $path).textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button("Add") { model.act("add-project", path); path = "" }
+            Button("Cancel", role: .cancel) { path = "" }
+        } message: {
+            Text("A path on the hub.")
+        }
+    }
+}
+
+private struct EntryView: View {
+    let model: AppModel
+    let entry: Entry
+
+    var body: some View {
+        switch entry.kind {
+        case "user":
+            HStack {
+                Spacer(minLength: 48)
+                Text(entry.text)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                    .background(Color.accentColor.opacity(0.15), in: .rect(cornerRadius: 18))
+                    .contextMenu { Button("Copy", systemImage: "doc.on.doc") { model.act("copy", entry.text) } }
+            }
+        case "assistant":
+            MarkdownView(blocks: entry.blocks ?? [])
+                .contextMenu { Button("Copy", systemImage: "doc.on.doc") { model.act("copy", entry.text) } }
+        default:
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.label ?? "").foregroundStyle(.tertiary)
+                Text(entry.text).lineLimit(2)
+            }
+            .font(.caption.monospaced())
+            .foregroundStyle(entry.tone == "error" ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+struct ThreadScreen: View {
+    @Bindable var model: AppModel
+    let thread: ThreadView
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 14) {
+                    ForEach(thread.entries) { EntryView(model: model, entry: $0).id($0.id) }
+                    if !thread.live.isEmpty {
+                        MarkdownView(blocks: thread.live)
+                    } else if !thread.working.isEmpty {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(thread.working).foregroundStyle(.secondary)
+                        }
+                    }
+                    Color.clear.frame(height: 1).id("end")
+                }
+                .padding()
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: model.scrolls) { proxy.scrollTo("end", anchor: .bottom) }
+            .onChange(of: thread.entries.count) { withAnimation { proxy.scrollTo("end", anchor: .bottom) } }
+        }
+        .safeAreaInset(edge: .bottom) {
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask the agent", text: Binding(get: { model.composer }, set: { model.draft($0) }), axis: .vertical)
+                    .lineLimit(1...6)
+                    .focused($focused)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 18))
+                Button { model.act("send") } label: {
+                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                }
+                .disabled(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .accessibilityLabel(thread.send)
+            }
+            .padding(.horizontal).padding(.vertical, 8)
+            .background(.bar)
+        }
+        .navigationTitle(thread.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !thread.branch.isEmpty {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 0) {
+                        Text(thread.title).font(.headline).lineLimit(1)
+                        Text(thread.branch).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                ForEach(thread.tools.filter { $0.action == "interrupt" }, id: \.self) { t in
+                    Button(t.label, systemImage: "stop.fill") { model.act(t.action) }
+                }
+                Menu {
+                    ForEach(thread.tools.filter { $0.action != "interrupt" }, id: \.self) { t in
+                        Button { model.act(t.action) } label: {
+                            if t.on { Label(t.label, systemImage: "checkmark") } else { Text(t.label) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+            }
+        }
+    }
+}
