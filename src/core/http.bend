@@ -253,6 +253,10 @@ def Ws.cbor.bytes(t: String) -> List<&2, U32>:
 def Ws.cbor(t: String) -> List<&2, U32>:
   Ws.encode(2, Ws.cbor.bytes(t))
 
+# text as one binary frame of its UTF-8 bytes (the phones' plots)
+def Ws.bin(s: String) -> List<&2, U32>:
+  Ws.encode(2, U.Utf8.encode(s))
+
 # Client side (a hub talking to another machine's hub)
 # ----------------------------------------------------
 

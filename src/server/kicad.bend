@@ -26,29 +26,33 @@ def KiCad.release() -> String:
 def KiStack.revision() -> String:
   "ecf16c119c7ed610f5f251c479b03884b8d98b09"
 
-def Io.text.done(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(String):
+def Io.bytes.done(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(List<&2, U32>):
   (f, res) = r
-  do IO<String>:
+  do IO<List<&2, U32>>:
     File.close(f)
-    return U.Utf8.decode(Result.default(&1, &1, U32 & String, List<&2, U32>, res, Nil{}))
+    return Result.default(&1, &1, U32 & String, List<&2, U32>, res, Nil{})
 
-def Io.text.sized(r: File & Result<&1, &1, U32 & String, U32>) -> IO(String):
+def Io.bytes.sized(r: File & Result<&1, &1, U32 & String, U32>) -> IO(List<&2, U32>):
   (f, res) = r
-  IO.bind(File & Result<&1, &1, U32 & String, List<&2, U32>>, String,
-    File.read_bytes(f, U32.max(Result.default(&1, &1, U32 & String, U32, res, 0), 1)), Io.text.done)
+  IO.bind(File & Result<&1, &1, U32 & String, List<&2, U32>>, List<&2, U32>,
+    File.read_bytes(f, U32.max(Result.default(&1, &1, U32 & String, U32, res, 0), 1)), Io.bytes.done)
 
-def Io.text.opened(r: Result<&1, &1, U32 & String, File>) -> IO(String):
+def Io.bytes.opened(r: Result<&1, &1, U32 & String, File>) -> IO(List<&2, U32>):
   match r:
     case Done{f}:
-      IO.bind(File & Result<&1, &1, U32 & String, U32>, String, File.size(f), Io.text.sized)
+      IO.bind(File & Result<&1, &1, U32 & String, U32>, List<&2, U32>, File.size(f), Io.bytes.sized)
     case Fail{_}:
-      IO.pure(String, "")
+      IO.pure(List<&2, U32>, Nil{})
 
 # Files
 # -----
 
+# a whole file's bytes ([] when it cannot be read)
+def Io.bytes(path: String) -> IO(List<&2, U32>):
+  IO.bind(Result<&1, &1, U32 & String, File>, List<&2, U32>, File.open(path, "r"), Io.bytes.opened)
+
 def Io.text(path: String) -> IO(String):
-  IO.bind(Result<&1, &1, U32 & String, File>, String, File.open(path, "r"), Io.text.opened)
+  IO.bind(List<&2, U32>, String, Io.bytes(path), bs => IO.pure(String, U.Utf8.decode(bs)))
 
 def Io.is_file.kind(v: U32 & U32 & U32) -> Bool:
   (k, _) = v

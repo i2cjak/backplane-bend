@@ -10,6 +10,7 @@ import ./nui.bend as N
 import ./layout.bend as L
 import ./theme.bend as T
 import ./viewer.bend as V
+import ../server/plot.bend as PV
 import ../core/board.bend as B
 import ../gfx/draw.bend as D
 import ../server/kicad.bend as K
@@ -1162,10 +1163,15 @@ def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg)) -
 def Shell.run(+inbox: Chan(S.Msg)) -> IO(Unit):
   IO.bind(Result<&1, &1, U32 & String, Window>, Unit, W.Win.open("Backplane", 1400, 900), r => Shell.opened(r, inbox))
 
-def main() -> IO(Unit):
+def start(args: List<String>) -> IO(Unit):
   do IO<Unit>:
     +user : String <- S.Env.get("HOME", "/tmp")
     +exe : String <- S.Sys.exe_dir.io()
-    args : List<String> <- IO.args()
     b : S.Boot <- S.Main.prepare(user, exe)
     S.Main.boot(S.Main.config(user, exe, args, b), False{}, i => Shell.run(i))
+
+# (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
+def main() -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- IO.args()
+    PV.Pv.main(args, a => start(a))

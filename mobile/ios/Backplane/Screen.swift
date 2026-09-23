@@ -6,10 +6,10 @@ import Foundation
 // choices whose values it sends instead
 struct Swipe: Decodable, Hashable {
     let label, action, value, tone: String
-    let options: [Choice]
+    let options: [SwipeChoice]
 }
 
-struct Choice: Decodable, Hashable {
+struct SwipeChoice: Decodable, Hashable {
     let label, value: String
 }
 
@@ -49,6 +49,21 @@ struct Entry: Decodable, Identifiable {
     let blocks: [Block]?
 }
 
+// the board viewer (src/mobile/view.bend): the source open ("" closed),
+// the key its plots carry, the choices, and how to draw
+struct Choice: Decodable, Hashable {
+    let label, value: String
+    let on: Bool
+}
+
+struct Viewer: Decodable {
+    let open, key: String
+    let choices: [Choice]
+    let bg: UInt32
+    let fade: Int
+    let margin, zmin, zmax: Float
+}
+
 struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
@@ -58,6 +73,7 @@ struct ThreadView: Decodable {
     let queued: String
     let live: [Block]
     let working, draft, send: String
+    let viewer: Viewer
 }
 
 // a delete a row asked for, waiting for yes ("row-delete" id) or no

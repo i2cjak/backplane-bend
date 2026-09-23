@@ -7,6 +7,7 @@ import ./notify.bend as N
 import ../core/cbor.bend as CB
 import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
+import ./view.bend as VW
 
 # What bridge.js calls. The phone apps see only strings: server messages
 # in (binary CBOR frames, carried as base64); the screen, commands and
@@ -36,14 +37,23 @@ def recv(+u: U.Ui, b64: String) -> Recv:
 def wire(text: String) -> String:
   SH.B64.encode(CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
 
-def act(u: U.Ui, action: String, value: String) -> U.Act:
-  U.Ui.act(u, action, value)
+def act.k(view: Bool, u: U.Ui, +action: String, value: String) -> U.Act:
+  match view:
+    case True{}:
+      VW.View.open(u, value)
+    case False{}:
+      VW.View.sync(U.Ui.act(u, action, value))
+
+# an action; "view" opens or closes the board viewer, and any action that
+# moves to another project re-aims it
+def act(u: U.Ui, +action: String, value: String) -> U.Act:
+  act.k(String.eq(action, "view"), u, action, value)
 
 def screen(+u: U.Ui) -> String:
   J.Json.show(S.Mob.screen(u))
 
-def online(u: U.Ui, b: Bool) -> U.Ui:
-  U.Ui.online(u, b)
+def online(u: U.Ui, b: Bool) -> U.Act:
+  VW.View.online(u, b)
 
 def tick(u: U.Ui, now: Nat) -> U.Ui:
   U.Ui.tick(u, now)

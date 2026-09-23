@@ -19,8 +19,9 @@ type Out is Data:
   AgentStart{thread: String, cwd: String, provider: String, model: String, session: String, runtime: M.RuntimeMode, interaction: M.InteractionMode}
   AgentSend{thread: String, line: String}
   AgentStop{thread: String}
-  # watch a KiCad file for a client (the viewer)
-  Watch{client: U32, path: String}
+  # show a client a project's board or schematic (kind "board",
+  # "schematic"; anything else stops), or the file at path when set
+  Watch{client: U32, kind: String, root: String, path: String}
   # install the latest release and restart
   Upgrade{}
   KiCadInstall{}
@@ -847,7 +848,7 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 12n:
       Step{[M.ThreadDeleted{J.Json.get_str(p, "thread", ""), now}], [Reply.ok(client, id), AgentStop{J.Json.get_str(p, "thread", "")}]}
     case 13n:
-      Step.outs([Reply.ok(client, id), Watch{client, J.Json.get_str(p, "path", "")}])
+      Step.outs([Reply.ok(client, id), Watch{client, J.Json.get_str(p, "kind", ""), J.Json.get_str(p, "root", ""), J.Json.get_str(p, "path", "")}])
     case 14n:
       Hub.modes(s, now, client, id, p, Hub.thread(s, J.Json.get_str(p, "thread", "")))
     case 15n:

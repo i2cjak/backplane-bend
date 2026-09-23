@@ -5,6 +5,7 @@ import ../core/client.bend as U
 import ../web/dom.bend as D
 import ../web/view.bend as V
 import ./notify.bend as N
+import ./view.bend as VW
 
 # Ui -> the screen the phone apps draw, as JSON. SwiftUI and Compose map
 # it onto native lists, toolbars and text fields; every decision (order,
@@ -173,7 +174,7 @@ def Mob.strs(xs: List<&2, String>) -> List<&2, J.Json>:
     case x <> t:
       J.Json.str(x) <> Mob.strs(t)
 
-def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> J.Json:
+def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, _, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, _, _, _, _, _, _}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"branch", J.Json.str(branch)},
@@ -185,14 +186,15 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> J.Json:
         J.KV{"live", J.Json.arr(Mob.nodes(D.Md.render(U.Str.get(live, id))))},
         J.KV{"working", J.Json.str(Mob.live(String.is_empty(U.Str.get(live, id)), V.View.running(turn)))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},
-        J.KV{"send", J.Json.str(Bool.pick(String, V.View.running(turn), "Queue", "Send"))}])
+        J.KV{"send", J.Json.str(Bool.pick(String, V.View.running(turn), "Queue", "Send"))},
+        J.KV{"viewer", vw}])
 
 def Mob.main(none: Bool, +u: U.Ui, +sel: String) -> J.Json:
   match none:
     case True{}:
       J.Null{}
     case False{}:
-      Mob.thread(u, U.Ui.thread(Mob.st(u), sel), U.Ui.pending(u, sel))
+      Mob.thread(u, U.Ui.thread(Mob.st(u), sel), U.Ui.pending(u, sel), VW.View.json(u))
 
 def Mob.empty(n: Nat) -> String:
   Bool.pick(String, Nat.is_eq(n, 0n), "Add a project to start.", "Pick a thread, or start one in a project.")

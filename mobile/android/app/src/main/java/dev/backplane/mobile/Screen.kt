@@ -7,9 +7,9 @@ import org.json.JSONObject
 
 // a swipe button: the action it sends with its value, or (a snooze)
 // choices whose values it sends instead
-data class Choice(val label: String, val value: String)
+data class SwipeChoice(val label: String, val value: String)
 
-data class Swipe(val label: String, val action: String, val value: String, val tone: String, val options: List<Choice>)
+data class Swipe(val label: String, val action: String, val value: String, val tone: String, val options: List<SwipeChoice>)
 
 data class Row(
     val id: String, val title: String, val state: String, val ago: String, val pinned: Boolean,
@@ -37,11 +37,20 @@ data class Entry(
     val tone: String, val label: String, val blocks: List<Block>,
 )
 
+// the board viewer (src/mobile/view.bend): the source open ("" closed),
+// the key its plots carry, the choices, and how to draw
+data class Choice(val label: String, val value: String, val on: Boolean)
+
+data class Viewer(
+    val open: String, val key: String, val choices: List<Choice>, val bg: Int, val fade: Float,
+    val margin: Float, val zmin: Float, val zmax: Float,
+)
+
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
-    val sending: List<String>, val queued: String,
+    val sending: List<String>, val queued: String, val viewer: Viewer,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -75,7 +84,7 @@ private fun blocks(a: JSONArray?): List<Block> = a.map { o ->
 
 private fun swipe(o: JSONObject) = Swipe(
     o.optString("label"), o.optString("action"), o.optString("value"), o.optString("tone"),
-    o.optJSONArray("options").map { Choice(it.optString("label"), it.optString("value")) },
+    o.optJSONArray("options").map { SwipeChoice(it.optString("label"), it.optString("value")) },
 )
 
 private fun row(o: JSONObject) = Row(
@@ -91,7 +100,14 @@ private fun thread(o: JSONObject) = ThreadView(
             it.optString("label"), blocks(it.optJSONArray("blocks")))
     },
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"),
+    strs(o.optJSONArray("sending")), o.optString("queued"), viewer(o.optJSONObject("viewer") ?: JSONObject()),
+)
+
+private fun viewer(o: JSONObject) = Viewer(
+    o.optString("open"), o.optString("key"),
+    o.optJSONArray("choices").map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) },
+    o.optInt("bg"), o.optDouble("fade", 220.0).toFloat(), o.optDouble("margin", 0.9).toFloat(),
+    o.optDouble("zmin", 0.5).toFloat(), o.optDouble("zmax", 0.5).toFloat(),
 )
 
 private fun strs(a: JSONArray?): List<String> =

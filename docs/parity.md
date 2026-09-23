@@ -51,6 +51,7 @@ Backplane stands. Updated as features land.
 - **Machines:** each hub listens on the tailnet by default (`--no-tailscale` turns this off) and lets in its owner's devices without the token, going by `tailscale whois` (law `tailnet_no_owner_no_trust`). It finds the owner's other hubs with GET /hello, plus any listed in `BACKPLANE_PEERS`. The sidebar lists them: the native window switches its connection there through a WebSocket link, and the web client opens that machine's page. Board viewers still read files on the machine the window runs on.
 - **Models:** the pickers show what each CLI offers now. Claude Code's /model list comes from an `initialize` control request, which calls no model. Codex's list comes from its cache and Grok's from `grok models`. The lists are read again every 15 minutes and pushed to clients. The effort chips follow the model.
 - **Viewers:** board, schematic and 3D (KiCad), STEP (through step2glb), and the agents' browser (Chrome). Clicking inspects an item.
+- **Board viewer on phones:** a thread's board or schematic, live, on the GPU (Metal, GLES 3). The hub sends chunks once and then only the ones a save changed; the 5.6 MB KiCad "video" demo board arrives in about 0.3 s (600 KB), and a moved track in about 0.4 s as one 1.6 KB delta. No item inspection or 3D on phones yet.
 
 ## Not yet
 

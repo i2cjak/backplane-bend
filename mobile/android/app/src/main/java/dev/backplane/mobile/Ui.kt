@@ -32,6 +32,8 @@ import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Stop
@@ -74,6 +76,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.foundation.layout.statusBarsPadding
 
 @Composable
 fun App(m: AppModel) {
@@ -85,6 +92,10 @@ fun App(m: AppModel) {
             pairing = false
         }
         s == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        s.thread != null && s.thread.viewer.open.isNotEmpty() -> {
+            BackHandler { m.act("view", "") }
+            PlotScreen(m, s.thread.viewer)
+        }
         s.thread != null -> {
             BackHandler { m.act("select", "") }
             ThreadScreen(m, s, s.thread)
@@ -364,6 +375,16 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                     }
                 },
                 actions = {
+                    if (t.viewer.choices.isNotEmpty()) Box {
+                        var boards by remember { mutableStateOf(false) }
+                        IconButton(onClick = { boards = true }) { Icon(Icons.Filled.Memory, "Board viewer") }
+                        DropdownMenu(boards, { boards = false }) {
+                            for (c in t.viewer.choices) DropdownMenuItem(
+                                text = { Text(c.label) },
+                                onClick = { boards = false; m.act("view", c.value) },
+                            )
+                        }
+                    }
                     for (tool in t.tools) if (tool.action == "interrupt")
                         IconButton(onClick = { m.act(tool.action) }) { Icon(Icons.Filled.Stop, tool.label) }
                     Box {
@@ -410,6 +431,39 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                     LinearProgressIndicator(Modifier.width(120.dp))
                 }
             }
+        }
+    }
+}
+
+// The board viewer over the thread: the plot of the screen's source, the
+// source choices, and a way back.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PlotScreen(m: AppModel, v: Viewer) {
+    // a plot for any other source is stale (a switch in flight)
+    val f = m.plots.frame?.takeIf { it.key == v.key }
+    Box(Modifier.fillMaxSize().background(Color(0xFF000000.toInt() or v.bg))) {
+        AndroidView(factory = { PlotSurface(it) }, modifier = Modifier.fillMaxSize(), update = { s ->
+            s.margin = v.margin
+            s.zmin = v.zmin
+            s.zmax = v.zmax
+            s.fadeMs = v.fade
+            if (f != null && f.none.isEmpty()) s.show(f, v.bg)
+        })
+        when {
+            f == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            f.none.isNotEmpty() -> Text(f.none, Modifier.align(Alignment.Center), color = Color.Gray)
+        }
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = 280.dp)) {
+                v.choices.forEachIndexed { i, c ->
+                    SegmentedButton(selected = c.value == v.open, onClick = { m.act("view", c.value) },
+                        shape = SegmentedButtonDefaults.itemShape(i, v.choices.size)) { Text(c.label) }
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
         }
     }
 }

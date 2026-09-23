@@ -38,6 +38,8 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         private set
     var scrolls by mutableIntStateOf(0)
         private set
+    // the board viewer's plots, which come straight from the socket
+    val plots = PlotStore()
     // drafts sent to Bend and not yet answered: until then a screen may
     // carry an older draft than the one on screen
     private var typing = 0
@@ -78,8 +80,15 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         val base = Pairing.socket(link) ?: return
         hub = Hub(scope,
             url = { Pairing.resume(base, engine.resume()) },
-            onOpen = { scope.launch { apply(engine.online(true)) } },
-            onMessage = { b -> scope.launch { apply(engine.recv(Base64.encodeToString(b, Base64.NO_WRAP))) } },
+            onOpen = {
+                plots.reset()
+                scope.launch { apply(engine.online(true)) }
+            },
+            // a plot goes straight to the viewer; everything else is CBOR for Bend
+            onMessage = { b ->
+                if (PlotStore.isPlot(b)) plots.receive(String(b, Charsets.UTF_8))
+                else scope.launch { apply(engine.recv(Base64.encodeToString(b, Base64.NO_WRAP))) }
+            },
             onClose = { scope.launch { apply(engine.online(false)) } },
         ).also { it.start() }
     }

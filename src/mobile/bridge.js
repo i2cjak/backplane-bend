@@ -64,9 +64,11 @@ globalThis.Backplane = {
     ui = r.ui;
     return out(r.cmds, true);
   },
+  // a new connection re-asks for the viewer's plot
   online(b) {
-    ui = App.online(ui, !!b);
-    return out(null);
+    const r = App.online(ui, !!b);
+    ui = r.ui;
+    return out(r.cmds);
   },
   tick(now) {
     ui = App.tick(ui, secs(now));

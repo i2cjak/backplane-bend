@@ -16,6 +16,8 @@ final class AppModel {
 
     private(set) var link = UserDefaults.standard.string(forKey: "link") ?? ""
     private(set) var screen: Screen?
+    // the board viewer's plots, which come straight from the socket
+    let plots = PlotStore()
     // the composer's text, owned here so typing never waits on Bend
     var composer = ""
     private(set) var scrolls = 0
@@ -31,6 +33,8 @@ final class AppModel {
     #if DEBUG
     // headless checks: SIMCTL_CHILD_BACKPLANE_SELECT=<thread id> opens it
     @ObservationIgnored private var opening = ProcessInfo.processInfo.environment["BACKPLANE_SELECT"]
+    // and SIMCTL_CHILD_BACKPLANE_VIEW=board (or schematic) opens its viewer
+    @ObservationIgnored private var viewing = ProcessInfo.processInfo.environment["BACKPLANE_VIEW"]
     #endif
 
     // this install's id, part of every message id (a resend is stored once)
@@ -98,8 +102,15 @@ final class AppModel {
                 let r = try? JSONDecoder().decode(Resume.self, from: Data(await e.resume().utf8))
                 return Pairing.socket(l, since: r?.since ?? "0", origin: r?.origin ?? "")
             },
-            onOpen: { [weak self] in self?.run { await $0.online(true) } },
-            onMessage: { [weak self] d in self?.run { await $0.recv(d.base64EncodedString()) } },
+            onOpen: { [weak self] in
+                self?.plots.reset()
+                self?.run { await $0.online(true) }
+            },
+            // a plot goes straight to the viewer; everything else is CBOR for Bend
+            onMessage: { [weak self] d in
+                if PlotStore.isPlot(d) { self?.plots.receive(String(decoding: d, as: UTF8.self)) }
+                else { self?.run { await $0.recv(d.base64EncodedString()) } }
+            },
             onClose: { [weak self] in self?.run { await $0.online(false) } })
         hub = h
         h.start()
@@ -160,6 +171,10 @@ final class AppModel {
             if let id = opening, s.projects.contains(where: { $0.threads.contains { $0.id == id } }) {
                 opening = nil
                 act("select", id)
+            }
+            if opening == nil, let v = viewing, let t = s.thread, !t.viewer.choices.isEmpty {
+                viewing = nil
+                act("view", v)
             }
             #endif
         }

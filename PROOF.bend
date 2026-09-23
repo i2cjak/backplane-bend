@@ -22,6 +22,9 @@ import ./src/app/layout.bend as L
 import ./src/core/eq.bend as Q
 import ./src/core/gh.bend as GH
 import ./src/core/fold.bend as FO
+import ./src/core/plot.bend as PL
+import ./src/mobile/view.bend as MV
+import ./src/core/client.bend as U
 
 # Lemmas
 # ------
@@ -2412,5 +2415,215 @@ def Laws.fold_user_shut(live):
 def Laws.fold_default_live(live):
   {==}
 
+# The phones' board viewer
+# ------------------------
+
+law eq_chunk_k_sound:
+  for s: Bool
+  for a: PL.Chunk
+  for b: PL.Chunk
+  for hs: {PL.Eq.sig(a, b) == s : Bool}
+  for +h: {PL.Eq.chunk.k(s, a, b) == True{} : Bool}
+  {a == b : PL.Chunk}
+
+def eq_chunk_k_sound(s, a, b, hs, h):
+  match s:
+    case False{}:
+      Empty.absurd({a == b : PL.Chunk}, false_ne_true(h))
+    case True{}:
+      match a b:
+        case PL.Chunk{+s1, +l1, +c1, +a1, +m1, +w1, +d1} PL.Chunk{+s2, +l2, +c2, +a2, +m2, +w2, +d2}:
+          +r5 = Bool.and(U32.is_eq(w1, w2), Q.Eq.str(d1, d2))
+          +r4 = Bool.and(U32.is_eq(m1, m2), r5)
+          +r3 = Bool.and(U32.is_eq(a1, a2), r4)
+          +r2 = Bool.and(U32.is_eq(c1, c2), r3)
+          +h1 = and_r(U32.is_eq(l1, l2), r2, h)
+          +h2 = and_r(U32.is_eq(c1, c2), r3, h1)
+          +h3 = and_r(U32.is_eq(a1, a2), r4, h2)
+          +h4 = and_r(U32.is_eq(m1, m2), r5, h3)
+          e0 = u32_eq_sound(s1, s2, hs)
+          el = u32_eq_sound(l1, l2, and_l(U32.is_eq(l1, l2), r2, h))
+          ec = u32_eq_sound(c1, c2, and_l(U32.is_eq(c1, c2), r3, h1))
+          ea = u32_eq_sound(a1, a2, and_l(U32.is_eq(a1, a2), r4, h2))
+          em = u32_eq_sound(m1, m2, and_l(U32.is_eq(m1, m2), r5, h3))
+          ew = u32_eq_sound(w1, w2, and_l(U32.is_eq(w1, w2), Q.Eq.str(d1, d2), h4))
+          ed = eq_str_sound(d1, d2, and_r(U32.is_eq(w1, w2), Q.Eq.str(d1, d2), h4))
+          %e0 : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{_, l2, c2, a2, m2, w2, d2} : PL.Chunk}
+          %el : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, _, c2, a2, m2, w2, d2} : PL.Chunk}
+          %ec : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, _, a2, m2, w2, d2} : PL.Chunk}
+          %ea : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, _, m2, w2, d2} : PL.Chunk}
+          %em : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, _, w2, d2} : PL.Chunk}
+          %ew : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, m1, _, d2} : PL.Chunk}
+          %ed : {PL.Chunk{s1, l1, c1, a1, m1, w1, d1} == PL.Chunk{s1, l1, c1, a1, m1, w1, _} : PL.Chunk}
+          {==}
+
+# chunks compared equal are equal
+law eq_chunk_sound:
+  for a: PL.Chunk
+  for b: PL.Chunk
+  for h: {PL.Eq.chunk(a, b) == True{} : Bool}
+  {a == b : PL.Chunk}
+
+def eq_chunk_sound(a, b, h):
+  match a b:
+    case PL.Chunk{+s1, l1, c1, a1, m1, w1, d1} PL.Chunk{+s2, l2, c2, a2, m2, w2, d2}:
+      eq_chunk_k_sound(U32.is_eq(s1, s2), PL.Chunk{s1, l1, c1, a1, m1, w1, d1}, PL.Chunk{s2, l2, c2, a2, m2, w2, d2}, {==}, h)
+
+law eq_chunk_refl:
+  for +x: PL.Chunk
+  {PL.Eq.chunk(x, x) == True{} : Bool}
+
+def eq_chunk_refl(x):
+  match x:
+    case PL.Chunk{+s, +l, +c, +a, +m, +w, +d}:
+      %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s)) : {PL.Eq.chunk.k(_, PL.Chunk{s, l, c, a, m, w, d}, PL.Chunk{s, l, c, a, m, w, d}) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(l, l), True{}, u32_eq_refl(l)) : {Bool.and(_, Bool.and(U32.is_eq(c, c), Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d)))))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(c, c), True{}, u32_eq_refl(c)) : {Bool.and(_, Bool.and(U32.is_eq(a, a), Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d))))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(a, a), True{}, u32_eq_refl(a)) : {Bool.and(_, Bool.and(U32.is_eq(m, m), Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d)))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(m, m), True{}, u32_eq_refl(m)) : {Bool.and(_, Bool.and(U32.is_eq(w, w), Q.Eq.str(d, d))) == True{} : Bool}
+      %Equal.sym(Bool, U32.is_eq(w, w), True{}, u32_eq_refl(w)) : {Bool.and(_, Q.Eq.str(d, d)) == True{} : Bool}
+      eq_str_refl(d)
+
+law ref_next_get:
+  for r: PL.Ref
+  for +o: PL.Chunk
+  for +ot: List<&2, PL.Chunk>
+  {PL.Ref.get(PL.Ref.next(r), o <> ot) == PL.Ref.get(r, ot) : PL.Chunk}
+
+def ref_next_get(r, o, ot):
+  match r:
+    case PL.Keep{i}:
+      {==}
+    case PL.Fresh{c}:
+      {==}
+
+law ref_next_fresh:
+  for r: PL.Ref
+  {PL.Ref.fresh(PL.Ref.next(r)) == PL.Ref.fresh(r) : Nat}
+
+def ref_next_fresh(r):
+  match r:
+    case PL.Keep{i}:
+      {==}
+    case PL.Fresh{c}:
+      {==}
+
+# the chunk a phone looks up for c is c
+law plot_find_get_k:
+  for os: List<&2, PL.Chunk>
+  for s: Bool
+  for +c: PL.Chunk
+  for h: {PL.Plot.hit(os, c) == s : Bool}
+  {PL.Ref.get(PL.Plot.find(os, s, c), os) == c : PL.Chunk}
+
+def plot_find_get_k(os, s, c, h):
+  match os:
+    case Nil{}:
+      {==}
+    case +o <> +ot:
+      match s:
+        case True{}:
+          Equal.sym(PL.Chunk, c, o, eq_chunk_sound(c, o, h))
+        case False{}:
+          Equal.trans(PL.Chunk, PL.Ref.get(PL.Ref.next(PL.Plot.find(ot, PL.Plot.hit(ot, c), c)), o <> ot), PL.Ref.get(PL.Plot.find(ot, PL.Plot.hit(ot, c), c), ot), c,
+            ref_next_get(PL.Plot.find(ot, PL.Plot.hit(ot, c), c), o, ot), plot_find_get_k(ot, PL.Plot.hit(ot, c), c, {==}))
+
+def Laws.plot_delta_exact(ns, old):
+  match ns:
+    case Nil{}:
+      {==}
+    case +n <> +t:
+      e1 = Equal.sym(PL.Chunk, PL.Ref.get(PL.Plot.find(old, PL.Plot.hit(old, n), n), old), n, plot_find_get_k(old, PL.Plot.hit(old, n), n, {==}))
+      e2 = Equal.sym(List<&2, PL.Chunk>, PL.Plot.apply(PL.Plot.delta(t, old), old), t, Laws.plot_delta_exact(t, old))
+      %e1 : {_ <> PL.Plot.apply(PL.Plot.delta(t, old), old) == n <> t : List<&2, PL.Chunk>}
+      %e2 : {n <> _ == n <> t : List<&2, PL.Chunk>}
+      {==}
+
+law append_snoc:
+  for pre: List<&2, PL.Chunk>
+  for +x: PL.Chunk
+  for +t: List<&2, PL.Chunk>
+  {List.append(&2, PL.Chunk, pre, x <> t) == List.append(&2, PL.Chunk, List.append(&2, PL.Chunk, pre, [x]), t) : List<&2, PL.Chunk>}
+
+def append_snoc(pre, x, t):
+  match pre:
+    case Nil{}:
+      {==}
+    case +p <> +pt:
+      Equal.cong(List<&2, PL.Chunk>, List<&2, PL.Chunk>, l => p <> l, List.append(&2, PL.Chunk, pt, x <> t),
+        List.append(&2, PL.Chunk, List.append(&2, PL.Chunk, pt, [x]), t), append_snoc(pt, x, t))
+
+# a chunk the phone holds (somewhere after pre) is found, so kept
+law plot_find_keeps_k:
+  for pre: List<&2, PL.Chunk>
+  for s: Bool
+  for +x: PL.Chunk
+  for +t: List<&2, PL.Chunk>
+  for h: {PL.Plot.hit(List.append(&2, PL.Chunk, pre, x <> t), x) == s : Bool}
+  {PL.Ref.fresh(PL.Plot.find(List.append(&2, PL.Chunk, pre, x <> t), s, x)) == 0n : Nat}
+
+def plot_find_keeps_k(pre, s, x, t, h):
+  match pre:
+    case Nil{}:
+      match s:
+        case True{}:
+          {==}
+        case False{}:
+          Empty.absurd({PL.Ref.fresh(PL.Ref.next(PL.Plot.find(t, PL.Plot.hit(t, x), x))) == 0n : Nat}, false_ne_true(Equal.trans(Bool, False{}, PL.Eq.chunk(x, x), True{}, Equal.sym(Bool, PL.Eq.chunk(x, x), False{}, h), eq_chunk_refl(x))))
+    case +p <> +pt:
+      match s:
+        case True{}:
+          {==}
+        case False{}:
+          Equal.trans(Nat, PL.Ref.fresh(PL.Ref.next(PL.Plot.find(List.append(&2, PL.Chunk, pt, x <> t), PL.Plot.hit(List.append(&2, PL.Chunk, pt, x <> t), x), x))),
+            PL.Ref.fresh(PL.Plot.find(List.append(&2, PL.Chunk, pt, x <> t), PL.Plot.hit(List.append(&2, PL.Chunk, pt, x <> t), x), x)), 0n,
+            ref_next_fresh(PL.Plot.find(List.append(&2, PL.Chunk, pt, x <> t), PL.Plot.hit(List.append(&2, PL.Chunk, pt, x <> t), x), x)),
+            plot_find_keeps_k(pt, PL.Plot.hit(List.append(&2, PL.Chunk, pt, x <> t), x), x, t, {==}))
+
+# every chunk of xs is kept by a phone holding pre ++ xs
+law plot_kept_all:
+  for xs: List<&2, PL.Chunk>
+  for +pre: List<&2, PL.Chunk>
+  {PL.Plot.fresh(PL.Plot.delta(xs, List.append(&2, PL.Chunk, pre, xs))) == 0n : Nat}
+
+def plot_kept_all(xs, pre):
+  match xs:
+    case Nil{}:
+      {==}
+    case +x <> +t:
+      ef = Equal.sym(Nat, PL.Ref.fresh(PL.Plot.find(List.append(&2, PL.Chunk, pre, x <> t), PL.Plot.hit(List.append(&2, PL.Chunk, pre, x <> t), x), x)), 0n,
+        plot_find_keeps_k(pre, PL.Plot.hit(List.append(&2, PL.Chunk, pre, x <> t), x), x, t, {==}))
+      ea = Equal.sym(List<&2, PL.Chunk>, List.append(&2, PL.Chunk, pre, x <> t), List.append(&2, PL.Chunk, List.append(&2, PL.Chunk, pre, [x]), t), append_snoc(pre, x, t))
+      %ef : {Nat.add(_, PL.Plot.fresh(PL.Plot.delta(t, List.append(&2, PL.Chunk, pre, x <> t)))) == 0n : Nat}
+      %ea : {PL.Plot.fresh(PL.Plot.delta(t, _)) == 0n : Nat}
+      plot_kept_all(t, List.append(&2, PL.Chunk, pre, [x]))
+
+def Laws.plot_unchanged_sends_nothing(cs):
+  plot_kept_all(cs, Nil{})
+
+def Laws.plot_hidden_not_sent(key, sig, layer, p, info, kind, acc, h):
+  %Equal.sym(U32, PL.Piece.alpha(kind, layer), 0, h) : {PL.Piece.put.k(PL.Piece.shown(_), B.Item{key, sig, layer, p, info}, acc) == acc : List<&2, PL.Piece>}
+  {==}
+
+def Laws.plot_courtyard_hidden():
+  {==}
+
+def Laws.plot_numbers_exact():
+  {==}
+
+def Laws.view_closed_wants_nothing(root):
+  match root:
+    case SNil{}:
+      {==}
+    case SCon{h, t}:
+      {==}
+
+def Laws.view_asks_once(u, cmds, h):
+  %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), cmds) == U.Act{u, cmds} : U.Act}
+  {==}
+
 def Laws.hub_frames_cbor(t):
+  {==}
+
+def Laws.hub_plot_frames_binary(s):
   {==}

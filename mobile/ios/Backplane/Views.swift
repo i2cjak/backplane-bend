@@ -300,6 +300,9 @@ struct ThreadScreen: View {
         }
         .navigationTitle(thread.title)
         .navigationBarTitleDisplayMode(.inline)
+        .fullScreenCover(isPresented: Binding(get: { !thread.viewer.open.isEmpty }, set: { if !$0 { model.act("view", "") } })) {
+            if let v = model.screen?.thread?.viewer { PlotScreen(model: model, viewer: v) }
+        }
         .toolbar {
             if !thread.branch.isEmpty {
                 ToolbarItem(placement: .principal) {
@@ -310,6 +313,16 @@ struct ThreadScreen: View {
                 }
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
+                if !thread.viewer.choices.isEmpty {
+                    Menu {
+                        ForEach(thread.viewer.choices, id: \.value) { c in
+                            Button(c.label) { model.act("view", c.value) }
+                        }
+                    } label: {
+                        Image(systemName: "cpu")
+                    }
+                    .accessibilityLabel("Board viewer")
+                }
                 ForEach(thread.tools.filter { $0.action == "interrupt" }, id: \.self) { t in
                     Button(t.label, systemImage: "stop.fill") { model.act(t.action) }
                 }

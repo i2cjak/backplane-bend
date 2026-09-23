@@ -20,6 +20,9 @@
 			</array>
 		</dict>
 	</array>
+	<!-- ProMotion: the board viewer draws at up to 120 Hz -->
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

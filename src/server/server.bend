@@ -20,6 +20,8 @@ import ./park.bend as PK
 import ./git.bend as GT
 import ./gh.bend as GH
 import ./term.bend as TM
+import ./plot.bend as PV
+import ../core/plot.bend as PL
 import ../core/agent.bend as AG
 import ../core/tailnet.bend as TN
 import ../core/images.bend as IM
@@ -59,7 +61,7 @@ type Msg is Data:
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>, machines: String}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>, machines: String, pv: Maybe<&2, Chan(PV.PMsg)>}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -342,10 +344,19 @@ def Conn.finish(s: Socket, bs: List<&2, U32>) -> IO(Unit):
     s2 : Socket <- Conn.send(s, bs)
     Socket.close(s2)
 
-# a message as a frame: always one binary CBOR frame (about 40% fewer
-# bytes on the air than JSON text; every client speaks it)
-def Conn.frame.out(t: String) -> List<&2, U32>:
-  W.Ws.cbor(t)
+def Conn.frame.plot(plot: Bool, t: String) -> List<&2, U32>:
+  match plot:
+    case True{}:
+      W.Ws.bin(t)
+    case False{}:
+      W.Ws.cbor(t)
+
+# a message as a frame: always binary, and CBOR (about 40% fewer bytes on
+# the air than JSON text; every client speaks it), except a phone's plot,
+# whose JSON text goes as it is: re-encoding megabytes of geometry would
+# cost the hub more than it saves (PL.Plot.is)
+def Conn.frame.out(+t: String) -> List<&2, U32>:
+  Conn.frame.plot(PL.Plot.is(t), t)
 
 def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit):
   match m:
@@ -587,7 +598,7 @@ def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
 
 def Info.net(n: Net) -> List<&2, J.KV>:
   match n:
-    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx, mc}:
+    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx, mc, pvx}:
       List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"machines", J.Str{mc}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
 
 # what this machine runs, for the settings screen and the model picker
@@ -731,13 +742,6 @@ def Hub.leave.close(m: Maybe<&2, Chan(Wire)>) -> IO(Unit):
       Chan.close(Wire, c)
     case None{}:
       IO.pure(Unit, Unit{})
-
-def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
-      do IO<Hub>:
-        Hub.leave.close(Clients.get(cl, client))
-        return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg, note}
 
 def Hub.push(h: Hub, +client: U32, text: String) -> IO(Hub):
   match h:
@@ -1546,7 +1550,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _, _, _, brx, pkx, tmx, mc}:
+    case Net{_, _, t, _, _, _, brx, pkx, tmx, mc, pvx}:
       t
 
 # Effects
@@ -1559,12 +1563,12 @@ def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
 
 def Cfg.mtext(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx, mc, pvx}}:
       mt
 
 def Cfg.rt(c: Cfg) -> K.Rt:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx, mc, pvx}}:
       rt
 
 def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
@@ -1721,8 +1725,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx, mc}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
 
 # Startup
 # -------
@@ -1790,12 +1794,12 @@ def Agent.pid_is(m: Maybe<&2, Agent>, +pid: U32) -> Bool:
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx}}:
       ms
 
 def Cfg.pk(c: Cfg) -> Maybe<&2, Chan(PK.PMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx, mc, pvx}}:
       pk
 
 def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
@@ -1832,17 +1836,27 @@ def Hub.mcp.send(later: Bool, +park: String, +body: String, +text: String, +repl
 
 def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, _, g, i, mc}:
-      Net{a, b, c, d, e, f, Some{q}, g, i, mc}
+    case Net{a, b, c, d, e, f, _, g, i, mc, pvx}:
+      Net{a, b, c, d, e, f, Some{q}, g, i, mc, pvx}
 
 def Net.with_tm(n: Net, q: Chan(TM.TMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, h, _, mc}:
-      Net{a, b, c, d, e, f, g, h, Some{q}, mc}
+    case Net{a, b, c, d, e, f, g, h, _, mc, pvx}:
+      Net{a, b, c, d, e, f, g, h, Some{q}, mc, pvx}
+
+def Net.with_pv(n: Net, q: Chan(PV.PMsg)) -> Net:
+  match n:
+    case Net{a, b, c, d, e, f, g, h, i, mc, _}:
+      Net{a, b, c, d, e, f, g, h, i, mc, Some{q}}
+
+def Cfg.pv(c: Cfg) -> Maybe<&2, Chan(PV.PMsg)>:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, _, _, pv}}:
+      pv
 
 def Cfg.tm(c: Cfg) -> Maybe<&2, Chan(TM.TMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm, mc, pvx}}:
       tm
 
 # a shell's output, to the hub (which sends it to every client)
@@ -1870,6 +1884,48 @@ def Term.put(m: Maybe<&2, Chan(TM.TMsg)>, +msg: TM.TMsg) -> IO(Unit):
         return Unit{}
     case None{}:
       IO.pure(Unit, Unit{})
+
+# The phones' viewer
+# ------------------
+
+# a plot for a phone, to the hub (which writes it to that phone's socket)
+def Plot.fwd.got(m: Maybe<&1, PV.POut>, +inbox: Chan(Msg), k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{PV.POut{client, text}}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, Push{client, text})
+        k(Unit{})
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Plot.fwd(fuel: Nat, +out: Chan(PV.POut), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      IO.bind(Maybe<&1, PV.POut>, Unit, Chan.recv(PV.POut, out), m => Plot.fwd.got(m, inbox, u => Plot.fwd(f, out, inbox)))
+
+def Plot.put(m: Maybe<&2, Chan(PV.PMsg)>, +msg: PV.PMsg) -> IO(Unit):
+  match m:
+    case Some{q}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(PV.PMsg, q, msg)
+        return Unit{}
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        Hub.leave.close(Clients.get(cl, client))
+        Plot.put(Cfg.pv(cfg), PV.PStop{client})
+        return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg, note}
+
+# kicad.watch: kind "board" or "schematic" shows it, anything else stops
+def Plot.watch(+client: U32, +kind: String, +root: String, +path: String) -> PV.PMsg:
+  Bool.pick(PV.PMsg, String.eq(kind, "board"), PV.PWatch{client, 0, root, path},
+    Bool.pick(PV.PMsg, String.eq(kind, "schematic"), PV.PWatch{client, 1, root, path}, PV.PStop{client}))
 
 def Term.msg(+op: String, +thread: String, +cwd: String, data: List<&2, U32>, +cols: U32, +rows: U32) -> TM.TMsg:
   Bool.pick(TM.TMsg, String.eq(op, "open"), TM.TOpen{thread, cwd, cols, rows},
@@ -1975,8 +2031,8 @@ def Term.json(+thread: String, bs: List<&2, U32>) -> String:
 
 def Net.with_pk(n: Net, q: Chan(PK.PMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, _, i, mc}:
-      Net{a, b, c, d, e, f, g, Some{q}, i, mc}
+    case Net{a, b, c, d, e, f, g, _, i, mc, pvx}:
+      Net{a, b, c, d, e, f, g, Some{q}, i, mc, pvx}
 
 def Browser.exe() -> IO(String):
   do IO<String>:
@@ -1986,7 +2042,7 @@ def Browser.exe() -> IO(String):
 
 def Cfg.br(c: Cfg) -> Maybe<&2, Chan(BR.BMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx, mc}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx, mc, pvx}}:
       br
 
 def Preview.shot(+o: J.Json) -> List<&2, J.Json>:
@@ -2070,8 +2126,8 @@ def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
 
 def Cfg.with_models(c: Cfg, +ms: String, +mt: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx, mc}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx, mc, pvx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
 
 def Hub.models.k(h: Hub) -> IO(Hub):
   match h:
@@ -2082,8 +2138,8 @@ def Hub.models.k(h: Hub) -> IO(Hub):
 
 def Cfg.with_machines(c: Cfg, +mc: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, _}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, _, pvx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
 
 # the owner's other machines changed: every client hears
 def Hub.machines(h: Hub, +mc: String) -> IO(Hub):
@@ -2160,12 +2216,12 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--no-tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{False{}, False{}, tok, ms, mt, rt, brx, pkx, tmx, mc}})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx, mc}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx, mc}})
+    case "--no-tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{False{}, False{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -2181,7 +2237,7 @@ def Models.every() -> U32:
 
 def Net.models(n: Net) -> String:
   match n:
-    case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc}:
+    case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx}:
       ms
 
 # Machines
@@ -2624,13 +2680,13 @@ def Tailnet.listen.k(none: Bool, +ip: String, +port: U32, +web: String, +inbox: 
 # serve HTTPS through `tailscale serve` when asked
 def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
   match n:
-    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx, mc}:
+    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx, mc, pvx}:
       do IO<Unit>:
         r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
         +ip : String = Tailnet.first(r)
         Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
         Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc}:
+    case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc, pvx}:
       IO.pure(Unit, Unit{})
 
 def Refresh.found(fd: Found, +inbox: Chan(Msg), +last: String) -> IO(String):
@@ -2778,7 +2834,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3787,
-    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{True{}, False{}, "", ms, mt, rt, None{}, None{}, None{}, ""}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{True{}, False{}, "", ms, mt, rt, None{}, None{}, None{}, "", None{}}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
@@ -2979,8 +3035,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         Hub.agent_stop(Agents.get(as, thread))
         return Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
-    case _ B.Watch{_, _}:
-      IO.pure(Hub, h)
+    case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.Watch{+client, +kind, +root, +path}:
+      do IO<Hub>:
+        Plot.put(Cfg.pv(cfg), Plot.watch(client, kind, root, path))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
@@ -3201,7 +3259,11 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
         shell : String <- Env.get("SHELL", "/bin/bash")
         IO.spawn(Unit, TM.Term.loop(Fuel.forever(), tq, Nil{}, shell, to))
         IO.spawn(Unit, Term.fwd(Fuel.forever(), to, inbox))
-        +nt : Net = Net.with_tm(Net.with_pk(Net.with_br(nt0, bq), pq), tq)
+        +vq : Chan(PV.PMsg) <- Chan.new(PV.PMsg, 1024)
+        +vo : Chan(PV.POut) <- Chan.new(PV.POut, 1024)
+        IO.spawn(Unit, PV.Pv.loop(Fuel.forever(), vq, PV.Pv.empty(), vo))
+        IO.spawn(Unit, Plot.fwd(Fuel.forever(), vo, inbox))
+        +nt : Net = Net.with_pv(Net.with_tm(Net.with_pk(Net.with_br(nt0, bq), pq), tq), vq)
         l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(host, port)
         Main.listened(l, Hub{st, f, ls, Nil{}, Nil{}, inbox, Cfg{home, web, host, port, pr, ds, v, nt}, ""}, web, inbox, host ++ ":" ++ U32.show(port), need, Cfg{home, web, host, port, pr, ds, v, nt}, front)
     case Fail{e} _:

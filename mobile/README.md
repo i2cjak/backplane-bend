@@ -23,6 +23,22 @@ a thread without taps.
 Pairing: paste the hub's tailnet link (`http://host:3787/#token=…`), or open
 `backplane://pair?url=<that link, URL-encoded>`.
 
+## Board viewer
+
+A thread's toolbar opens its project's board or schematic (the chip
+icon). The hub sends it as a plot (`src/core/plot.bend`): chunks of
+geometry in paint order, then, on each save, only the chunks that changed
+(laws `plot_delta_exact`, `plot_unchanged_sends_nothing`). Plot messages
+go straight from the socket to the renderer, never through bridge.js.
+
+The phone uploads a plot to the GPU once; pan, pinch and double-tap only
+move a transform, so every frame costs the same whatever the board. Each
+layer is drawn as coverage (tracks, arcs and dots as instanced capsules
+with an analytic edge, fills by stencil) and laid over the frame in its
+colour and opacity. Frames are drawn only while a finger moves, a fling
+coasts or new chunks fade in. iOS: Metal (shaders compiled on the device,
+so the build needs no Metal toolchain), up to 120 Hz. Android: OpenGL ES 3.
+
 ## TestFlight
 
 `archive` needs `~/backplane-ios/signing.env` on the Mac (never committed):

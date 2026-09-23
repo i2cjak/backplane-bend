@@ -24,6 +24,8 @@ import ./src/core/gh.bend as GH
 import ./src/gfx/text.bend as X
 import ./src/core/fold.bend as FO
 import ./src/core/http.bend as WS
+import ./src/core/plot.bend as PL
+import ./src/mobile/view.bend as MV
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -956,3 +958,59 @@ law fold_default_live:
 law hub_frames_cbor:
   for +t: String
   {List.head(&2, U32, WS.Ws.cbor(t)) == Some{130} : Maybe<&2, U32>}
+
+# a plot for a phone goes as a binary frame too, never text
+law hub_plot_frames_binary:
+  for s: String
+  {List.head(&2, U32, WS.Ws.bin(s)) == Some{130} : Maybe<&2, U32>}
+
+# The phones' board viewer
+# ------------------------
+# The hub sends a phone a board or schematic as chunks of geometry, and
+# each later version only as a delta against what that phone holds.
+
+# what a phone rebuilds from a delta against the chunks it holds is
+# exactly the new plot, whatever it held before
+law plot_delta_exact:
+  for ns: List<&2, PL.Chunk>
+  for +old: List<&2, PL.Chunk>
+  {PL.Plot.apply(PL.Plot.delta(ns, old), old) == ns : List<&2, PL.Chunk>}
+
+# re-reading an unchanged board sends no geometry: every chunk goes as the
+# index of one the phone holds (and so nothing fades in again)
+law plot_unchanged_sends_nothing:
+  for +cs: List<&2, PL.Chunk>
+  {PL.Plot.fresh(PL.Plot.delta(cs, cs)) == 0n : Nat}
+
+# an item on a layer the viewers hide is never sent
+law plot_hidden_not_sent:
+  for +key: String
+  for +sig: U32
+  for +layer: U32
+  for +p: B.Prim
+  for +info: String
+  for +kind: U32
+  for +acc: List<&2, PL.Piece>
+  for h: {PL.Piece.alpha(kind, layer) == 0 : U32}
+  {PL.Piece.put(B.Item{key, sig, layer, p, info}, kind, acc) == acc : List<&2, PL.Piece>}
+
+# the courtyards are such a layer on a board
+law plot_courtyard_hidden:
+  {PL.Piece.alpha(0, 17) == 0 : U32}
+
+# numbers survive the wire exactly: small and large, and negatives as
+# two's complement
+law plot_numbers_exact:
+  {PL.Dec.nums(PL.Enc.text([0, 1, 31, 32, 1024, 123456789, 4294967295])) == [0, 1, 31, 32, 1024, 123456789, 4294967295] : List<&2, U32>}
+
+# a closed viewer wants no source, in any project
+law view_closed_wants_nothing:
+  for +root: String
+  {MV.View.key("", root) == "" : String}
+
+# a viewer the hub is already showing its source asks the hub nothing
+law view_asks_once:
+  for +u: U.Ui
+  for +cmds: List<&2, U.Cmd>
+  for h: {String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")) == True{} : Bool}
+  {MV.View.sync.u(u, cmds) == U.Act{u, cmds} : U.Act}
