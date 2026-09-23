@@ -12,6 +12,7 @@ import ./theme.bend as T
 import ./viewer.bend as V
 import ../core/board.bend as B
 import ../gfx/draw.bend as D
+import ../server/kicad.bend as K
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -247,27 +248,15 @@ def Shell.queue(a: Shell, k: Chan(ShellMsg) -> Shell -> IO(Unit)) -> IO(Unit):
 # The board watcher
 # -----------------
 
-def Watch.first.hit(ns: List<&2, String>) -> Bool:
-  match ns:
-    case n <> _:
-      String.ends_with(n, ".kicad_pcb")
-    case Nil{}:
-      False{}
+def Watch.pcb(f: K.Files) -> String:
+  match f:
+    case K.Files{_, pcb, _}:
+      pcb
 
-def Watch.first(ns: List<&2, String>, hit: Bool, +root: String) -> String:
-  match ns hit:
-    case n <> _ True{}:
-      root ++ "/" ++ n
-    case _ <> +t False{}:
-      Watch.first(t, Watch.first.hit(t), root)
-    case Nil{} _:
-      ""
-
-# the project's board file ("" when it has none)
+# the project's canonical board (.backplane.json, else the .kicad_pro's
+# sibling; "" when it has none), the same file the agents are told to edit
 def Watch.find(+root: String) -> IO(String):
-  do IO<String>:
-    +ns : List<&2, String> <- S.Names.of(root)
-    return Watch.first(ns, Watch.first.hit(ns), root)
+  IO.bind(K.Files, String, K.Files.read(root), f => IO.pure(String, Watch.pcb(f)))
 
 def Watch.items(m: Maybe<&2, List<&2, B.Item>>) -> Maybe<&2, List<&2, B.Item>>:
   match m:
