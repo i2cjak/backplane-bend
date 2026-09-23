@@ -963,10 +963,26 @@ def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
     case Some{Hit{_, _, _, _, +action, +value}}:
       Nui.click.act(String.eq(action, "focus"), n, action, value)
     case None{}:
-      Step{n, Nil{}, False{}}
+      Step{n, Nil{}, True{}}
+
+# a click outside the model picker closes it (its own rows and chips, and
+# its toggle, keep their meaning)
+def Menu.inside(m: Maybe<&2, Hit>) -> Bool:
+  match m:
+    case Some{Hit{_, _, _, _, +a, +v}}:
+      Bool.or(Bool.or(String.eq(a, "model"), String.eq(a, "effort")), Bool.and(String.eq(a, "flag"), String.eq(v, "models")))
+    case None{}:
+      False{}
+
+def Menu.shut(inside: Bool, +n: Nui) -> Nui:
+  match inside:
+    case True{}:
+      n
+    case False{}:
+      Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "models"))
 
 def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
-  Nui.click.k(Hit.find(Nui.hits(n), x, y), n)
+  Nui.click.k(Hit.find(Nui.hits(n), x, y), Menu.shut(Menu.inside(Hit.find(Nui.hits(n), x, y)), n))
 
 def Nui.key.proj(proj: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match proj:
@@ -998,8 +1014,16 @@ def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mo
 def Nui.key.go(+name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Nui.key.go.k(String.is_empty(name), name, n, code, text, mods)
 
+# Esc first closes an open menu (the model picker)
+def Nui.key.menu(menu: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match menu:
+    case True{}:
+      Step{Nui.with_ui(n, U.Ui.flag_off(Nui.ui(n), "models")), Nil{}, True{}}
+    case False{}:
+      Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
+
 def Nui.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
+  Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), U.Ui.flag(Nui.ui(n), "models")), n, code, text, mods)
 
 def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
   match open:
