@@ -8,6 +8,7 @@ import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
 import ../gfx/bitmap.bend as BM
 import ../core/vt.bend as VT
+import ../core/attach.bend as AT
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -206,22 +207,6 @@ def Nui.composer.k(e: Ed, n: Nui) -> Step:
     case Ed{_, +c, False{}, False{}}:
       Step{Nui.with_caret(n, c), Nil{}, True{}}
 
-def Nui.path.k(e: Ed, n: Nui) -> Step:
-  match e:
-    case Ed{+t, _, True{}, _}:
-      Nui.act(Nui.with_path(n, "", 0n), "add-project", t)
-    case Ed{t, +c, False{}, _}:
-      Step{Nui.with_path(n, t, c), Nil{}, True{}}
-
-def Nui.field.k(comp: Bool, path: Bool, n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  match comp path n:
-    case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.k(Ed.key(code, text, mods, U.Ui.draft_text(u), ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
-      Nui.path.k(Ed.key(code, text, mods, pa, ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case _ _ _:
-      Step{n, Nil{}, False{}}
-
 def Nui.focus_of(n: Nui) -> String:
   match n:
     case Nui{_, _, _, _, _, _, _, _, fo, _, _, _, vw}:
@@ -232,14 +217,9 @@ def Nui.focus(n: Nui, fo: String) -> Step:
     case Nui{u, w, h, mx, my, sd, sc, ca, _, pa, hi, ms, vw}:
       Step{Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
 
-def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +text: String) -> Step:
-  match comp path n:
-    case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
-      Nui.path.k(Ed.insert(pa, ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case _ _ _:
-      Step{n, Nil{}, False{}}
+# whether a path field has the keys (a project to add, a file to attach)
+def Nui.in_path(+n: Nui) -> Bool:
+  Bool.or(String.eq(Nui.focus_of(n), "project-path"), String.eq(Nui.focus_of(n), "attach-path"))
 
 # Pointer
 # -------
@@ -330,17 +310,6 @@ def Nui.ui(n: Nui) -> U.Ui:
   match n:
     case Nui{u, _, _, _, _, _, _, _, _, _, _, _, vw}:
       u
-
-# pasted text lands in the focused field at the caret
-def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
-  match term:
-    case True{}:
-      Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.paste(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), text)), n)
-    case False{}:
-      Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), String.eq(Nui.focus_of(n), "project-path"), n, text)
-
-def Nui.paste(+n: Nui, text: String) -> Step:
-  Nui.paste.t(String.eq(Nui.focus_of(n), "terminal"), n, text)
 
 # The board viewer
 # ----------------
@@ -449,22 +418,6 @@ def Vw.refit(v: V.Vw) -> V.Vw:
     case V.Vw{s, vi, _, r, d, lx, ly, b, _, cu, vx}:
       V.Vw{s, vi, False{}, r, d, lx, ly, b, False{}, cu, Vx.refit(vx)}
 
-def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  match nofocus fit:
-    case True{} True{}:
-      Step{Nui.with_vw(n, Vw.refit(Nui.vw(n))), Nil{}, True{}}
-    case _ _:
-      Nui.field.k(String.eq(Nui.focus_of(n), "composer"), String.eq(Nui.focus_of(n), "project-path"), n, code, text, mods)
-
-def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  match paste esc:
-    case True{} _:
-      Step{n, [NPaste{}], False{}}
-    case False{} True{}:
-      Nui.focus(n, "")
-    case False{} False{}:
-      Nui.key.free(String.is_empty(Nui.focus_of(n)), U32.is_eq(code, 102), n, code, text, mods)
-
 # a key press (releases do nothing)
 # The command palette
 # -------------------
@@ -554,10 +507,89 @@ def Step.nui(s: Step) -> Nui:
     case Step{n, _, _}:
       n
 
+# attach each pasted file
+def Nui.attach.all(ps: List<&2, String>, +n: Nui) -> Step:
+  match ps:
+    case Nil{}:
+      Step{n, Nil{}, True{}}
+    case +p <> t:
+      +s = Nui.act(n, "attach-file", p)
+      Step.merge(s, Nui.attach.all(t, Step.nui(s)))
+
+# a paste into the composer: files (file:// URIs, image paths) attach,
+# anything else is text at the caret
+def Nui.paste.comp(ps: List<&2, String>, n: Nui, +text: String) -> Step:
+  match ps n:
+    case Nil{} Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
+      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+    case +p <> +t _:
+      Nui.attach.all(p <> t, n)
+
 def Nui.focus.step(s: Step, +fo: String) -> Step:
   match s:
     case Step{+n, cs, d}:
       Step.merge(Step{n, cs, d}, Nui.focus(n, fo))
+
+# Enter in a path field: add the project, or attach the file (and go back
+# to the composer)
+def Nui.path.done(attach: Bool, +n: Nui, +t: String) -> Step:
+  match attach:
+    case True{}:
+      Nui.focus.step(Nui.act(Nui.with_path(n, "", 0n), "attach-file", t), "composer")
+    case False{}:
+      Nui.act(Nui.with_path(n, "", 0n), "add-project", t)
+
+def Nui.path.k(e: Ed, +n: Nui) -> Step:
+  match e:
+    case Ed{+t, _, True{}, _}:
+      Nui.path.done(String.eq(Nui.focus_of(n), "attach-path"), n, t)
+    case Ed{t, +c, False{}, _}:
+      Step{Nui.with_path(n, t, c), Nil{}, True{}}
+
+def Nui.field.k(comp: Bool, path: Bool, n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match comp path n:
+    case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
+      Nui.composer.k(Ed.key(code, text, mods, U.Ui.draft_text(u), ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+    case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
+      Nui.path.k(Ed.key(code, text, mods, pa, ca), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+    case _ _ _:
+      Step{n, Nil{}, False{}}
+
+def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +text: String) -> Step:
+  match comp path n:
+    case True{} _ _:
+      Nui.paste.comp(AT.Att.pasted(text), n, text)
+    case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
+      Nui.path.k(Ed.insert(pa, ca, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+    case _ _ _:
+      Step{n, Nil{}, False{}}
+
+# pasted text lands in the focused field at the caret
+def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
+  match term:
+    case True{}:
+      Nui.act.k(U.Ui.term_keys(Nui.ui(n), VT.Vt.paste(U.Ui.term(Nui.ui(n), U.Ui.sel(Nui.ui(n))), text)), n)
+    case False{}:
+      Nui.paste.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, text)
+
+def Nui.paste(+n: Nui, text: String) -> Step:
+  Nui.paste.t(String.eq(Nui.focus_of(n), "terminal"), n, text)
+
+def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match nofocus fit:
+    case True{} True{}:
+      Step{Nui.with_vw(n, Vw.refit(Nui.vw(n))), Nil{}, True{}}
+    case _ _:
+      Nui.field.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, code, text, mods)
+
+def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
+  match paste esc:
+    case True{} _:
+      Step{n, [NPaste{}], False{}}
+    case False{} True{}:
+      Nui.focus(n, "")
+    case False{} False{}:
+      Nui.key.free(String.is_empty(Nui.focus_of(n)), U32.is_eq(code, 102), n, code, text, mods)
 
 # window modifiers (1 shift, 2 ctrl, 4 alt) as xterm's (1 shift, 4 ctrl, 8 alt)
 def Keys.vt(+m: U32) -> U32:
@@ -709,10 +741,20 @@ def Nui.shortcut.k(i: Nat, +n: Nui) -> Step:
     case _:
       Step{n, [NPaste{}], False{}}
 
+# the palette's key: items (the terminal; the attach path field)
+def Pal.keyact(i: Nat, +n: Nui) -> Step:
+  match i:
+    case 0n:
+      Nui.shortcut.k(0n, n)
+    case 1n:
+      Nui.focus(Nui.with_path(n, "", 0n), "attach-path")
+    case _:
+      Step{n, Nil{}, False{}}
+
 def Pal.run.k(key: Bool, +n: Nui, +a: String, +v: String) -> Step:
   match key:
     case True{}:
-      Nui.shortcut.k(U.Keys.pos(["term"], String.drop(a, 4n)), n)
+      Pal.keyact(U.Keys.pos(["term", "attach"], String.drop(a, 4n)), n)
     case False{}:
       Nui.act(n, a, v)
 

@@ -157,6 +157,7 @@ let ui = App.init(now(), cid);
 let socket = null;
 let queued = false;
 let scroll = false;
+let focus = null;
 
 function render() {
   queued = false;
@@ -166,6 +167,10 @@ function render() {
   const tl2 = document.getElementById("timeline");
   if (tl2 && (scroll || pinned)) tl2.scrollTop = tl2.scrollHeight;
   scroll = false;
+  if (focus) {
+    document.getElementById(focus)?.focus();
+    focus = null;
+  }
 }
 
 function later() {
@@ -195,26 +200,108 @@ function run(cmds) {
     } else if (c.$ === "Copy") {
       copy(c.text);
     } else if (c.$ === "Focus") {
-      requestAnimationFrame(() => document.getElementById(c.id)?.focus());
+      focus = c.id; // after the next render, which may create it
+      later();
     } else if (c.$ === "Scroll") {
       scroll = true;
     }
   }
 }
 
+// run an action; answers whether it did anything (a key it did nothing
+// with stays the browser's)
 function dispatch(action, value) {
   const r = App.act(ui, action, value);
   ui = r.ui;
+  const did = r.cmds && r.cmds.$ === "Con";
   run(r.cmds);
   later();
+  return did;
+}
+
+// how many terminal cells fit: the thread pane's width, 40% of the height
+function termSize() {
+  let probe = document.getElementById("term-probe");
+  if (!probe) {
+    probe = document.createElement("span");
+    probe.id = "term-probe";
+    probe.className = "term-probe";
+    probe.textContent = "0".repeat(20);
+    document.body.appendChild(probe);
+  }
+  const cw = probe.getBoundingClientRect().width / 20 || 7.2;
+  const pane = document.getElementById("thread");
+  const w = (pane ? pane.clientWidth : window.innerWidth) - 24;
+  const h = window.innerHeight * 0.4 - 40;
+  return `${Math.max(20, Math.floor(w / cw))}x${Math.max(5, Math.floor(h / 17))}`;
 }
 
 function valueOf(el) {
   const v = el.getAttribute("data-value");
   if (v === null) return el.value ?? "";
+  if (v === "@term-size") return termSize();
   if (v.startsWith("#")) return document.getElementById(v.slice(1))?.value ?? "";
   return v;
 }
+
+// Files: read, cut into the pieces app.bend asks for, base64, and hand
+// each piece to the `attach` action (which decides what to send)
+function base64(u8) {
+  let s = "";
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+async function upload(action, file) {
+  const key = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const size = Number(App.chunk());
+  const name = file.name || "pasted." + ((file.type || "").split("/")[1] || "bin");
+  if (file.size === 0) return;
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  for (let i = 0, off = 0; off < bytes.length; i += 1, off += size) {
+    const last = off + size >= bytes.length;
+    const piece = JSON.stringify({ key, name, size: bytes.length, i, last, data: base64(bytes.subarray(off, off + size)) });
+    dispatch(action, piece);
+    await new Promise((r) => setTimeout(r, 0));
+  }
+}
+
+document.addEventListener("change", (e) => {
+  const el = e.target.closest?.("[data-attach]");
+  if (!el || !el.files) return;
+  const files = [...el.files];
+  el.value = "";
+  (async () => {
+    for (const f of files) await upload(el.getAttribute("data-attach"), f);
+  })();
+});
+
+document.addEventListener("paste", (e) => {
+  const cd = e.clipboardData;
+  if (!cd) return;
+  const keys = e.target.closest?.("[data-keys]");
+  if (keys) {
+    e.preventDefault();
+    dispatch(keys.getAttribute("data-text"), cd.getData("text/plain"));
+    return;
+  }
+  const el = e.target.closest?.("[data-paste]");
+  const files = [...(cd.files || [])];
+  if (!el || files.length === 0) return;
+  e.preventDefault();
+  (async () => {
+    for (const f of files) await upload(el.getAttribute("data-paste"), f);
+  })();
+});
+
+// text typed into a key field without a key event (a phone keyboard)
+document.addEventListener("input", (e) => {
+  const el = e.target.closest?.("[data-text]");
+  if (!el || !el.value) return;
+  const v = el.value;
+  el.value = "";
+  dispatch(el.getAttribute("data-text"), v);
+});
 
 for (const ev of EVENTS) {
   document.addEventListener(ev, (e) => {
@@ -224,6 +311,26 @@ for (const ev of EVENTS) {
     dispatch(action, ev === "input" ? el.value : valueOf(el));
   });
 }
+
+// keys: the page's own shortcuts (app.bend lists them), then a key field
+// (the terminal) gets every key as "<key>\t<mods>"
+const KEYS_PAGE = App.keys_page().split(",");
+const KEYS_TERM = App.keys_term().split(",");
+
+document.addEventListener("keydown", (e) => {
+  if (e.isComposing) return;
+  const field = e.target.closest?.("[data-keys]");
+  const combo = (e.ctrlKey ? "ctrl+" : "") + (e.altKey ? "alt+" : "") + (e.shiftKey ? "shift+" : "") + e.key.toLowerCase();
+  if ((field ? KEYS_TERM : KEYS_PAGE).includes(combo)) {
+    e.preventDefault();
+    dispatch("key", combo + "\t" + termSize());
+    return;
+  }
+  if (field) {
+    const mods = (e.shiftKey ? 1 : 0) | (e.ctrlKey ? 4 : 0) | (e.altKey ? 8 : 0);
+    if (dispatch(field.getAttribute("data-keys"), e.key + "\t" + mods)) e.preventDefault();
+  }
+});
 
 document.addEventListener("keydown", (e) => {
   const el = e.target.closest?.("[data-enter]");

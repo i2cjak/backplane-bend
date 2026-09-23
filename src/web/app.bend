@@ -4,6 +4,7 @@ import ./dom.bend as D
 import ../core/client.bend as U
 import ./view.bend as V
 import ../core/cbor.bend as C
+import ../core/attach.bend as AT
 
 # What host.js calls. Everything the page decides happens behind these.
 
@@ -42,3 +43,15 @@ def wire_out(text: String) -> List<&2, U32>:
 
 def show(j: J.Json) -> String:
   J.Json.show(j)
+
+# how many bytes of a file go in one upload piece
+def chunk() -> String:
+  Nat.show(AT.Att.chunk())
+
+# the shortcuts the page takes for itself, comma-separated (in the
+# terminal, and elsewhere)
+def keys_term() -> String:
+  String.join(U.Ui.keys(True{}), ",")
+
+def keys_page() -> String:
+  String.join(U.Ui.keys(False{}), ",")

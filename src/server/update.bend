@@ -5,17 +5,30 @@ import ../core/json.bend as J
 import ../core/semver.bend as SV
 import ../core/version.bend as VR
 
-# Updates from GitHub releases. A check asks the releases API for the
-# latest release and announces it when it is newer than this build (law
-# update_never_same). Applying downloads this platform's tarball, checks its
+# Updates from GitHub releases. A check lists the recent releases, takes
+# the newest one the update channel allows (SV.Chan.pick: `stable` only full
+# releases, `nightly` also the nightly prereleases), and announces it when
+# it is newer than this build (law update_never_same). Applying downloads this platform's tarball, checks its
 # sha256 against the release's SHA256SUMS, unpacks it beside the running
 # binary, swaps the files in with renames, and restarts in place.
 
 def Update.repo() -> String:
   "i2cjak/backplane-bend"
 
-def Update.api() -> String:
-  "https://api.github.com/repos/" ++ Update.repo() ++ "/releases/latest"
+# stable asks for the latest full release (however many nightlies follow
+# it); nightly lists the recent ones
+def Update.api(+channel: String) -> String:
+  "https://api.github.com/repos/" ++ Update.repo() ++ Bool.pick(String, String.eq(SV.Chan.of(channel), "nightly"), "/releases?per_page=40", "/releases/latest")
+
+# the releases an answer holds (a list, or the one /releases/latest gives)
+def Update.items(j: J.Json) -> List<&2, J.Json>:
+  match j:
+    case J.Arr{xs}:
+      J.Json.elems(J.Arr{xs})
+    case J.Obj{fs}:
+      [J.Obj{fs}]
+    case _:
+      Nil{}
 
 type Asset is Data:
   Asset{name: String, url: String}
@@ -30,25 +43,51 @@ def Update.assets(xs: List<&2, J.Json>) -> List<&2, Asset>:
     case +x <> t:
       Asset{J.Json.get_str(x, "name", ""), J.Json.get_str(x, "browser_download_url", "")} <> Update.assets(t)
 
-def Update.release(m: Maybe<&2, J.Json>) -> Maybe<&2, Release>:
-  match m:
-    case Some{+o}:
-      Some{Release{J.Json.get_str(o, "tag_name", ""), Update.assets(J.Json.elems(J.Json.get_obj(o, "assets")))}}
-    case None{}:
-      None{}
+# the releases as the channel picker sees them (drafts are left out)
+def Update.rels.k(draft: Bool, +x: J.Json, rest: List<&2, SV.Rel>) -> List<&2, SV.Rel>:
+  match draft:
+    case True{}:
+      rest
+    case False{}:
+      SV.Rel{J.Json.get_str(x, "tag_name", ""), J.Json.get_bool(x, "prerelease", False{})} <> rest
 
-def Update.ran(r: P.Ran) -> Maybe<&2, Release>:
+def Update.rels(xs: List<&2, J.Json>) -> List<&2, SV.Rel>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      Update.rels.k(J.Json.get_bool(x, "draft", False{}), x, Update.rels(t))
+
+def Update.named.k(hit: Bool, +x: J.Json, +tag: String, rest: Maybe<&2, Release>) -> Maybe<&2, Release>:
+  match hit:
+    case True{}:
+      Some{Release{tag, Update.assets(J.Json.elems(J.Json.get_obj(x, "assets")))}}
+    case False{}:
+      rest
+
+def Update.named(xs: List<&2, J.Json>, +tag: String) -> Maybe<&2, Release>:
+  match xs:
+    case Nil{}:
+      None{}
+    case +x <> t:
+      Update.named.k(Bool.and(Bool.not(String.is_empty(tag)), String.eq(J.Json.get_str(x, "tag_name", ""), tag)), x, tag, Update.named(t, tag))
+
+# the release a channel takes from the listed ones
+def Update.pick(+channel: String, +xs: List<&2, J.Json>) -> Maybe<&2, Release>:
+  Update.named(xs, SV.Chan.pick(SV.Chan.of(channel), Update.rels(xs)))
+
+def Update.ran(r: P.Ran, +channel: String) -> Maybe<&2, Release>:
   match r:
     case P.Ran{0, out}:
-      Update.release(J.Json.parse(out))
+      Update.pick(channel, Update.items(Maybe.default(&2, J.Json, J.Json.parse(out), J.Null{})))
     case _:
       None{}
 
-# the latest release, or None when offline or rate-limited
-def Update.latest() -> IO(Maybe<&2, Release>):
+# the newest release on a channel, or None when offline or rate-limited
+def Update.latest(+channel: String) -> IO(Maybe<&2, Release>):
   do IO<Maybe<&2, Release>>:
-    r : P.Ran <- P.Proc.run("curl", ["-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github+json", Update.api()], "")
-    return Update.ran(r)
+    r : P.Ran <- P.Proc.run("curl", ["-fsSL", "--max-time", "20", "-H", "Accept: application/vnd.github+json", Update.api(channel)], "")
+    return Update.ran(r, channel)
 
 # "linux-x64", "linux-arm64", "darwin-arm64", "darwin-x64"
 def Update.plat.k(linux: Bool, arm: Bool) -> String:
@@ -204,9 +243,9 @@ def Update.apply.k(r: Maybe<&2, Release>, +plat: String, +exe: String, +home: St
     case None{}:
       IO.pure(String, "no release found")
 
-# install the latest release beside the running binary
-def Update.apply(+exe: String, +home: String) -> IO(String):
+# install the channel's newest release beside the running binary
+def Update.apply(+channel: String, +exe: String, +home: String) -> IO(String):
   do IO<String>:
-    r : Maybe<&2, Release> <- Update.latest()
+    r : Maybe<&2, Release> <- Update.latest(channel)
     +plat : String <- Update.platform()
     Update.apply.k(r, plat, exe, home)

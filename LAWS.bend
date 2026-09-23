@@ -8,6 +8,7 @@ import ./src/core/hub.bend as H
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
+import ./src/core/attach.bend as AT
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -122,6 +123,43 @@ law semver_cmp_refl:
 law update_never_same:
   for +v: SV.Ver
   {SV.Ver.newer(v, v) == False{} : Bool}
+
+# a prerelease (a nightly) sorts before the release of its version
+law semver_pre_before_release:
+  for +a: Nat
+  for +b: Nat
+  for +c: Nat
+  for +d: Nat
+  for +n: Nat
+  {SV.Ver.newer(SV.Ver{a, b, c, False{}, 0n, 0n}, SV.Ver{a, b, c, True{}, d, n}) == True{} : Bool}
+
+# a later nightly build of the same day is newer
+law semver_nightly_later:
+  for +a: Nat
+  for +b: Nat
+  for +c: Nat
+  for +d: Nat
+  for +n: Nat
+  {SV.Ver.newer(SV.Ver{a, b, c, True{}, d, 1n+n}, SV.Ver{a, b, c, True{}, d, n}) == True{} : Bool}
+
+# a nightly from a later day is newer, whatever its build number
+law semver_nightly_next_day:
+  for +a: Nat
+  for +b: Nat
+  for +c: Nat
+  for +d: Nat
+  for +n: Nat
+  for +m: Nat
+  {SV.Ver.newer(SV.Ver{a, b, c, True{}, 1n+d, m}, SV.Ver{a, b, c, True{}, d, n}) == True{} : Bool}
+
+# Attachments
+# -----------
+
+# a stored attachment's name uses only letters, digits, '.', '_' and '-',
+# so no name can reach outside its thread's directory
+law attach_clean_ok:
+  for s: String
+  {AT.Att.all_ok(AT.Att.clean(s)) == True{} : Bool}
 
 # Models working together
 # -----------------------

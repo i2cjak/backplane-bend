@@ -9,6 +9,7 @@ import ./src/core/hub.bend as H
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
+import ./src/core/attach.bend as AT
 
 # Lemmas
 # ------
@@ -330,15 +331,73 @@ def pre_cmp_refl(b):
 
 def Laws.semver_cmp_refl(v):
   match v:
-    case SV.Ver{+a, +b, +c, +p}:
-      %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.pre_cmp(p, p)))) == EQ{} : Cmp}
-      %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.pre_cmp(p, p))) == EQ{} : Cmp}
-      %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {SV.Ver.then(_, SV.Ver.pre_cmp(p, p)) == EQ{} : Cmp}
-      pre_cmp_refl(p)
+    case SV.Ver{+a, +b, +c, +p, +d, +n}:
+      %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(SV.Ver.pre_cmp(p, p), SV.Ver.then(Nat.cmp(d, d), Nat.cmp(n, n)))))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(SV.Ver.pre_cmp(p, p), SV.Ver.then(Nat.cmp(d, d), Nat.cmp(n, n))))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {SV.Ver.then(_, SV.Ver.then(SV.Ver.pre_cmp(p, p), SV.Ver.then(Nat.cmp(d, d), Nat.cmp(n, n)))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, SV.Ver.pre_cmp(p, p), EQ{}, pre_cmp_refl(p)) : {SV.Ver.then(_, SV.Ver.then(Nat.cmp(d, d), Nat.cmp(n, n))) == EQ{} : Cmp}
+      %Equal.sym(Cmp, Nat.cmp(d, d), EQ{}, nat_cmp_refl(d)) : {SV.Ver.then(_, Nat.cmp(n, n)) == EQ{} : Cmp}
+      nat_cmp_refl(n)
 
 def Laws.update_never_same(v):
   %Equal.sym(Cmp, SV.Ver.cmp(v, v), EQ{}, Laws.semver_cmp_refl(v)) : {Cmp.is_gt(_) == False{} : Bool}
   {==}
+
+law nat_cmp_succ:
+  for n: Nat
+  {Nat.cmp(1n+n, n) == GT{} : Cmp}
+
+def nat_cmp_succ(n):
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      nat_cmp_succ(p)
+
+def Laws.semver_pre_before_release(a, b, c, d, n):
+  %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(GT{}, SV.Ver.then(Nat.cmp(0n, d), Nat.cmp(0n, n))))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(GT{}, SV.Ver.then(Nat.cmp(0n, d), Nat.cmp(0n, n)))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(GT{}, SV.Ver.then(Nat.cmp(0n, d), Nat.cmp(0n, n))))) == True{} : Bool}
+  {==}
+
+def Laws.semver_nightly_later(a, b, c, d, n):
+  %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(d, d), Nat.cmp(1n+n, n))))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(d, d), Nat.cmp(1n+n, n)))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(d, d), Nat.cmp(1n+n, n))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(d, d), EQ{}, nat_cmp_refl(d)) : {Cmp.is_gt(SV.Ver.then(EQ{}, SV.Ver.then(_, Nat.cmp(1n+n, n)))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(1n+n, n), GT{}, nat_cmp_succ(n)) : {Cmp.is_gt(SV.Ver.then(EQ{}, SV.Ver.then(EQ{}, _))) == True{} : Bool}
+  {==}
+
+def Laws.semver_nightly_next_day(a, b, c, d, n, m):
+  %Equal.sym(Cmp, Nat.cmp(a, a), EQ{}, nat_cmp_refl(a)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(b, b), SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(1n+d, d), Nat.cmp(m, n))))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(b, b), EQ{}, nat_cmp_refl(b)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(Nat.cmp(c, c), SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(1n+d, d), Nat.cmp(m, n)))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(c, c), EQ{}, nat_cmp_refl(c)) : {Cmp.is_gt(SV.Ver.then(_, SV.Ver.then(EQ{}, SV.Ver.then(Nat.cmp(1n+d, d), Nat.cmp(m, n))))) == True{} : Bool}
+  %Equal.sym(Cmp, Nat.cmp(1n+d, d), GT{}, nat_cmp_succ(d)) : {Cmp.is_gt(SV.Ver.then(EQ{}, SV.Ver.then(EQ{}, SV.Ver.then(_, Nat.cmp(m, n))))) == True{} : Bool}
+  {==}
+
+# Attachment lemmas and laws
+# --------------------------
+
+law attach_chr_ok:
+  for b: Bool
+  for +c: U32
+  for e: {AT.Att.ok(c) == b : Bool}
+  {AT.Att.ok(AT.Att.chr(b, c)) == True{} : Bool}
+
+def attach_chr_ok(b, c, e):
+  match b:
+    case True{}:
+      e
+    case False{}:
+      {==}
+
+def Laws.attach_clean_ok(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{Chr{+c}, t}:
+      %Equal.sym(Bool, AT.Att.ok(AT.Att.chr(AT.Att.ok(c), c)), True{}, attach_chr_ok(AT.Att.ok(c), c, {==})) : {Bool.and(_, AT.Att.all_ok(AT.Att.clean(t))) == True{} : Bool}
+      Laws.attach_clean_ok(t)
 
 # Orchestration laws
 # ------------------

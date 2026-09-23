@@ -2,6 +2,9 @@ import Base
 import ../core/model.bend as M
 import ./dom.bend as D
 import ../core/client.bend as U
+import ../core/attach.bend as AT
+import ../core/vt.bend as VT
+import ../core/diff.bend as DF
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -133,10 +136,33 @@ def View.entry_thread(e: M.Entry) -> String:
     case M.Act{_, t, _, _, _, _}:
       t
 
+# Attachments: a message's attachment lines drawn as chips
+def View.chip(+path: String) -> D.Node:
+  D.El{"span", "", [D.At{"class", Bool.pick(String, AT.Att.image(path), "chip image", "chip")}, D.At{"title", path}], [D.Txt{AT.Att.label(path)}]}
+
+def View.chips.go(ps: List<&2, String>) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      View.chip(p) <> View.chips.go(t)
+
+def View.chips.of(ps: List<&2, String>) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> +t:
+      [D.El{"div", "", [D.At{"class", "chips"}], View.chips.go(p <> t)}]
+
+# a user message: what was written, then its attachments
+def View.user_body(+text: String) -> List<&2, D.Node>:
+  D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(AT.Att.body(text)), Nil{}, [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{AT.Att.body(text)}]}]),
+    View.chips.of(AT.Att.paths(text)))
+
 def View.entry.own(e: M.Entry) -> D.Node:
   match e:
     case M.Msg{id, _, M.User{}, +text, _}:
-      D.El{"div", id, [D.At{"class", "msg user"}], [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{text}]}, D.Dom.copy(text)]}
+      D.El{"div", id, [D.At{"class", "msg user"}], D.Dom.cat(View.user_body(text), [D.Dom.copy(AT.Att.body(text))])}
     case M.Msg{id, _, _, +text, _}:
       D.El{"div", id, [D.At{"class", "msg assistant"}], [D.El{"div", "", [D.At{"class", "body"}], D.Md.render(text)}, D.Dom.copy(text)]}
     case M.Act{id, _, tone, kind, summary, _}:
@@ -222,7 +248,7 @@ def View.settle(o: M.Override, auto: Bool) -> D.Node:
     case _ _:
       D.Dom.button("", "settle", "", "Settle thread", "Settle")
 
-def View.header(t: M.Thread, panel: Bool) -> D.Node:
+def View.header(t: M.Thread, +panel: Bool, term: Bool, +diff: Bool) -> D.Node:
   match t:
     case M.Thread{_, _, title, _, _, turn, _, _, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
       D.El{"header", "", [D.At{"class", "thread-head"}], [
@@ -231,7 +257,107 @@ def View.header(t: M.Thread, panel: Bool) -> D.Node:
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
         D.El{"div", "", [D.At{"class", "tools"}], D.Dom.cat(D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
           [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua)), D.Dom.button("", "archive", "", "Archive thread", "Archive"),
-           D.Dom.button(Bool.pick(String, panel, "on", ""), "panel", "", "Board viewer", "Board")])}]}
+           D.Dom.button(Bool.pick(String, term, "on", ""), "term-toggle", "@term-size", "Terminal (ctrl+j)", "Terminal"),
+           D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
+           D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")])}]}
+
+# Terminal
+# --------
+
+def View.nib(+n: U32) -> Char:
+  Chr{Bool.pick(U32, U32.is_lt(n, 10), (n + 48 : U32), (n + 87 : U32))}
+
+def View.hex.go(k: Nat, +x: U32, acc: String) -> String:
+  match k:
+    case 0n:
+      acc
+    case 1n+j:
+      View.hex.go(j, U32.shrn(x, 4n), SCon{View.nib(U32.and(x, 15)), acc})
+
+# 0xRRGGBB as "#rrggbb"
+def View.hex(+x: U32) -> String:
+  "#" ++ View.hex.go(6n, x, "")
+
+def View.run.style(+fg: U32, +bg: U32, bold: Bool, ul: Bool) -> String:
+  String.concat([Bool.pick(String, U32.is_eq(fg, VT.Vt.fg()), "", "color:" ++ View.hex(fg) ++ ";"),
+    Bool.pick(String, U32.is_eq(bg, VT.Vt.bg()), "", "background:" ++ View.hex(bg) ++ ";"),
+    Bool.pick(String, bold, "font-weight:700;", ""), Bool.pick(String, ul, "text-decoration:underline;", "")])
+
+def View.runs(rs: List<&2, VT.VRun>) -> List<&2, D.Node>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case VT.VRun{t, +fg, +bg, bo, ul} <> rest:
+      D.El{"span", "", [D.At{"style", View.run.style(fg, bg, bo, ul)}], [D.Txt{t}]} <> View.runs(rest)
+
+def View.tlines(ls: List<&2, VT.VLine>) -> List<&2, D.Node>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case VT.VLine{rs} <> t:
+      D.El{"div", "", [D.At{"class", "tl"}], View.runs(rs)} <> View.tlines(t)
+
+def View.cursor(c: VT.VCur) -> List<&2, D.Node>:
+  match c:
+    case VT.VCur{+x, +y, True{}}:
+      [D.El{"div", "cur", [D.At{"class", "cur"}, D.At{"style", "left:" ++ U32.show(x) ++ "ch;top:" ++ U32.show((y * 17 : U32)) ++ "px"}], Nil{}}]
+    case VT.VCur{_, _, False{}}:
+      Nil{}
+
+# the thread's shell: its screen, and over it a transparent field that
+# takes keys (and a phone's keyboard)
+def View.term(+v: VT.Vt) -> D.Node:
+  D.El{"section", "term-pane", [D.At{"class", "term-pane"}], [
+    D.El{"div", "", [D.At{"class", "term-head"}], [D.Dom.span("label", "Terminal" ++ Bool.pick(String, String.is_empty(VT.Vt.title(v)), "", " · " ++ VT.Vt.title(v))),
+      D.Dom.button("icon", "term-toggle", "", "Close (ctrl+j)", "×")]},
+    D.El{"div", "", [D.At{"class", "screen"}, D.At{"style", "background:" ++ View.hex(VT.Vt.bg()) ++ ";color:" ++ View.hex(VT.Vt.fg())}],
+      D.Dom.cat(View.tlines(VT.Vt.lines(v, 0n)), D.Dom.cat(View.cursor(VT.Vt.cursor(v)),
+        [D.El{"textarea", "term", [D.At{"id", "term"}, D.At{"class", "term-in"}, D.At{"data-keys", "term-key"}, D.At{"data-text", "term-paste"},
+          D.At{"autocapitalize", "off"}, D.At{"autocomplete", "off"}, D.At{"spellcheck", "false"}, D.At{"aria-label", "Terminal input"}], Nil{}}]))}]}
+
+# Diff
+# ----
+
+def View.dl.cls(+k: U32) -> String:
+  Bool.pick(String, U32.is_eq(k, 1), "dl add", Bool.pick(String, U32.is_eq(k, 2), "dl del", Bool.pick(String, U32.is_eq(k, 3), "dl meta", "dl")))
+
+def View.dl.no(+n: Nat) -> String:
+  Bool.pick(String, Nat.is_eq(n, 0n), "", Nat.show(n))
+
+def View.dlines(ls: List<&2, DF.DLine>) -> List<&2, D.Node>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case DF.DLine{+k, t, +o, +n} <> rest:
+      D.El{"div", "", [D.At{"class", View.dl.cls(k)}], [D.Dom.span("no", View.dl.no(o)), D.Dom.span("no", View.dl.no(n)),
+        D.Dom.span("sign", Bool.pick(String, U32.is_eq(k, 1), "+", Bool.pick(String, U32.is_eq(k, 2), "-", " "))), D.Dom.span("code", t)]} <> View.dlines(rest)
+
+def View.dhunks(hs: List<&2, DF.DHunk>) -> List<&2, D.Node>:
+  match hs:
+    case Nil{}:
+      Nil{}
+    case DF.DHunk{+hd, ls} <> t:
+      D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(hd), Nil{}, [D.Dom.span("dhunk", hd)]), D.Dom.cat(View.dlines(ls), View.dhunks(t)))
+
+def View.dfiles(fs: List<&2, DF.DFile>) -> List<&2, D.Node>:
+  match fs:
+    case Nil{}:
+      Nil{}
+    case DF.DFile{_, +nw, st, hs} <> t:
+      D.El{"div", nw, [D.At{"class", "dfile"}], D.El{"div", "", [D.At{"class", "dhead"}], [D.Dom.span("name", nw), D.Dom.span("status", st)]} <> View.dhunks(hs)} <> View.dfiles(t)
+
+# what this thread changed, with the git actions (as the native Lay.diff)
+def View.diff(+text: String) -> D.Node:
+  +fs = DF.Diff.parse(text)
+  D.El{"aside", "diff", [D.At{"class", "viewer diff"}, D.At{"id", "viewer"}], [
+    D.El{"div", "", [D.At{"class", "diff-head"}], [
+      D.Dom.span("summary", Bool.pick(String, List.is_empty(&2, DF.DFile, fs), "No changes since this thread began.", DF.Diff.summary(fs))),
+      D.El{"div", "", [D.At{"class", "diff-btns"}], [
+        D.Dom.button("", "revert", "0", "Put the files back as they were when this thread began", "Revert thread"),
+        D.Dom.button("", "git", "commit_push_pr", "Commit, push and open a pull request", "Open PR"),
+        D.Dom.button("primary", "git", "commit_push", "Commit and push", "Commit & push"),
+        D.Dom.button("icon", "panel", "", "Close", "×")]}]},
+    D.El{"div", "", [D.At{"class", "diff-body"}], View.dfiles(fs)}]}
 
 def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
   match ms:
@@ -240,13 +366,29 @@ def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
     case +m <> t:
       D.Dom.button(Bool.pick(String, String.eq(m, cur), "on", ""), "model", m, "Use " ++ m, m) <> View.models(t, cur)
 
-def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String) -> D.Node:
+def View.pending(ps: List<&2, String>) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      D.El{"button", "", [D.At{"class", Bool.pick(String, AT.Att.image(p), "chip image", "chip")}, D.At{"title", "Remove " ++ p}, D.At{"data-value", p}, D.On{"click", "detach"}],
+        [D.Txt{AT.Att.label(p) ++ " ×"}]} <> View.pending(t)
+
+# what the next message attaches (and what is still uploading)
+def View.attaching(+ps: List<&2, String>, +up: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, Bool.and(List.is_empty(&2, String, ps), String.is_empty(up)), Nil{},
+    [D.El{"div", "", [D.At{"class", "chips"}], D.Dom.cat(View.pending(ps),
+      Bool.pick(List<&2, D.Node>, String.is_empty(up), Nil{}, [D.Dom.span("chip up", up ++ " …")]))}])
+
+def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +atts: List<&2, String>, +up: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
-    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], View.models(ms, model)}), [
-    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}], Nil{}},
+    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], View.models(ms, model)}), D.Dom.cat(View.attaching(atts, up), [
+    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
       D.Dom.button("model-chip", "flag", "models", "Choose the model", label ++ " ▾"),
-      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])}
+      D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [D.Txt{"Attach"},
+        D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
+      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}]))}
 
 # Subagents
 # ---------
@@ -279,7 +421,7 @@ def View.sending(ps: List<&2, String>) -> List<&2, D.Node>:
     case Nil{}:
       Nil{}
     case p <> t:
-      D.El{"div", "", [D.At{"class", "msg user sending"}], [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{p}]}, D.Dom.span("note", "sending…")]} <> View.sending(t)
+      D.El{"div", "", [D.At{"class", "msg user sending"}], D.Dom.cat(View.user_body(p), [D.Dom.span("note", "sending…")])} <> View.sending(t)
 
 # Asks: what the agent waits on the user for
 
@@ -317,18 +459,19 @@ def View.queued(+q: String) -> D.Node:
   Bool.pick(D.Node, String.is_empty(q), D.El{"div", "", [D.At{"class", "queued none"}], Nil{}},
     D.El{"div", "", [D.At{"class", "queued"}], [D.Dom.span("label", "Queued"), D.Dom.span("text", q), D.Dom.span("note", "sends when this turn ends")]})
 
-def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>) -> D.Node:
+def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool) -> D.Node:
   match u t:
-    case U.Ui{+st, +sel, +drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
-      D.El{"main", "thread", [D.At{"class", "thread-view"}], [
-        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
+    case U.Ui{+st, +sel, +drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
+      D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view")}], D.Dom.cat([
+        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, term, String.eq(U.Str.get(nf, "view.kind"), "diff")),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
-        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo)]}
+        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo, atts, up)],
+        D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
 # Settings
 # --------
@@ -367,14 +510,16 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
       View.setrow("KiCad CLI", U.Str.get(nf, "kicad.cli"), View.fork(U.Str.get(nf, "kicad.fork"))),
       View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
+      View.setrow("Update channel", "Stable takes releases; nightly also takes the daily builds.", View.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
       View.setrow("Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note),
-        Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")], Nil{}))]}]}
+        Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")],
+          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")]))]}]}
 
 def View.empty(n: Nat) -> D.Node:
   D.El{"main", "empty", [D.At{"class", "empty"}], [D.Txt{Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")}]}
 
 def View.thread(+u: U.Ui, t: M.Thread) -> D.Node:
-  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)))
+  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"))
 
 def View.main.s(settings: Bool, none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
   match settings none u:
@@ -397,6 +542,14 @@ def View.error(e: String) -> List<&2, D.Node>:
     case SCon{h, t}:
       [D.El{"div", "error", [D.At{"class", "toast"}, D.On{"click", "dismiss"}], [D.Txt{SCon{h, t}}]}]
 
+# the side pane: the diff view, or the board canvas
+def View.aside(diff: Bool, +text: String) -> D.Node:
+  match diff:
+    case True{}:
+      View.diff(text)
+    case False{}:
+      D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}
+
 # the whole page
 def View.page(u: U.Ui) -> D.Node:
   match u:
@@ -404,5 +557,5 @@ def View.page(u: U.Ui) -> D.Node:
       D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app") ++ Bool.pick(String, Bool.or(Bool.not(String.is_empty(sel)), U.Flag.get(o, "settings")), " picked", "")}],
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
           View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
-          D.Dom.cat(D.Dom.when(pa, D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}),
+          D.Dom.cat(D.Dom.when(pa, View.aside(String.eq(U.Str.get(nf, "view.kind"), "diff"), U.Str.get(nf, "diff"))),
             View.error(e)))}

@@ -8,6 +8,13 @@ on:
       tag:
         description: Existing tag to (re)publish, e.g. v0.2.0
         required: true
+  # nightly.yml builds and publishes its prerelease through these same jobs
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing tag to build and publish
+        required: true
+        type: string
 
 permissions:
   contents: write

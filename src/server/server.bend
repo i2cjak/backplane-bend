@@ -19,6 +19,8 @@ import ./push.bend as PU
 import ./park.bend as PK
 import ./git.bend as GT
 import ./term.bend as TM
+import ../core/attach.bend as AT
+import ../core/sha1.bend as SH
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -42,6 +44,10 @@ type Msg is Data:
   Tick{}
   Push{client: U32, text: String}
   TermOut{thread: String, data: List<&2, U32>}
+  # a line for a thread's agent built off the hub (a message with images)
+  AgentWrite{thread: String, line: String}
+  # time to look for a release on the update channel
+  UpdateCheck{}
 
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
@@ -1229,7 +1235,8 @@ def Upgrade.found.k(none: Bool, +tag: String, +inbox: Chan(Msg)) -> IO(Unit):
 def Upgrade.found(+tag: String, +inbox: Chan(Msg)) -> IO(Unit):
   Upgrade.found.k(String.is_empty(tag), tag, inbox)
 
-# 15 s after start, then hourly: announce a newer release
+# 15 s after start, then hourly: the hub looks for a newer release on the
+# update channel (it holds the setting)
 def Upgrade.check(fuel: Nat, +wait: U32, +inbox: Chan(Msg)) -> IO(Unit):
   match fuel:
     case 0n:
@@ -1237,8 +1244,7 @@ def Upgrade.check(fuel: Nat, +wait: U32, +inbox: Chan(Msg)) -> IO(Unit):
     case 1n+f:
       do IO<Unit>:
         IO.sleep(wait)
-        r : Maybe<&2, UP.Release> <- UP.Update.latest()
-        Upgrade.found(UP.Update.newer(r), inbox)
+        ok : Bool <- Chan.send(Msg, inbox, UpdateCheck{})
         Upgrade.check(f, 3600000, inbox)
 
 def Upgrade.start.go(on: Bool, +inbox: Chan(Msg)) -> IO(Unit):
@@ -1307,8 +1313,8 @@ def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Fil
 
 def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String) -> List<&2, String>:
   match cfg:
-    case Cfg{_, _, _, _, _, dirs, _, _}:
-      List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, dirs),
+    case Cfg{+home, _, _, _, _, dirs, _, _}:
+      List.append(&2, String, Q.Claude.args(model, session, r, i, prompt, List.append(&2, String, dirs, [home ++ "/attachments"])),
         ["--mcp-config", "{\"mcpServers\":{\"backplane\":{\"type\":\"http\",\"url\":\"" ++ Hub.mcp_url(cfg, thread) ++ "\"}}}"])
 
 # what a Claude process was started with; a turn asking for something else
@@ -1340,7 +1346,7 @@ def Hub.start.k(+m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +mo
 # `codex exec` for one turn, with this thread's MCP endpoint and the
 # Backplane instructions (the same runtime block Claude gets)
 def Codex.args(+cfg: Cfg, +thread: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, prompt: String) -> List<&2, String>:
-  List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model),
+  List.concat(&2, String, [Codex.head.k(String.is_empty(session), session), Codex.sandbox(r), Codex.opt("-m", model), AT.Att.codex(text),
     ["-c", "mcp_servers.backplane.url=\"" ++ Hub.mcp_url(cfg, thread) ++ "\"",
      "-c", "developer_instructions=" ++ J.Json.show(J.Str{prompt}), text]])
 
@@ -1514,13 +1520,188 @@ def Install.go(+home: String, +inbox: Chan(Msg)) -> IO(Unit):
     err : String <- K.KiCad.install(home)
     Upgrade.done(err, inbox)
 
-# install the latest release and restart into it
-def Upgrade.go(+home: String, +inbox: Chan(Msg)) -> IO(Unit):
+# install the channel's newest release and restart into it
+def Upgrade.go(+home: String, +channel: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     Upgrade.say(inbox, Upgrade.note([J.KV{"state", J.Str{"updating"}}]))
     exe : String <- H.Sys.exe_dir()
-    err : String <- UP.Update.apply(exe, home)
+    err : String <- UP.Update.apply(channel, exe, home)
     Upgrade.done(err, inbox)
+
+# Media jobs (Hub.media): attachments and update checks
+# -----------------------------------------------------
+
+def Media.fail(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +msg: String) -> IO(Unit):
+  GitJob.reply(inbox, client, id, False{}, J.Json.obj([J.KV{"text", J.Str{msg}}, J.KV{"thread", J.Str{thread}}, J.KV{"upload", J.Flag{True{}}}]))
+
+def Media.attached(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +path: String) -> IO(Unit):
+  GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"attached", J.Str{path}}, J.KV{"thread", J.Str{thread}}]))
+
+def Media.wrote.k(res: Result<&1, &1, U32 & String, Unit>) -> String:
+  match res:
+    case Done{_}:
+      ""
+    case Fail{_}:
+      "cannot write the attachment"
+
+def Media.wrote(r: File & Result<&1, &1, U32 & String, Unit>) -> IO(String):
+  (f, res) = r
+  do IO<String>:
+    File.close(f)
+    return Media.wrote.k(res)
+
+def Media.opened(r: Result<&1, &1, U32 & String, File>, bs: List<&2, U32>) -> IO(String):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, Unit>, String, File.write_bytes(f, bs), Media.wrote)
+    case Fail{_}:
+      IO.pure(String, "cannot open the attachment file")
+
+# write (mode "w") or append ("a") bytes; "" or what went wrong
+def Media.put.file(+path: String, +mode: String, bs: List<&2, U32>) -> IO(String):
+  IO.bind(Result<&1, &1, U32 & String, File>, String, File.open(path, mode), r => Media.opened(r, bs))
+
+def Media.size(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> Nat:
+  match r:
+    case Done{(0, (sz, _))}:
+      U32.to_nat(sz)
+    case _:
+      0n
+
+# a regular file's size (None for anything else)
+def Media.stat(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> Maybe<&2, Nat>:
+  match r:
+    case Done{(0, (sz, _))}:
+      Some{U32.to_nat(sz)}
+    case _:
+      None{}
+
+def Media.put.done(+err: String, +last: Bool, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +path: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(err),
+    Bool.pick(IO(Unit), last, Media.attached(inbox, client, id, thread, path), GitJob.reply(inbox, client, id, True{}, J.Json.obj(Nil{}))),
+    Media.fail(inbox, client, id, thread, err))
+
+def Media.put.k(over: Bool, +first: Bool, +last: Bool, bs: List<&2, U32>, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +path: String) -> IO(Unit):
+  match over:
+    case True{}:
+      do IO<Unit>:
+        rm : Result<&1, &1, U32 & String, Unit> <- H.FS.remove(path)
+        Media.fail(inbox, client, id, thread, "attachments are limited to " ++ Nat.show(Nat.div(AT.Att.cap(), 1048576n)) ++ " MB")
+    case False{}:
+      IO.bind(String, Unit, Media.put.file(path, Bool.pick(String, first, "w", "a"), bs), e => Media.put.done(e, last, inbox, client, id, thread, path))
+
+def Media.put.go(+have: Nat, +first: Bool, +last: Bool, +bs: List<&2, U32>, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +path: String) -> IO(Unit):
+  Media.put.k(Nat.is_gt(Nat.add(have, List.length(&2, U32, bs)), AT.Att.cap()), first, last, bs, inbox, client, id, thread, path)
+
+def Media.put.parts(ps: List<&2, String>, +b: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +home: String) -> IO(Unit):
+  match ps:
+    case +i <> +l <> +name <> _:
+      do IO<Unit>:
+        mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(AT.Att.dir(home, thread))
+        st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(AT.Att.dir(home, thread) ++ "/" ++ AT.Att.safe(name))
+        Media.put.go(Bool.pick(Nat, String.eq(i, "0"), 0n, Media.size(st)), String.eq(i, "0"), String.eq(l, "1"), AT.Att.b64(b),
+          inbox, client, id, thread, AT.Att.dir(home, thread) ++ "/" ++ AT.Att.safe(name))
+    case _:
+      Media.fail(inbox, client, id, thread, "bad upload")
+
+# one piece of an upload (a = "<index>|<last>|<name>", b = base64); the
+# first piece starts the file, the rest append; a file never passes the cap
+# and never lands outside <home>/attachments/<thread>/
+def Media.put(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  Media.put.parts(String.split(a, '|'), b, inbox, client, id, thread, home)
+
+def Media.copy.k(ok: Bool, fits: Bool, +src: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +dest: String) -> IO(Unit):
+  match ok fits:
+    case True{} True{}:
+      do IO<Unit>:
+        bs : List<&2, U32> <- Files.read(src)
+        Media.put.go(0n, True{}, True{}, bs, inbox, client, id, thread, dest)
+    case True{} False{}:
+      Media.fail(inbox, client, id, thread, "attachments are limited to " ++ Nat.show(Nat.div(AT.Att.cap(), 1048576n)) ++ " MB")
+    case False{} _:
+      Media.fail(inbox, client, id, thread, "not a file: " ++ src)
+
+def Media.copy.m(m: Maybe<&2, Nat>, +src: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +dest: String) -> IO(Unit):
+  match m:
+    case Some{+n}:
+      Media.copy.k(True{}, Nat.is_le(n, AT.Att.cap()), src, inbox, client, id, thread, dest)
+    case None{}:
+      Media.copy.k(False{}, True{}, src, inbox, client, id, thread, dest)
+
+# a file on this machine (the native window's paste or path), copied in
+def Media.file(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +src: String, +name: String, +home: String) -> IO(Unit):
+  do IO<Unit>:
+    mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(AT.Att.dir(home, thread))
+    st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(src)
+    Media.copy.m(Media.stat(st), src, inbox, client, id, thread, AT.Att.dir(home, thread) ++ "/" ++ AT.Att.safe(name))
+
+def Media.img.k(ok: Bool, +path: String) -> IO(Maybe<&2, AT.Img>):
+  match ok:
+    case True{}:
+      IO.bind(List<&2, U32>, Maybe<&2, AT.Img>, Files.read(path), bs => IO.pure(Maybe<&2, AT.Img>, Some{AT.Img{AT.Att.mime(path), SH.B64.encode(bs)}}))
+    case False{}:
+      IO.pure(Maybe<&2, AT.Img>, None{})
+
+def Media.img.m(m: Maybe<&2, Nat>, +path: String) -> IO(Maybe<&2, AT.Img>):
+  match m:
+    case Some{+n}:
+      Media.img.k(Bool.and(Nat.is_gt(n, 0n), Nat.is_le(n, U32.to_nat(AT.Att.inline_max()))), path)
+    case None{}:
+      IO.pure(Maybe<&2, AT.Img>, None{})
+
+# an attached image small enough to send inline
+def Media.img(+path: String) -> IO(Maybe<&2, AT.Img>):
+  do IO<Maybe<&2, AT.Img>>:
+    st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
+    Media.img.m(Media.stat(st), path)
+
+def Media.imgs.add(m: Maybe<&2, AT.Img>, acc: List<&2, AT.Img>) -> List<&2, AT.Img>:
+  match m:
+    case Some{i}:
+      i <> acc
+    case None{}:
+      acc
+
+def Media.imgs(ps: List<&2, String>, acc: List<&2, AT.Img>) -> IO(List<&2, AT.Img>):
+  match ps:
+    case Nil{}:
+      IO.pure(List<&2, AT.Img>, List.reverse(&2, AT.Img, acc))
+    case +p <> t:
+      IO.bind(Maybe<&2, AT.Img>, List<&2, AT.Img>, Media.img(p), m => Media.imgs(t, Media.imgs.add(m, acc)))
+
+# a Claude message with images: read them, then hand the stream-json line
+# (image blocks, then the text) to the thread's agent
+def Media.claude(+inbox: Chan(Msg), +thread: String, +text: String) -> IO(Unit):
+  do IO<Unit>:
+    ims : List<&2, AT.Img> <- Media.imgs(AT.Att.images(text), Nil{})
+    ok : Bool <- Chan.send(Msg, inbox, AgentWrite{thread, AT.Att.claude(text, ims)})
+    return Unit{}
+
+# look for a release on a channel now (announced like the hourly check)
+def Media.check(+channel: String, +inbox: Chan(Msg), +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    r : Maybe<&2, UP.Release> <- UP.Update.latest(channel)
+    +tag : String = UP.Update.newer(r)
+    Upgrade.found(tag, inbox)
+    Bool.pick(IO(Unit), String.is_empty(id), IO.pure(Unit, Unit{}), GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"version", J.Str{tag}}, J.KV{"channel", J.Str{channel}}])))
+
+# a Git out: the media jobs here (an upload piece runs on the hub, so the
+# pieces of a file land in order), git jobs off the hub
+def Media.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  match i:
+    case 0n:
+      Media.put(inbox, client, id, thread, a, b, home)
+    case 1n:
+      IO.spawn(Unit, Media.file(inbox, client, id, thread, a, b, home))
+    case 2n:
+      IO.spawn(Unit, Media.claude(inbox, thread, a))
+    case 3n:
+      IO.spawn(Unit, Media.check(a, inbox, client, id))
+    case _:
+      IO.spawn(Unit, GitJob.run(job, inbox, client, id, thread, cwd, a, b, home))
+
+def Media.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  Media.run.k(C.Codec.pos(["attach.put", "attach.file", "attach.claude", "update.check"], job), job, inbox, client, id, thread, cwd, a, b, home)
 
 def Agent.pid_is(m: Maybe<&2, Agent>, +pid: U32) -> Bool:
   match m:
@@ -1661,15 +1842,15 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
       do IO<Hub>:
-        IO.spawn(Unit, GitJob.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg)))
+        Media.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.AskAnswered{+ask, +answer}:
       do IO<Hub>:
         Park.put(Cfg.pk(cfg), PK.PAnswer{ask, answer})
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
-    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
-        IO.spawn(Unit, Upgrade.go(Cfg.home(cfg), inbox))
+        IO.spawn(Unit, Upgrade.go(Cfg.home(cfg), M.Setting.get(st, "update.channel", "stable"), inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
@@ -1848,8 +2029,26 @@ def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
         Wire.all(cl, Term.json(thread, data))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
+def Hub.agent_write(h: Hub, +thread: String, line: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      do IO<Hub>:
+        Hub.agent_send(Agents.get(as, thread), line)
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.update_check(h: Hub) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, +inbox, cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Media.check(M.Setting.get(st, "update.channel", "stable"), inbox, 0, ""))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
+    case AgentWrite{thread, line}:
+      Hub.agent_write(h, thread, line)
+    case UpdateCheck{}:
+      Hub.update_check(h)
     case Mcp{thread, body, reply}:
       Hub.mcp(h, thread, body, reply, now)
     case Announce{text}:
