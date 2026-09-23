@@ -443,7 +443,7 @@ def Push.drop_request(token: String) -> String:
 def Push.turn_ended.done(dead: List<&2, String>) -> IO(Unit):
   IO.pure(Unit, Unit{})
 
-# Dead tokens are found but not yet dropped: that needs a way back into
-# the hub (see Push.drop_request).
+# without the hub's inbox: dead tokens are found but not dropped (the hub
+# calls Push.turn_ended.dead and posts Push.drop_request for each)
 def Push.turn_ended(+home: String, st: M.State, +thread: String, +state: String) -> IO(Unit):
   IO.bind(List<&2, String>, Unit, Push.turn_ended.dead(home, st, thread, state), Push.turn_ended.done)

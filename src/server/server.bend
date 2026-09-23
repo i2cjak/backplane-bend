@@ -1547,6 +1547,17 @@ def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
         return Unit{}
     case None{}:
       IO.pure(Unit, Unit{})
+# a phone push for an ended turn, off the hub loop; the tokens APNs calls
+# dead come back as device.drop requests, as if a client had sent them
+def Hub.drop_dead(ts: List<&2, String>, +inbox: Chan(Msg)) -> IO(Unit):
+  match ts:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case t <> rest:
+      IO.bind(Bool, Unit, Chan.send(Msg, inbox, Rpc{0, PU.Push.drop_request(t)}), _ => Hub.drop_dead(rest, inbox))
+
+def Hub.phone(+home: String, st: M.State, +thread: String, +state: String, +inbox: Chan(Msg)) -> IO(Unit):
+  IO.bind(List<&2, String>, Unit, PU.Push.turn_ended.dead(home, st, thread, state), ds => Hub.drop_dead(ds, inbox))
 
 # the reply now, or (for a request that waits on the user) parked until
 # the ask it opened is answered
@@ -1640,9 +1651,9 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         fs : K.Files <- K.Files.read(cwd)
         IO.spawn(Unit, Grok.run(Grok.args(r, model), AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs), text, session}, cwd, thread, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
-    case Hub{+st, f, ls, cl, as, inbox, +cfg, note} B.TurnEnded{+thread, +state}:
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
-        IO.spawn(Unit, PU.Push.turn_ended(Cfg.home(cfg), st, thread, state))
+        IO.spawn(Unit, Hub.phone(Cfg.home(cfg), st, thread, state, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.TermOp{+op, +thread, +cwd, data, +cols, +rows}:
       do IO<Hub>:
