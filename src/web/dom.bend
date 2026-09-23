@@ -1,5 +1,6 @@
 import Base
 import ../core/links.bend as LK
+import ../core/diff.bend as DF
 
 # A view is a tree of Nodes; the host patches the DOM to match it. Events
 # carry an action name back to Ui.act together with a value: the element's
@@ -194,8 +195,27 @@ def Md.line(+l: String) -> Line:
     String.starts_with(t, "# "), Bool.or(String.starts_with(t, "- "), String.starts_with(t, "* ")),
     String.is_empty(String.trim(t)), t, l)
 
+def Md.nl(first: Bool, acc: String) -> String:
+  match first:
+    case True{}:
+      acc
+    case False{}:
+      SCon{'\n', acc}
+
+# lines kept newest first, joined oldest first with "\n"; tail-recursive
+# (String.join recursed once per line)
+def Md.unlines.go(ls: List<&2, String>, first: Bool, acc: String) -> String:
+  match ls:
+    case Nil{}:
+      acc
+    case l <> t:
+      Md.unlines.go(t, False{}, String.reverse.go(String.reverse(l), Md.nl(first, acc)))
+
+def Md.unlines(ls: List<&2, String>) -> String:
+  Md.unlines.go(ls, True{}, SNil{})
+
 def Md.para(ls: List<&2, String>) -> Node:
-  El{"p", "", Nil{}, Md.inline(String.join(List.reverse(&2, String, ls), "\n"))}
+  El{"p", "", Nil{}, Md.inline(Md.unlines(ls))}
 
 def Md.li(s: String) -> Node:
   El{"li", "", Nil{}, Md.inline(s)}
@@ -208,7 +228,7 @@ def Md.lis(xs: List<&2, String>) -> List<&2, Node>:
       Md.li(x) <> Md.lis(t)
 
 def Md.codeblock(ls: List<&2, String>) -> Node:
-  +text = String.join(List.reverse(&2, String, ls), "\n")
+  +text = Md.unlines(ls)
   El{"div", "", [At{"class", "codeblock"}], [Dom.copy(text), El{"pre", "", Nil{}, [El{"code", "", Nil{}, [Txt{text}]}]}]}
 
 # the node a finished block contributes
@@ -268,6 +288,8 @@ def Md.bgo(ls: List<&2, String>, r: Blk & List<&2, Node>) -> List<&2, Node>:
     case +l <> t:
       Md.bgo(t, Md.bstep.pair(l, r))
 
-# markdown text as nodes
+# markdown text as nodes. Lines come from the tail-recursive Diff.lines:
+# String.lines recurses once per character, and a long reply overflowed
+# the phone's JavaScriptCore stack
 def Md.render(s: String) -> List<&2, Node>:
-  Md.bgo(String.lines(s), (BNone{}, Nil{}))
+  Md.bgo(DF.Diff.lines(s), (BNone{}, Nil{}))

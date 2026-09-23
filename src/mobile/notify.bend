@@ -94,9 +94,26 @@ def Note.doing(es: List<&2, M.Entry>, +id: String, +acc: String) -> String:
 def Note.clip(+s: String, +n: Nat) -> String:
   Bool.pick(String, Nat.is_gt(String.length(s), n), String.take(s, n) ++ "…", s)
 
+# the rest after c: nothing once the line ends
+def Note.cut(c: Char, t: String) -> String:
+  Bool.pick(String, Char.is_eq(c, '\n'), SNil{}, t)
+
+# the first line, at most n characters of it, reversed. It reads only
+# those, never the whole text: a reply can be megabytes long, and
+# splitting it into lines recursed once per character (the phone's
+# JavaScriptCore ran out of stack on a real log)
+def Note.upto(n: Nat, s: String, acc: String) -> String:
+  match n s:
+    case 0n _:
+      acc
+    case 1n+_ SNil{}:
+      acc
+    case 1n+m SCon{+h, t}:
+      Note.upto(m, Note.cut(h, t), SCon{h, acc})
+
 # one line of at most n characters, for a banner or the island
-def Note.line(s: String, n: Nat) -> String:
-  Note.clip(String.trim(Maybe.default(&2, String, List.head(&2, String, String.lines(String.trim(s))), "")), n)
+def Note.line(s: String, +n: Nat) -> String:
+  Note.clip(String.trim(String.reverse(Note.upto(Nat.add(n, 1n), String.trim_start(s), SNil{}))), n)
 
 def Note.body(+kind: String, +said: String) -> String:
   Bool.pick(String, String.eq(kind, "fail"), "Failed", Bool.pick(String, String.is_empty(said), "Finished", Note.line(said, 180n)))

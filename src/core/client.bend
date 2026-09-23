@@ -123,12 +123,17 @@ def Ui.decode.k(m: Maybe<&2, M.Change>, rest: List<&2, M.Change>) -> List<&2, M.
 # Receiving
 # ---------
 
-def Ui.decode(xs: List<&2, J.Json>) -> List<&2, M.Change>:
+# tail-recursive, reversed once: a log holds thousands of changes, and a
+# frame per change overflowed the phone's JavaScriptCore
+def Ui.decode.go(xs: List<&2, J.Json>, acc: List<&2, M.Change>) -> List<&2, M.Change>:
   match xs:
     case Nil{}:
-      Nil{}
+      acc
     case +x <> t:
-      Ui.decode.k(C.Change.decode(x), Ui.decode(t))
+      Ui.decode.go(t, Ui.decode.k(C.Change.decode(x), acc))
+
+def Ui.decode(xs: List<&2, J.Json>) -> List<&2, M.Change>:
+  List.reverse(&2, M.Change, Ui.decode.go(xs, Nil{}))
 
 # what a change means for the page beyond the read model: a new thread we
 # asked for gets selected; a finished reply ends its live text

@@ -95,15 +95,20 @@ def Mob.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +now:
     case r <> t:
       Mob.project(r, open, st, now) <> Mob.projects(t, open, st, now)
 
-# markdown blocks from the same Md.render the web page uses
-def Mob.nodes(ns: List<&2, D.Node>) -> List<&2, J.Json>:
+# markdown blocks from the same Md.render the web page uses; built onto a
+# reversed accumulator so a long reply's many blocks cost no stack (only
+# nesting does)
+def Mob.nodes.go(ns: List<&2, D.Node>, acc: List<&2, J.Json>) -> List<&2, J.Json>:
   match ns:
     case Nil{}:
-      Nil{}
+      acc
     case D.El{tag, _, _, kids} <> t:
-      J.Json.obj([J.KV{"tag", J.Json.str(tag)}, J.KV{"kids", J.Json.arr(Mob.nodes(kids))}]) <> Mob.nodes(t)
+      Mob.nodes.go(t, J.Json.obj([J.KV{"tag", J.Json.str(tag)}, J.KV{"kids", J.Json.arr(List.reverse(&2, J.Json, Mob.nodes.go(kids, Nil{})))}]) <> acc)
     case D.Txt{text} <> t:
-      J.Json.obj([J.KV{"text", J.Json.str(text)}]) <> Mob.nodes(t)
+      Mob.nodes.go(t, J.Json.obj([J.KV{"text", J.Json.str(text)}]) <> acc)
+
+def Mob.nodes(ns: List<&2, D.Node>) -> List<&2, J.Json>:
+  List.reverse(&2, J.Json, Mob.nodes.go(ns, Nil{}))
 
 def Mob.entry(e: M.Entry) -> J.Json:
   match e:
@@ -116,12 +121,16 @@ def Mob.entry(e: M.Entry) -> J.Json:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"kind", J.Json.str("act")}, J.KV{"tone", J.Json.str(tone)},
         J.KV{"label", J.Json.str(kind)}, J.KV{"text", J.Json.str(summary)}])
 
-def Mob.entries(es: List<&2, M.Entry>) -> List<&2, J.Json>:
+# a thread's entries, tail-recursive (a thread can hold thousands)
+def Mob.entries.go(es: List<&2, M.Entry>, acc: List<&2, J.Json>) -> List<&2, J.Json>:
   match es:
     case Nil{}:
-      Nil{}
+      acc
     case e <> t:
-      Mob.entry(e) <> Mob.entries(t)
+      Mob.entries.go(t, Mob.entry(e) <> acc)
+
+def Mob.entries(es: List<&2, M.Entry>) -> List<&2, J.Json>:
+  List.reverse(&2, J.Json, Mob.entries.go(es, Nil{}))
 
 # a toolbar button: what it says and the action it sends
 def Mob.tool(label: String, action: String, on: Bool) -> J.Json:

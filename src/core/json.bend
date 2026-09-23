@@ -35,22 +35,32 @@ def Json.nat(n: Nat) -> Json:
 def Json.bool(b: Bool) -> Json:
   Flag{b}
 
-def Json.items(xs: List<&2, Json>) -> Json:
+# Lists and chains convert through a reversed accumulator: tail calls
+# only, since a log can hold thousands of items and a frame per item
+# overflowed the phone's JavaScriptCore
+
+def Json.items.go(xs: List<&2, Json>, acc: Json) -> Json:
   match xs:
     case Nil{}:
-      End{}
+      acc
     case h <> t:
-      Item{h, Json.items(t)}
+      Json.items.go(t, Item{h, acc})
+
+def Json.items(xs: List<&2, Json>) -> Json:
+  Json.items.go(List.reverse(&2, Json, xs), End{})
 
 def Json.arr(xs: List<&2, Json>) -> Json:
   Arr{Json.items(xs)}
 
-def Json.fields(kvs: List<&2, KV>) -> Json:
+def Json.fields.go(kvs: List<&2, KV>, acc: Json) -> Json:
   match kvs:
     case Nil{}:
-      End{}
+      acc
     case KV{k, v} <> t:
-      Field{k, v, Json.fields(t)}
+      Json.fields.go(t, Field{k, v, acc})
+
+def Json.fields(kvs: List<&2, KV>) -> Json:
+  Json.fields.go(List.reverse(&2, KV, kvs), End{})
 
 def Json.obj(kvs: List<&2, KV>) -> Json:
   Obj{Json.fields(kvs)}
@@ -126,12 +136,15 @@ def Json.get_bool(o: Json, +key: String, d: Bool) -> Bool:
 def Json.get_obj(o: Json, +key: String) -> Json:
   Maybe.default(&2, Json, Json.get(o, key), Null{})
 
-def Json.to_list(xs: Json) -> List<&2, Json>:
+def Json.to_list.go(xs: Json, acc: List<&2, Json>) -> List<&2, Json>:
   match xs:
     case Item{h, t}:
-      h <> Json.to_list(t)
+      Json.to_list.go(t, h <> acc)
     case _:
-      Nil{}
+      acc
+
+def Json.to_list(xs: Json) -> List<&2, Json>:
+  List.reverse(&2, Json, Json.to_list.go(xs, Nil{}))
 
 # the elements of an array, or []
 def Json.elems(a: Json) -> List<&2, Json>:
@@ -185,54 +198,70 @@ def Json.esc.chr.k(ctl: Bool, q: Bool, bs: Bool, +c: U32, rest: String) -> Strin
 def Json.esc.chr(+c: U32, rest: String) -> String:
   Json.esc.chr.k(U32.is_lt(c, 32), U32.is_eq(c, 34), U32.is_eq(c, 92), c, rest)
 
-# s with JSON escapes, prepended to rest
-def Json.esc(s: String, rest: String) -> String:
+# s escaped, reversed onto acc (tail-recursive: a string can be megabytes,
+# and one stack frame per character overflowed the phone's JavaScriptCore)
+def Json.esc.rev(s: String, acc: String) -> String:
   match s:
     case SNil{}:
-      rest
+      acc
     case SCon{Chr{c}, t}:
-      Json.esc.chr(c, Json.esc(t, rest))
+      Json.esc.rev(t, String.reverse.go(Json.esc.chr(c, SNil{}), acc))
+
+# s with JSON escapes, prepended to rest
+def Json.esc(s: String, rest: String) -> String:
+  String.reverse.go(Json.esc.rev(s, SNil{}), rest)
 
 def Json.quote(s: String, rest: String) -> String:
   SCon{'"', Json.esc(s, SCon{'"', rest})}
 
-def Json.sep(first: Bool, s: String) -> String:
+# a comma unless first, pushed onto a reversed accumulator
+def Json.sep.rev(first: Bool, acc: String) -> String:
   match first:
     case True{}:
-      s
+      acc
     case False{}:
-      SCon{',', s}
+      SCon{',', acc}
 
-law Json.emit:
+def Json.quote.rev(s: String, acc: String) -> String:
+  SCon{'"', Json.esc.rev(s, SCon{'"', acc})}
+
+law Json.emit.rev:
   for j: Json
   for first: Bool
-  for rest: String
+  for acc: String
   String
 
-# j printed compactly in front of rest; `first` says whether a chain cell is
-# the first of its container (no leading comma)
-def Json.emit(j, first, rest):
+# j printed compactly, front to back, reversed onto acc; `first` says
+# whether a chain cell is the first of its container (no leading comma).
+# A chain's tail is the tail call and strings escape tail-recursively, so
+# the stack grows only with nesting, never with the length of an array or
+# a string (a frame per item overflowed the phone's JavaScriptCore)
+def Json.emit.rev(j, first, acc):
   match j:
     case Null{}:
-      "null" ++ rest
+      String.reverse.go("null", acc)
     case Flag{True{}}:
-      "true" ++ rest
+      String.reverse.go("true", acc)
     case Flag{False{}}:
-      "false" ++ rest
+      String.reverse.go("false", acc)
     case Num{r}:
-      r ++ rest
+      String.reverse.go(r, acc)
     case Str{s}:
-      Json.quote(s, rest)
+      Json.quote.rev(s, acc)
     case Arr{xs}:
-      SCon{'[', Json.emit(xs, True{}, SCon{']', rest})}
+      SCon{']', Json.emit.rev(xs, True{}, SCon{'[', acc})}
     case Obj{fs}:
-      SCon{'{', Json.emit(fs, True{}, SCon{'}', rest})}
+      SCon{'}', Json.emit.rev(fs, True{}, SCon{'{', acc})}
     case Item{h, t}:
-      Json.sep(first, Json.emit(h, True{}, Json.emit(t, False{}, rest)))
+      Json.emit.rev(t, False{}, Json.emit.rev(h, True{}, Json.sep.rev(first, acc)))
     case Field{k, v, t}:
-      Json.sep(first, Json.quote(k, SCon{':', Json.emit(v, True{}, Json.emit(t, False{}, rest))}))
+      Json.emit.rev(t, False{}, Json.emit.rev(v, True{}, SCon{':', Json.quote.rev(k, Json.sep.rev(first, acc))}))
     case End{}:
-      rest
+      acc
+
+# j printed compactly in front of rest
+def Json.emit(j: Json, first: Bool, rest: String) -> String:
+  String.reverse.go(Json.emit.rev(j, first, SNil{}), rest)
 
 # compact JSON text
 def Json.show(j: Json) -> String:
