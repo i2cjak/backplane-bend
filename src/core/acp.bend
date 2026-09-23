@@ -153,11 +153,25 @@ def Acp.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
     case +h <> t:
       Bool.pick(Nat, String.eq(h, x), i, Acp.pos(t, x, 1n+i))
 
-def Acp.request.k(i: Nat, a: Acp, +id: String, +o: J.Json) -> AcpOut:
-  match i:
-    case 0n:
+def Acp.open_now(a: Acp) -> Bool:
+  match a:
+    case Acp{s, _, _}:
+      Bool.not(String.is_empty(s))
+
+# session/load replays the old conversation as updates before it answers:
+# only updates after the session is open belong to this turn
+def Acp.update.live(open: Bool, a: Acp, +o: J.Json) -> AcpOut:
+  match open:
+    case True{}:
       Acp.update.k(Acp.pos(["agent_message_chunk", "tool_call"], J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "update"), "sessionUpdate", ""), 0n), a,
         J.Json.get_obj(J.Json.get_obj(o, "params"), "update"))
+    case False{}:
+      AcpOut{a, Nil{}, Nil{}}
+
+def Acp.request.k(i: Nat, +a: Acp, +id: String, +o: J.Json) -> AcpOut:
+  match i:
+    case 0n:
+      Acp.update.live(Acp.open_now(a), a, o)
     case 1n:
       AcpOut{a, [Acp.permit(id, J.Json.get_obj(o, "params"))], Nil{}}
     case _:

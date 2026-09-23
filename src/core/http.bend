@@ -104,17 +104,32 @@ def Http.route.k(parts: List<&2, String>) -> String:
       "/"
 
 # the path without its query string
+def Http.param.go(ps: List<&2, String>, +name: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case +q <> t:
+      Bool.pick(String, String.starts_with(q, name ++ "="), String.drop(q, 1n+String.length(name)), Http.param.go(t, name))
+
+# a query parameter of a request path ("" when absent)
+def Http.param(+p: String, +name: String) -> String:
+  Http.param.go(String.split(Maybe.default(&2, String, List.head(&2, String, List.drop(&2, String, String.split(p, '?'), 1n)), ""), '&'), name)
+
 def Http.route(p: String) -> String:
   Http.route.k(String.split(p, '?'))
+
+# a response with its own Cache-Control
+def Http.response.c(status: String, ctype: String, body: List<&2, U32>, cache: String, extra: String) -> List<&2, U32>:
+  +body2 = body
+  List.append(&2, U32, U.Utf8.encode("HTTP/1.1 " ++ status ++ "\r\nContent-Type: " ++ ctype
+    ++ "\r\nContent-Length: " ++ Nat.show(List.length(&2, U32, body2))
+    ++ "\r\nCache-Control: " ++ cache ++ "\r\nConnection: close\r\n" ++ extra ++ "\r\n"), body2)
 
 # Responses
 # ---------
 
 def Http.response(status: String, ctype: String, body: List<&2, U32>, extra: String) -> List<&2, U32>:
-  +body2 = body
-  List.append(&2, U32, U.Utf8.encode("HTTP/1.1 " ++ status ++ "\r\nContent-Type: " ++ ctype
-    ++ "\r\nContent-Length: " ++ Nat.show(List.length(&2, U32, body2))
-    ++ "\r\nCache-Control: no-cache\r\nConnection: close\r\n" ++ extra ++ "\r\n"), body2)
+  Http.response.c(status, ctype, body, "no-cache", extra)
 
 def Http.text(status: String, body: String) -> List<&2, U32>:
   Http.response(status, "text/plain; charset=utf-8", U.Utf8.encode(body), "")

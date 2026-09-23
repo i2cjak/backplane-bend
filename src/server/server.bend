@@ -29,7 +29,7 @@ type Wire is Data:
 type Msg is Data:
   Announce{text: String}
   Mcp{thread: String, body: String, reply: Chan(String)}
-  Join{client: U32, out: Chan(Wire)}
+  Join{client: U32, out: Chan(Wire), since: Nat, origin: String}
   Leave{client: U32}
   Rpc{client: U32, text: String}
   AgentLine{thread: String, line: String}
@@ -390,23 +390,23 @@ def Conn.reader(fuel: Nat, s: Socket, +buf: List<&2, U32>, +id: U32, +inbox: Cha
       Conn.decoded(W.Ws.decode(buf), s, buf, id, inbox, out,
         s2 => b2 => Conn.reader(f, s2, b2, id, inbox, out))
 
-def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.ws.dup(r: Socket & Result<&1, &1, U32 & String, Socket>, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   (rd, res) = r
   match res:
     case Done{wr}:
       do IO<Unit>:
         +out : Chan(Wire) <- Chan.new(Wire, 1024)
         IO.spawn(Unit, Conn.writer(Fuel.forever(), wr, out))
-        ok : Bool <- Chan.send(Msg, inbox, Join{id, out})
+        ok : Bool <- Chan.send(Msg, inbox, Join{id, out, since, origin})
         Conn.reader(Fuel.forever(), rd, rest, id, inbox, out)
     case Fail{_}:
       Socket.close(rd)
 
-def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.ws(s: Socket, key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   do IO<Unit>:
     s2 : Socket <- Conn.send(s, W.Ws.accept(key))
     r : Socket & Result<&1, &1, U32 & String, Socket> <- H.Sock.dup(s2)
-    Conn.ws.dup(r, rest, id, inbox)
+    Conn.ws.dup(r, rest, id, inbox, since, origin)
 
 def Conn.safe(+p: String) -> Bool:
   Bool.and(Bool.not(String.contains(p, "..")), String.starts_with(p, "/"))
@@ -414,22 +414,42 @@ def Conn.safe(+p: String) -> Bool:
 def Conn.file(+p: String) -> String:
   Bool.pick(String, String.eq(p, "/"), "/index.html", p)
 
-def Conn.served(s: Socket, +path: String, bs: List<&2, U32>) -> IO(Unit):
+# hashed bundle chunks never change under their name; the page and the
+# service worker are checked every time
+def Conn.cache(+path: String) -> String:
+  Bool.pick(String, String.starts_with(path, "/chunk-"), "public, max-age=31536000, immutable", "no-cache")
+
+def Conn.served(s: Socket, +path: String, +gz: Bool, bs: List<&2, U32>) -> IO(Unit):
   match bs:
     case Nil{}:
       Conn.finish(s, W.Http.text("404 Not Found", "not found"))
     case b <> t:
-      Conn.finish(s, W.Http.response("200 OK", W.Http.ctype(path), b <> t, ""))
+      Conn.finish(s, W.Http.response.c("200 OK", W.Http.ctype(path), b <> t, Conn.cache(path), Bool.pick(String, gz, "Content-Encoding: gzip\r\nVary: Accept-Encoding\r\n", "Vary: Accept-Encoding\r\n")))
 
-def Conn.static.k(ok: Bool, s: Socket, +web: String, +path: String) -> IO(Unit):
+# a precompressed .gz beside the file when the browser takes gzip
+def Conn.gz(bs: List<&2, U32>, s: Socket, +web: String, +path: String) -> IO(Unit):
+  match bs:
+    case Nil{}:
+      IO.bind(List<&2, U32>, Unit, Files.read(web ++ path), plain => Conn.served(s, path, False{}, plain))
+    case b <> t:
+      Conn.served(s, path, True{}, b <> t)
+
+def Conn.static.go(gz: Bool, s: Socket, +web: String, +path: String) -> IO(Unit):
+  match gz:
+    case True{}:
+      IO.bind(List<&2, U32>, Unit, Files.read(web ++ path ++ ".gz"), bs => Conn.gz(bs, s, web, path))
+    case False{}:
+      IO.bind(List<&2, U32>, Unit, Files.read(web ++ path), bs => Conn.served(s, path, False{}, bs))
+
+def Conn.static.k(ok: Bool, s: Socket, +web: String, +path: String, gz: Bool) -> IO(Unit):
   match ok:
     case True{}:
-      IO.bind(List<&2, U32>, Unit, Files.read(web ++ path), bs => Conn.served(s, path, bs))
+      Conn.static.go(gz, s, web, path)
     case False{}:
       Conn.finish(s, W.Http.text("400 Bad Request", "bad path"))
 
-def Conn.static(s: Socket, +web: String, +path: String) -> IO(Unit):
-  Conn.static.k(Conn.safe(path), s, web, Conn.file(path))
+def Conn.static(s: Socket, +web: String, +path: String, gz: Bool) -> IO(Unit):
+  Conn.static.k(Conn.safe(path), s, web, Conn.file(path), gz)
 
 # a websocket from plain loopback is trusted; anything else (the tailnet
 # listener, or `tailscale serve` proxying with its identity headers) must
@@ -438,19 +458,20 @@ def Conn.allowed(+trusted: Bool, +hs: List<&2, W.Header>, +path: String, +token:
   Bool.or(Bool.and(trusted, String.is_empty(W.Http.header_of(hs, "tailscale-user-login"))),
     Bool.and(Bool.not(String.is_empty(token)), String.contains(path, "token=" ++ token)))
 
-def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.gate(ok: Bool, s: Socket, +key: String, rest: List<&2, U32>, +id: U32, +inbox: Chan(Msg), +since: Nat, +origin: String) -> IO(Unit):
   match ok:
     case True{}:
-      Conn.ws(s, key, rest, id, inbox)
+      Conn.ws(s, key, rest, id, inbox, since, origin)
     case False{}:
       Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
 
 def Conn.route.k(ws: Bool, s: Socket, req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
   match ws req:
     case True{} W.Request{_, +p, +hs}:
-      Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox)
-    case False{} W.Request{_, p, _}:
-      Conn.static(s, web, W.Http.route(p))
+      Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox,
+        Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"))
+    case False{} W.Request{_, p, +hs}:
+      Conn.static(s, web, W.Http.route(p), String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"))
 
 def Conn.is_ws(req: W.Request) -> Bool:
   match req:
@@ -710,8 +731,20 @@ def Cfg.version(c: Cfg) -> String:
     case Cfg{_, _, _, _, _, _, v, nt}:
       v
 
-def Hub.log_msg(+ls: List<&2, String>, +cfg: Cfg) -> String:
-  "{\"t\":\"log\",\"version\":" ++ J.Json.show(J.Str{Cfg.version(cfg)}) ++ ",\"info\":" ++ J.Json.show(Hub.info(cfg)) ++ ",\"items\":[" ++ String.join(List.reverse(&2, String, ls), ",") ++ "]}"
+# which log this is: the time of its first change (a client resumes only
+# into the log it came from)
+def Hub.origin(+ls: List<&2, String>) -> String:
+  Nat.show(J.Json.get_nat(Maybe.default(&2, J.Json, J.Json.parse(Maybe.default(&2, String, List.last(&2, String, ls), "")), J.Null{}), "at", 0n))
+
+def Hub.log_msg.k(+n: Nat, +ls: List<&2, String>, +cfg: Cfg, +since: Nat) -> String:
+  "{\"t\":\"log\",\"since\":" ++ Nat.show(since) ++ ",\"origin\":\"" ++ Hub.origin(ls) ++ "\",\"version\":" ++ J.Json.show(J.Str{Cfg.version(cfg)}) ++ ",\"info\":" ++ J.Json.show(Hub.info(cfg))
+    ++ ",\"items\":[" ++ String.join(List.reverse(&2, String, List.take(&2, String, ls, Nat.sub(n, since))), ",") ++ "]}"
+
+# the log for a client that has the first `since` changes already (a
+# reconnect sends only what it missed; a client ahead of the log, as after
+# a server reset, gets everything, since 0)
+def Hub.log_msg(+ls: List<&2, String>, +cfg: Cfg, +since: Nat) -> String:
+  Hub.log_msg.k(List.length(&2, String, ls), ls, cfg, Bool.pick(Nat, Nat.is_le(since, List.length(&2, String, ls)), since, 0n))
 
 def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
   match empty:
@@ -725,11 +758,11 @@ def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
 def Hub.join.note(+out: Chan(Wire), +note: String) -> IO(Unit):
   Hub.join.note.k(String.is_empty(note), out, note)
 
-def Hub.join(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
+def Hub.join(h: Hub, +client: U32, +out: Chan(Wire), +since: Nat, +origin: String) -> IO(Hub):
   match h:
     case Hub{st, f, +ls, cl, as, inbox, +cfg, +note}:
       do IO<Hub>:
-        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, cfg)})
+        ok : Bool <- Chan.send(Wire, out, WText{Hub.log_msg(ls, cfg, Bool.pick(Nat, String.eq(origin, Hub.origin(ls)), since, 0n))})
         Hub.join.note(out, note)
         return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg, note}
 
@@ -1481,8 +1514,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.mcp(h, thread, body, reply, now)
     case Announce{text}:
       Hub.note(h, text)
-    case Join{client, out}:
-      Hub.join(h, client, out)
+    case Join{client, out, since, origin}:
+      Hub.join(h, client, out, since, origin)
     case Leave{client}:
       Hub.leave(h, client)
     case Rpc{client, text}:

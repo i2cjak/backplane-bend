@@ -339,7 +339,7 @@ def Nui.ui(n: Nui) -> U.Ui:
 
 def Nui.panel(n: Nui) -> Bool:
   match n:
-    case Nui{U.Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, _}, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case Nui{U.Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, _, _}, _, _, _, _, _, _, _, _, _, _, _, _}:
       pa
 
 def Nui.vx0.k(open: Bool, +w: U32) -> U32:

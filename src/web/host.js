@@ -129,7 +129,18 @@ root.__v = { $: "El", tag: "div", key: "", attrs: { $: "Nil" }, kids: { $: "Nil"
 root.__kids = [];
 
 const now = () => BigInt(Math.floor(Date.now() / 1000));
-let ui = App.init(now());
+// this browser's id: part of every message id, so a resend after a dropped
+// link is recognised and stored once
+const cid = (() => {
+  let c = localStorage.getItem("backplane-cid");
+  if (!c) {
+    c = Array.from(crypto.getRandomValues(new Uint8Array(4)), (b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem("backplane-cid", c);
+  }
+  return c;
+})();
+
+let ui = App.init(now(), cid);
 let socket = null;
 let queued = false;
 let scroll = false;
@@ -224,9 +235,44 @@ const token = (() => {
   return localStorage.getItem("backplane-token") ?? "";
 })();
 
+// The event log this page holds, kept across reloads: a reload shows it at
+// once and the socket then brings only what is new (since=, origin=). Raw
+// server items only; the page state is rebuilt from them by app.bend.
+const CACHE = "backplane-log";
+let cache = (() => {
+  try {
+    return JSON.parse(localStorage.getItem(CACHE) ?? "null");
+  } catch {
+    return null;
+  }
+})();
+
+function keep(msg) {
+  if (msg.t === "log") {
+    cache = { origin: msg.origin ?? "", items: msg.since > 0 && cache ? cache.items.concat(msg.items) : msg.items };
+  } else if (msg.t === "changes" && cache) {
+    cache.items = cache.items.concat(msg.items);
+  } else {
+    return;
+  }
+  try {
+    localStorage.setItem(CACHE, JSON.stringify(cache));
+  } catch {
+    localStorage.removeItem(CACHE); // over quota: start from the server next time
+  }
+}
+
+if (cache && Array.isArray(cache.items)) {
+  ui = App.recv(ui, toJson({ t: "log", since: 0, origin: cache.origin, items: cache.items })).ui;
+}
+
 function connect() {
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  const s = new WebSocket(`${proto}//${location.host}/ws${token ? "?token=" + token : ""}`);
+  const q = new URLSearchParams();
+  if (token) q.set("token", token);
+  q.set("since", App.seq(ui));
+  q.set("origin", App.origin(ui));
+  const s = new WebSocket(`${proto}//${location.host}/ws?${q}`);
   s.onopen = () => {
     socket = s;
     backoff = 250;
@@ -234,7 +280,11 @@ function connect() {
     later();
   };
   s.onmessage = (e) => {
-    ui = App.recv(ui, toJson(JSON.parse(e.data)));
+    const msg = JSON.parse(e.data);
+    keep(msg);
+    const r = App.recv(ui, toJson(msg));
+    ui = r.ui;
+    run(r.cmds);
     later();
   };
   s.onclose = () => {
@@ -253,3 +303,8 @@ setInterval(() => {
 
 connect();
 render();
+
+// the app shell works offline where the browser allows it (HTTPS or localhost)
+if ("serviceWorker" in navigator && window.isSecureContext) {
+  navigator.serviceWorker.register("/sw.js").catch(() => {});
+}

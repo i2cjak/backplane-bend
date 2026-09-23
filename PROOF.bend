@@ -5,6 +5,7 @@ import ./src/app/viewer.bend as V
 import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
+import ./src/core/hub.bend as H
 
 # Lemmas
 # ------
@@ -402,3 +403,20 @@ def Laws.stale_board_ignored(n, key, items, now, h):
   %Equal.sym(Bool, N.Vw.fresh_for(N.Nui.vw(n), key), False{}, h) : {N.Nui.with_vw(n, N.Vw.if(_, N.Nui.vw(n), v => N.Vw.board.same(v, key, items, now))) == n : N.Nui}
   Laws.nui_with_own_vw(n)
 
+
+def Laws.resume_is_replay(a, b, s):
+  match a:
+    case Nil{}:
+      {==}
+    case h <> t:
+      Laws.resume_is_replay(t, b, M.State.apply(s, h))
+
+def Laws.queue_never_concurrent(s, now, th, msg, role, text, h1, h2):
+  %Equal.sym(Bool, H.Hub.running(H.Hub.thread(s, th)), True{}, h1) : {H.Step.outs_of(H.Hub.post.go(Bool.and(_, Bool.not(String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"))), H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  %Equal.sym(Bool, String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude"), False{}, h2) : {H.Step.outs_of(H.Hub.post.go(Bool.and(True{}, Bool.not(_)), H.Hub.thread(s, th), H.Hub.cwd(s, H.Hub.thread(s, th)), M.Queue.of(s, th), now, th, msg, role, text)) == [] : List<&2, H.Out>}
+  {==}
+
+def Laws.resend_stored_once(s, now, client, id, th, text, msg, h1, h2):
+  %Equal.sym(Bool, String.is_empty(msg), False{}, h1) : {H.Queue.changes(H.Hub.turn.m(s, now, client, id, th, text, Bool.pick(String, _, H.Hub.id("m", now, H.Hub.seq(s)), msg), Bool.not(_))) == [] : List<&2, M.Change>}
+  %Equal.sym(Bool, H.Hub.has_msg(H.Hub.entries(s), msg), True{}, h2) : {H.Queue.changes(H.Hub.turn.k(Bool.and(True{}, _), s, now, client, id, th, msg, text)) == [] : List<&2, M.Change>}
+  {==}

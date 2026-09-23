@@ -30,6 +30,9 @@ fi
 rm -rf dist
 mkdir -p dist build
 bend src/web/index.html -o dist/web
+cp src/web/sw.js dist/web/sw.js
+# precompressed copies: the server sends these to browsers that take gzip
+for f in dist/web/*.js dist/web/*.css dist/web/*.html; do gzip -9 -k -n -f "$f"; done
 bend src/server/main.bend -o dist/backplane-serve
 bend src/app/main.bend -o dist/backplane
 cp dist/backplane build/backplane

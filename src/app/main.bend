@@ -668,7 +668,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     +q : Chan(ShellMsg) <- Chan.new(ShellMsg, 8192)
     +out : Chan(S.Wire) <- Chan.new(S.Wire, 8192)
     t : U32 <- H.Clock.epoch()
-    ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out})
+    ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out, 0n, ""})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q))
     ty : L.Ty <- L.Ty.load()

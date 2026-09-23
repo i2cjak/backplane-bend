@@ -150,7 +150,7 @@ def Mcp.task.k(+ts: List<&2, M.Task>, +id: String, +thread: String) -> Maybe<&2,
 # a task this thread delegated (other threads' tasks are not its business)
 def Mcp.task(s: M.State, +id: String, +thread: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _}:
+    case M.State{_, _, _, _, tk, _, _}:
       Mcp.task.k(Map.values(&2, M.Task, tk), id, thread)
 
 def Mcp.status(m: Maybe<&2, M.Task>) -> Res:
@@ -237,7 +237,7 @@ def Mcp.threads(ts: List<&2, M.Thread>, +project: String) -> List<&2, J.Json>:
 
 def Mcp.list(+s: M.State, +thread: String) -> Res:
   match s:
-    case M.State{_, ts, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _}:
       Res.ok(J.Json.obj([J.KV{"threads", J.Json.arr(Mcp.threads(Map.values(&2, M.Thread, ts), Mcp.project_of(B.Hub.thread(s, thread))))}]))
 
 def Mcp.entry(e: M.Entry) -> J.Json:
@@ -275,7 +275,7 @@ def Mcp.read.last(+xs: List<&2, J.Json>, +limit: Nat, +target: String) -> Res:
 
 def Mcp.read.k(ok: Bool, +s: M.State, +target: String, +limit: Nat) -> Res:
   match ok s:
-    case True{} M.State{_, _, es, _, _, _}:
+    case True{} M.State{_, _, es, _, _, _, _}:
       Mcp.read.last(Mcp.mine(es, target, Nil{}), limit, target)
     case False{} _:
       Res.fail("that thread is not in this project")
@@ -284,8 +284,7 @@ def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +target: String, +text: String)
   match ok:
     case True{}:
       Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"sent"}}]),
-        B.Step{[M.MessagePosted{target, B.Hub.id("m", now, B.Hub.seq(s)), M.User{}, text, now}, M.TurnChanged{target, M.Running{}, now}],
-          B.Hub.run(B.Hub.thread(s, target), B.Hub.cwd(s, B.Hub.thread(s, target)), text)}}
+        B.Hub.post(s, now, target, B.Hub.id("m", now, B.Hub.seq(s)), M.User{}, text)}
     case False{}:
       Res.fail("that thread is not in this project")
 

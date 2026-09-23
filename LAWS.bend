@@ -4,6 +4,7 @@ import ./src/app/viewer.bend as V
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
+import ./src/core/hub.bend as H
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -171,3 +172,41 @@ law stale_board_ignored:
   for +now: Nat
   for h: {N.Vw.fresh_for(N.Nui.vw(n), key) == False{} : Bool}
   {N.Nui.board(n, key, items, now) == n : N.Nui}
+
+# Delivery
+# --------
+
+# a client that reconnects with the first changes already folded, and
+# folds only what it missed, holds exactly what a cold replay gives
+law resume_is_replay:
+  for a: List<&2, M.Change>
+  for b: List<&2, M.Change>
+  for s: M.State
+  {M.State.replay(List.append(&2, M.Change, a, b), s) == M.State.replay(b, M.State.replay(a, s)) : M.State}
+
+# a message for a Codex or Grok thread whose turn is running starts no
+# agent: it is stored and waits (one turn at a time per session)
+law queue_never_concurrent:
+  for +s: M.State
+  for +now: Nat
+  for +th: String
+  for +msg: String
+  for role: M.Role
+  for +text: String
+  for h1: {H.Hub.running(H.Hub.thread(s, th)) == True{} : Bool}
+  for h2: {String.eq(H.Hub.provider(H.Hub.thread(s, th)), "claude") == False{} : Bool}
+  {H.Step.outs_of(H.Hub.post(s, now, th, msg, role, text)) == [] : List<&2, H.Out>}
+
+# a message the server already stored (resent after a dropped link) is not
+# stored again, and starts nothing
+law resend_stored_once:
+  for +s: M.State
+  for +now: Nat
+  for +client: U32
+  for +id: String
+  for +th: String
+  for +text: String
+  for +msg: String
+  for h1: {String.is_empty(msg) == False{} : Bool}
+  for h2: {H.Hub.has_msg(H.Hub.entries(s), msg) == True{} : Bool}
+  {H.Queue.changes(H.Hub.turn(s, now, client, id, th, text, msg)) == [] : List<&2, M.Change>}
