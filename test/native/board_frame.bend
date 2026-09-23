@@ -28,7 +28,7 @@ def go(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(Unit):
     +n : Nat = List.length(&2, V.Seen, ss)
     +t1 : Nat <- IO.now()
     +v : V.View = V.View.fit(ss, 0.0, 0.0, 1400.0, 900.0)
-    +ops : List<&2, R.Op> = List.reverse(&2, R.Op, V.Ops.scene(ss, v, D.Clip{0, 0, 1400, 900}, 10000n, 0n, False{}))
+    +ops : List<&2, R.Op> = List.reverse(&2, R.Op, V.Ops.scene(ss, v, D.Clip{0, 0, 1400, 900}, 10000n, 0n, False{}, 0))
     +k : Nat = List.length(&2, R.Op, ops)
     +t2 : Nat <- IO.now()
     +img : Image = R.Frame.render(1400, 900, ops, 526603)
