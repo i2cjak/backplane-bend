@@ -1,6 +1,7 @@
 import Base
 import ../core/model.bend as M
 import ./dom.bend as D
+import ./icon.bend as WI
 import ../core/client.bend as U
 import ../core/attach.bend as AT
 import ../core/vt.bend as VT
@@ -70,9 +71,9 @@ def View.rows_of(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) 
 def View.shelf.k(open: Bool, +key: String, +label: String, ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
   match open:
     case True{}:
-      D.Dom.button("shelf open", "toggle-settled", key, "Hide", label) <> View.rows_of(ts, st, sel, now)
+      WI.WIcon.button("shelf open", "toggle-settled", key, "Hide", "chevron-down", 14, label) <> View.rows_of(ts, st, sel, now)
     case False{}:
-      [D.Dom.button("shelf", "toggle-settled", key, "Show", label)]
+      [WI.WIcon.button("shelf", "toggle-settled", key, "Show", "chevron-right", 14, label)]
 
 # a collapsible shelf (Settled, Archived): its label and count, then its
 # rows when open; nothing when empty
@@ -96,7 +97,7 @@ def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +n
     case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
       D.El{"section", id, [D.At{"class", "project"}],
         List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}],
-            [D.Dom.span("name", title), D.Dom.button("icon", "new-thread", id, "New thread", "+")]}],
+            [D.Dom.span("name", title), WI.WIcon.button("icon", "new-thread", id, "New thread", "plus", 16, "")]}],
           View.rows_in(pinned, st, sel, now, True{}, False{}),
           View.rows_in(active, st, sel, now, True{}, False{}),
           View.snoozed(snoozed, st, sel, now),
@@ -140,10 +141,10 @@ def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
-            D.Dom.button("icon", "proj-open", "", "Add project", "+")]}],
+            WI.WIcon.button("icon", "proj-open", "", "Add project", "plus", 16, "")]}],
           D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding),
             D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now),
-            [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")]))))}
+            [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")]))))}
 
 def View.sidebar(u: U.Ui) -> D.Node:
   match u:
@@ -442,16 +443,17 @@ def View.chips.of(ps: List<&2, String>) -> List<&2, D.Node>:
 
 # a user message: what was written, then its attachments
 def View.user_body(+text: String) -> List<&2, D.Node>:
-  D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(AT.Att.body(text)), Nil{}, [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{AT.Att.body(text)}]}]),
+  D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(AT.Att.body(text)), Nil{}, [D.El{"div", "", [D.At{"class", "body plain"}], D.Dom.linked(AT.Att.body(text))}]),
     View.chips.of(AT.Att.paths(text)))
 
-# the images a reply names, each opening full size in a new tab
+# the images a reply names; a click opens one in the lightbox (data-lightbox,
+# app.bend's lb_*), a middle click in a new tab
 def View.images(ps: List<&2, String>) -> List<&2, D.Node>:
   match ps:
     case Nil{}:
       Nil{}
     case +p <> t:
-      D.El{"a", "", [D.At{"class", "shot"}, D.At{"href", IM.Img.url(p)}, D.At{"target", "_blank"}, D.At{"title", p}],
+      D.El{"a", "", [D.At{"class", "shot"}, D.At{"href", IM.Img.url(p)}, D.At{"target", "_blank"}, D.At{"title", p}, D.At{"data-lightbox", IM.Img.url(p)}],
         [D.El{"img", "", [D.At{"src", IM.Img.url(p)}, D.At{"alt", p}, D.At{"loading", "lazy"}], Nil{}}]} <> View.images(t)
 
 def View.entry.own(e: M.Entry) -> D.Node:
@@ -541,7 +543,7 @@ def View.cursor(c: VT.VCur) -> List<&2, D.Node>:
 def View.term(+v: VT.Vt) -> D.Node:
   D.El{"section", "term-pane", [D.At{"class", "term-pane"}], [
     D.El{"div", "", [D.At{"class", "term-head"}], [D.Dom.span("label", "Terminal" ++ Bool.pick(String, String.is_empty(VT.Vt.title(v)), "", " · " ++ VT.Vt.title(v))),
-      D.Dom.button("icon", "term-toggle", "", "Close (ctrl+j)", "×")]},
+      WI.WIcon.button("icon", "term-toggle", "", "Close (ctrl+j)", "x", 16, "")]},
     D.El{"div", "", [D.At{"class", "screen"}, D.At{"style", "background:" ++ View.hex(VT.Vt.bg()) ++ ";color:" ++ View.hex(VT.Vt.fg())}],
       D.Dom.cat(View.tlines(VT.Vt.lines(v, 0n)), D.Dom.cat(View.cursor(VT.Vt.cursor(v)),
         [D.El{"textarea", "term", [D.At{"id", "term"}, D.At{"class", "term-in"}, D.At{"data-keys", "term-key"}, D.At{"data-text", "term-paste"},
@@ -588,7 +590,7 @@ def View.diff(+text: String) -> D.Node:
         D.Dom.button("", "revert", "0", "Put the files back as they were when this thread began", "Revert thread"),
         D.Dom.button("", "git", "commit_push_pr", "Commit, push and open a pull request", "Open PR"),
         D.Dom.button("primary", "git", "commit_push", "Commit and push", "Commit & push"),
-        D.Dom.button("icon", "panel", "", "Close", "×")]}]},
+        WI.WIcon.button("icon", "panel", "", "Close", "x", 16, "")]}]},
     D.El{"div", "", [D.At{"class", "diff-body"}], View.dfiles(fs)}]}
 
 def View.pending(ps: List<&2, String>) -> List<&2, D.Node>:
@@ -612,15 +614,16 @@ def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool,
     D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
       D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
-      D.Dom.button("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort) ++ " ▾"),
-      D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [D.Txt{"Attach"},
+      WI.WIcon.after("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort), "chevron-down", 14),
+      D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [WI.WIcon.svg("paperclip", 16),
         D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
       D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])))}
 
 def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool) -> D.Node:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
-      D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view")}], D.Dom.cat([
+      D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
+        D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat([
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff")),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),

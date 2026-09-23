@@ -23,6 +23,7 @@ import ./imgfx.bend as IF
 import ../core/images.bend as IM
 import ../gfx/bitmap.bend as BM
 import ../gfx/tiles.bend as TI
+import ../core/lightbox.bend as LBX
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -197,8 +198,21 @@ def Pics.sent(r: Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, +q: Ch
     case Fail{e}:
       Pics.sent.err(e, q, tag, path)
 
+# "full:<path>": the image for the lightbox, decoded as large as a screen
+def Pics.full(+key: String) -> Bool:
+  String.starts_with(key, "full:")
+
+def Pics.src(+key: String) -> String:
+  Bool.pick(String, Pics.full(key), String.drop(key, 5n), key)
+
+def Pics.maxw.of(+key: String) -> U32:
+  Bool.pick(U32, Pics.full(key), 1600, Pics.maxw())
+
+def Pics.maxh.of(+key: String) -> U32:
+  Bool.pick(U32, Pics.full(key), 1000, Pics.maxh())
+
 def Pics.decode(+file: String, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
-  IO.bind(Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, Unit, IF.Imgfx.decode(file, Pics.maxw(), Pics.maxh()), r => Pics.sent(r, q, tag, path))
+  IO.bind(Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, Unit, IF.Imgfx.decode(file, Pics.maxw.of(path), Pics.maxh.of(path)), r => Pics.sent(r, q, tag, path))
 
 def Pics.fetched(r: P.Ran, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
   match r:
@@ -216,9 +230,9 @@ def Pics.fetched(r: P.Ran, +q: Chan(ShellMsg), +tag: String, +path: String) -> I
 def Pics.load(local: Bool, +path: String, +url: String, +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
   match local:
     case True{}:
-      IO.bind(String, Unit, S.Env.get("HOME", ""), home => Pics.decode(Bool.pick(String, String.starts_with(path, "~/"), home ++ String.drop(path, 1n), path), q, tag, path))
+      IO.bind(String, Unit, S.Env.get("HOME", ""), home => Pics.decode(Bool.pick(String, String.starts_with(Pics.src(path), "~/"), home ++ String.drop(Pics.src(path), 1n), Pics.src(path)), q, tag, path))
     case False{}:
-      IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "f=$(mktemp) && curl -sf -m 30 -o \"$f\" \"$1\" && echo \"$f\"", "sh", url ++ IM.Img.url(path)], "/"),
+      IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "f=$(mktemp) && curl -sf -m 30 -o \"$f\" \"$1\" && echo \"$f\"", "sh", url ++ IM.Img.url(Pics.src(path))], "/"),
         r => Pics.fetched(r, q, tag, path))
 
 def Pics.new.k(fresh: Bool, +v: String, rest: List<&2, String>) -> List<&2, String>:
@@ -292,12 +306,28 @@ def Pics.ask(+hs: List<&2, N.Hit>, wa: Aux, +q: Chan(ShellMsg)) -> IO(Aux):
       +fresh = Pics.uniq(Pics.new(hs, ak), Nil{})
       IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}, fr}))
 
-def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
+# no caret blinks under the lightbox (nothing else asks for frames then)
+def Lbv.blink(on: Bool, +n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
+  match on:
+    case True{}:
+      IO.pure(N.Nui, n)
+    case False{}:
+      Shell.blink(n, q, ms)
+
+# the lightbox's picture, asked for as large as a screen while it is up
+def Lbv.want(on: Bool, +path: String) -> List<&2, N.Hit>:
+  match on:
+    case True{}:
+      [N.Hit{0, 0, 0, 0, "img", "full:" ++ path}]
+    case False{}:
+      Nil{}
+
+def Shell.shown(r: Window & Image, +n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
   (w, img) = r
   do IO<Shell>:
     Unit <- IO.pure(Unit, Image.drop!(img))
-    +n2 : N.Nui <- Shell.blink(n, q, ms)
-    wa2 : Aux <- Pics.ask(N.Nui.hits(n2), wa, q)
+    +n2 : N.Nui <- Lbv.blink(N.Lbx.on(n), n, q, ms)
+    wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q)
     Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa2})
 
 def Pics.found(r: Map<&2, BM.Bitmap> & BM.Bitmap) -> BM.Bitmap:
@@ -457,6 +487,11 @@ def Shell.connect(a: Shell, +url: String) -> IO(Shell):
 # Commands
 # --------
 
+# a link opens in the system's browser, detached (BACKPLANE_OPEN names
+# another opener); the address goes as an argument, never as shell text
+def Shell.open(+url: String) -> IO(Unit):
+  IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "${BACKPLANE_OPEN:-xdg-open} \"$1\" >/dev/null 2>&1 &", "sh", url], "/"), r => IO.pure(Unit, Unit{}))
+
 def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
   match a c:
     case Shell{n, w, d, qd, q, +i, wa} N.NSend{t}:
@@ -475,6 +510,10 @@ def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
       IO.die(Shell, 0, "")
     case _ N.NConnect{url}:
       Shell.connect(a, url)
+    case Shell{n, w, d, qd, q, i, wa} N.NOpen{url}:
+      do IO<Shell>:
+        IO.spawn(Unit, Shell.open(url))
+        return Shell{n, w, d, qd, q, i, wa}
 
 # a connection closed: this machine's own hub means the app is ending;
 # another machine's is tried again in a moment; an old one is let go
@@ -537,12 +576,18 @@ def Shell.pasted(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(Shel
   (w, text) = r
   Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.paste(n, text))
 
+def Shell.dropped(r: Window & String, +n: N.Nui, d: Bool, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux) -> IO(Shell):
+  (w, text) = r
+  Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.drop(n, text))
+
 def Shell.event(a: Shell, e: W.WinEv) -> IO(Shell):
   match a e:
     case Shell{n, w, d, qd, q, i, wa} W.WPaste{_}:
       IO.bind(Window & String, Shell, W.Win.pasted(w), r => Shell.pasted(r, n, d, qd, q, i, wa))
+    case Shell{n, w, d, qd, q, i, wa} W.WDrop{_}:
+      IO.bind(Window & String, Shell, W.Win.dropped(w), r => Shell.dropped(r, n, d, qd, q, i, wa))
     case Shell{+n, w, d, qd, q, i, wa} _:
-      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.event(n, e))
+      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.event.lb(N.Lbx.on(n), n, e))
 
 def Shell.events(es: List<&2, W.WinEv>, a: Shell) -> IO(Shell):
   match es:
@@ -944,18 +989,68 @@ def Aux.with_memo(a: Aux, m: L.TLMemo) -> Aux:
     case Aux{ws, ty, ti, Kept{f, _}}:
       Aux{ws, ty, ti, Kept{f, m}}
 
+# frames go on while a fade, a hover ease or a lightbox ease runs
+def Shell.anim(+n: N.Nui, +ms: Nat) -> Bool:
+  Bool.or(Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), N.Lbx.busy(n, ms))
+
 # present the frame's tiles and keep them for the next frame
 def Shell.present(+tiles: TI.Tiles, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
     case L.Out{_, +hs}:
       IO.bind(Window & Image, Shell, W.Win.present(w, TI.Tiles.image(tiles)),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), ms))
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms))
+
+# The lightbox (nui.bend's Lbx, core/lightbox.bend's Lb): the picture
+# alone on a dark window, zoomed and panned, its full decode once there
+# (else the thread's copy), and the close square on top
+def Lbv.bg() -> U32:
+  1052688
+
+def Lbv.pick(full: BM.Bitmap, +thumb: BM.Bitmap) -> BM.Bitmap:
+  match full:
+    case BM.Bitmap{0, _, _, _, _, _, _, _}:
+      thumb
+    case BM.Bitmap{w, h, d, t, x0, y0, fw, fh}:
+      BM.Bitmap{w, h, d, t, x0, y0, fw, fh}
+
+def Lbv.pic(b: BM.Bitmap, +x: LBX.LbAx, +y: LBX.LbAx, +ww: U32, +hh: U32) -> Image:
+  match b:
+    case BM.Bitmap{0, _, _, _, _, _, _, _}:
+      Pix{Lbv.bg()}
+    case BM.Bitmap{bw, bh, d, t, x0, y0, fw, fh}:
+      BM.Bitmap.view(ww, hh, BM.Bitmap{bw, bh, d, t, x0, y0, fw, fh},
+        U32.from_nat(LBX.LbAx.at(x)), U32.from_nat(LBX.LbAx.at(y)), U32.from_nat(LBX.LbAx.d(x)), U32.from_nat(LBX.LbAx.d(y)),
+        U32.from_nat(LBX.LbAx.s(x)), U32.from_nat(LBX.LbAx.s(y)), U32.from_nat(LBX.LbAx.len(x, U32.to_nat(ww))), U32.from_nat(LBX.LbAx.len(y, U32.to_nat(hh))), Pix{Lbv.bg()})
+
+# the close square (LBX.Lb.close_hit's): a frame with an x in it (ops
+# topmost first, as R.Frame.over takes them)
+def Lbv.close(+ww: U32) -> List<&2, R.Op>:
+  +x = U32.from_nat(LBX.Lb.close_x(U32.to_nat(ww)))
+  List.append(&2, R.Op, [D.Draw.seg(D.Clip.all(), U32.to_f32((x + 12 : U32)), 24.0, U32.to_f32((x + 24 : U32)), 36.0, 1.5, T.Th.text(), 255),
+      D.Draw.seg(D.Clip.all(), U32.to_f32((x + 24 : U32)), 24.0, U32.to_f32((x + 12 : U32)), 36.0, 1.5, T.Th.text(), 255)],
+    List.append(&2, R.Op, D.Draw.frame(D.Clip.all(), x, 12, 36, 36, T.Th.line()), [D.Draw.rect(D.Clip.all(), x, 12, 36, 36, T.Th.panel(), 255)]))
+
+def Lbv.draw(+n: N.Nui, +pics: Map<&2, BM.Bitmap>, +ms: Nat) -> Image:
+  R.Frame.over(N.Nui.width(n), N.Nui.height(n), Lbv.close(N.Nui.width(n)),
+    Lbv.pic(Lbv.pick(Pics.get(pics, "full:" ++ N.Lbx.path(n)), Pics.get(pics, N.Lbx.path(n))),
+      LBX.Lb.x(N.Lbx.get(n), N.Lbx.box(n), ms), LBX.Lb.y(N.Lbx.get(n), N.Lbx.box(n), ms), N.Nui.width(n), N.Nui.height(n)))
+
+# the frame: the lightbox while it is up, else the window's tiles. The
+# lightbox is drawn whole and leaves the kept tiles alone: they still hold
+# the window's last frame, which is what shows again when it closes
+def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  match on:
+    case True{}:
+      IO.bind(Window & Image, Shell, W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms)),
+        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms))
+    case False{}:
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
+        L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
     case L.Out{+ops, +hs}:
-      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
-        L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
+      Lbv.paint(N.Lbx.on(n), ops, hs, n, w, q, i, wa, epoch, ms)
 
 # the timeline's memo is brought up to this frame first; layout draws from it
 def Shell.paint.m(+memo: L.TLMemo, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
@@ -971,7 +1066,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
         Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
 
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.k(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), w, q, i, wa, epoch, ms)
+  Shell.paint.k(N.Lbx.stamp(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), ms), w, q, i, wa, epoch, ms)
 
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):

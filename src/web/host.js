@@ -50,9 +50,13 @@ function* each(list) {
 
 const EVENTS = ["click", "input"];
 
+// icons (src/web/icon.bend) are inline SVG, which needs its namespace
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG_TAGS = new Set(["svg", "path"]);
+
 function create(v) {
   if (v.$ === "Txt") return document.createTextNode(v.text);
-  const el = document.createElement(v.tag);
+  const el = SVG_TAGS.has(v.tag) ? document.createElementNS(SVG_NS, v.tag) : document.createElement(v.tag);
   el.__v = { $: "El", tag: v.tag, key: v.key, attrs: { $: "Nil" }, kids: { $: "Nil" } };
   el.__kids = [];
   patch(el, v);
@@ -279,6 +283,44 @@ document.addEventListener("change", (e) => {
   })();
 });
 
+// Drops: files dragged onto a [data-drop] area go to its action, the way
+// the attach button's do; its data-drop-hover action hears "1" while they
+// hover and "" once they leave or land (app.bend decides what that shows)
+let dropOver = null;
+function dragsFiles(e) {
+  return [...(e.dataTransfer?.types || [])].includes("Files");
+}
+function dropHover(el) {
+  if (el === dropOver) return;
+  if (dropOver) dispatch(dropOver.getAttribute("data-drop-hover"), "");
+  dropOver = el;
+  if (el) dispatch(el.getAttribute("data-drop-hover"), "1");
+}
+
+document.addEventListener("dragover", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const el = e.target.closest?.("[data-drop]") || null;
+  e.dataTransfer.dropEffect = el ? "copy" : "none";
+  dropHover(el);
+});
+
+document.addEventListener("dragleave", (e) => {
+  if (dropOver && !(e.relatedTarget && dropOver.isConnected && dropOver.contains(e.relatedTarget))) dropHover(null);
+});
+
+document.addEventListener("drop", (e) => {
+  if (!dragsFiles(e)) return;
+  e.preventDefault();
+  const el = e.target.closest?.("[data-drop]");
+  dropHover(null);
+  const files = [...(e.dataTransfer.files || [])];
+  if (!el || files.length === 0) return;
+  (async () => {
+    for (const f of files) await upload(el.getAttribute("data-drop"), f);
+  })();
+});
+
 document.addEventListener("paste", (e) => {
   const cd = e.clipboardData;
   if (!cd) return;
@@ -349,6 +391,127 @@ document.addEventListener("keydown", (e) => {
   e.preventDefault();
   dispatch(el.getAttribute("data-enter"), valueOf(el));
 });
+
+// Lightbox
+// --------
+// A click on an image in a thread ([data-lightbox]) shows it over the page.
+// app.bend's lb_* hold every decision (zoom, pan, easing, what closes it);
+// this feeds them the pointer and sets the style they answer, drawing
+// frames only while lb_busy says an ease is running.
+
+let lb = null; // { el, img, v: the Bend Lb, drawing, pointers }
+const lbNow = () => BigInt(Math.floor(performance.now())) + 1n;
+const lbN = (x) => BigInt(Math.max(0, Math.round(x)));
+const lbBox = () => App.lb_box(lbN(lb.img.naturalWidth), lbN(lb.img.naturalHeight), lbN(window.innerWidth), lbN(window.innerHeight));
+
+function lbDraw() {
+  if (!lb) return;
+  lb.drawing = false;
+  if (!lb.img.naturalWidth) return;
+  const now = lbNow();
+  lb.v = App.lb_stamp(lb.v, now);
+  lb.img.style.cssText = App.lb_css(lb.v, lbBox(), now);
+  if (App.lb_busy(lb.v, now)) lbLater();
+}
+
+function lbLater() {
+  if (lb && !lb.drawing) {
+    lb.drawing = true;
+    requestAnimationFrame(lbDraw);
+  }
+}
+
+function lbClose() {
+  if (!lb) return;
+  lb.el.remove();
+  lb = null;
+}
+
+function lbPinch() {
+  const [a, b] = [...lb.pointers.values()];
+  return { d: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+}
+
+function lbOpen(url) {
+  lbClose();
+  const el = create(App.lb_node(url));
+  const img = el.querySelector("img");
+  lb = { el, img, v: App.lb_open(), drawing: false, pointers: new Map(), pinch: null };
+  img.style.visibility = "hidden"; // until loaded; lb_css then sets the whole style
+  img.addEventListener("load", lbDraw);
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1;
+    const mag = Math.max(1, Math.round(Math.abs(e.deltaY) * k));
+    if (e.deltaY === 0) return;
+    lb.v = App.lb_wheel(lb.v, e.deltaY > 0, BigInt(mag), e.ctrlKey, lbN(e.clientX), lbN(e.clientY), lbBox(), lbNow());
+    lbDraw();
+  }, { passive: false });
+  el.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("[data-lb-close]")) return;
+    e.preventDefault();
+    el.setPointerCapture(e.pointerId);
+    lb.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (lb.pointers.size === 2) {
+      lb.v = App.lb_release(lb.v, lbN(e.clientX), lbN(e.clientY), lbBox(), lbNow());
+      lb.pinch = lbPinch();
+    } else if (lb.pointers.size === 1) {
+      lb.v = App.lb_press(lb.v, lbN(e.clientX), lbN(e.clientY), lbBox(), lbNow());
+    }
+  });
+  el.addEventListener("pointermove", (e) => {
+    if (!lb.pointers.has(e.pointerId)) return;
+    lb.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (lb.pinch && lb.pointers.size === 2) {
+      const p = lbPinch();
+      lb.v = App.lb_pinch(lb.v, lbN(lb.pinch.d), lbN(p.d), lbN(p.x), lbN(p.y), lbBox(), lbNow());
+      lb.pinch = p;
+    } else if (lb.pointers.size === 1) {
+      lb.v = App.lb_move(lb.v, lbN(e.clientX), lbN(e.clientY), lbBox(), lbNow());
+    }
+    lbDraw();
+  });
+  const up = (e) => {
+    if (!lb || !lb.pointers.has(e.pointerId)) return;
+    lb.pointers.delete(e.pointerId);
+    if (lb.pinch) {
+      if (lb.pointers.size === 0) lb.pinch = null;
+      return;
+    }
+    const closes = e.type === "pointerup" && App.lb_closes(lb.v, lbN(e.clientX), lbN(e.clientY));
+    lb.v = App.lb_release(lb.v, lbN(e.clientX), lbN(e.clientY), lbBox(), lbNow());
+    if (closes) lbClose();
+    else lbDraw();
+  };
+  el.addEventListener("pointerup", up);
+  el.addEventListener("pointercancel", up);
+  el.addEventListener("click", (e) => {
+    if (e.target.closest("[data-lb-close]")) lbClose();
+  });
+  document.body.appendChild(el);
+  document.activeElement?.blur?.();
+  if (img.complete) lbDraw();
+}
+
+document.addEventListener("click", (e) => {
+  if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
+  const a = e.target.closest?.("[data-lightbox]");
+  if (!a) return;
+  e.preventDefault();
+  lbOpen(a.getAttribute("data-lightbox"));
+});
+
+// while the lightbox is up, its keys are its own
+document.addEventListener("keydown", (e) => {
+  if (!lb) return;
+  e.stopImmediatePropagation();
+  if (App.lb_key(e.key)) {
+    e.preventDefault();
+    lbClose();
+  }
+}, true);
+
+window.addEventListener("resize", () => lbDraw());
 
 // Socket
 // ------

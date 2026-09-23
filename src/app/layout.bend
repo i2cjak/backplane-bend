@@ -3,9 +3,11 @@ import ../core/model.bend as M
 import ../core/json.bend as J
 import ../core/client.bend as U
 import ../core/images.bend as IM
+import ../core/links.bend as LK
 import ../gfx/raster.bend as R
 import ../gfx/draw.bend as D
 import ../gfx/text.bend as X
+import ../gfx/icon.bend as IC
 import ../web/dom.bend as N
 import ./theme.bend as T
 import ./nui.bend as S
@@ -114,7 +116,7 @@ def Ty.load() -> IO(Ty):
     +meta : X.Face <- X.Text.face(Ty.fonts.ui(), 12)
     +code : X.Face <- X.Text.face(Ty.fonts.code(), 13)
     c : Map<&2, X.TG> <- Ty.fonts.warm([ui, bold, meta, code], Map.new(&2, X.TG))
-    return Ty{c, ui, bold, meta, ui, code}
+    return Ty{IC.Ico.warm(c, 16), ui, bold, meta, ui, code}
 
 # Shapes
 # ------
@@ -150,6 +152,15 @@ def Lay.chip(+ty: Ty, +x: U32, +y: U32, +label: String, +on: Bool, action: Strin
   Out{List.append(&2, R.Op, Lay.box(D.Clip.all(), x, y, w, 28, 6, Bool.pick(U32, on, T.Th.sel(), T.Th.raise()), Bool.pick(U32, on, T.Th.accent(), T.Th.line())),
       Ty.text(ty, 2n, label, D.Clip.all(), (x + 10 : U32), y, 28, Bool.pick(U32, on, T.Th.text(), T.Th.dim()))),
     [Lay.hit(x, y, w, 28, action, value)]}
+
+# an icon (core/icons.bend) at 16 px with its top-left at (x, y)
+def Lay.icon(+ty: Ty, +name: String, +c: D.Clip, +x: U32, +y: U32, +color: U32) -> List<&2, R.Op>:
+  IC.Ico.op(Ty.cache(ty), name, 16, c, x, y, color)
+
+# a square 28 px button holding an icon
+def Lay.ibutton(+ty: Ty, +c: D.Clip, +x: U32, +y: U32, +name: String, +color: U32, action: String, value: String) -> Out:
+  Out{List.append(&2, R.Op, Lay.box(c, x, y, 28, 28, 6, T.Th.raise(), T.Th.line()), Lay.icon(ty, name, c, (x + 6 : U32), (y + 6 : U32), color)),
+    [Lay.hit(x, y, 28, 28, action, value)]}
 
 # Sidebar
 # -------
@@ -209,10 +220,10 @@ def Lay.col.then(a: Col, k: U32 -> Col) -> Col:
 def Lay.shelf.k(+ty: Ty, open: Bool, +key: String, +label: String, ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat, +c: D.Clip, +y: U32) -> Col:
   match open:
     case True{}:
-      Lay.col.cat(Out{Ty.text(ty, 2n, "▾ " ++ label, c, 16, y, 28, T.Th.dim()), [Lay.hit(0, y, 264, 28, "toggle-settled", key)]},
+      Lay.col.cat(Out{List.append(&2, R.Op, Lay.icon(ty, "chevron-down", c, 12, (y + 6 : U32), T.Th.dim()), Ty.text(ty, 2n, label, c, 32, y, 28, T.Th.dim())), [Lay.hit(0, y, 264, 28, "toggle-settled", key)]},
         Lay.rows(ty, ts, st, sel, now, False{}, c, (y + 28 : U32)))
     case False{}:
-      Col{Out{Ty.text(ty, 2n, "▸ " ++ label, c, 16, y, 28, T.Th.faint()), [Lay.hit(0, y, 264, 28, "toggle-settled", key)]}, (y + 28 : U32)}
+      Col{Out{List.append(&2, R.Op, Lay.icon(ty, "chevron-right", c, 12, (y + 6 : U32), T.Th.faint()), Ty.text(ty, 2n, label, c, 32, y, 28, T.Th.faint())), [Lay.hit(0, y, 264, 28, "toggle-settled", key)]}, (y + 28 : U32)}
 
 # a collapsible shelf (Settled, Archived): its name and count, then its rows
 # when open; nothing when empty
@@ -235,7 +246,7 @@ def Lay.project(+ty: Ty, r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: St
   match r:
     case U.SRow{_, M.Project{+id, title, _, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
       Lay.col.cat(Out.cat(Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 200), c, 16, (y + 4 : U32), 28, T.Th.dim())),
-          Out{Ty.text(ty, 0n, "+", c, 238, (y + 4 : U32), 28, T.Th.faint()), [Lay.hit(230, (y + 4 : U32), 28, 28, "new-thread", id)]}),
+          Out{Lay.icon(ty, "plus", c, 236, (y + 10 : U32), T.Th.faint()), [Lay.hit(230, (y + 4 : U32), 28, 28, "new-thread", id)]}),
         Lay.col.then(Lay.rows(ty, pinned, st, sel, now, False{}, c, (y + 32 : U32)), y1 =>
           Lay.col.then(Lay.rows(ty, active, st, sel, now, False{}, c, y1), y2 =>
             Lay.col.then(Lay.snoozed(ty, snoozed, st, sel, now, c, y2), y3 =>
@@ -360,7 +371,7 @@ def Mach.bar.k(any: Bool, +ty: Ty, +rs: List<&2, U.MRow>) -> Out:
     case True{}:
       Out{List.concat(&2, R.Op, [[D.Draw.rect(D.Clip.all(), 0, 87, 264, 1, T.Th.line(), 255)],
           Ty.text(ty, 2n, Ty.fit(ty, 2n, U.Machines.current(rs), 200), D.Clip.all(), 16, 52, 36, T.Th.text()),
-          Ty.text(ty, 2n, "▾", D.Clip.all(), 240, 52, 36, T.Th.dim())]), [Lay.hit(0, 52, 263, 36, "flag", "machines")]}
+          Lay.icon(ty, "chevron-down", D.Clip.all(), 236, 62, T.Th.dim())]), [Lay.hit(0, 52, 263, 36, "flag", "machines")]}
     case False{}:
       Out.none()
 
@@ -379,12 +390,12 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       D.Draw.disc(top, 19.0, 26.0, 3.5, Bool.pick(U32, on, T.Th.ok(), T.Th.bad()), 255)]),
     Out.ops(List.append(&2, R.Op, Ty.text(ty, 1n, "Backplane", top, 30, 0, 52, T.Th.text()),
       Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
-    Out{Ty.text(ty, 0n, "+", top, 238, 0, 52, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "vw-projo", "")]},
+    Out{Lay.icon(ty, "plus", top, 234, 18, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "vw-projo", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret),
     Links.over(Lay.col.out(Lay.projects(ty, U.Side.rows(st, now), open, st, sel, now,
       D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
-        Ty.text(ty, 2n, "Settings", D.Clip.all(), 16, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim()))),
+        List.append(&2, R.Op, Lay.icon(ty, "settings", D.Clip.all(), 16, (h - 32 : U32), Bool.pick(U32, settings, T.Th.text(), T.Th.dim())), Ty.text(ty, 2n, "Settings", D.Clip.all(), 40, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim())))),
       [Lay.hit(0, (h - 48 : U32), 263, 48, "flag", "settings")]},
     Mach.bar.k(many, ty, ms),
     Mach.menu(ty, Bool.and(many, U.Flag.get(open, "machines")), ms)])
@@ -425,6 +436,8 @@ def TL.h.k(k: Nat) -> U32:
       22
     case 12n:
       20
+    case 13n:
+      23
     case _:
       10
 
@@ -443,6 +456,65 @@ def Nd.plain(ns: List<&2, N.Node>) -> String:
     case N.El{_, _, _, ks} <> t:
       Nd.plain(ks) ++ Nd.plain(t)
 
+# the links (<a>) of a node list, in order
+def Nd.href(xs: List<&2, N.Attr>) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case N.At{"href", v} <> _:
+      v
+    case _ <> t:
+      Nd.href(t)
+
+def Nd.links(ns: List<&2, N.Node>) -> List<&2, LK.Piece>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case N.Txt{_} <> t:
+      Nd.links(t)
+    case N.El{"a", _, +at, +ks} <> t:
+      LK.PLink{Nd.plain(ks), Nd.href(at)} <> Nd.links(t)
+    case N.El{_, _, _, ks} <> t:
+      List.append(&2, LK.Piece, Nd.links(ks), Nd.links(t))
+
+# Links
+# -----
+# A paragraph with links lays out as kind 13 lines: the paragraph's links
+# ride in the line's copy field (LK.Link.enc); drawing cuts each line into
+# runs (LK.Link.cut) and each link run hits "open-url" with its address.
+
+def TL.linked.k(+none: Bool, ls: List<&2, String>, +color: U32, +enc: String) -> List<&2, TLine>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      TLine{l, color, Bool.pick(U32, none, 0, 13), Bool.pick(String, none, "", enc), 0} <> TL.linked.k(none, t, color, enc)
+
+def TL.linked(ls: List<&2, String>, +color: U32, +enc: String) -> List<&2, TLine>:
+  TL.linked.k(String.is_empty(enc), ls, color, enc)
+
+def TL.link.w(+ty: Ty, p: LK.Piece) -> U32:
+  match p:
+    case LK.PText{s}:
+      Ty.width(ty, 3n, s)
+    case LK.PLink{l, _}:
+      Ty.width(ty, 3n, l)
+
+def TL.link.seg(+ty: Ty, p: LK.Piece, +c: D.Clip, +x: U32, +y: U32, +color: U32) -> Out:
+  match p:
+    case LK.PText{s}:
+      Out.ops(Ty.text(ty, 3n, s, c, x, y, 23, color))
+    case LK.PLink{+l, u}:
+      Out{D.Draw.rect(c, x, (y + 19 : U32), Ty.width(ty, 3n, l), 1, T.Th.accent(), 255) <> Ty.text(ty, 3n, l, c, x, y, 23, T.Th.accent()),
+        [Lay.hit(x, y, Ty.width(ty, 3n, l), 23, "open-url", u)]}
+
+def TL.link.segs(ps: List<&2, LK.Piece>, +ty: Ty, +c: D.Clip, +x: U32, +y: U32, +color: U32) -> Out:
+  match ps:
+    case Nil{}:
+      Out.none()
+    case +p <> t:
+      Out.cat(TL.link.seg(ty, p, c, x, y, color), TL.link.segs(t, ty, c, (x + TL.link.w(ty, p) : U32), y, color))
+
 def TL.texts(ls: List<&2, String>, +color: U32, +kind: U32) -> List<&2, TLine>:
   match ls:
     case Nil{}:
@@ -450,19 +522,19 @@ def TL.texts(ls: List<&2, String>, +color: U32, +kind: U32) -> List<&2, TLine>:
     case l <> t:
       TLine{l, color, kind, "", 0} <> TL.texts(t, color, kind)
 
-def TL.bullets(ls: List<&2, String>, first: Bool) -> List<&2, TLine>:
+def TL.bullets(ls: List<&2, String>, first: Bool, +enc: String) -> List<&2, TLine>:
   match ls:
     case Nil{}:
       Nil{}
     case l <> t:
-      TLine{Bool.pick(String, first, "•  ", "   ") ++ l, T.Th.soft(), 0, "", 0} <> TL.bullets(t, False{})
+      TLine{Bool.pick(String, first, "•  ", "   ") ++ l, T.Th.soft(), Bool.pick(U32, String.is_empty(enc), 0, 13), enc, 0} <> TL.bullets(t, False{}, enc)
 
 def TL.items(+ty: Ty, ns: List<&2, N.Node>, +px: U32) -> List<&2, TLine>:
   match ns:
     case Nil{}:
       Nil{}
-    case n <> t:
-      List.append(&2, TLine, TL.bullets(Ty.wrap(ty, 3n, Nd.plain([n]), (px - 24 : U32)), True{}), TL.items(ty, t, px))
+    case +n <> t:
+      List.append(&2, TLine, TL.bullets(Ty.wrap(ty, 3n, Nd.plain([n]), (px - 24 : U32)), True{}, LK.Link.enc(Nd.links([n]))), TL.items(ty, t, px))
 
 def TL.code(ls: List<&2, String>) -> List<&2, TLine>:
   match ls:
@@ -485,7 +557,7 @@ def TL.trim(+ls: List<&2, String>) -> List<&2, String>:
 def TL.block(+ty: Ty, n: N.Node, +px: U32) -> List<&2, TLine>:
   match n:
     case N.El{"p", _, _, +ks}:
-      TL.texts(Ty.wrap(ty, 3n, Nd.plain(ks), px), T.Th.soft(), 0)
+      TL.linked(Ty.wrap(ty, 3n, Nd.plain(ks), px), T.Th.soft(), LK.Link.enc(Nd.links(ks)))
     case N.El{"ul", _, _, ks}:
       TL.items(ty, ks, px)
     case N.El{"ol", _, _, ks}:
@@ -657,6 +729,8 @@ def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U
         [Lay.hit(x0, y, (Ty.width(ty, 2n, text) + 12 : U32), 24, "select", copy)]}
     case 11n:
       Out{Ty.text(ty, 2n, text, c, (x1 - Ty.width(ty, 2n, text) : U32), y, 22, color), [Lay.hit((x1 - Ty.width(ty, 2n, text) : U32), y, Ty.width(ty, 2n, text), 22, "select", copy)]}
+    case 13n:
+      TL.link.segs(LK.Link.cut(text, LK.Link.dec(copy)), ty, c, x0, y, color)
     case 12n:
       TL.img.draw(U32.is_eq(bw, 4096), ty, text, color, copy, bw, c, x0, y)
     case 5n:
@@ -852,7 +926,7 @@ def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +focused: Bool, +blink: B
       Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
     Bool.pick(Out, Bool.and(focused, blink), Out.ops([D.Draw.rect(D.Clip.all(), (x0 + 16 + cx : U32), (y + 14 + (U32.from_nat(row) * 23 : U32) : U32), 1, 16, T.Th.accent(), 255)]), Out.none()),
     Out{Nil{}, [Lay.hit(x0, y, (x1 - x0 : U32), 64, "focus", "composer")]},
-    Out{Ty.text(ty, 2n, models ++ "  ▾", D.Clip.all(), (x0 + 16 : U32), (y + 64 : U32), 28, T.Th.dim()), [Lay.hit((x0 + 8 : U32), (y + 64 : U32), (Ty.width(ty, 2n, models) + 36 : U32), 28, "flag", "models")]},
+    Out{List.append(&2, R.Op, Ty.text(ty, 2n, models, D.Clip.all(), (x0 + 16 : U32), (y + 64 : U32), 28, T.Th.dim()), Lay.icon(ty, "chevron-down", D.Clip.all(), (x0 + 22 + Ty.width(ty, 2n, models) : U32), (y + 70 : U32), T.Th.dim())), [Lay.hit((x0 + 8 : U32), (y + 64 : U32), (Ty.width(ty, 2n, models) + 36 : U32), 28, "flag", "models")]},
     Lay.button(ty, D.Clip.all(), (x1 - 12 - Lay.button.w(ty, send) : U32), (y + 64 : U32), send, T.Th.accent(), "send", ""),
     Lay.picker(ty, picking, "" <> ms, model, info, prov, (x0 + 8 : U32), (y + 64 : U32), es, effort),
     Lay.skills(ty, rs, x0, x1, (y - 4 : U32))])
@@ -1246,7 +1320,7 @@ def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: 
   Out.when(Bool.not(String.is_empty(info)), Out.all([
     Out.ops(Lay.box(D.Clip.all(), (x0 + 16 : U32), y, w, ch, 10, T.Th.panel(), T.Th.line())),
     Out.ops(Ty.text(ty, 1n, title, D.Clip.all(), (x0 + 30 : U32), (y + 8 : U32), 28, T.Th.text())),
-    Out{Ty.text(ty, 0n, "×", D.Clip.all(), (x0 + w - 8 : U32), (y + 8 : U32), 28, T.Th.dim()), [Lay.hit((x0 + w - 16 : U32), (y + 6 : U32), 28, 28, "vw-unpick", "")]},
+    Out{Lay.icon(ty, "x", D.Clip.all(), (x0 + w - 10 : U32), (y + 12 : U32), T.Th.dim()), [Lay.hit((x0 + w - 16 : U32), (y + 6 : U32), 28, 28, "vw-unpick", "")]},
     Info.draw(ty, rows, (x0 + 16 : U32), (y + 38 : U32), w),
     Lay.button(ty, D.Clip.all(), (x0 + 30 : U32), (y + ch - 40 : U32), "Mention in chat", T.Th.accent(), "draft", draft ++ Bool.pick(String, String.is_empty(draft), "", " ") ++ mention)]))
 
@@ -1750,7 +1824,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +caret: Nat, +focus: String, +blink:
   Out.all([
     Lay.composer(ty, draft, caret, String.eq(focus, "composer"), blink, x0, x1, h, running, models, picking, ms, model, info, prov, es, effort, rs),
     Lay.atts(ty, atts, up, (x0 + 24 + Ty.width(ty, 2n, models) + 36 : U32), (y + 64 : U32)),
-    Lay.button(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - Lay.button.w(ty, "Attach") : U32), (y + 64 : U32), "Attach", T.Th.soft(), "focus", "attach-path"),
+    Lay.ibutton(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - 28 : U32), (y + 64 : U32), "paperclip", T.Th.soft(), "focus", "attach-path"),
     Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, x0, x1, (y - 36 : U32))])
 
 def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focus: String, +blink: Bool,
@@ -1779,12 +1853,27 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +st: M.Sta
           Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))]))
 
+# while files dragged in hover over the window, an accent ring around the
+# composer (placed as Lay.thread.k places it) shows where they drop
+def Lay.drop_mark(on: Bool, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match on:
+    case True{}:
+      +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
+      +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) - 5 : U32) : U32}
+      +y = {(h - 125 : U32) : U32}
+      Out.ops([D.Draw.rect(D.Clip.all(), cx0, y, (cw + 10 : U32), 2, T.Th.accent(), 255),
+        D.Draw.rect(D.Clip.all(), cx0, (y + 108 : U32), (cw + 10 : U32), 2, T.Th.accent(), 255),
+        D.Draw.rect(D.Clip.all(), cx0, y, 2, 110, T.Th.accent(), 255),
+        D.Draw.rect(D.Clip.all(), (cx0 + cw + 8 : U32), y, 2, 110, T.Th.accent(), 255)])
+    case False{}:
+      Out.none()
+
 def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
+      Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf)
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf))
 
 # only the screen shown is laid out (a Bool.pick would lay out all three)
 def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:

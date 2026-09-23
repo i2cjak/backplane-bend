@@ -269,6 +269,63 @@ def Att.pasted.keep(ls: List<&2, String>) -> List<&2, String>:
 def Att.pasted(+text: String) -> List<&2, String>:
   Bool.pick(List<&2, String>, Att.pasted.all(String.lines(text)), Att.pasted.keep(String.lines(text)), Nil{})
 
+# Drops
+# -----
+# A drag from a file manager carries text/uri-list (RFC 2483): a URI per
+# line (CRLF), '#' lines are comments. Its file: URIs are the files dropped
+# (file:///p, file://host/p, file:/p, percent-encoded); everything else is
+# ignored (laws drop_non_file_ignored, drop_uri_list_example).
+
+# a percent-encoded text, decoded (bytes as UTF-8)
+def Att.unpct(s: String) -> String:
+  U.Utf8.decode(Att.pct(String.split(s, '%')))
+
+# after "file://": the host (empty, localhost, a machine name) goes
+def Att.uri.after_host(ps: List<&2, String>) -> String:
+  match ps:
+    case _ <> +a <> t:
+      "/" ++ String.join(a <> t, "/")
+    case _:
+      ""
+
+# after "file:": the path, still encoded
+def Att.uri.local(+r: String) -> String:
+  Bool.pick(String, String.starts_with(r, "//"), Att.uri.after_host(String.split(String.drop(r, 2n), '/')), r)
+
+# the path a file: URI names
+def Att.uri.path(+l: String) -> String:
+  Att.unpct(Att.uri.local(String.drop(l, 5n)))
+
+def Att.uri.put(abs: Bool, +p: String, rest: List<&2, String>) -> List<&2, String>:
+  match abs:
+    case True{}:
+      p <> rest
+    case False{}:
+      rest
+
+def Att.uri.keep(file: Bool, +l: String, rest: List<&2, String>) -> List<&2, String>:
+  match file:
+    case True{}:
+      Att.uri.put(String.starts_with(Att.uri.path(l), "/"), Att.uri.path(l), rest)
+    case False{}:
+      rest
+
+# one (trimmed) line of a uri-list: a file: URI with an absolute path
+# joins the dropped files; any other line is ignored
+def Att.uri.one(+l: String, rest: List<&2, String>) -> List<&2, String>:
+  Att.uri.keep(String.starts_with(l, "file:"), l, rest)
+
+def Att.uri.go(ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      Att.uri.one(String.trim(l), Att.uri.go(t))
+
+# the files a text/uri-list names, in order
+def Att.uri_list(s: String) -> List<&2, String>:
+  Att.uri.go(String.lines(s))
+
 # where an attachment lives
 def Att.dir(+home: String, thread: String) -> String:
   home ++ "/attachments/" ++ Att.safe(thread)

@@ -108,6 +108,7 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .composer .skills .name { color: var(--text); white-space: nowrap; }
 .composer .skills .desc { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer textarea:focus, .add input:focus { outline: none; border-color: var(--accent); }
+.thread-view.dropping .composer { outline: 2px dashed var(--accent); outline-offset: -4px; background: var(--raise); }
 .tasks { border: 1px solid var(--line); background: var(--panel); max-width: 860px; }
 .tasks-head { display: block; padding: 6px 10px; color: var(--faint); font-size: 11px; }
 .task { display: flex; gap: 10px; align-items: center; padding: 5px 10px; cursor: pointer; }
@@ -234,3 +235,15 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 
 .msg .shot { display: block; margin: 8px 0; }
 .msg .shot img { display: block; max-width: 100%; max-height: 420px; border: 1px solid var(--line); background: var(--bg); }
+
+.msg a.link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.ico { flex: none; display: block; }
+button.icon { display: inline-flex; align-items: center; justify-content: center; }
+.shelf, .settings-link, .model-chip { display: flex; align-items: center; gap: 6px; }
+.composer-foot .attach { display: inline-flex; align-items: center; }
+
+.lightbox { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.9); overflow: hidden; touch-action: none; cursor: grab; }
+.lightbox:active { cursor: grabbing; }
+.lightbox .lb-img { position: absolute; left: 0; top: 0; max-width: none; max-height: none; transform-origin: 0 0; will-change: transform; user-select: none; -webkit-user-drag: none; }
+.lightbox .lb-close { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; padding: 0; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 20px; line-height: 1; cursor: pointer; }
+.lightbox .lb-close:hover { border-color: var(--accent); }

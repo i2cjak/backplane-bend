@@ -1,4 +1,5 @@
 import Base
+import ../core/links.bend as LK
 
 # A view is a tree of Nodes; the host patches the DOM to match it. Events
 # carry an action name back to Ui.act together with a value: the element's
@@ -68,13 +69,31 @@ def Md.glyph(c: Char) -> Glyph:
     case Chr{+u}:
       Md.glyph.k(U32.is_eq(u, 96), U32.is_eq(u, 42))
 
-# a finished run of plain text (acc is reversed)
+# a web link, opening in a new tab
+def Dom.link(+label: String, +url: String) -> Node:
+  El{"a", "", [At{"class", "link"}, At{"href", url}, At{"target", "_blank"}, At{"rel", "noopener noreferrer"}, At{"title", url}], [Txt{label}]}
+
+# text with its links (LK.Link.pieces) as nodes, onto out (reversed)
+def Dom.pieces(ps: List<&2, LK.Piece>, out: List<&2, Node>) -> List<&2, Node>:
+  match ps:
+    case Nil{}:
+      out
+    case LK.PText{s} <> t:
+      Dom.pieces(t, Txt{s} <> out)
+    case LK.PLink{l, u} <> t:
+      Dom.pieces(t, Dom.link(l, u) <> out)
+
+# text as nodes, its links clickable
+def Dom.linked(+s: String) -> List<&2, Node>:
+  List.reverse(&2, Node, Dom.pieces(LK.Link.pieces(s), Nil{}))
+
+# a finished run of plain text (acc is reversed); its links become <a>
 def Md.text(acc: String, out: List<&2, Node>) -> List<&2, Node>:
   match acc:
     case SNil{}:
       out
     case SCon{h, t}:
-      Txt{String.reverse(SCon{h, t})} <> out
+      Dom.pieces(LK.Link.pieces(String.reverse(SCon{h, t})), out)
 
 def Md.code(acc: String) -> Node:
   El{"code", "", Nil{}, [Txt{String.reverse(acc)}]}
