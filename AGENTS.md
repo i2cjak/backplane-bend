@@ -78,6 +78,7 @@ Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/sn
 - `IO.args()` answers `List<&1, String>`; copy it into a `List<&2, String>` by recursion before reading it twice.
 - Random access into big byte lists: turn them into a balanced `Data` tree once and walk ranges (`Words.range`), never `drop` per lookup.
 - Only tail calls are free: a walk that builds its result outside the recursive call (`String.repeat`, `Utf8.encode_onto`, `Json.items`) overflows the stack around a few hundred thousand steps. For big inputs, push onto a reversed accumulator and reverse once (`Enc.go` in cbor.bend).
+- Effect C must not contain the word `undefined`, even in a comment: bend reads it as a missing name and stops with "an unbound name in the emitted C" (vendored code included, e.g. stb_image in `src/app/effects/img.c`).
 - CPU forks are dealt out once, not stolen: fork over one flat balanced tree of work items (all primitives of all nodes) rather than nesting forks per group; nested forks inside a heavy group barely spread.
 
 ## House rules

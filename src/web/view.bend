@@ -5,6 +5,7 @@ import ../core/client.bend as U
 import ../core/attach.bend as AT
 import ../core/vt.bend as VT
 import ../core/diff.bend as DF
+import ../core/images.bend as IM
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -444,12 +445,21 @@ def View.user_body(+text: String) -> List<&2, D.Node>:
   D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(AT.Att.body(text)), Nil{}, [D.El{"div", "", [D.At{"class", "body plain"}], [D.Txt{AT.Att.body(text)}]}]),
     View.chips.of(AT.Att.paths(text)))
 
+# the images a reply names, each opening full size in a new tab
+def View.images(ps: List<&2, String>) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      D.El{"a", "", [D.At{"class", "shot"}, D.At{"href", IM.Img.url(p)}, D.At{"target", "_blank"}, D.At{"title", p}],
+        [D.El{"img", "", [D.At{"src", IM.Img.url(p)}, D.At{"alt", p}, D.At{"loading", "lazy"}], Nil{}}]} <> View.images(t)
+
 def View.entry.own(e: M.Entry) -> D.Node:
   match e:
     case M.Msg{id, _, M.User{}, +text, _}:
       D.El{"div", id, [D.At{"class", "msg user"}], D.Dom.cat(View.user_body(text), [D.Dom.copy(AT.Att.body(text))])}
     case M.Msg{id, _, _, +text, _}:
-      D.El{"div", id, [D.At{"class", "msg assistant"}], [D.El{"div", "", [D.At{"class", "body"}], D.Md.render(text)}, D.Dom.copy(text)]}
+      D.El{"div", id, [D.At{"class", "msg assistant"}], D.Dom.cat([D.El{"div", "", [D.At{"class", "body"}], D.Md.render(text)}], D.Dom.cat(View.images(IM.Img.paths(text)), [D.Dom.copy(text)]))}
     case M.Act{id, _, tone, kind, summary, _}:
       D.El{"div", id, [D.At{"class", "act " ++ tone}], [D.Dom.span("kind", kind), D.Dom.span("summary", summary)]}
 

@@ -231,3 +231,6 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 .machines { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 12px; border-bottom: 1px solid var(--line); }
 .machines .machine { background: none; border: 1px solid var(--line); padding: 2px 8px; color: var(--dim); }
 .machines .machine.on { color: var(--text); border-color: var(--accent); }
+
+.msg .shot { display: block; margin: 8px 0; }
+.msg .shot img { display: block; max-width: 100%; max-height: 420px; border: 1px solid var(--line); background: var(--bg); }

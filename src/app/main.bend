@@ -19,6 +19,8 @@ import ../gfx/mesh.bend as MS
 import ../core/schematic.bend as SC
 import ../server/proc.bend as P
 import ./link.bend as LK
+import ./imgfx.bend as IF
+import ../core/images.bend as IM
 import ../gfx/bitmap.bend as BM
 
 # `backplane`: the hub, the web server (for other devices), and the native
@@ -35,13 +37,15 @@ type ShellMsg is Data:
   Mesh3{key: String, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
   Shot{key: String, bmp: BM.Bitmap}
+  PicOk{tag: String, path: String, w: U32, h: U32, rgb: List<&2, U32>}
+  PicErr{tag: String, path: String, why: String}
   Blink{}
 
 # which hub the window talks to: its own (url "") or another machine's
 # through a link; each connection gets its own tag so messages from one
 # already left are dropped
 type Tie is Data:
-  Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat}
+  Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat, pics: Map<&2, BM.Bitmap>, asked: Map<&2, Bool>}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -140,29 +144,199 @@ def Shell.blink(+n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
   Shell.blink.k(Bool.and(Nat.is_gt(N.Blink.wait(n, ms), 0n), Nat.is_le(Maybe.default(&2, Nat, Nat.read(U.Ui.info(N.Nui.ui(n), "caret.due")), 0n), ms)),
     n, q, N.Blink.wait(n, ms), ms)
 
-def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
-  (w, img) = r
-  do IO<Shell>:
-    Unit <- IO.pure(Unit, Image.drop!(img))
-    n2 : N.Nui <- Shell.blink(n, q, ms)
-    Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa})
-
 def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
   match vw:
     case V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}:
       V.Fade.busy(ss, now)
+
+# Images in threads
+# -----------------
+# The layout marks each image a reply names with "img" hit regions (its
+# rectangle once its size is known). New ones are decoded off the loop
+# (fetched from the hub first when it is another machine's), kept per
+# connection, noted in the client info ("img:<path>") so the layout gives
+# them room, and drawn into the frame's base under the UI.
+
+# the largest an image is drawn (the timeline's width, a screen's third)
+def Pics.maxw() -> U32:
+  760
+
+def Pics.maxh() -> U32:
+  360
+
+def Pics.size(+w: U32, +h: U32) -> String:
+  U32.show(w) ++ "x" ++ U32.show(h)
+
+def Tie.pics(t: Tie) -> Map<&2, BM.Bitmap>:
+  match t:
+    case Tie{_, _, _, _, ps, _}:
+      ps
+
+def Pics.sent.ok(got: U32 & U32 & List<&2, U32>, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
+  (w, rest) = got
+  (h, rgb) = rest
+  do IO<Unit>:
+    ok : Bool <- Chan.send(ShellMsg, q, PicOk{tag, path, w, h, rgb})
+    return Unit{}
+
+def Pics.sent.err(e: U32 & String, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
+  (_, why) = e
+  do IO<Unit>:
+    ok : Bool <- Chan.send(ShellMsg, q, PicErr{tag, path, why})
+    return Unit{}
+
+def Pics.sent(r: Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
+  match r:
+    case Done{got}:
+      Pics.sent.ok(got, q, tag, path)
+    case Fail{e}:
+      Pics.sent.err(e, q, tag, path)
+
+def Pics.decode(+file: String, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
+  IO.bind(Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, Unit, IF.Imgfx.decode(file, Pics.maxw(), Pics.maxh()), r => Pics.sent(r, q, tag, path))
+
+def Pics.fetched(r: P.Ran, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, +out}:
+      do IO<Unit>:
+        Pics.decode(String.trim(out), q, tag, path)
+        r2 : P.Ran <- P.Proc.run("rm", ["-f", String.trim(out)], "/")
+        return Unit{}
+    case P.Ran{_, _}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(ShellMsg, q, PicErr{tag, path, "that machine did not send it"})
+        return Unit{}
+
+# an image on this machine is read here; another machine's hub sends it
+def Pics.load(local: Bool, +path: String, +url: String, +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+  match local:
+    case True{}:
+      IO.bind(String, Unit, S.Env.get("HOME", ""), home => Pics.decode(Bool.pick(String, String.starts_with(path, "~/"), home ++ String.drop(path, 1n), path), q, tag, path))
+    case False{}:
+      IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "f=$(mktemp) && curl -sf -m 30 -o \"$f\" \"$1\" && echo \"$f\"", "sh", url ++ IM.Img.url(path)], "/"),
+        r => Pics.fetched(r, q, tag, path))
+
+def Pics.new.k(fresh: Bool, +v: String, rest: List<&2, String>) -> List<&2, String>:
+  match fresh:
+    case True{}:
+      v <> rest
+    case False{}:
+      rest
+
+def Pics.new(hs: List<&2, N.Hit>, +asked: Map<&2, Bool>) -> List<&2, String>:
+  match hs:
+    case Nil{}:
+      Nil{}
+    case N.Hit{_, _, _, _, +a, +v} <> t:
+      Pics.new.k(Bool.and(String.eq(a, "img"), Bool.not(U.Flag.get(asked, v))), v, Pics.new(t, asked))
+
+def Pics.mark(ps: List<&2, String>, asked: Map<&2, Bool>) -> Map<&2, Bool>:
+  match ps:
+    case Nil{}:
+      asked
+    case p <> t:
+      Pics.mark(t, Map.set(&2, Bool, asked, p, True{}))
+
+def Pics.spawn(ps: List<&2, String>, +url: String, +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+  match ps:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case +p <> t:
+      do IO<Unit>:
+        IO.spawn(Unit, Pics.load(String.is_empty(url), p, url, q, tag))
+        Pics.spawn(t, url, q, tag)
+
+def Pics.keep(m: Maybe<&2, BM.Bitmap>, ps: Map<&2, BM.Bitmap>, +path: String) -> Map<&2, BM.Bitmap>:
+  match m:
+    case Some{b}:
+      Map.set(&2, BM.Bitmap, ps, path, b)
+    case None{}:
+      ps
+
+def Pics.store(a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
+  match a:
+    case Shell{+n, w, _, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, ps, ak}}}:
+      Shell.later(Shell{N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "img:" ++ path, note)), w, True{}, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, Pics.keep(m, ps, path), ak}}})
+
+# an image loaded (or failed) for this connection: keep it and redraw
+def Pics.got(current: Bool, a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
+  match current:
+    case True{}:
+      Pics.store(a, path, note, m)
+    case False{}:
+      IO.pure(Shell, a)
+
+def Pics.had(xs: List<&2, String>, +x: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +h <> t:
+      Bool.or(String.eq(h, x), Pics.had(t, x))
+
+def Pics.uniq(ps: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      List.reverse(&2, String, acc)
+    case +p <> t:
+      Pics.uniq(t, Bool.pick(List<&2, String>, Pics.had(acc, p), acc, p <> acc))
+
+# images the frame shows that were never asked for start loading
+def Pics.ask(+hs: List<&2, N.Hit>, wa: Aux, +q: Chan(ShellMsg)) -> IO(Aux):
+  match wa:
+    case Aux{ws, ty, Tie{home, +url, +tag, n, ps, +ak}}:
+      +fresh = Pics.uniq(Pics.new(hs, ak), Nil{})
+      IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}}))
+
+def Shell.shown(r: Window & Image, n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
+  (w, img) = r
+  do IO<Shell>:
+    Unit <- IO.pure(Unit, Image.drop!(img))
+    +n2 : N.Nui <- Shell.blink(n, q, ms)
+    wa2 : Aux <- Pics.ask(N.Nui.hits(n2), wa, q)
+    Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa2})
+
+def Pics.found(r: Map<&2, BM.Bitmap> & BM.Bitmap) -> BM.Bitmap:
+  (_, b) = r
+  b
+
+# a loaded image (none yet: an empty one, width 0)
+def Pics.get(pics: Map<&2, BM.Bitmap>, +k: String) -> BM.Bitmap:
+  Pics.found(Map.get(BM.Bitmap, BM.Bitmap{0, 0, 0n, Pix{0}, 0, 0, 0, 0}, pics, k))
+
+def Pics.place(b: BM.Bitmap, +x: U32, +y: U32, +w: U32, +h: U32, +ww: U32, +hh: U32, base: Image) -> Image:
+  match b:
+    case BM.Bitmap{0, _, _, _, _, _, _, _}:
+      base
+    case BM.Bitmap{bw, bh, d, t, _, _, _, _}:
+      BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{bw, bh, d, t, 0, 0, 0, 0}, x, y, w, h), base)
+
+def Pics.over.k(draw: Bool, +x: U32, +y: U32, +w: U32, +h: U32, +v: String, +pics: Map<&2, BM.Bitmap>, +ww: U32, +hh: U32, base: Image) -> Image:
+  match draw:
+    case True{}:
+      Pics.place(Pics.get(pics, v), x, y, w, h, ww, hh, base)
+    case False{}:
+      base
+
+# each image once, at its rectangle, under the UI
+def Pics.over(hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, +done: List<&2, String>, +ww: U32, +hh: U32, base: Image) -> Image:
+  match hs:
+    case Nil{}:
+      base
+    case N.Hit{+x0, +y0, +x1, +y1, +a, +v} <> t:
+      Pics.over(t, pics, v <> done, ww, hh,
+        Pics.over.k(Bool.and(Bool.and(String.eq(a, "img"), U32.is_gt((x1 - x0 : U32), 1)), Bool.not(Pics.had(done, v))), x0, y0, (x1 - x0 : U32), (y1 - y0 : U32), v, pics, ww, hh, base))
 
 # Machines
 # --------
 
 def Tie.tag(t: Tie) -> String:
   match t:
-    case Tie{_, _, g, _}:
+    case Tie{_, _, g, _, _, _}:
       g
 
 def Tie.url(t: Tie) -> String:
   match t:
-    case Tie{_, u, _, _}:
+    case Tie{_, u, _, _, _, _}:
       u
 
 # the hub to join: this machine's own, or a link to another
@@ -181,13 +355,13 @@ def Shell.joined(+i2: Chan(S.Msg), +q: Chan(ShellMsg), +tag: String) -> IO(Unit)
 
 def Shell.connect.k(t: Tie, a: Shell, +url: String) -> IO(Shell):
   match t a:
-    case Tie{+home, _, _, +n} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _}}:
+    case Tie{+home, _, _, +n, _, _} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _}}:
       do IO<Shell>:
         ok : Bool <- Chan.send(S.Msg, i, S.Leave{0})
         +tag : String = url ++ "#" ++ Nat.show(n)
         +i2 : Chan(S.Msg) <- Shell.hub(String.is_empty(url), home, url)
         Shell.joined(i2, q, tag)
-        return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n}}}
+        return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}}}
 
 def Shell.retry.later(+q: Chan(ShellMsg), +tag: String) -> IO(Unit):
   do IO<Unit>:
@@ -326,6 +500,10 @@ def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
       Shell.gone(String.eq(tag, Tie.tag(ti)), String.is_empty(Tie.url(ti)), a, Tie.tag(ti))
     case Retry{tag}:
       Shell.retry(String.eq(tag, Tie.tag(ti)), a, Tie.url(ti))
+    case PicOk{tag, +path, +w, +h, rgb}:
+      Pics.got(String.eq(tag, Tie.tag(ti)), a, path, Pics.size(w, h), Some{BM.Bitmap.image(w, h, rgb, 0, 0, w, h)})
+    case PicErr{tag, +path, why}:
+      Pics.got(String.eq(tag, Tie.tag(ti)), a, path, "err:" ++ why, None{})
     case _:
       IO.pure(Shell, a)
 
@@ -724,25 +902,26 @@ def Vx.pick(x: V.Vx) -> String:
       p
 
 # UI ops over the fading items and the picked item, over the base
-def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>) -> Image:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
       R.Frame.over(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx))),
-          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))), b)
+          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
+        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)))
 
 # the frame: UI ops over the fading items over the base
-def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> Image:
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>) -> Image:
   match pa:
     case True{}:
-      Shell.image.over(ops, vw, ww, hh, x0, now)
+      Shell.image.over(ops, vw, ww, hh, x0, now, hs, pics)
     case False{}:
-      R.Frame.render(ww, hh, ops, T.Th.bg())
+      R.Frame.over(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}))
 
-def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
-    case L.Out{+ops, hs}:
-      IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms)),
+    case L.Out{+ops, +hs}:
+      IO.bind(Window & Image, Shell, W.Win.present(w, Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)))),
         r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), ms))
 
 def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
@@ -790,6 +969,10 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.status(a, key, text)
     case Shot{key, b}:
       Shell.shot(a, key, b)
+    case PicOk{tag, path, w, h, rgb}:
+      Shell.tagged(a, PicOk{tag, path, w, h, rgb})
+    case PicErr{tag, path, why}:
+      Shell.tagged(a, PicErr{tag, path, why})
 
 def Shell.got(m: Maybe<&1, ShellMsg>, a: Shell, k: Shell -> IO(Unit)) -> IO(Unit):
   match m:
@@ -820,7 +1003,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     ty : L.Ty <- L.Ty.load()
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n}}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg)) -> IO(Unit):

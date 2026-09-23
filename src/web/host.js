@@ -366,6 +366,10 @@ const token = (() => {
   return localStorage.getItem("backplane-token") ?? "";
 })();
 
+// images in threads load by URL (<img src="/img?...">) and cannot carry the
+// token in a query the way the socket does: a same-site cookie carries it
+if (token) document.cookie = `bp_token=${token}; path=/; SameSite=Strict`;
+
 // The event log this page holds, kept across reloads: a reload shows it at
 // once and the socket then brings only what is new (since=, origin=). Raw
 // server items only; the page state is rebuilt from them by app.bend.

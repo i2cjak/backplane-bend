@@ -2,6 +2,7 @@ import Base
 import ../core/model.bend as M
 import ../core/json.bend as J
 import ../core/client.bend as U
+import ../core/images.bend as IM
 import ../gfx/raster.bend as R
 import ../gfx/draw.bend as D
 import ../gfx/text.bend as X
@@ -421,6 +422,8 @@ def TL.h.k(k: Nat) -> U32:
       24
     case 11n:
       22
+    case 12n:
+      20
     case _:
       10
 
@@ -574,6 +577,56 @@ def TL.copy(+ty: Ty, +c: D.Clip, +x1: U32, +y: U32, +lh: U32, +copy: String) -> 
 def TL.sides(+c: D.Clip, +x0: U32, +x1: U32, +y: U32, +h: U32) -> List<&2, R.Op>:
   [D.Draw.rect(c, x0, y, 1, h, T.Th.line(), 255), D.Draw.rect(c, (x1 - 1 : U32), y, 1, h, T.Th.line(), 255)]
 
+# Images
+# ------
+# An image a reply names takes whole 20 px lines. Each of its lines hits
+# the image's full rectangle ("img"), so the window draws the image (under
+# the UI, from the frame's base) whenever any part of it is in view. The
+# window notes each image's state in the client info as "img:<path>":
+# "<w>x<h>" once decoded (its size, shrunk to fit), "err:<why>", or nothing
+# while it loads.
+
+def TL.img.rows(k: Nat, +i: Nat, +size: String, +path: String) -> List<&2, TLine>:
+  match k:
+    case 0n:
+      Nil{}
+    case 1n+j:
+      TLine{size, 0, 12, path, U32.from_nat(i)} <> TL.img.rows(j, 1n+i, size, path)
+
+def TL.img.h(+size: String) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(size, 'x'), 1n), "")), 0n)
+
+def TL.img.k(state: Nat, +ty: Ty, +st: String, +path: String, +px: U32) -> List<&2, TLine>:
+  match state:
+    case 0n:
+      [TLine{"loading " ++ Ty.fit(ty, 2n, path, (px - 80 : U32)), T.Th.faint(), 12, path, 4096}]
+    case 1n:
+      [TLine{Ty.fit(ty, 2n, "cannot show " ++ path ++ ": " ++ String.drop(st, 4n), px), T.Th.dim(), 3, "", 0}]
+    case _:
+      TL.img.rows(Nat.div(Nat.add(TL.img.h(st), 27n), 20n), 0n, st, path)
+
+def TL.img(+ty: Ty, +st: String, +path: String, +px: U32) -> List<&2, TLine>:
+  TL.img.k(Bool.pick(Nat, String.is_empty(st), 0n, Bool.pick(Nat, String.starts_with(st, "err:"), 1n, 2n)), ty, st, path, px)
+
+def TL.images(+ty: Ty, ps: List<&2, String>, +pics: Map<&2, String>, +px: U32) -> List<&2, TLine>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      List.append(&2, TLine, TL.img(ty, U.Str.get(pics, "img:" ++ p), p, px), TL.images(ty, t, pics, px))
+
+def TL.img.size(+size: String, +i: Nat) -> U32:
+  U32.from_nat(Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(size, 'x'), i), "")), 0n))
+
+# a line of an image: row k of it (4096: still loading, a note)
+def TL.img.draw(loading: Bool, +ty: Ty, +text: String, +color: U32, +path: String, +k: U32, +c: D.Clip, +x0: U32, +y: U32) -> Out:
+  match loading:
+    case True{}:
+      Out{Ty.text(ty, 2n, text, c, x0, y, 20, color), [Lay.hit(x0, y, 1, 20, "img", path)]}
+    case False{}:
+      Bool.pick(Out, U32.is_lt(y, (k * 20 + 8 : U32)), Out.none(),
+        Out{Nil{}, [Lay.hit(x0, (y - k * 20 + 4 : U32), TL.img.size(text, 0n), TL.img.size(text, 1n), "img", path)]})
+
 def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U32, +c: D.Clip, +x0: U32, +x1: U32, +y: U32) -> Out:
   match k:
     case 1n:
@@ -603,6 +656,8 @@ def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U
         [Lay.hit(x0, y, (Ty.width(ty, 2n, text) + 12 : U32), 24, "select", copy)]}
     case 11n:
       Out{Ty.text(ty, 2n, text, c, (x1 - Ty.width(ty, 2n, text) : U32), y, 22, color), [Lay.hit((x1 - Ty.width(ty, 2n, text) : U32), y, Ty.width(ty, 2n, text), 22, "select", copy)]}
+    case 12n:
+      TL.img.draw(U32.is_eq(bw, 4096), ty, text, color, copy, bw, c, x0, y)
     case 5n:
       Out.ops(Ty.text(ty, 1n, text, c, x0, y, 28, color))
     case _:
@@ -1501,37 +1556,37 @@ def TL.bubble.a(+ty: Ty, +text: String, +px: U32) -> List<&2, TLine>:
   +w = {(TL.widest(ty, List.append(&2, String, ls, TL.chips.texts(ps)), 0) + 40 : U32) : U32}
   List.concat(&2, TLine, [[TLine{"", 0, 6, "", w}], TL.user(ls, AT.Att.body(text), True{}, w), TL.chips(ps, w), [TLine{"", 0, 6, "", w}, TLine{"", 0, 4, "", 0}]])
 
-def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32) -> List<&2, TLine>:
+def TL.entry.own(+ty: Ty, e: M.Entry, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   match e:
     case M.Msg{_, _, M.User{}, +text, _}:
       TL.bubble.a(ty, text, px)
     case M.Msg{_, _, _, +text, _}:
-      List.append(&2, TLine, TL.blocks(ty, N.Md.render(text), px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}])
+      List.concat(&2, TLine, [TL.blocks(ty, N.Md.render(text), px), TL.images(ty, IM.Img.paths(text), pics, px), [TLine{"", 0, 7, text, 0}, TLine{"", 0, 4, "", 0}]])
     case M.Act{_, _, +tone, kind, summary, _}:
       [TLine{Ty.fit(ty, 2n, kind ++ "  " ++ summary, px), Bool.pick(U32, String.eq(tone, "error"), T.Th.bad(), T.Th.dim()), 3, "", 0}]
 
 # an entry of this thread (headed by the thread it came from, if another
 # thread sent it) or one this thread sent elsewhere (a link line)
-def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32) -> List<&2, TLine>:
+def TL.entry.k(mine: Bool, +ty: Ty, e: M.Entry, +st: M.State, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   match mine e:
     case True{} M.Msg{+id, t, r, x, at}:
-      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px))
+      List.append(&2, TLine, TL.from.k(String.is_empty(M.Link.from(id)), M.Link.from(id), st, px, ty), TL.entry.own(ty, M.Msg{id, t, r, x, at}, px, pics))
     case True{} _:
-      TL.entry.own(ty, e, px)
+      TL.entry.own(ty, e, px, pics)
     case False{} M.Msg{_, +t, _, +x, _}:
       [TLine{Ty.fit(ty, 2n, "→ " ++ U.Tasks.title(st, t) ++ ":  " ++ TL.first_line(x), px), T.Th.accent(), 10, t, 0}]
     case False{} _:
       Nil{}
 
-def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
-  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px)
+def TL.entry(+ty: Ty, +e: M.Entry, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
+  TL.entry.k(String.eq(TL.thread_of(e), sel), ty, e, st, px, pics)
 
-def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32) -> List<&2, TLine>:
+def TL.entries(+ty: Ty, es: List<&2, M.Entry>, +st: M.State, +sel: String, +px: U32, +pics: Map<&2, String>) -> List<&2, TLine>:
   match es:
     case Nil{}:
       Nil{}
     case e <> t:
-      List.append(&2, TLine, TL.entry(ty, e, st, sel, px), TL.entries(ty, t, st, sel, px))
+      List.append(&2, TLine, TL.entry(ty, e, st, sel, px, pics), TL.entries(ty, t, st, sel, px, pics))
 
 # messages the server has not stored yet, marked as sending
 def TL.sending(+ty: Ty, ps: List<&2, String>, +px: U32) -> List<&2, TLine>:
@@ -1574,7 +1629,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +caret: Nat, +focus: String, +blink:
 
 def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
-    +atts: List<&2, String>, +up: String, +path: String) -> Out:
+    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
@@ -1587,7 +1642,7 @@ def Lay.thread.k(+ty: Ty, t: M.Thread, +draft: String, +st: M.State, +sel: Strin
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
       Lay.timeline(ty,
-        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw), TL.sending(ty, pend, cw),
+        List.concat(&2, TLine, [TL.entries(ty, TL.mine(U.Ui.entries(st), sel, Nil{}), st, sel, cw, pics), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
         cx0, cx1, top, (h - ah - qh : U32), sc,
         Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel))),
@@ -1603,7 +1658,7 @@ def Lay.thread(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
       Lay.thread.k(ty, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path)
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf)
 
 def Lay.main(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
@@ -1616,7 +1671,6 @@ def Lay.frame(+ty: Ty, +n: S.Nui) -> Out:
   match n:
     case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _, _, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       Lay.rev(Out.all([
-        Out.when(pa, Out.ops([D.Draw.rect(D.Clip.all(), 264, 0, U32.shr((w - 264 : U32)), h, T.Th.bg(), 255)])),
         Lay.main(ty, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)),
         Bool.pick(Out, pa, Lay.viewer(ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h), Out.none()),
         Lay.term.of(ty, n, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w), h),
