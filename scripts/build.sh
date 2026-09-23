@@ -3,6 +3,7 @@
 #   dist/backplane        the app: native window + hub + web server
 #   dist/backplane-serve  hub + web server only (no X11 needed)
 #   dist/web/             the web client (for other devices)
+#   dist/backplane-browser, dist/backplane-step2glb   host helpers (with bun)
 # X11 headers: /usr/include (libx11-dev), or BACKPLANE_X11=<prefix> holding
 # include/ and lib/libX11.so (see AGENTS.md).
 # System fonts (src/gfx/effects/font.c) need no headers and no link flags:
@@ -32,4 +33,12 @@ bend src/web/index.html -o dist/web
 bend src/server/main.bend -o dist/backplane-serve
 bend src/app/main.bend -o dist/backplane
 cp dist/backplane build/backplane
+# the host helpers (Bun): the agents' browser and STEP -> GLB for the 3D
+# viewer; the app runs without them, so a machine without bun skips them
+if command -v bun >/dev/null 2>&1 || [ -x "$HOME/.bun/bin/bun" ]; then
+  PATH="$HOME/.bun/bin:$PATH" scripts/build-browser.sh
+  PATH="$HOME/.bun/bin:$PATH" scripts/build-step2glb.sh
+else
+  echo "bun not found: skipping backplane-browser and backplane-step2glb"
+fi
 ls -la dist

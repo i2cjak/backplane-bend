@@ -53,6 +53,12 @@ rm -rf "$prefix/web.old"
 [ -d "$prefix/web" ] && mv "$prefix/web" "$prefix/web.old"
 mv -f "$tmp/backplane-$os-$arch/backplane" "$tmp/backplane-$os-$arch/backplane-serve" "$prefix/"
 mv "$tmp/backplane-$os-$arch/web" "$prefix/web"
+for h in backplane-browser backplane-step2glb LICENSE; do
+  [ -e "$tmp/backplane-$os-$arch/$h" ] && mv -f "$tmp/backplane-$os-$arch/$h" "$prefix/"
+done
+if [ -d "$tmp/backplane-$os-$arch/licenses" ]; then
+  rm -rf "$prefix/licenses" && mv "$tmp/backplane-$os-$arch/licenses" "$prefix/licenses"
+fi
 ln -sf "$prefix/backplane" "$bin/backplane"
 ln -sf "$prefix/backplane-serve" "$bin/backplane-serve"
 echo

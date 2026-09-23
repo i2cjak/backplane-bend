@@ -161,12 +161,16 @@ def Update.swap.one(+from: String, +to: String) -> IO(String):
     r : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(from, to)
     return Update.swap.k(r, to)
 
+# the binaries and web client must swap; the helpers (browser, STEP) swap
+# when the release carries them
 def Update.swap(+src: String, +exe: String, +tag: String) -> IO(String):
   do IO<String>:
     e1 : String <- Update.swap.one(src ++ "/backplane", exe ++ "/backplane")
     e2 : String <- Update.swap.one(src ++ "/backplane-serve", exe ++ "/backplane-serve")
     o : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(exe ++ "/web", exe ++ "/web.old-" ++ tag)
     e3 : String <- Update.swap.one(src ++ "/web", exe ++ "/web")
+    hb : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(src ++ "/backplane-browser", exe ++ "/backplane-browser")
+    hs : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(src ++ "/backplane-step2glb", exe ++ "/backplane-step2glb")
     return e1 ++ e2 ++ e3
 
 def Update.install.go(+tag: String, +plat: String, +tn: String, +tu: String, +su: String, +exe: String, +dir: String) -> IO(String):
