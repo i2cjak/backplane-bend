@@ -11,6 +11,10 @@ import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
+import ./src/core/svg.bend as SVG
+import ./src/core/icons.bend as ICO
+import ./src/core/lightbox.bend as LBX
+import ./src/core/links.bend as LK
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -248,6 +252,20 @@ law attach_clean_ok:
   for s: String
   {AT.Att.all_ok(AT.Att.clean(s)) == True{} : Bool}
 
+# a dropped uri-list line that is not a file: URI (http:, a '#' comment,
+# anything not starting with 'f') attaches nothing
+law drop_non_file_ignored:
+  for c: Char
+  for s: String
+  for rest: List<&2, String>
+  for h: {Char.is_eq(c, 'f') == False{} : Bool}
+  {AT.Att.uri.one(SCon{c, s}, rest) == rest : List<&2, String>}
+
+# a file manager's drop: file: URIs (any host) come back as their decoded
+# paths, in order; comments and other schemes are dropped
+law drop_uri_list_example:
+  {AT.Att.uri_list("# nautilus\r\nfile:///home/me/My%20Board%C3%A9.png\r\nhttps://x.org/a.png\r\nfile://localhost/tmp/b%25.txt\r\n") == ["/home/me/My Boardé.png", "/tmp/b%.txt"] : List<&2, String>}
+
 # Models working together
 # -----------------------
 
@@ -453,3 +471,105 @@ law caret_shows_when_moved:
 law tailnet_no_owner_no_trust:
   for login: String
   {TN.Tailnet.trusts("", login) == False{} : Bool}
+
+# Links
+# -----
+
+# only web addresses open: a link never runs script or reads a file
+law link_no_script:
+  for s: String
+  {LK.Link.is_web("javascript:" ++ s) == False{} : Bool}
+
+law link_no_file:
+  for s: String
+  {LK.Link.is_web("file:" ++ s) == False{} : Bool}
+
+# a line with no links is drawn as it is, one run of text
+law link_plain_line:
+  for s: String
+  {LK.Link.cut(s, Nil{}) == [LK.PText{s}] : List<&2, LK.Piece>}
+
+# Image lightbox
+# --------------
+
+# the lightbox never zooms out past the fitted picture
+law lightbox_zoom_min:
+  for +z: Nat
+  {Nat.is_ge(LBX.Lb.clamp(z), LBX.Lb.zmin()) == True{} : Bool}
+
+# nor in past its most
+law lightbox_zoom_max:
+  for +z: Nat
+  {Nat.is_le(LBX.Lb.clamp(z), LBX.Lb.zmax()) == True{} : Bool}
+
+# a zoomed picture is never scrolled past its far edge: it keeps covering
+# the window
+law lightbox_scroll_max:
+  for +a: Nat
+  for +m: Nat
+  for +d: Nat
+  for +v: Nat
+  {Nat.is_le(LBX.Lb.scroll(a, m, d, v), Nat.mul(Nat.sub(d, v), LBX.Lb.sub())) == True{} : Bool}
+
+# a zoom ease starts where the zoom was
+law lightbox_ease_start:
+  for +z0: Nat
+  for +z1: Nat
+  for +t0: Nat
+  {LBX.Lb.ease.at(z0, z1, t0, t0) == z0 : Nat}
+
+# and lands on its target once its time has passed, at any later time
+law lightbox_ease_done:
+  for +z0: Nat
+  for +z1: Nat
+  for +t0: Nat
+  for +k: Nat
+  {LBX.Lb.ease.at(z0, z1, t0, Nat.add(Nat.add(t0, LBX.Lb.ms()), k)) == z1 : Nat}
+
+# after which it asks for no more frames (no repaint loop)
+law lightbox_idle:
+  for +t0: Nat
+  for +k: Nat
+  {LBX.Lb.easing(t0, Nat.add(Nat.add(t0, LBX.Lb.ms()), k)) == False{} : Bool}
+
+# a picture just opened is still: nothing animates
+law lightbox_opens_still:
+  for +now: Nat
+  {LBX.Lb.busy(LBX.Lb.open(), now) == False{} : Bool}
+
+# Icons
+# -----
+
+# closepath takes the pen back to where its subpath began
+law svg_close_returns:
+  for p: SVG.Pen
+  {SVG.Pen.cur(SVG.Pen.close(p)) == SVG.Pen.start(p) : SVG.Pt}
+
+# a moveto starts a new subpath where it lands
+law svg_move_starts:
+  for p: SVG.Pen
+  for +x: F32
+  for +y: F32
+  {SVG.Pen.start(SVG.Pen.move(p, x, y)) == SVG.Pt{x, y} : SVG.Pt}
+
+# an absolute coordinate ignores the pen
+law svg_absolute_ignores_pen:
+  for +p: F32
+  for +v: F32
+  {SVG.Svg.at(False{}, p, v) == v : F32}
+
+# extra pairs after a moveto are linetos
+law svg_implicit_lineto:
+  {SVG.Svg.kinds(SVG.Svg.parse("m1 2 3 4 5 6z")) == [77, 76, 76, 90] : List<&2, U32>}
+
+# compact numbers split where SVG says: "1-2.5.5e1" is 1, -2.5, .5e1
+law svg_numbers_split:
+  {List.length(&2, SVG.Tok, SVG.Svg.lex("M1-2.5.5e1")) == 4n : Nat}
+
+# every icon the UIs draw is in the set
+law icons_used_exist:
+  {ICO.Icon.missing(ICO.Icon.used()) == Nil{} : List<&2, String>}
+
+# every path of every icon parses and begins with a moveto
+law icons_all_draw:
+  {ICO.Icon.bad(ICO.Icon.all()) == Nil{} : List<&2, String>}

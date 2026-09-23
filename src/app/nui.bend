@@ -9,6 +9,8 @@ import ../gfx/mesh.bend as MS
 import ../gfx/bitmap.bend as BM
 import ../core/vt.bend as VT
 import ../core/attach.bend as AT
+import ../core/links.bend as LK
+import ../core/lightbox.bend as LB
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -42,6 +44,8 @@ type NCmd is Data:
   NPaste{}
   NQuit{}
   NConnect{url: String}
+  # open a web address in the system's browser
+  NOpen{url: String}
 
 type Step is Data:
   Step{nui: Nui, cmds: List<&2, NCmd>, dirty: Bool}
@@ -1085,6 +1089,19 @@ def Nui.attach.all(ps: List<&2, String>, +n: Nui) -> Step:
       +s = Nui.act(n, "attach-file", p)
       Step.merge(s, Nui.attach.all(t, Step.nui(s)))
 
+# files dragged over the window: the composer shows where they drop (a
+# frame only when that changes)
+def Nui.drag_over(+n: Nui) -> Step:
+  Step{Nui.with_ui(n, U.Ui.drop_hover(Nui.ui(n), "1")), Nil{}, Bool.not(U.Ui.flag(Nui.ui(n), "drop"))}
+
+def Nui.drag_leave(+n: Nui) -> Step:
+  Step{Nui.with_ui(n, U.Ui.drop_hover(Nui.ui(n), "")), Nil{}, True{}}
+
+# files dropped on the window (a text/uri-list): each attaches, the way
+# a pasted file does
+def Nui.drop(+n: Nui, text: String) -> Step:
+  Nui.attach.all(AT.Att.uri_list(text), Nui.with_ui(n, U.Ui.drop_hover(Nui.ui(n), "")))
+
 # a paste into the composer: files (file:// URIs, image paths) attach,
 # anything else is text at the caret
 def Nui.paste.comp(ps: List<&2, String>, n: Nui, +text: String) -> Step:
@@ -1244,12 +1261,20 @@ def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
 def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
   Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo", "vw-find"], action, 0n), n, value)
 
+# a link in a message: only a web address is ever opened (law link_no_script)
+def Nui.click.url(url: Bool, +n: Nui, +action: String, +value: String) -> Step:
+  match url:
+    case True{}:
+      Step{n, Bool.pick(List<&2, NCmd>, LK.Link.is_web(value), [NOpen{value}], Nil{}), False{}}
+    case False{}:
+      Nui.act(n, action, value)
+
 def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
   match focus:
     case True{}:
       Nui.focus(n, value)
     case False{}:
-      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.act(n, action, value))
+      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.click.url(String.eq(action, "open-url"), n, action, value))
 
 def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
   match m:
@@ -1338,6 +1363,139 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
       Step{n, [NQuit{}], False{}}
     case W.WPaste{t}:
       Nui.paste(n, t)
+    case W.WDragOver{_, _}:
+      Nui.drag_over(n)
+    case W.WDragLeave{}:
+      Nui.drag_leave(n)
+    case W.WDrop{t}:
+      Nui.drop(n, t)
+
+# The image lightbox
+# ------------------
+# A click on an image in a thread shows it over everything: "@lb" is its
+# path, "@lb.v" the view (core/lightbox.bend's Lb, as text). While it is
+# up the pointer and keys are its own: the wheel zooms at the pointer
+# (eased), a drag pans, and Escape, the close square or a click off the
+# picture closes it.
+
+def Lbx.path(+n: Nui) -> String:
+  U.Ui.scratch(Nui.ui(n), "@lb")
+
+def Lbx.on(+n: Nui) -> Bool:
+  Bool.not(String.is_empty(Lbx.path(n)))
+
+def Lbx.get(+n: Nui) -> LB.Lb:
+  LB.Lb.read(U.Ui.scratch(Nui.ui(n), "@lb.v"))
+
+def Lbx.set(+n: Nui, lb: LB.Lb) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@lb.v", LB.Lb.show(lb)))
+
+# the picture's size: its full decode ("img:full:<path>") once there, else
+# the thread's copy
+def Lbx.size.k(+full: String, +thumb: String) -> String:
+  Bool.pick(String, Bool.or(String.is_empty(full), String.starts_with(full, "err:")), thumb, full)
+
+def Lbx.size(+n: Nui) -> String:
+  Lbx.size.k(U.Ui.info(Nui.ui(n), "img:full:" ++ Lbx.path(n)), U.Ui.info(Nui.ui(n), "img:" ++ Lbx.path(n)))
+
+def Lbx.dim(+s: String, +i: Nat) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(s, 'x'), i), "")), 0n)
+
+def Lbx.box(+n: Nui) -> LB.LbBox:
+  LB.LbBox{Lbx.dim(Lbx.size(n), 0n), Lbx.dim(Lbx.size(n), 1n), U32.to_nat(Nui.width(n)), U32.to_nat(Nui.height(n))}
+
+# still easing (the loop asks for frames only then)
+def Lbx.busy(+n: Nui, +ms: Nat) -> Bool:
+  Bool.and(Lbx.on(n), LB.Lb.busy(Lbx.get(n), ms))
+
+# an ease waiting for its first frame starts at this one
+def Lbx.stamp.k(on: Bool, +n: Nui, +ms: Nat) -> Nui:
+  match on:
+    case True{}:
+      Lbx.set(n, LB.Lb.stamp(Lbx.get(n), ms))
+    case False{}:
+      n
+
+def Lbx.stamp(+n: Nui, +ms: Nat) -> Nui:
+  Lbx.stamp.k(Lbx.on(n), n, ms)
+
+def Lbx.open(+n: Nui, +path: String) -> Step:
+  Step{Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@lb", path), "@lb.v", LB.Lb.show(LB.Lb.open()))), Nil{}, True{}}
+
+def Lbx.close(+n: Nui) -> Step:
+  Step{Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@lb", ""), "@lb.v", "")), Nil{}, True{}}
+
+def Lbx.step(+n: Nui, lb: LB.Lb) -> Step:
+  Step{Lbx.set(n, lb), Nil{}, True{}}
+
+def Lbx.release(closes: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match closes:
+    case True{}:
+      Lbx.close(n)
+    case False{}:
+      Lbx.step(n, LB.Lb.release(Lbx.get(n), U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
+
+def Lbx.move(down: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match down:
+    case True{}:
+      Lbx.step(n, LB.Lb.move(Lbx.get(n), U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
+    case False{}:
+      Step{n, Nil{}, False{}}
+
+def Lbx.key(esc: Bool, +n: Nui) -> Step:
+  match esc:
+    case True{}:
+      Lbx.close(n)
+    case False{}:
+      Step{n, Nil{}, False{}}
+
+# one window event while the lightbox is up
+def Lbx.event(+n: Nui, e: W.WinEv) -> Step:
+  match e:
+    case W.WKey{+code, _, _, True{}}:
+      Lbx.key(U32.is_eq(code, Key.escape()), n)
+    case W.WButton{+x, +y, 1, True{}}:
+      Lbx.step(n, LB.Lb.press(Lbx.get(n), U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
+    case W.WButton{+x, +y, 1, False{}}:
+      Lbx.release(Bool.or(LB.Lb.closes(Lbx.get(n), U32.to_nat(x), U32.to_nat(y)), LB.Lb.close_hit(U32.to_nat(x), U32.to_nat(y), U32.to_nat(Nui.width(n)))), n, x, y)
+    case W.WMove{+x, +y}:
+      Lbx.move(LB.Lb.is_down(Lbx.get(n)), n, x, y)
+    case W.WWheel{+x, +y, +dir}:
+      Lbx.step(n, LB.Lb.wheel(Lbx.get(n), U32.is_eq(dir, 0), 100n, True{}, U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
+    case W.WSize{w, h}:
+      Nui.resize(n, w, h)
+    case W.WExpose{}:
+      Step{n, Nil{}, True{}}
+    case W.WQuit{}:
+      Step{n, [NQuit{}], False{}}
+    case _:
+      Step{n, Nil{}, False{}}
+
+def Lbx.hit(m: Maybe<&2, Hit>) -> String:
+  match m:
+    case Some{Hit{_, _, _, _, +a, +v}}:
+      Bool.pick(String, String.eq(a, "img"), v, "")
+    case None{}:
+      ""
+
+def Lbx.press(+path: String, +n: Nui, e: W.WinEv) -> Step:
+  Bool.pick(Step, String.is_empty(path), Nui.event(n, e), Lbx.open(n, path))
+
+def Lbx.pressed(+n: Nui, e: W.WinEv) -> Step:
+  match e:
+    case W.WButton{+x, +y, 1, True{}}:
+      Lbx.press(Lbx.hit(Hit.find(Nui.hits(n), x, y)), n, W.WButton{x, y, 1, True{}})
+    case _:
+      Nui.event(n, e)
+
+# one window event: the lightbox's while it is up; a press on an image
+# opens it
+def Nui.event.lb(open: Bool, +n: Nui, e: W.WinEv) -> Step:
+  match open:
+    case True{}:
+      Lbx.event(n, e)
+    case False{}:
+      Lbx.pressed(n, e)
 
 # every event of a batch, in order
 def Nui.events(es: List<&2, W.WinEv>, s: Step) -> Step:
@@ -1345,4 +1503,4 @@ def Nui.events(es: List<&2, W.WinEv>, s: Step) -> Step:
     case Nil{} _:
       s
     case e <> t Step{+n, cs, d}:
-      Nui.events(t, Step.merge(Step{n, cs, d}, Nui.event(n, e)))
+      Nui.events(t, Step.merge(Step{n, cs, d}, Nui.event.lb(Lbx.on(n), n, e)))

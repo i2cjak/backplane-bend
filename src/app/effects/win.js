@@ -26,3 +26,6 @@ function win_title(win, title) {
 function win_pasted(win) {
   return io_tup(win, "");
 }
+function win_dropped(win) {
+  return io_tup(win, "");
+}

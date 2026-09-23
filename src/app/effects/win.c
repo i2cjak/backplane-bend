@@ -10,6 +10,7 @@
 //   0 key (keysym, code point typed, mods, down)   1 button (x, y, button, down)
 //   2 move (x, y)   3 wheel (x, y, dir)   4 size (w, h)   5 expose
 //   6 quit   7 paste (text via Win.pasted)
+//   8 drag over (x, y)   9 drag left   10 drop (text/uri-list via Win.dropped)
 // mods: 1 shift, 2 ctrl, 4 alt, 8 super.
 
 #if defined(__linux__)
@@ -41,7 +42,8 @@
   X(XChangeProperty, int, (Display*, Window, Atom, Atom, int, int, const unsigned char*, int)) \
   X(XSendEvent, Status, (Display*, Window, Bool, long, XEvent*)) \
   X(XFree, int, (void*)) \
-  X(XDeleteProperty, int, (Display*, Window, Atom))
+  X(XDeleteProperty, int, (Display*, Window, Atom)) \
+  X(XTranslateCoordinates, Bool, (Display*, Window, Window, int, int, int*, int*, Window*))
 
 #define WIN_PTR(name, ret, args) static ret (*x_##name) args;
 WIN_FNS(WIN_PTR)
@@ -75,6 +77,13 @@ typedef struct {
   u64       copy_len;
   char*     paste;
   u64       paste_len;
+  // drag and drop (XDND)
+  Atom      dnd_aware, dnd_enter, dnd_position, dnd_status, dnd_leave, dnd_drop,
+            dnd_finished, dnd_sel, dnd_copy, dnd_uri, dnd_types, dnd_prop;
+  Window    dnd_src;
+  int       dnd_ok;
+  char*     drop;
+  u64       drop_len;
 } AppWin;
 
 static void win_push(AppWin* a, u32 kind, u32 p, u32 q, u32 r, u32 s) {
@@ -150,6 +159,106 @@ static void win_pasted(AppWin* a) {
   }
 }
 
+// Drag and drop (XDND 5). A file manager's drag offers text/uri-list;
+// while one hovers the app hears 8 (x, y), when it leaves 9, and when it
+// lands 10, its list read like a paste (Win.dropped). Drags without files
+// are refused and never reach the app.
+static void win_dnd_send(AppWin* a, Atom type, long l1, long l2, long l3, long l4) {
+  XEvent ev;
+  memset(&ev, 0, sizeof ev);
+  ev.xclient.type         = ClientMessage;
+  ev.xclient.display      = a->dpy;
+  ev.xclient.window       = a->dnd_src;
+  ev.xclient.message_type = type;
+  ev.xclient.format       = 32;
+  ev.xclient.data.l[0]    = (long)a->win;
+  ev.xclient.data.l[1]    = l1;
+  ev.xclient.data.l[2]    = l2;
+  ev.xclient.data.l[3]    = l3;
+  ev.xclient.data.l[4]    = l4;
+  x_XSendEvent(a->dpy, a->dnd_src, False, NoEventMask, &ev);
+  x_XFlush(a->dpy);
+}
+
+// whether an XdndEnter offers text/uri-list (more than three types are
+// on the source's XdndTypeList)
+static int win_dnd_offers(AppWin* a, XClientMessageEvent* m) {
+  if (m->data.l[1] & 1) {
+    Atom type;
+    int fmt, ok = 0;
+    unsigned long n = 0, left = 0;
+    unsigned char* data = NULL;
+    if (x_XGetWindowProperty(a->dpy, (Window)m->data.l[0], a->dnd_types, 0, 1024, False,
+      XA_ATOM, &type, &fmt, &n, &left, &data) == Success && data) {
+      for (unsigned long i = 0; i < n; i += 1) {
+        ok |= ((Atom*)data)[i] == a->dnd_uri;
+      }
+      x_XFree(data);
+    }
+    return ok;
+  }
+  return (Atom)m->data.l[2] == a->dnd_uri || (Atom)m->data.l[3] == a->dnd_uri
+    || (Atom)m->data.l[4] == a->dnd_uri;
+}
+
+// an Xdnd client message (1), or not one (0)
+static int win_dnd(AppWin* a, XClientMessageEvent* m) {
+  Atom t = m->message_type;
+  if (t == a->dnd_enter) {
+    a->dnd_src = (Window)m->data.l[0];
+    a->dnd_ok  = win_dnd_offers(a, m);
+  } else if (t == a->dnd_position) {
+    a->dnd_src = (Window)m->data.l[0];
+    int rx = (int)(((unsigned long)m->data.l[2] >> 16) & 0xffff);
+    int ry = (int)((unsigned long)m->data.l[2] & 0xffff);
+    int x = 0, y = 0;
+    Window child;
+    x_XTranslateCoordinates(a->dpy, DefaultRootWindow(a->dpy), a->win, rx, ry, &x, &y, &child);
+    win_dnd_send(a, a->dnd_status, a->dnd_ok ? 3 : 2, 0, 0, a->dnd_ok ? (long)a->dnd_copy : 0);
+    if (a->dnd_ok) {
+      win_push(a, 8, x < 0 ? 0 : (u32)x, y < 0 ? 0 : (u32)y, 0, 0);
+    }
+  } else if (t == a->dnd_leave) {
+    if (a->dnd_ok) {
+      win_push(a, 9, 0, 0, 0, 0);
+    }
+    a->dnd_ok = 0;
+  } else if (t == a->dnd_drop) {
+    a->dnd_src = (Window)m->data.l[0];
+    if (a->dnd_ok) {
+      x_XConvertSelection(a->dpy, a->dnd_sel, a->dnd_uri, a->dnd_prop, a->win, (Time)m->data.l[2]);
+      x_XFlush(a->dpy);
+    } else {
+      win_dnd_send(a, a->dnd_finished, 0, 0, 0, 0);
+    }
+    a->dnd_ok = 0;
+  } else {
+    return 0;
+  }
+  return 1;
+}
+
+// the dropped list arrived (or the source could not give it)
+static void win_dropped(AppWin* a, Atom prop) {
+  Atom type;
+  int fmt;
+  unsigned long n = 0, left = 0;
+  unsigned char* data = NULL;
+  if (prop != None && x_XGetWindowProperty(a->dpy, a->win, prop, 0, 1 << 24, True,
+    AnyPropertyType, &type, &fmt, &n, &left, &data) == Success && data) {
+    free(a->drop);
+    a->drop = io_mem(malloc(n + 1));
+    memcpy(a->drop, data, n);
+    a->drop_len = n;
+    x_XFree(data);
+    win_push(a, 10, 0, 0, 0, 0);
+    win_dnd_send(a, a->dnd_finished, 1, (long)a->dnd_copy, 0, 0);
+  } else {
+    win_push(a, 9, 0, 0, 0, 0);
+    win_dnd_send(a, a->dnd_finished, 0, 0, 0, 0);
+  }
+}
+
 static void win_pump(AppWin* a) {
   while (x_XPending(a->dpy) > 0) {
     XEvent ev;
@@ -194,6 +303,9 @@ static void win_pump(AppWin* a) {
         }
         break;
       case ClientMessage:
+        if (win_dnd(a, &ev.xclient)) {
+          break;
+        }
         if ((Atom)ev.xclient.data.l[0] == a->del) {
           win_push(a, 6, 0, 0, 0, 0);
         }
@@ -202,7 +314,9 @@ static void win_pump(AppWin* a) {
         win_answer(a, &ev.xselectionrequest);
         break;
       case SelectionNotify:
-        if (ev.xselection.property != None) {
+        if (ev.xselection.selection == a->dnd_sel) {
+          win_dropped(a, ev.xselection.property);
+        } else if (ev.xselection.property != None) {
           win_pasted(a);
         }
         break;
@@ -255,6 +369,21 @@ Term win_open_run(Env e, Term* f, IoWork* w) {
     a->targets = x_XInternAtom(dpy, "TARGETS", False);
     a->prop    = x_XInternAtom(dpy, "BACKPLANE_PASTE", False);
     x_XSetWMProtocols(dpy, a->win, &a->del, 1);
+    a->dnd_aware    = x_XInternAtom(dpy, "XdndAware", False);
+    a->dnd_enter    = x_XInternAtom(dpy, "XdndEnter", False);
+    a->dnd_position = x_XInternAtom(dpy, "XdndPosition", False);
+    a->dnd_status   = x_XInternAtom(dpy, "XdndStatus", False);
+    a->dnd_leave    = x_XInternAtom(dpy, "XdndLeave", False);
+    a->dnd_drop     = x_XInternAtom(dpy, "XdndDrop", False);
+    a->dnd_finished = x_XInternAtom(dpy, "XdndFinished", False);
+    a->dnd_sel      = x_XInternAtom(dpy, "XdndSelection", False);
+    a->dnd_copy     = x_XInternAtom(dpy, "XdndActionCopy", False);
+    a->dnd_uri      = x_XInternAtom(dpy, "text/uri-list", False);
+    a->dnd_types    = x_XInternAtom(dpy, "XdndTypeList", False);
+    a->dnd_prop     = x_XInternAtom(dpy, "BACKPLANE_DROP", False);
+    Atom xdnd_version = 5;
+    x_XChangeProperty(dpy, a->win, a->dnd_aware, XA_ATOM, 32, PropModeReplace,
+      (unsigned char*)&xdnd_version, 1);
     x_XStoreName(dpy, a->win, title);
     x_XSelectInput(dpy, a->win, KeyPressMask | KeyReleaseMask | ButtonPressMask
       | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | ExposureMask);
@@ -431,6 +560,20 @@ Term win_pasted_run(Env e, Term* f, IoWork* w) {
 
 static void __attribute__((constructor)) win_pasted_use(void) {
   io_eff(CID_WIN_PASTED, win_pasted_run, 0);
+}
+
+#endif
+
+#ifdef CID_WIN_DROPPED
+
+// the text/uri-list of the last drop event
+Term win_dropped_run(Env e, Term* f, IoWork* w) {
+  AppWin* a = (AppWin*)io_hand_v(f[0]);
+  return io_tup(e, f[0], io_str(e, a->drop ? a->drop : "", a->drop ? a->drop_len : 0));
+}
+
+static void __attribute__((constructor)) win_dropped_use(void) {
+  io_eff(CID_WIN_DROPPED, win_dropped_run, 0);
 }
 
 #endif

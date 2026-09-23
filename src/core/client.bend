@@ -532,7 +532,7 @@ def Ui.actions() -> List<&2, String>:
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
-   "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49",
+   "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine"]
 
 # Reading the client state
@@ -1721,6 +1721,18 @@ def Ui.attach.o(+u: Ui, +o: J.Json) -> Act:
 def Ui.attach(+u: Ui, v: String) -> Act:
   Ui.attach.o(u, Maybe.default(&2, J.Json, J.Json.parse(v), J.Null{}))
 
+# files are dragged over the window ("1") or have left it (""); while
+# they hover, the composer shows where they drop
+def Ui.drop_hover.k(on: Bool, u: Ui) -> Ui:
+  match on:
+    case True{}:
+      Ui.flag_on(u, "drop")
+    case False{}:
+      Ui.flag_off(u, "drop")
+
+def Ui.drop_hover(u: Ui, +v: String) -> Ui:
+  Ui.drop_hover.k(Bool.not(String.is_empty(v)), u)
+
 # a file on the machine the hub runs on (the native window), copied in
 def Ui.attach_file(+u: Ui, +path: String) -> Act:
   Ui.on_thread.p(Ui.up_set(u, Ui.sel(u), AT.Att.base(AT.Att.from_uri(path))), "attach.file", [J.KV{"path", J.Str{path}}])
@@ -1923,6 +1935,8 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.mention(u, value)
     case 40n:
       Ui.on_thread(u, "files.list")
+    case 49n:
+      Act{Ui.drop_hover(u, value), Nil{}}
     case 50n:
       Ui.attach(u, value)
     case 51n:

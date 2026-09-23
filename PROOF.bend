@@ -11,6 +11,9 @@ import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
+import ./src/core/svg.bend as SVG
+import ./src/core/lightbox.bend as LBX
+import ./src/core/links.bend as LK
 import ./src/core/tailnet.bend as TN
 
 # Lemmas
@@ -431,6 +434,13 @@ def Laws.attach_clean_ok(s):
       %Equal.sym(Bool, AT.Att.ok(AT.Att.chr(AT.Att.ok(c), c)), True{}, attach_chr_ok(AT.Att.ok(c), c, {==})) : {Bool.and(_, AT.Att.all_ok(AT.Att.clean(t))) == True{} : Bool}
       Laws.attach_clean_ok(t)
 
+def Laws.drop_non_file_ignored(c, s, rest, h):
+  %Equal.sym(Bool, Char.is_eq(c, 'f'), False{}, h) : {AT.Att.uri.keep(String.starts_with.if(s, "ile:", _), SCon{c, s}, rest) == rest : List<&2, String>}
+  {==}
+
+def Laws.drop_uri_list_example():
+  {==}
+
 # Orchestration laws
 # ------------------
 
@@ -756,4 +766,165 @@ def Laws.caret_shows_when_moved():
   {==}
 
 def Laws.tailnet_no_owner_no_trust(login):
+  {==}
+
+def Laws.link_no_script(s):
+  {==}
+
+def Laws.link_no_file(s):
+  {==}
+
+def Laws.link_plain_line(s):
+  {==}
+
+# Image lightbox
+# --------------
+
+# a is at most a
+law le_refl:
+  for a: Nat
+  {Nat.is_le(a, a) == True{} : Bool}
+
+def le_refl(a):
+  match a:
+    case 0n:
+      {==}
+    case 1n+p:
+      le_refl(p)
+
+# not a >= b means b >= a
+law ge_flip:
+  for a: Nat
+  for b: Nat
+  for h: {Nat.is_ge(a, b) == False{} : Bool}
+  {Nat.is_ge(b, a) == True{} : Bool}
+
+def ge_flip(a, b, h):
+  match a b:
+    case 0n 0n:
+      Empty.absurd({Nat.is_ge(0n, 0n) == True{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      Empty.absurd({Nat.is_ge(0n, 1n+p) == True{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+    case 1n+p 1n+q:
+      ge_flip(p, q, h)
+
+# either of two numbers at most hi is at most hi
+law pick_le:
+  for c: Bool
+  for a: Nat
+  for b: Nat
+  for -hi: Nat
+  for ha: {Nat.is_le(a, hi) == True{} : Bool}
+  for hb: {Nat.is_le(b, hi) == True{} : Bool}
+  {Nat.is_le(Bool.pick(Nat, c, a, b), hi) == True{} : Bool}
+
+def pick_le(c, a, b, hi, ha, hb):
+  match c:
+    case True{}:
+      ha
+    case False{}:
+      hb
+
+law min_le_k:
+  for c: Bool
+  for +a: Nat
+  for +b: Nat
+  for h: {Nat.is_le(a, b) == c : Bool}
+  {Nat.is_le(Bool.pick(Nat, c, a, b), b) == True{} : Bool}
+
+def min_le_k(c, a, b, h):
+  match c:
+    case True{}:
+      h
+    case False{}:
+      le_refl(b)
+
+# the lesser of a and b is at most b
+law lb_min_le:
+  for +a: Nat
+  for +b: Nat
+  {Nat.is_le(LBX.Lb.min(a, b), b) == True{} : Bool}
+
+def lb_min_le(a, b):
+  min_le_k(Nat.is_le(a, b), a, b, {==})
+
+law max_ge_k:
+  for c: Bool
+  for +a: Nat
+  for +b: Nat
+  for h: {Nat.is_ge(a, b) == c : Bool}
+  {Nat.is_ge(Bool.pick(Nat, c, a, b), a) == True{} : Bool}
+
+def max_ge_k(c, a, b, h):
+  match c:
+    case True{}:
+      Nat.ge_refl(a)
+    case False{}:
+      ge_flip(a, b, h)
+
+# the greater of a and b is at least a
+law lb_max_ge:
+  for +a: Nat
+  for +b: Nat
+  {Nat.is_ge(LBX.Lb.max(a, b), a) == True{} : Bool}
+
+def lb_max_ge(a, b):
+  max_ge_k(Nat.is_ge(a, b), a, b, {==})
+
+def Laws.lightbox_zoom_min(z):
+  lb_max_ge(LBX.Lb.zmin(), LBX.Lb.min(z, LBX.Lb.zmax()))
+
+def Laws.lightbox_zoom_max(z):
+  pick_le(Nat.is_ge(LBX.Lb.zmin(), LBX.Lb.min(z, LBX.Lb.zmax())), LBX.Lb.zmin(), LBX.Lb.min(z, LBX.Lb.zmax()), LBX.Lb.zmax(), {==}, lb_min_le(z, LBX.Lb.zmax()))
+
+def Laws.lightbox_scroll_max(a, m, d, v):
+  lb_min_le(Nat.sub(Nat.add(Nat.div(Nat.mul(Nat.mul(a, d), LBX.Lb.sub()), LBX.Lb.one()), Nat.mul(Nat.add(LBX.Lb.pad(d, v), LBX.Lb.bias()), LBX.Lb.sub())),
+    Nat.mul(Nat.add(m, Nat.div(v, 2n)), LBX.Lb.sub())), Nat.mul(Nat.sub(d, v), LBX.Lb.sub()))
+
+def Laws.lightbox_ease_start(z0, z1, t0):
+  %Equal.sym(Bool, Nat.is_ge(t0, Nat.add(t0, LBX.Lb.ms())), False{}, ge_past(t0, 179n))
+    : {LBX.Lb.ease(_, Nat.sub(t0, t0), z0, z1) == z0 : Nat}
+  %Equal.sym(Nat, Nat.sub(t0, t0), 0n, sub_self(t0)) : {LBX.Lb.ease(False{}, _, z0, z1) == z0 : Nat}
+  {==}
+
+def Laws.lightbox_ease_done(z0, z1, t0, k):
+  %Equal.sym(Bool, Nat.is_ge(Nat.add(Nat.add(t0, LBX.Lb.ms()), k), Nat.add(t0, LBX.Lb.ms())), True{},
+    ge_add(Nat.add(t0, LBX.Lb.ms()), Nat.add(t0, LBX.Lb.ms()), k, Nat.ge_refl(Nat.add(t0, LBX.Lb.ms()))))
+    : {LBX.Lb.ease(_, Nat.sub(Nat.add(Nat.add(t0, LBX.Lb.ms()), k), t0), z0, z1) == z1 : Nat}
+  {==}
+
+def Laws.lightbox_idle(t0, k):
+  %Equal.sym(Bool, Nat.is_ge(Nat.add(Nat.add(t0, LBX.Lb.ms()), k), Nat.add(t0, LBX.Lb.ms())), True{},
+    ge_add(Nat.add(t0, LBX.Lb.ms()), Nat.add(t0, LBX.Lb.ms()), k, Nat.ge_refl(Nat.add(t0, LBX.Lb.ms()))))
+    : {Bool.not(_) == False{} : Bool}
+  {==}
+
+def Laws.lightbox_opens_still(now):
+  {==}
+
+def Laws.svg_close_returns(p):
+  match p:
+    case SVG.Pen{x, y, sx, sy, cx, cy, ck}:
+      {==}
+
+def Laws.svg_move_starts(p, x, y):
+  match p:
+    case SVG.Pen{a, b, c, d, e, f, g}:
+      {==}
+
+def Laws.svg_absolute_ignores_pen(p, v):
+  {==}
+
+def Laws.svg_implicit_lineto():
+  {==}
+
+def Laws.svg_numbers_split():
+  {==}
+
+def Laws.icons_used_exist():
+  {==}
+
+def Laws.icons_all_draw():
   {==}

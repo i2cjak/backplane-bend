@@ -141,20 +141,22 @@ def Bm.build(d: Nat, blank: Bool, +rows: List<&2, List<&2, U32>>) -> Image:
 # Sampling
 # --------
 
-# where the bitmap lands: at (x0, y0), fw x fh, from a w x h source
+# where the bitmap lands: at (x0, y0), fw x fh, from a w x h source; of
+# that, the part scrolled (ox, oy) in is drawn, cw x ch (a whole bitmap:
+# 0, 0, fw, fh)
 type BmGeo is Data:
-  BmGeo{x0: U32, y0: U32, fw: U32, fh: U32, w: U32, h: U32}
+  BmGeo{x0: U32, y0: U32, fw: U32, fh: U32, w: U32, h: U32, ox: U32, oy: U32, cw: U32, ch: U32}
 
 # the source column / row of frame column x / row y (nearest neighbour)
 def BmGeo.sx(g: BmGeo, +x: U32) -> U32:
   match g:
-    case BmGeo{+x0, _, +fw, _, +w, _}:
-      (((x - x0 : U32) * w : U32) / fw : U32)
+    case BmGeo{+x0, _, +fw, _, +w, _, +ox, _, _, _}:
+      (((x - x0 + ox : U32) * w : U32) / fw : U32)
 
 def BmGeo.sy(g: BmGeo, +y: U32) -> U32:
   match g:
-    case BmGeo{_, +y0, _, +fh, _, +h}:
-      (((y - y0 : U32) * h : U32) / fh : U32)
+    case BmGeo{_, +y0, _, +fh, _, +h, _, +oy, _, _}:
+      (((y - y0 + oy : U32) * h : U32) / fh : U32)
 
 # a source node at (ox, oy), 2^e pixels wide
 type BmSrc is Data:
@@ -273,9 +275,9 @@ def BmCut.of(out: Bool, inside: Bool) -> BmCut:
 # how the n x n frame region at (rx, ry) meets the bitmap's place
 def BmCut.at(g: BmGeo, +rx: U32, +ry: U32, +n: U32) -> BmCut:
   match g:
-    case BmGeo{+x0, +y0, +fw, +fh, _, _}:
-      +x1 = (x0 + fw : U32)
-      +y1 = (y0 + fh : U32)
+    case BmGeo{+x0, +y0, _, _, _, _, _, _, +cw, +ch}:
+      +x1 = (x0 + cw : U32)
+      +y1 = (y0 + ch : U32)
       BmCut.of(Bool.or(Bool.or(U32.is_ge(rx, x1), U32.is_le((rx + n : U32), x0)), Bool.or(U32.is_ge(ry, y1), U32.is_le((ry + n : U32), y0))),
         Bool.and(Bool.and(U32.is_ge(rx, x0), U32.is_le((rx + n : U32), x1)), Bool.and(U32.is_ge(ry, y0), U32.is_le((ry + n : U32), y1))))
 
@@ -319,13 +321,25 @@ def Bitmap.move(b: Bitmap, +x0: U32, +y0: U32, +fw: U32, +fh: U32) -> Bitmap:
 def Bitmap.over.k(+fd: Nat, b: Bitmap, +base: Image) -> Image:
   match b:
     case Bitmap{+w, +h, d, t, +x0, +y0, +fw, +fh}:
-      +g = {BmGeo{x0, y0, fw, fh, w, h} : BmGeo}
+      +g = {BmGeo{x0, y0, fw, fh, w, h, 0, 0, fw, fh} : BmGeo}
       Bm.place(fd, BmCut.at(g, 0, 0, U32.shln(1, fd)), base, BmSrc{t, 0, 0, d}, g, 0, 0)
 
 # a W x H frame (the base, as from R.Frame.render) with the bitmap drawn
 # over it; draw ops go on top with R.Frame.over(W, H, ops, this)
 def Bitmap.over(+fw: U32, +fh: U32, b: Bitmap, +base: Image) -> Image:
   Bitmap.over.k(R.Frame.depth(fw, fh), b, base)
+
+def Bitmap.view.k(+fd: Nat, b: Bitmap, +x0: U32, +y0: U32, +fw: U32, +fh: U32, +ox: U32, +oy: U32, +cw: U32, +ch: U32, +base: Image) -> Image:
+  match b:
+    case Bitmap{+w, +h, d, t, _, _, _, _}:
+      +g = {BmGeo{x0, y0, fw, fh, w, h, ox, oy, cw, ch} : BmGeo}
+      Bm.place(fd, BmCut.at(g, 0, 0, U32.shln(1, fd)), base, BmSrc{t, 0, 0, d}, g, 0, 0)
+
+# a W x H frame with part of the bitmap over the base: the bitmap shown
+# fw x fh and scrolled (ox, oy) in, its visible cw x ch drawn at (x0, y0)
+# (a zoomed, panned view)
+def Bitmap.view(+ww: U32, +wh: U32, b: Bitmap, +x0: U32, +y0: U32, +fw: U32, +fh: U32, +ox: U32, +oy: U32, +cw: U32, +ch: U32, +base: Image) -> Image:
+  Bitmap.view.k(R.Frame.depth(ww, wh), b, x0, y0, fw, fh, ox, oy, cw, ch, base)
 
 # a W x H frame of the bitmap over a solid background
 def Bitmap.frame(+fw: U32, +fh: U32, b: Bitmap, +bg: U32) -> Image:
@@ -368,9 +382,9 @@ def Bitmap.hit(b: Bitmap, +x: U32, +y: U32) -> Bool:
 def Bitmap.page_x(b: Bitmap, +x: U32) -> U32:
   match b:
     case Bitmap{+w, +h, _, _, +x0, +y0, +fw, +fh}:
-      BmGeo.sx(BmGeo{x0, y0, fw, fh, w, h}, x)
+      BmGeo.sx(BmGeo{x0, y0, fw, fh, w, h, 0, 0, fw, fh}, x)
 
 def Bitmap.page_y(b: Bitmap, +y: U32) -> U32:
   match b:
     case Bitmap{+w, +h, _, _, +x0, +y0, +fw, +fh}:
-      BmGeo.sy(BmGeo{x0, y0, fw, fh, w, h}, y)
+      BmGeo.sy(BmGeo{x0, y0, fw, fh, w, h, 0, 0, fw, fh}, y)

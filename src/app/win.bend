@@ -15,6 +15,9 @@ type WinEv is Data:
   WExpose{}
   WQuit{}
   WPaste{text: String}
+  WDragOver{x: U32, y: U32}
+  WDragLeave{}
+  WDrop{text: String}
 
 def Win.open(title: String, w: U32, h: U32) -> IO(Result<&1, &1, U32 & String, Window>):
   import "./effects/win.c"
@@ -41,6 +44,11 @@ def Win.paste(win: Window) -> IO(Window):
   import "./effects/win.js"
 
 def Win.pasted(win: Window) -> IO(Window & String):
+  import "./effects/win.c"
+  import "./effects/win.js"
+
+# the text/uri-list of the last WDrop (files dragged in from outside)
+def Win.dropped(win: Window) -> IO(Window & String):
   import "./effects/win.c"
   import "./effects/win.js"
 
@@ -73,6 +81,12 @@ def Win.ev.k(k: Nat, +a: U32, +b: U32, +c: U32, +d: U32) -> WinEv:
       WExpose{}
     case 7n:
       WPaste{""}
+    case 8n:
+      WDragOver{a, b}
+    case 9n:
+      WDragLeave{}
+    case 10n:
+      WDrop{""}
     case _:
       WQuit{}
 
