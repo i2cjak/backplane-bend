@@ -113,7 +113,8 @@ def View.sidebar(u: U.Ui) -> D.Node:
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
             D.Dom.button("icon", "toggle-add", "", "Add project", "+")]}],
           D.Dom.cat(View.add(adding),
-            View.projects(List.sort(~PRow, ~PRow.before, View.rows(U.Ui.projects(st), U.Ui.threads(st))), open, sel, now)))}
+            D.Dom.cat(View.projects(List.sort(~PRow, ~PRow.before, View.rows(U.Ui.projects(st), U.Kids.keep(U.Ui.threads(st), U.Kids.set(st)))), open, sel, now),
+            [D.Dom.button("settings-link", "flag", "settings", "Settings", "Settings")])))}
 
 # Thread
 # ------
@@ -192,36 +193,121 @@ def View.header(t: M.Thread, panel: Bool) -> D.Node:
   match t:
     case M.Thread{_, _, title, _, _, turn, _, _, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
       D.El{"header", "", [D.At{"class", "thread-head"}], [
+        D.Dom.button("back", "select", "", "Threads", "‹"),
         D.Dom.span("title", title),
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
         D.El{"div", "", [D.At{"class", "tools"}], D.Dom.cat(D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
           [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua)), D.Dom.button("", "archive", "", "Archive thread", "Archive"),
            D.Dom.button(Bool.pick(String, panel, "on", ""), "panel", "", "Board viewer", "Board")])}]}
 
-def View.composer(+draft: String, running: Bool) -> D.Node:
-  D.El{"div", "", [D.At{"class", "composer"}], [
-    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask the agent"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}], Nil{}},
-    D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}
+def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      D.Dom.button(Bool.pick(String, String.eq(m, cur), "on", ""), "model", m, "Use " ++ m, m) <> View.models(t, cur)
+
+def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String) -> D.Node:
+  D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
+    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], View.models(ms, model)}), [
+    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"}, D.At{"data-enter", "send"}], Nil{}},
+    D.El{"div", "", [D.At{"class", "composer-foot"}], [
+      D.Dom.button("model-chip", "flag", "models", "Choose the model", label ++ " ▾"),
+      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])}
+
+# Subagents
+# ---------
+
+
+def View.task(t: M.Task, +st: M.State) -> D.Node:
+  match t:
+    case M.Task{_, _, +child, _, +s, _, _, +pr, +mo}:
+      D.El{"div", child, [D.At{"class", "task " ++ U.Task.word(s)}, D.At{"data-value", child}, D.On{"click", "select"}],
+        [D.Dom.span("state-dot", ""), D.Dom.span("who", U.Models.label(pr, mo)), D.Dom.span("title", U.Tasks.title(st, child)), D.Dom.span("state", U.Task.word(s))]}
+
+def View.tasks.go(ts: List<&2, M.Task>, +st: M.State) -> List<&2, D.Node>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case t <> rest:
+      View.task(t, st) <> View.tasks.go(rest, st)
+
+# the subagent viewer: the tasks this thread delegated
+def View.tasks(+ts: List<&2, M.Task>, +st: M.State) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, M.Task, ts), Nil{},
+    [D.El{"div", "tasks", [D.At{"class", "tasks"}], D.Dom.span("tasks-head", "Subagents") <> View.tasks.go(ts, st)}])
+
+def View.parent(+st: M.State, +p: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, String.is_empty(p), Nil{},
+    [D.El{"button", "", [D.At{"class", "parent"}, D.At{"data-value", p}, D.On{"click", "select"}], [D.Txt{"← delegated by " ++ U.Tasks.title(st, p)}]}])
 
 def View.thread(u: U.Ui, t: M.Thread) -> D.Node:
   match u t:
-    case U.Ui{st, +sel, drafts, +live, _, _, _, _, panel, _, _, _, _, _, _} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}:
+    case U.Ui{+st, +sel, drafts, +live, +op, _, _, _, panel, _, _, _, _, _, +nf} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", "thread-view"}], [
         View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
+          D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{})),
-            View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id)))},
-        View.composer(U.Str.get(drafts, sel), View.running(turn))]}
+            View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id)))))},
+        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo)]}
+
+# Settings
+# --------
+
+def View.chips(xs: List<&2, String>, +cur: String, +key: String) -> List<&2, D.Node>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +v <> t:
+      D.Dom.button(Bool.pick(String, String.eq(v, cur), "on", ""), "setting", key ++ "=" ++ v, key, Bool.pick(String, String.is_empty(v), "default", v)) <> View.chips(t, cur, key)
+
+def View.setrow(+label: String, +note: String, ctl: List<&2, D.Node>) -> D.Node:
+  D.El{"div", "", [D.At{"class", "set-row"}], [D.El{"div", "", [D.At{"class", "set-text"}], [D.Dom.span("set-label", label), D.Dom.span("set-note", note)]},
+    D.El{"div", "", [D.At{"class", "set-ctl"}], ctl}]}
+
+def View.days(+d: String) -> List<&2, D.Node>:
+  +n = {Maybe.default(&2, Nat, Nat.read(d), 3n) : Nat}
+  [D.Dom.button("", "setting", "settle.days=" ++ Nat.show(Bool.pick(Nat, Nat.is_gt(n, 1n), Nat.sub(n, 1n), 1n)), "Fewer days", "−"),
+   D.Dom.span("days", Nat.show(n) ++ Bool.pick(String, Nat.is_eq(n, 1n), " day", " days")),
+   D.Dom.button("", "setting", "settle.days=" ++ Nat.show(Bool.pick(Nat, Nat.is_lt(n, 90n), 1n+n, 90n)), "More days", "+")]
+
+def View.fork(+fork: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, String.is_empty(fork), [D.Dom.button("primary", "kicad-install", "", "Install Backplane KiCad", "Install Backplane KiCad")],
+    [D.Dom.span("ok", "Backplane KiCad " ++ fork)])
+
+# the same settings as the native window
+def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String) -> D.Node:
+  +prov = M.Setting.get(st, "agent.provider", "claude")
+  +ipc = M.Setting.get(st, "kicad.ipc", "on")
+  D.El{"main", "settings", [D.At{"class", "settings-view"}], [
+    D.El{"header", "", [D.At{"class", "thread-head"}], [D.Dom.span("title", "Settings"), D.Dom.span("meta", ""), D.Dom.button("", "flag", "settings", "Close settings", "Close")]},
+    D.El{"div", "", [D.At{"class", "settings"}], [
+      View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
+      View.setrow("Provider for new threads", "Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
+      View.setrow("Model for new threads", "The models this machine's " ++ prov ++ " install offers.", View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
+      View.setrow("KiCad CLI", U.Str.get(nf, "kicad.cli"), View.fork(U.Str.get(nf, "kicad.fork"))),
+      View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
+      View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
+      View.setrow("Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note),
+        Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")], Nil{}))]}]}
 
 def View.empty(n: Nat) -> D.Node:
   D.El{"main", "empty", [D.At{"class", "empty"}], [D.Txt{Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")}]}
 
+def View.main.s(settings: Bool, none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
+  match settings none u:
+    case True{} _ U.Ui{+st, _, _, _, _, _, _, _, _, +v, _, _, _, +note, +nf}:
+      View.settings(st, nf, v, note)
+    case False{} True{} _:
+      View.empty(n)
+    case False{} False{} U.Ui{+st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}:
+      View.thread(U.Ui{st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}, U.Ui.thread(st, sel))
+
 def View.main.k(none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
   match none u:
-    case True{} _:
-      View.empty(n)
-    case False{} U.Ui{+st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}:
-      View.thread(U.Ui{st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}, U.Ui.thread(st, sel))
+    case _ U.Ui{+st, _, _, _, +o, _, _, _, _, +v, _, _, _, +note, +nf}:
+      View.main.s(U.Flag.get(o, "settings"), none, u, sel, n)
 
 def View.error(e: String) -> List<&2, D.Node>:
   match e:
@@ -234,7 +320,7 @@ def View.error(e: String) -> List<&2, D.Node>:
 def View.page(u: U.Ui) -> D.Node:
   match u:
     case U.Ui{+st, +sel, +d, +l, +o, +on, +now, +ad, +pa, +v, +r, +w, +e, +note, +nf}:
-      D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app")}],
+      D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app") ++ Bool.pick(String, Bool.or(Bool.not(String.is_empty(sel)), U.Flag.get(o, "settings")), " picked", "")}],
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}),
           View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
           D.Dom.cat(D.Dom.when(pa, D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}),
