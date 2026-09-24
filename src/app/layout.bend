@@ -17,6 +17,7 @@ import ../core/board.bend as B
 import ../core/schematic.bend as SC
 import ../core/hier.bend as HI
 import ../core/glb.bend as G
+import ../gfx/face.bend as FA
 import ../gfx/bitmap.bend as BM
 import ../core/diff.bend as DF
 import ../core/vt.bend as VT
@@ -1878,10 +1879,10 @@ def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: 
 def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
   Lay.chip(ty, x, 12, label, U32.is_eq(k, cur), "vw-kind", U32.show(k))
 
-def Lay.shown(+k: U32, +empty: Bool, +ts: List<&2, G.Tri3>, b: BM.Bitmap) -> Bool:
+def Lay.shown(+k: U32, +empty: Bool, +ts: FA.Scene3, b: BM.Bitmap) -> Bool:
   match b:
     case BM.Bitmap{w, _, _, _, _, _, _, _}:
-      Bool.pick(Bool, U32.is_ge(k, 4), True{}, Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(List.is_empty(&2, G.Tri3, ts)), Bool.not(empty))))
+      Bool.pick(Bool, U32.is_ge(k, 4), True{}, Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(FA.Scene3.is_empty(ts)), Bool.not(empty))))
 
 def Lay.help(+k: U32) -> String:
   Bool.pick(String, U32.is_eq(k, 4), "wheel scroll",
@@ -1965,7 +1966,7 @@ def Lay.diff.if(open: Bool, +ty: Ty, +diff: String, +x0: U32, +x1: U32, +h: U32,
       Out.none()
 
 # a board, schematic or model on show opens in the bundled KiCad
-def Lay.kicad.on(+k: U32, +empty: Bool, +ts: List<&2, G.Tri3>, +bm: BM.Bitmap) -> Bool:
+def Lay.kicad.on(+k: U32, +empty: Bool, +ts: FA.Scene3, +bm: BM.Bitmap) -> Bool:
   Bool.and(U32.is_le(k, 2), Lay.shown(k, empty, ts, bm))
 
 # a - b, never below 0

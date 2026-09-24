@@ -17,6 +17,9 @@ import ../server/kicad.bend as K
 import ../gfx/text.bend as X
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
+import ../gfx/face.bend as FA
+import ../core/pcb3d.bend as P3
+import ./parts3.bend as PT
 import ../core/schematic.bend as SC
 import ../core/hier.bend as HI
 import ../server/proc.bend as P
@@ -38,7 +41,8 @@ type ShellMsg is Data:
   Gone{tag: String}
   Retry{tag: String}
   Board{key: String, items: List<&2, B.Item>}
-  Mesh3{key: String, tris: List<&2, G.Tri3>}
+  Mesh3{key: String, scene: FA.Scene3}
+  Parts3{key: String, t0: Nat, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
   Sheets{key: String, text: String}
   Shot{key: String, bmp: BM.Bitmap}
@@ -166,11 +170,6 @@ def Shell.blink.k(go: Bool, +n: N.Nui, +q: Chan(ShellMsg), +wait: Nat, +ms: Nat)
 def Shell.blink(+n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
   Shell.blink.k(Bool.and(Nat.is_gt(N.Blink.wait(n, ms), 0n), Nat.is_le(Maybe.default(&2, Nat, Nat.read(U.Ui.info(N.Nui.ui(n), "caret.due")), 0n), ms)),
     n, q, N.Blink.wait(n, ms), ms)
-
-def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
-  match vw:
-    case V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}:
-      V.Fade.busy(ss, now)
 
 # Images in threads
 # -----------------
@@ -780,7 +779,7 @@ def Watch.glb.done(r: P.Ran, +glb: String, +key: String, +q: Chan(ShellMsg)) -> 
     case P.Ran{0, _}:
       do IO<Unit>:
         bs : List<&2, U32> <- S.Files.read(glb)
-        ok : Bool <- Chan.send(ShellMsg, q, Mesh3{key, G.Mesh.tris(G.Glb.parse(bs))})
+        ok : Bool <- Chan.send(ShellMsg, q, Mesh3{key, FA.Scene3.of_model(MS.Model.of(G.Mesh.tris(G.Glb.parse(bs))))})
         return Unit{}
     case P.Ran{_, out}:
       Watch.say(key, "3D export failed: " ++ String.take(String.trim(out), 160n), q)
@@ -797,9 +796,158 @@ def Watch.mesh.k(glb: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> 
         r : P.Ran <- Watch.glb.run(Watch.glb.cmd(path, out, cli, step))
         Watch.glb.done(r, out, key, q)
 
-# a 3D model: a .glb as it is; a STEP or board converted to GLB first
+# Boards in 3D
+# ------------
+# A board is drawn from its own file at once (its face, edges and holes);
+# its parts follow, each model file read once and placed at every
+# footprint that uses it: those already converted all at once, the rest
+# as four workers convert them (STEP to GLB by backplane-step2glb, into a
+# cache keyed by the file's path, size and time). The viewer fades in what
+# comes late.
+
+# a model's triangles at every place it is used, onto acc
+def Parts.placed(+glb: String, ms: List<&2, G.M4>, acc: List<&2, G.Tri3>) -> IO(List<&2, G.Tri3>):
+  IO.bind(List<&2, U32>, List<&2, G.Tri3>, S.Files.read(glb), bs => IO.pure(List<&2, G.Tri3>, P3.Place.all(ms, G.Mesh.tris(G.Glb.parse(bs)), acc)))
+
+def Parts.send(+ts: List<&2, G.Tri3>, +key: String, +t0: Nat, +q: Chan(ShellMsg)) -> IO(Unit):
+  match ts:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case _:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(ShellMsg, q, Parts3{key, t0, ts})
+        return Unit{}
+
+type PCtx is Data:
+  PCtx{board: String, dir: String, vars: List<&2, P3.KV>, cache: String, step: String, key: String, t0: Nat, q: Chan(ShellMsg)}
+
+# a model still to convert: its file and where it goes
+type Todo is Data:
+  Todo{src: String, ms: List<&2, G.M4>}
+
+# the placed triangles of the models ready so far, and the rest to convert
+type Scan is Data:
+  Scan{ready: List<&2, G.Tri3>, todo: List<&2, Todo>}
+
+def Scan.k(ready: Bool, missing: Bool, +src: String, +glb: String, ms: List<&2, G.M4>, s: Scan) -> IO(Scan):
+  match ready missing s:
+    case True{} _ Scan{r, t}:
+      IO.bind(List<&2, G.Tri3>, Scan, Parts.placed(glb, ms, r), r2 => IO.pure(Scan, Scan{r2, t}))
+    case False{} False{} Scan{r, t}:
+      IO.pure(Scan, Scan{r, Todo{src, ms} <> t})
+    case _ _ _:
+      IO.pure(Scan, s)
+
+def Scan.g(+g: String, +src: String, ms: List<&2, G.M4>, s: Scan) -> IO(Scan):
+  Scan.k(Bool.not(String.is_empty(g)), String.is_empty(src), src, g, ms, s)
+
+def Scan.one.k(+src: String, ms: List<&2, G.M4>, +cache: String, s: Scan) -> IO(Scan):
+  IO.bind(String, Scan, PT.Parts.cached(src, cache), g => Scan.g(g, src, ms, s))
+
+def Scan.one(g: P3.Group3, +c: PCtx, s: Scan) -> IO(Scan):
+  match g c:
+    case P3.Group3{+raw, ms} PCtx{+board, +dir, +vars, +cache, _, _, _, _}:
+      IO.bind(String, Scan, PT.Parts.file(raw, board, dir, vars, cache), src => Scan.one.k(src, ms, cache, s))
+
+# every model found, and read at once when its GLB is ready
+def Scan.go(gs: List<&2, P3.Group3>, +c: PCtx, s: Scan) -> IO(Scan):
+  match gs:
+    case Nil{}:
+      IO.pure(Scan, s)
+    case g <> t:
+      IO.bind(Scan, Scan, Scan.one(g, c, s), s2 => Scan.go(t, c, s2))
+
+def Parts.conv(t: Todo, +c: PCtx) -> IO(Unit):
+  match t c:
+    case Todo{+src, ms} PCtx{_, _, _, +cache, +step, +key, +t0, +q}:
+      IO.bind(String, Unit, PT.Parts.glb(src, cache, step), g => IO.bind(List<&2, G.Tri3>, Unit, Parts.placed(g, ms, Nil{}), ts => Parts.send(ts, key, t0, q)))
+
+def Parts.work(ts: List<&2, Todo>, +c: PCtx) -> IO(Unit):
+  match ts:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case t <> r:
+      IO.bind(Unit, Unit, Parts.conv(t, c), u => Parts.work(r, c))
+
+type Deal4 is Data:
+  Deal4{a: List<&2, Todo>, b: List<&2, Todo>, c: List<&2, Todo>, d: List<&2, Todo>}
+
+def Deal4.go(ts: List<&2, Todo>, h: Deal4) -> Deal4:
+  match ts h:
+    case Nil{} _:
+      h
+    case t <> r Deal4{a, b, c, d}:
+      Deal4.go(r, Deal4{b, c, d, t <> a})
+
+def Parts.spawn(h: Deal4, +c: PCtx) -> IO(Unit):
+  match h:
+    case Deal4{a, b, cc, d}:
+      do IO<Unit>:
+        IO.spawn(Unit, Parts.work(a, c))
+        IO.spawn(Unit, Parts.work(b, c))
+        IO.spawn(Unit, Parts.work(cc, c))
+        IO.spawn(Unit, Parts.work(d, c))
+        return Unit{}
+
+# the models ready in the cache go in one message; the rest are
+# converted by four workers, each sent when done
+def Parts.scanned(s: Scan, +c: PCtx) -> IO(Unit):
+  match s c:
+    case Scan{r, t} PCtx{_, _, _, _, _, +key, +t0, +q}:
+      do IO<Unit>:
+        Parts.send(r, key, t0, q)
+        Parts.spawn(Deal4.go(t, Deal4{Nil{}, Nil{}, Nil{}, Nil{}}), c)
+
+def Parts.start(+gs: List<&2, P3.Group3>, +board: String, +key: String, +t0: Nat, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    +cache : String <- PT.Parts.cache()
+    mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(cache)
+    +vars : List<&2, P3.KV> <- PT.Parts.vars(PT.Parts.dir(board))
+    step : String <- Watch.step2glb()
+    +c : PCtx = PCtx{board, PT.Parts.dir(board), vars, cache, step, key, t0, q}
+    s : Scan <- Scan.go(gs, c, Scan{Nil{}, Nil{}})
+    Parts.scanned(s, c)
+
+def Watch.pcb3.k(items: Maybe<&2, List<&2, B.Item>>, p: Maybe<&2, P3.Pcb3>, +path: String, +key: String, +now: Nat, +q: Chan(ShellMsg)) -> IO(Unit):
+  match items p:
+    case Some{+its} Some{+pc}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(ShellMsg, q, Mesh3{key, FA.Scene3.board(FA.Face3.of(its, pc), now)})
+        Parts.start(P3.Pcb3.groups(pc), path, key, now, q)
+    case _ _:
+      IO.pure(Unit, Unit{})
+
+type Read3 is Data:
+  Read3{items: Maybe<&2, List<&2, B.Item>>, p: Maybe<&2, P3.Pcb3>}
+
+# a board's items and its 3D facts, read at once
+def Read3.of(+bs: List<&2, U32>) -> Read3:
+  a b = B.Board.items(bs) P3.Pcb3.of(bs)
+  Read3{a, b}
+
+def Watch.pcb3.r(r: Read3, +path: String, +key: String, +now: Nat, +q: Chan(ShellMsg)) -> IO(Unit):
+  match r:
+    case Read3{items, p}:
+      Watch.pcb3.k(items, p, path, key, now, q)
+
+# a board: its face now, its parts as they load
+def Watch.pcb3(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    +bs : List<&2, U32> <- S.Files.read(path)
+    now : Nat <- IO.now()
+    Watch.pcb3.r(Read3.of(bs), path, key, now, q)
+
+def Watch.mesh.b(pcb: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  match pcb:
+    case True{}:
+      Watch.pcb3(path, key, q)
+    case False{}:
+      Watch.mesh.k(String.ends_with(path, ".glb"), path, key, q)
+
+# a 3D model: a board drawn from its file; a .glb as it is; a STEP
+# converted to GLB first
 def Watch.mesh(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
-  Watch.mesh.k(String.ends_with(path, ".glb"), path, key, q)
+  Watch.mesh.b(String.ends_with(path, ".kicad_pcb"), path, key, q)
 
 # The sheet tree
 # --------------
@@ -1004,10 +1152,19 @@ def Shell.board(a: Shell, +key: String, +items: List<&2, B.Item>) -> IO(Shell):
         ms : Nat <- IO.now()
         Shell.later(Shell{N.Nui.board(n, key, items, ms), w, True{}, qd, q, i, wa})
 
-def Shell.mesh(a: Shell, +key: String, ts: List<&2, G.Tri3>) -> IO(Shell):
+def Shell.parts(a: Shell, +key: String, +t0: Nat, ts: List<&2, G.Tri3>) -> IO(Shell):
   match a:
     case Shell{n, w, _, qd, q, i, wa}:
-      Shell.later(Shell{N.Nui.mesh(n, key, ts), w, True{}, qd, q, i, wa})
+      do IO<Shell>:
+        ms : Nat <- IO.now()
+        Shell.later(Shell{N.Nui.parts(n, key, t0, ts, ms), w, True{}, qd, q, i, wa})
+
+def Shell.mesh(a: Shell, +key: String, ts: FA.Scene3) -> IO(Shell):
+  match a:
+    case Shell{n, w, _, qd, q, i, wa}:
+      do IO<Shell>:
+        ms : Nat <- IO.now()
+        Shell.later(Shell{N.Nui.mesh(n, key, FA.Scene3.got(ts, ms)), w, True{}, qd, q, i, wa})
 
 def Shell.shot(a: Shell, +key: String, b: BM.Bitmap) -> IO(Shell):
   match a:
@@ -1028,6 +1185,16 @@ def Shell.status(a: Shell, +key: String, +text: String) -> IO(Shell):
 # Viewer frames
 # -------------
 
+def Vx.scene(x: V.Vx) -> FA.Scene3:
+  match x:
+    case V.Vx{_, _, s, _, _, _, _, _, _, _, bm}:
+      s
+
+def Shell.busy(vw: V.Vw, +now: Nat) -> Bool:
+  match vw:
+    case V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}:
+      Bool.or(V.Fade.busy(ss, now), FA.Scene3.fading(Vx.scene(vx), now))
+
 def Vx.kind(x: V.Vx) -> U32:
   match x:
     case V.Vx{k, _, _, _, _, _, _, _, _, _, bm}:
@@ -1047,10 +1214,24 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base):
 # a 3D model rendered into the panel, or the board/schematic's items
-def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, x: V.Vx) -> Image:
+# half a frame's size, rounded up (a frame half as big spans one level
+# less of the quadtree, so its image serves as the full frame's, each
+# pixel four)
+def Half.of(+n: U32) -> U32:
+  U32.shr((n + 1 : U32))
+
+# a 3D scene into the panel; while it is dragged, a draft at half size
+def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat) -> Image:
+  match draft:
+    case True{}:
+      FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, 526603)
+    case False{}:
+      FA.Scene3.render(ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, 526603)
+
+def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
-      MS.Mesh.render.at(ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, 526603)
+      Shell.base3(drag, ww, hh, x0, ts, c, now)
     case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
       Shell.shot.base(ww, hh, x0, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
@@ -1059,8 +1240,8 @@ def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, 
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match redraw vw:
-    case True{} V.Vw{+ss, +v, f, r, d, lx, ly, _, _, _, +vx}:
-      V.Vw{ss, v, f, r, d, lx, ly, Shell.base(ww, hh, x0, ss, v, now, flip, vx), True{}, now, vx}
+    case True{} V.Vw{+ss, +v, f, r, +d, lx, ly, _, _, _, +vx}:
+      V.Vw{ss, v, f, r, d, lx, ly, Shell.base(ww, hh, x0, ss, v, now, flip, d, vx), True{}, now, vx}
     case False{} _:
       vw
 
@@ -1068,7 +1249,7 @@ def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, 
 def Shell.vw(+vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match vw:
     case V.Vw{+ss, +v, f, r, d, lx, ly, b, +fr, +cut, vx}:
-      Shell.vw.k(Bool.or(Bool.not(fr), V.Vw.late(ss, cut, now)), V.Vw{ss, v, f, r, d, lx, ly, b, fr, cut, vx}, ww, hh, x0, now, flip)
+      Shell.vw.k(Bool.or(Bool.or(Bool.not(fr), V.Vw.late(ss, cut, now)), FA.Scene3.fading(Vx.scene(vx), cut)), V.Vw{ss, v, f, r, d, lx, ly, b, fr, cut, vx}, ww, hh, x0, now, flip)
 
 def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat, +flip: U32) -> V.Vw:
   match open:
@@ -1228,6 +1409,8 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.board(a, key, items)
     case Mesh3{key, ts}:
       Shell.mesh(a, key, ts)
+    case Parts3{key, t0, ts}:
+      Shell.parts(a, key, t0, ts)
     case Status{key, text}:
       Shell.status(a, key, text)
     case Sheets{key, text}:

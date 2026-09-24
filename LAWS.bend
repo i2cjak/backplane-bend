@@ -28,6 +28,10 @@ import ./src/core/fold.bend as FO
 import ./src/core/http.bend as WS
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
+import ./src/core/pcb3d.bend as P3
+import ./src/gfx/mesh.bend as MS
+import ./src/gfx/face.bend as FA
+import ./src/core/glb.bend as G
 import ./src/core/menu.bend as MN
 import ./src/app/win.bend as W
 import ./src/core/badge.bend as BG
@@ -1202,6 +1206,43 @@ law view_3d_draws_board:
 law view_3d_key:
   {MV.View.key("3d", "/p") == "2|/p|" : String}
 
+# 3D boards
+# ---------
+
+# a model path's ${VARS} come from the board's variables
+law pcb3d_path_vars:
+  {P3.Env.sub("${KICAD10_3DMODEL_DIR}/R.3dshapes/R_0402.step", [P3.KV{"KIPRJMOD", "/b"}, P3.KV{"KICAD10_3DMODEL_DIR", "/lib"}])
+    == "/lib/R.3dshapes/R_0402.step" : String}
+
+# a variable the board does not know stays as written (the file is then
+# not found, rather than found in the wrong place)
+law pcb3d_path_unknown_kept:
+  {P3.Env.sub("${NOPE}/x.step", [P3.KV{"KIPRJMOD", "/b"}]) == "${NOPE}/x.step" : String}
+
+# triangles there from the start never fade
+law mesh_first_never_fades:
+  for +now: Nat
+  {MS.Fade.alpha(0n, now) == 255 : U32}
+
+# parts that arrive with the board (within 350 ms) do not fade in
+law scene3_prompt_parts_no_fade:
+  {FA.Scene3.fading(FA.Scene3.add(FA.Scene3.board(FA.FNone{}, 5000n), [G.Tri3{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 255}], 5100n), 5101n)
+    == False{} : Bool}
+
+# parts that arrive late fade in
+law scene3_late_parts_fade:
+  {FA.Scene3.fading(FA.Scene3.add(FA.Scene3.board(FA.FNone{}, 5000n), [G.Tri3{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 255}], 7000n), 7001n)
+    == True{} : Bool}
+
+# and the fade ends
+law scene3_fade_ends:
+  {FA.Scene3.fading(FA.Scene3.add(FA.Scene3.board(FA.FNone{}, 5000n), [G.Tri3{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 255}], 7000n), 7450n)
+    == False{} : Bool}
+
+# parts from an older read of the board are dropped
+law scene3_stale_parts_dropped:
+  {MS.Model.size(FA.Scene3.model(FA.Scene3.add_if(FA.Scene3.board(FA.FNone{}, 5000n), 4000n, [G.Tri3{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 255}], 7000n)))
+    == 0n : Nat}
 # The model picker
 # ----------------
 # Its pieces come from core/menu.bend for whatever models and effort

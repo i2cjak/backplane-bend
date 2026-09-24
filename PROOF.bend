@@ -25,6 +25,10 @@ import ./src/core/gh.bend as GH
 import ./src/core/fold.bend as FO
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
+import ./src/core/pcb3d.bend as P3
+import ./src/gfx/mesh.bend as MS
+import ./src/gfx/face.bend as FA
+import ./src/core/glb.bend as G
 import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
 import ./src/core/client.bend as U
@@ -2787,6 +2791,26 @@ def Laws.view_3d_draws_board(root):
 def Laws.view_3d_key():
   {==}
 
+def Laws.pcb3d_path_vars():
+  {==}
+
+def Laws.pcb3d_path_unknown_kept():
+  {==}
+
+def Laws.mesh_first_never_fades(now):
+  {==}
+
+def Laws.scene3_prompt_parts_no_fade():
+  {==}
+
+def Laws.scene3_late_parts_fade():
+  {==}
+
+def Laws.scene3_fade_ends():
+  {==}
+
+def Laws.scene3_stale_parts_dropped():
+  {==}
 # The model picker
 # ----------------
 

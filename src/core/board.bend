@@ -314,11 +314,11 @@ def Pad.hole.k(has: Bool, +key: String, +sig: U32, +c: Pt, +d: F32, +info: Strin
 
 # a pad on its first listed layer ("*.Cu" draws on both sides), plus its hole
 def Board.pad(+x: S.Sx, +key: String, +sig: U32, +pl: Place, +ctx: String) -> List<&2, Item>:
-  +info = "pad " ++ S.Sx.arg(x, 0n) ++ Info.kv("net", Info.net(x)) ++ Info.kv("shape", S.Sx.arg(x, 1n)) ++ ctx
+  +info = "pad " ++ S.Sx.arg(x, 0n) ++ Info.kv("net", Info.net(x)) ++ Info.kv("type", S.Sx.arg(x, 1n)) ++ Info.kv("shape", S.Sx.arg(x, 2n)) ++ ctx
   +at = S.Sx.get(x, "at")
   +c = Geo.place(pl, Geo.pt(at))
   +size = S.Sx.get(x, "size")
-  +shape = S.Sx.arg(x, 1n)
+  +shape = S.Sx.arg(x, 2n)
   +drill = S.Sx.f(S.Sx.get(x, "drill"), 0n)
   Item{key, sig, Layer.id(S.Sx.arg(S.Sx.get(x, "layers"), 0n)), Pad.shape.k(String.eq(shape, "circle"), String.eq(shape, "oval"), c,
     S.Sx.f(size, 0n), S.Sx.f(size, 1n), Geo.rad(F32.neg(S.Sx.f(at, 2n)))), info}
