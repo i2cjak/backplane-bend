@@ -2,6 +2,7 @@ import Base
 import ./check.bend as C
 import ../src/core/client.bend as U
 import ../src/core/json.bend as J
+import ../src/mobile/screen.bend as S
 
 def strs(xs: List<&2, String>) -> String:
   String.join(xs, ",")
@@ -24,3 +25,7 @@ def main() -> IO(Unit):
       U.Ui.info(U.Ui.recv(U.Ui.recv(U.Ui.init(0n), push("{\"t\":\"log\",\"items\":[],\"info\":{\"models\":\"old\",\"listen\":\"x\"}}")), push("{\"t\":\"info\",\"info\":{\"models\":\"new\"}}")), "models"), "new")
     C.Check.str("info push keeps the rest",
       U.Ui.info(U.Ui.recv(U.Ui.recv(U.Ui.init(0n), push("{\"t\":\"log\",\"items\":[],\"info\":{\"models\":\"old\",\"listen\":\"x\"}}")), push("{\"t\":\"info\",\"info\":{\"models\":\"new\"}}")), "listen"), "x")
+    C.Check.str("phone picker", J.Json.show(S.Mob.picker(info(), "claude", "opus", "high")),
+      "{\"label\":\"claude · opus · high\",\"models\":[{\"label\":\"default\",\"value\":\"\",\"on\":false},{\"label\":\"Opus 5.5 · claude-opus-5-5\",\"value\":\"opus\",\"on\":true},{\"label\":\"haiku\",\"value\":\"haiku\",\"on\":false}],\"efforts\":[{\"label\":\"auto\",\"value\":\"\",\"on\":false},{\"label\":\"low\",\"value\":\"low\",\"on\":false},{\"label\":\"medium\",\"value\":\"medium\",\"on\":false},{\"label\":\"high\",\"value\":\"high\",\"on\":true},{\"label\":\"xhigh\",\"value\":\"xhigh\",\"on\":false},{\"label\":\"max\",\"value\":\"max\",\"on\":false}]}")
+    C.Check.str("phone picker, default model", J.Json.show(S.Mob.picker(info(), "claude", "", "")),
+      "{\"label\":\"claude · default\",\"models\":[{\"label\":\"default\",\"value\":\"\",\"on\":true},{\"label\":\"Opus 5.5 · claude-opus-5-5\",\"value\":\"opus\",\"on\":false},{\"label\":\"haiku\",\"value\":\"haiku\",\"on\":false}],\"efforts\":[{\"label\":\"auto\",\"value\":\"\",\"on\":true},{\"label\":\"low\",\"value\":\"low\",\"on\":false},{\"label\":\"high\",\"value\":\"high\",\"on\":false},{\"label\":\"max\",\"value\":\"max\",\"on\":false}]}")

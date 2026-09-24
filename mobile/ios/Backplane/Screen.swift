@@ -84,6 +84,13 @@ struct Viewer: Decodable {
     let card: Card?
 }
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+struct ModelPicker: Decodable {
+    let label: String
+    let models, efforts: [Choice]
+}
+
 struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
@@ -93,6 +100,7 @@ struct ThreadView: Decodable {
     let queued: String
     let live: [Block]
     let working, draft, send: String
+    let picker: ModelPicker
     let viewer: Viewer
 }
 

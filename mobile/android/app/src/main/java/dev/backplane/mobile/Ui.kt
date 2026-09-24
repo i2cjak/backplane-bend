@@ -407,6 +407,30 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                         Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Box {
+                        var models by remember { mutableStateOf(false) }
+                        TextButton(onClick = { models = true }) {
+                            Text(t.picker.label, style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Filled.ExpandMore, "Choose the model and effort", Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.outline)
+                        }
+                        DropdownMenu(models, { models = false }) {
+                            for (c in t.picker.models) DropdownMenuItem(
+                                text = { Text(c.label) },
+                                leadingIcon = { if (c.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                                onClick = { models = false; m.act("model", c.value) },
+                            )
+                            if (t.picker.efforts.isNotEmpty()) {
+                                HorizontalDivider()
+                                for (c in t.picker.efforts) DropdownMenuItem(
+                                    text = { Text("Effort: ${c.label}") },
+                                    leadingIcon = { if (c.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                                    onClick = { models = false; m.act("effort", c.value) },
+                                )
+                            }
+                        }
+                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })

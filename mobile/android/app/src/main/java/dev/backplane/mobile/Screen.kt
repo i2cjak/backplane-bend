@@ -55,11 +55,15 @@ data class Viewer(
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
 )
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>)
+
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
-    val sending: List<String>, val queued: String, val viewer: Viewer,
+    val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -109,8 +113,14 @@ private fun thread(o: JSONObject) = ThreadView(
             it.optString("label"), blocks(it.optJSONArray("blocks")))
     },
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"), viewer(o.optJSONObject("viewer") ?: JSONObject()),
+    strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
+    viewer(o.optJSONObject("viewer") ?: JSONObject()),
 )
+
+private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }
+
+private fun picker(o: JSONObject) =
+    ModelPicker(o.optString("label"), choices(o.optJSONArray("models")), choices(o.optJSONArray("efforts")))
 
 private fun ints(a: JSONArray?): IntArray = if (a == null) IntArray(0) else IntArray(a.length()) { a.optInt(it) }
 
