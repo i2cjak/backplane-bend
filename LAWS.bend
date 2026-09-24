@@ -47,6 +47,7 @@ import ./src/core/hier.bend as HI
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
+import ./src/core/cron.bend as CR
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2111,3 +2112,21 @@ law seen_add_has:
 law invite_roundtrip:
   {SG.Invite.parse(SG.Invite.make("http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))
     == Some{SG.Inv{"http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}} : Maybe<&2, SG.Inv>}
+# Routine schedules
+# -----------------
+
+# a routine's next time is after the time asked about, or 0 (never)
+law cron_next_after:
+  for +c: CR.Cron
+  for +after: Nat
+  for +off: Nat
+  for +east: Bool
+  {CR.Cron.ok(after, CR.Cron.next(c, after, off, east)) == True{} : Bool}
+
+# once a routine fires at now (last := now) it is not due again at now
+law cron_due_fires_once:
+  for +c: CR.Cron
+  for +now: Nat
+  for +off: Nat
+  for +east: Bool
+  {CR.Cron.due(c, now, now, off, east) == False{} : Bool}

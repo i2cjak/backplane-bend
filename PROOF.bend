@@ -42,6 +42,7 @@ import ./src/core/hier.bend as HI
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
+import ./src/core/cron.bend as CR
 
 # Lemmas
 # ------
@@ -3965,4 +3966,32 @@ def Laws.seen_add_has(s, k, now):
       {==}
 
 def Laws.invite_roundtrip():
+  {==}
+
+# Routine schedules
+# -----------------
+
+law cron_guard_ok:
+  for +a: Nat
+  for b: Bool
+  for x: Nat
+  for h: {Nat.is_gt(x, a) == b : Bool}
+  {CR.Cron.ok(a, CR.Cron.guard.k(b, x)) == True{} : Bool}
+
+def cron_guard_ok(a, b, x, h):
+  match b:
+    case True{}:
+      match x:
+        case 0n:
+          {==}
+        case 1n+k:
+          h
+    case False{}:
+      {==}
+
+def Laws.cron_next_after(c, after, off, east):
+  cron_guard_ok(after, Nat.is_gt(CR.Cron.raw(c, after, off, east), after), CR.Cron.raw(c, after, off, east), {==})
+
+def Laws.cron_due_fires_once(c, now, off, east):
+  %Equal.sym(Cmp, Nat.cmp(now, now), EQ{}, nat_cmp_refl(now)) : {CR.Cron.due.k(_, CR.Cron.next(c, now, off, east), now) == False{} : Bool}
   {==}
