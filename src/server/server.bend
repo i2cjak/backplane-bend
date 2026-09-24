@@ -1236,6 +1236,28 @@ def Snooze.tomorrow(+inbox: Chan(Msg), +client: U32, +id: String, +thread: Strin
     GitJob.say(inbox, "thread.snooze", [J.KV{"thread", J.Str{thread}}, J.KV{"until", J.Num{Nat.show(M.Snooze.tomorrow(Maybe.default(&2, Nat, Nat.read(now), 0n), Snooze.tz(r)))}}])
     GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"thread", J.Str{thread}}]))
 
+def Env.or(r: Result<&1, &1, U32 & String, String>, d: String) -> String:
+  match r:
+    case Done{+v}:
+      Bool.pick(String, String.is_empty(v), d, v)
+    case Fail{_}:
+      d
+
+def Env.get(name: String, d: String) -> IO(String):
+  do IO<String>:
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
+    return Env.or(r, d)
+
+# open the thread's KiCad project in the bundled KiCad
+def KiCadJob.run(+inbox: Chan(Msg), +client: U32, +id: String, +cwd: String, +home: String) -> IO(Unit):
+  do IO<Unit>:
+    explicit : String <- Env.get("BACKPLANE_KICAD_CLI", "")
+    exe : String <- H.Sys.exe_dir()
+    rt : K.Rt <- K.Rt.resolve(explicit, exe, home)
+    fs : K.Files <- K.Files.read(cwd)
+    +err : String <- K.KiCad.open(rt, fs)
+    GitJob.reply(inbox, client, id, String.is_empty(err), J.Json.obj([J.KV{"text", J.Str{err}}]))
+
 def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   match i:
     case 0n:
@@ -1248,12 +1270,14 @@ def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: Str
       MergeJob.run(inbox, cwd, a)
     case 4n:
       RmJob.run(inbox, thread, cwd, a, b)
+    case 5n:
+      KiCadJob.run(inbox, client, id, cwd, home)
     case _:
       GitJob.run.git(job, inbox, client, id, thread, cwd, a, b, home)
 
 # a job the hub asked for: a git job, or one of the sidebar's
 def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove"], job), job, inbox, client, id, thread, cwd, a, b, home)
+  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad"], job), job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------
@@ -1734,18 +1758,6 @@ def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
 
 # Startup
 # -------
-
-def Env.or(r: Result<&1, &1, U32 & String, String>, d: String) -> String:
-  match r:
-    case Done{+v}:
-      Bool.pick(String, String.is_empty(v), d, v)
-    case Fail{_}:
-      d
-
-def Env.get(name: String, d: String) -> IO(String):
-  do IO<String>:
-    r : Result<&1, &1, U32 & String, String> <- IO.get_env(name)
-    return Env.or(r, d)
 
 def Upgrade.start(+inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:

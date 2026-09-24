@@ -383,7 +383,7 @@ def Hub.methods.fs() -> List<&2, String>:
 
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
-  ["thread.snooze", "thread.reorder", "files.list"]
+  ["thread.snooze", "thread.reorder", "files.list", "kicad.open"]
 
 # snooze a thread: {thread, for: "1h" | "1w" | "tomorrow" | "off"} or
 # {thread, until}. Tomorrow 9:00 is local time, which the server knows:
@@ -690,6 +690,8 @@ def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
       Hub.reorder(s, now, client, id, p)
     case 2n:
       Step.outs([Git{client, id, "files", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
+    case 3n:
+      Step.outs([Git{client, id, "kicad", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
     case _:
       Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
 

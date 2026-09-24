@@ -1670,10 +1670,31 @@ def Lay.diff.if(open: Bool, +ty: Ty, +diff: String, +x0: U32, +x1: U32, +h: U32,
     case False{}:
       Out.none()
 
+# a board, schematic or model on show opens in the bundled KiCad
+def Lay.kicad.on(+k: U32, +empty: Bool, +ts: List<&2, G.Tri3>, +bm: BM.Bitmap) -> Bool:
+  Bool.and(U32.is_le(k, 2), Lay.shown(k, empty, ts, bm))
+
+# a - b, never below 0
+def Lay.room(+a: U32, +b: U32) -> U32:
+  Bool.pick(U32, U32.is_gt(a, b), (a - b : U32), 0)
+
+# the header width the Open in KiCad button takes
+def Lay.kicad.w(+ty: Ty, +on: Bool) -> U32:
+  Bool.pick(U32, on, (Lay.button.w(ty, "Open in KiCad") + 12 : U32), 0)
+
+def Lay.kicad(on: Bool, +ty: Ty, +x1: U32) -> Out:
+  match on:
+    case True{}:
+      Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Open in KiCad") : U32), 12, "Open in KiCad", T.Th.text(), "kicad-open", "")
+    case False{}:
+      Out.none()
+
 def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32) -> Out:
   match x:
-    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, bm}:
+    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, +bm}:
       +help = Lay.help(k)
+      +ko = Lay.kicad.on(k, empty, ts, bm)
+      +kw = Lay.kicad.w(ty, ko)
       +bw = Lay.button.w(ty, "Board")
       +sw = Lay.button.w(ty, "Schematic")
       +tw = Lay.button.w(ty, "3D")
@@ -1686,7 +1707,8 @@ def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +i
         Lay.tab(ty, "Browser", 3, k, (x0 + 40 + bw + sw + tw : U32)),
         Lay.tab(ty, "Diff", 4, k, (x0 + 48 + bw + sw + tw + Lay.button.w(ty, "Browser") : U32)),
         Lay.diff.if(U32.is_eq(k, 4), ty, diff, x0, x1, h, scroll),
-        Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32)), D.Clip.all(), (x1 - 16 - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, (x1 - x0 - 380 : U32))) : U32), 0, 52, T.Th.faint())),
+        Lay.kicad(ko, ty, x1),
+        Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (380 + kw : U32))), D.Clip.all(), (x1 - 16 - kw - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (380 + kw : U32)))) : U32), 0, 52, T.Th.faint())),
         Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.not(Lay.shown(k, empty, ts, bm))),
           Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - U32.min(Ty.width(ty, 3n, busy), (x1 - x0 : U32)) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
         Lay.inspect(ty, info, draft, x0, x1, h)])
