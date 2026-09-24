@@ -545,7 +545,7 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "look", "look-set"]
 
 # Reading the client state
 # ------------------------
@@ -635,6 +635,35 @@ def Models.strs(xs: List<&2, J.Json>) -> List<&2, String>:
 
 def Models.list(+info: String, +provider: String) -> List<&2, String>:
   Models.strs(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), provider)))
+
+def Models.menu.k(skip: Bool, +m: String, rest: List<&2, String>) -> List<&2, String>:
+  match skip:
+    case True{}:
+      rest
+    case False{}:
+      m <> rest
+
+def Models.menu.go(ms: List<&2, String>) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      Models.menu.k(Bool.or(String.is_empty(m), String.eq(m, "default")), m, Models.menu.go(t))
+
+# the model menu's entries: the provider's default ("") first, then each
+# model the CLI reports once (a CLI that lists "default" itself is the
+# same entry)
+def Models.menu(+info: String, +provider: String) -> List<&2, String>:
+  "" <> Models.menu.go(Models.list(info, provider))
+
+# The writing model: the small model that titles threads, names branches
+# and writes commit messages (settings text.provider, text.model; Claude's
+# Haiku unless set, like T3 Code's text generation model)
+def TextGen.provider(+st: M.State) -> String:
+  M.Setting.get(st, "text.provider", "claude")
+
+def TextGen.model(+st: M.State) -> String:
+  Bool.pick(String, Bool.and(String.eq(TextGen.provider(st), "claude"), String.is_empty(M.Setting.get(st, "text.model", ""))), "haiku", M.Setting.get(st, "text.model", ""))
 
 def Models.label(+provider: String, +model: String) -> String:
   provider ++ " · " ++ Bool.pick(String, String.is_empty(model), "default", model)
@@ -1466,6 +1495,13 @@ def Ui.scratch_set(u: Ui, +k: String, v: String) -> Ui:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, Map.set(&2, String, dr, k, v), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
 
+# A project's badge editor ("@look" is the project whose editor is open):
+# "look" opens it for a project, or closes it when it is open for that
+# one (or for ""); "look-set" sets project.color.<id> or project.icon.<id>
+# ("key=value") and leaves it open.
+def Ui.look(+u: Ui, +id: String) -> Ui:
+  Ui.scratch_set(u, "@look", Bool.pick(String, String.eq(Ui.scratch(u, "@look"), id), "", id))
+
 def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, +nf, ob, tr}:
@@ -2222,6 +2258,10 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.row_delete(u, value)
     case 63n:
       Act{Ui.tool_fold(u, value), Nil{}}
+    case 64n:
+      Act{Ui.look(u, value), Nil{}}
+    case 65n:
+      Ui.setting(u, value)
     case _:
       Act{u, Nil{}}
 

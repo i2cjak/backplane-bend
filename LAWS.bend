@@ -26,6 +26,9 @@ import ./src/core/fold.bend as FO
 import ./src/core/http.bend as WS
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
+import ./src/core/menu.bend as MN
+import ./src/app/win.bend as W
+import ./src/core/badge.bend as BG
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -1058,3 +1061,143 @@ law view_3d_draws_board:
 
 law view_3d_key:
   {MV.View.key("3d", "/p") == "2|/p|" : String}
+
+# The model picker
+# ----------------
+# Its pieces come from core/menu.bend for whatever models and effort
+# levels the CLIs report, so a new model can never make two collide.
+
+# model rows stack: each starts where the one above it ends
+law menu_rows_apart:
+  for n: Nat
+  for +x: Nat
+  for +y: Nat
+  for +w: Nat
+  {MN.Boxes.apart(MN.Menu.rows(n, x, y, w)) == True{} : Bool}
+
+# effort chips never overlap, however many and however wide, in a menu of
+# any width: each is right of the one before it or on a line below
+law menu_chips_apart:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Boxes.apart(MN.Flow.place(ws, left, right, x, y, h, gap)) == True{} : Bool}
+
+# and all of them end above the first model row
+law menu_chips_above_rows:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Boxes.above(MN.Flow.place(ws, left, right, x, y, h, gap), MN.Flow.under(ws, left, right, x, y, h, gap)) == True{} : Bool}
+
+# the rows shown take no more height than there is (the menu never covers
+# the thread's header; the rest scroll)
+law menu_rows_fit:
+  for +n: Nat
+  for +room: Nat
+  {Nat.is_ge(room, MN.Menu.span(n, room)) == True{} : Bool}
+
+# scrolled, the rows shown never run past the last model
+law menu_scroll_in_list:
+  for +off: Nat
+  for +n: Nat
+  for +shown: Nat
+  for h: {Nat.is_ge(n, shown) == True{} : Bool}
+  {Nat.is_ge(n, Nat.add(shown, MN.Menu.off(off, n, shown))) == True{} : Bool}
+
+# the menu is never wider than the room it opens in
+law menu_width_fits:
+  for +want: Nat
+  for +room: Nat
+  {Nat.is_ge(room, MN.Menu.width(want, room)) == True{} : Bool}
+
+# a model's label starts past the name column (names are clipped to it)
+law menu_label_clear:
+  for +name_x: Nat
+  for +widest: Nat
+  for +w: Nat
+  {Nat.is_ge(MN.Menu.label_x(name_x, MN.Menu.col(widest, w)), Nat.add(name_x, MN.Menu.col(widest, w))) == True{} : Bool}
+
+# every press in the window first closes a menu it lands outside of
+law menu_press_first:
+  for +n: N.Nui
+  for +x: U32
+  for +y: U32
+  {N.Nui.event(n, W.WButton{x, y, 1, True{}}) == N.Nui.press(N.Nui.in_viewer(n, x), N.Menu.press(N.Hit.find(N.Nui.hits(n), x, y), n), x, y) : N.Step}
+
+# a press on nothing is outside
+law menu_press_nothing:
+  {N.Menu.inside(None{}) == False{} : Bool}
+
+# so is a press on anything that is not the menu's own
+law menu_press_elsewhere:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +a: String
+  for +v: String
+  for h: {N.Menu.own(a, v) == False{} : Bool}
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, a, v}}) == False{} : Bool}
+
+# the picker's own pieces keep it open: any model row, effort chip, or its box
+law menu_press_rows_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "model", v}}) == True{} : Bool}
+
+law menu_press_box_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "menu", v}}) == True{} : Bool}
+
+law menu_press_chips_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "effort", v}}) == True{} : Bool}
+
+# Project badges
+# --------------
+
+# every icon a project may take is in the set (and so draws: icons_all_draw)
+law badge_icons_exist:
+  {ICO.Icon.missing(BG.Badge.icons()) == Nil{} : List<&2, String>}
+
+# a project with no colour set gets one of the tints, whatever its id
+law badge_auto_tint:
+  for +k: Nat
+  {BG.Badge.has(BG.Badge.colors(), BG.Badge.nth(k)) == True{} : Bool}
+
+# a colour that is not a tint falls back to the project's own
+law badge_unknown_color:
+  for +id: String
+  {BG.Badge.color.of("mauve", id) == BG.Badge.auto(id) : String}
+
+# a set tint wins
+law badge_set_color:
+  for +id: String
+  {BG.Badge.color.of("teal", id) == "teal" : String}
+
+# no icon set, or one not in the set, is the folder
+law badge_default_icon:
+  {BG.Badge.icon.of("") == "folder" : String}
+
+law badge_unknown_icon:
+  {BG.Badge.icon.of("rocket-ship") == "folder" : String}

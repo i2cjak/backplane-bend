@@ -47,7 +47,7 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .project-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread { display: flex; align-items: center; gap: 8px; padding: 4px 12px; cursor: pointer; }
 .thread:hover { background: var(--raise); }
-.thread.on { background: var(--raise); box-shadow: inset 2px 0 var(--accent); }
+.thread.on { background: var(--raise); box-shadow: inset 2px 0 var(--tint, var(--accent)); }
 .thread .title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread .ago { color: var(--faint); font-size: 11px; }
 .dot { width: 6px; height: 6px; background: var(--faint); flex: none; }
@@ -100,11 +100,23 @@ button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowra
 .composer textarea { resize: none; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; min-height: 60px; max-height: 40vh; }
 .composer-foot { display: flex; justify-content: space-between; align-items: center; }
 .model-chip { background: none; border-color: transparent; color: var(--dim); padding-left: 0; }
-.picker { position: absolute; bottom: 100%; left: 16px; display: flex; flex-direction: column; min-width: 200px; background: var(--panel); border: 1px solid var(--line); padding: 4px; }
-.picker button { text-align: left; border-color: transparent; background: none; }
-.picker button.on { color: var(--text); background: var(--raise); }
-.picker .efforts { display: flex; gap: 2px; padding-bottom: 4px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
-.picker .efforts button { text-align: center; flex: 1; padding: 2px 6px; }
+.shade { position: fixed; inset: 0; z-index: 30; }
+.model-menu { position: absolute; bottom: calc(100% - 4px); left: 16px; z-index: 31; display: flex; flex-direction: column; min-width: 280px; max-width: calc(100% - 32px); max-height: 60vh; background: var(--panel); border: 1px solid var(--line); padding: 6px; }
+.model-menu .rows { overflow-y: auto; display: flex; flex-direction: column; }
+.model-menu .row { display: grid; grid-template-columns: minmax(0, var(--namew)) minmax(0, 1fr); gap: 16px; text-align: left; border-color: transparent; background: none; padding: 4px 10px; }
+.model-menu .row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu .row .label { color: var(--faint); font-size: 12px; }
+.model-menu .row.on { color: var(--text); background: var(--sel, var(--raise)); }
+.model-menu .efforts { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 6px; margin-bottom: 6px; border-bottom: 1px solid var(--line); }
+.model-menu .efforts button { padding: 2px 10px; }
+.project-head .badge { background: none; border: none; padding: 0 6px 0 0; color: var(--tint); display: inline-flex; }
+.thread-head .badge { color: var(--tint); display: inline-flex; }
+.project .look { position: relative; z-index: 31; margin: 2px 8px 6px; padding: 8px 10px; background: var(--raise); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; }
+.look .swatches, .look .glyphs { display: flex; flex-wrap: wrap; gap: 5px; }
+.look .swatch { width: 18px; height: 18px; padding: 0; border: none; }
+.look .swatch.on { outline: 2px solid var(--text); outline-offset: 1px; }
+.look .glyph { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--dim); }
+.look .glyph.on { color: var(--tint); border-color: var(--tint); background: var(--sel, var(--raise)); }
 .composer .skills { position: absolute; bottom: 100%; left: 16px; right: 16px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); padding: 4px; }
 .composer .skills button { display: flex; gap: 10px; text-align: left; border-color: transparent; background: none; }
 .composer .skills button:first-child { background: var(--raise); }

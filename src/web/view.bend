@@ -8,6 +8,7 @@ import ../core/vt.bend as VT
 import ../core/diff.bend as DF
 import ../core/images.bend as IM
 import ../core/fold.bend as FO
+import ../core/badge.bend as BG
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -93,24 +94,53 @@ def View.snoozed(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) 
     case +t <> +rest:
       D.Dom.span("shelf-label", "Snoozed") <> View.rows_in(t <> rest, st, sel, now, False{}, True{})
 
-def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat) -> D.Node:
+# a project's badge editor, open under its name: its tints, then its
+# icons (a click sets one and leaves it open; a click anywhere else, on the
+# shade behind it, closes it)
+def View.swatches(cs: List<&2, String>, +cur: String, +id: String) -> List<&2, D.Node>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case +c <> t:
+      D.El{"button", "", [D.At{"class", Bool.pick(String, String.eq(c, cur), "swatch on", "swatch")}, D.At{"style", "background:" ++ BG.Badge.css(c)}, D.At{"title", c},
+        D.At{"data-value", BG.Badge.color_key(id) ++ "=" ++ c}, D.On{"click", "look-set"}], Nil{}} <> View.swatches(t, cur, id)
+
+def View.glyphs(ns: List<&2, String>, +cur: String, +id: String) -> List<&2, D.Node>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +n <> t:
+      WI.WIcon.button(Bool.pick(String, String.eq(n, cur), "glyph on", "glyph"), "look-set", BG.Badge.icon_key(id) ++ "=" ++ n, n, n, 16, "") <> View.glyphs(t, cur, id)
+
+def View.look(open: Bool, +st: M.State, +id: String) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "shade"}, D.At{"data-value", ""}, D.On{"click", "look"}], Nil{}},
+       D.El{"div", "", [D.At{"class", "look"}], [
+         D.El{"div", "", [D.At{"class", "swatches"}], View.swatches(BG.Badge.colors(), BG.Badge.color(st, id), id)},
+         D.El{"div", "", [D.At{"class", "glyphs"}], View.glyphs(BG.Badge.icons(), BG.Badge.icon(st, id), id)}]}]
+    case False{}:
+      Nil{}
+
+def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String) -> D.Node:
   match r:
     case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
-      D.El{"section", id, [D.At{"class", "project"}],
+      D.El{"section", id, [D.At{"class", "project"}, D.At{"style", "--tint:" ++ BG.Badge.css_of(st, id)}],
         List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}],
-            [D.Dom.span("name", title), WI.WIcon.button("icon", "new-thread", id, "New thread", "plus", 16, "")]}],
+            [WI.WIcon.button("badge", "look", id, "Colour and icon", BG.Badge.icon(st, id), 14, ""), D.Dom.span("name", title), WI.WIcon.button("icon", "new-thread", id, "New thread", "plus", 16, "")]}],
+          View.look(String.eq(look, id), st, id),
           View.rows_in(pinned, st, sel, now, True{}, False{}),
           View.rows_in(active, st, sel, now, True{}, False{}),
           View.snoozed(snoozed, st, sel, now),
           View.shelf(U.Flag.get(open, id), id, "Settled", settled, st, sel, now),
           View.shelf(U.Flag.get(open, "arch:" ++ id), "arch:" ++ id, "Archived", M.Archive.of(hidden), st, sel, now)])}
 
-def View.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat) -> List<&2, D.Node>:
+def View.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String) -> List<&2, D.Node>:
   match rs:
     case Nil{}:
       Nil{}
     case r <> t:
-      View.project(r, open, st, sel, now) <> View.projects(t, open, st, sel, now)
+      View.project(r, open, st, sel, now, look) <> View.projects(t, open, st, sel, now, look)
 
 def View.add(adding: Bool) -> List<&2, D.Node>:
   match adding:
@@ -137,20 +167,20 @@ def View.machines(many: Bool, rs: List<&2, U.MRow>) -> List<&2, D.Node>:
     case False{}:
       Nil{}
 
-def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String) -> D.Node:
+def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String, +look: String) -> D.Node:
   D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
             WI.WIcon.button("icon", "proj-open", "", "Add project", "plus", 16, "")]}],
           D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding),
-            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now),
+            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now, look),
             [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")]))))}
 
 def View.sidebar(u: U.Ui) -> D.Node:
   match u:
-    case U.Ui{+st, +sel, d, l, +open, +on, +now, +adding, pa, +v, r, w, e, note, nf, ob, tr}:
-      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v)
+    case U.Ui{+st, +sel, +d, l, +open, +on, +now, +adding, pa, +v, r, w, e, note, nf, ob, tr}:
+      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v, U.Str.get(d, "@look"))
 
 # Thread
 # ------
@@ -252,11 +282,12 @@ def View.del(on: Bool) -> List<&2, D.Node>:
     case False{}:
       [D.Dom.button("", "delete", "", "Delete thread", "Delete")]
 
-def View.header(t: M.Thread, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> D.Node:
+def View.header(t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> D.Node:
   match t:
-    case M.Thread{_, _, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
-      D.El{"header", "", [D.At{"class", "thread-head"}], [
+    case M.Thread{_, +p, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
+      D.El{"header", "", [D.At{"class", "thread-head"}, D.At{"style", "--tint:" ++ BG.Badge.css_of(st, p)}], [
         D.Dom.button("back", "select", "", "Threads", "‹"),
+        D.El{"span", "", [D.At{"class", "badge"}], [WI.WIcon.svg(BG.Badge.icon(st, p), 16)]},
         D.Dom.span("title", title),
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
         D.El{"div", "", [D.At{"class", "tools"}], List.concat(&2, D.Node, [D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
@@ -265,12 +296,22 @@ def View.header(t: M.Thread, +panel: Bool, snoozed: Bool, picking: Bool, term: B
            D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")]])}]}
 
-def View.models(ms: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+# the model menu's rows: each model's name, then what its CLI calls it,
+# in two columns (the names' as wide as the longest, --namew)
+def View.models(ms: List<&2, String>, +cur: String, +info: String, +prov: String) -> List<&2, D.Node>:
   match ms:
     case Nil{}:
       Nil{}
     case +m <> t:
-      D.Dom.button(Bool.pick(String, String.eq(m, cur), "on", ""), "model", m, "Use " ++ m, m) <> View.models(t, cur)
+      D.El{"button", "", [D.At{"class", Bool.pick(String, String.eq(m, cur), "row on", "row")}, D.At{"title", "Use " ++ Bool.pick(String, String.is_empty(m), "the default", m)}, D.At{"data-value", m}, D.On{"click", "model"}],
+        [D.Dom.span("name", Bool.pick(String, String.is_empty(m), "default", m)), D.Dom.span("label", U.Models.label_of(info, prov, m))]} <> View.models(t, cur, info, prov)
+
+def View.namew(ms: List<&2, String>) -> Nat:
+  match ms:
+    case Nil{}:
+      7n
+    case +m <> t:
+      Nat.max(String.length(m), View.namew(t))
 
 # reasoning effort chips, the provider's default first
 def View.efforts(es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
@@ -282,6 +323,17 @@ def View.efforts(es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
 
 def View.effort_row(+es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
   Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, es), Nil{}, [D.El{"div", "", [D.At{"class", "efforts"}], View.efforts(es, cur)}])
+
+# the model menu over the composer, and a shade behind it: a click
+# anywhere off the menu lands on the shade and closes it
+def View.menu(open: Bool, +ms: List<&2, String>, +cur: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "shade"}, D.At{"data-value", "models"}, D.On{"click", "flag"}], Nil{}},
+       D.El{"div", "", [D.At{"class", "model-menu"}, D.At{"style", "--namew:" ++ Nat.show(View.namew(ms)) ++ "ch"}],
+         D.Dom.cat(View.effort_row(es, effort), [D.El{"div", "", [D.At{"class", "rows"}], View.models(ms, cur, info, prov)}])}]
+    case False{}:
+      Nil{}
 
 # the skills a `$` being typed may complete to (Tab or Enter takes the first)
 def View.skills.go(rs: List<&2, U.SkillRow>) -> List<&2, D.Node>:
@@ -389,7 +441,10 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
     D.El{"div", "", [D.At{"class", "settings"}], [
       View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
       View.setrow("Provider for new threads", Bool.pick(String, String.is_empty(U.Models.cli(U.Str.get(nf, "models"), prov)), prov ++ " is not installed", U.Models.cli(U.Str.get(nf, "models"), prov)) ++ ". Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
-      View.setrow("Model for new threads", Bool.pick(String, String.is_empty(M.Setting.get(st, "agent.model", "")), "default", M.Setting.get(st, "agent.model", "")) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), prov, M.Setting.get(st, "agent.model", "")), View.chips("" <> U.Models.list(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
+      View.setrow("Model for new threads", Bool.pick(String, String.is_empty(M.Setting.get(st, "agent.model", "")), "default", M.Setting.get(st, "agent.model", "")) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), prov, M.Setting.get(st, "agent.model", "")), View.chips(U.Models.menu(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
+      View.setrow("Writing: provider", "Titles threads, names branches and writes commit messages. A small model keeps this cheap.", View.chips(["claude", "codex", "grok"], U.TextGen.provider(st), "text.provider")),
+      View.setrow("Writing: model", Bool.pick(String, String.is_empty(U.TextGen.model(st)), "default", U.TextGen.model(st)) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), U.TextGen.provider(st), U.TextGen.model(st)),
+        View.chips(U.Models.menu(U.Str.get(nf, "models"), U.TextGen.provider(st)), U.TextGen.model(st), "text.model")),
       View.setrow("KiCad CLI", U.Str.get(nf, "kicad.cli"), View.fork(U.Str.get(nf, "kicad.fork"))),
       View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
@@ -646,10 +701,10 @@ def View.attaching(+ps: List<&2, String>, +up: String) -> List<&2, D.Node>:
     [D.El{"div", "", [D.At{"class", "chips"}], D.Dom.cat(View.pending(ps),
       Bool.pick(List<&2, D.Node>, String.is_empty(up), Nil{}, [D.Dom.span("chip up", up ++ " …")]))}])
 
-def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
+def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
     +atts: List<&2, String>, +up: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
-    D.Dom.when(picking, D.El{"div", "", [D.At{"class", "picker"}], D.Dom.cat(View.effort_row(es, effort), View.models(ms, model))}), D.Dom.cat(View.skills(rs), D.Dom.cat(View.attaching(atts, up), [
+    View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(View.attaching(atts, up), [
     D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
       D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
@@ -663,14 +718,14 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
         D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat([
-        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff"), String.eq(U.Str.get(drafts, "@del"), id)),
+        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind"), "diff"), String.eq(U.Str.get(drafts, "@del"), id)),
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
-        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.list(U.Str.get(nf, "models"), pr), mo,
+        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
           U.Effort.chips(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
