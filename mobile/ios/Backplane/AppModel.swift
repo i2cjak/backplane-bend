@@ -45,6 +45,8 @@ final class AppModel {
     // and SIMCTL_CHILD_BACKPLANE_ACTS="diff;;term-toggle=$SIZE;;…" runs
     // actions two seconds apart once the thread is open
     @ObservationIgnored private var acting = ProcessInfo.processInfo.environment["BACKPLANE_ACTS"]
+    // and SIMCTL_CHILD_BACKPLANE_BOT=<bot or room name> opens it (then ACTS run)
+    @ObservationIgnored private var botting = ProcessInfo.processInfo.environment["BACKPLANE_BOT"]
     #endif
 
     // this install's id, part of every message id (a resend is stored once)
@@ -295,6 +297,13 @@ final class AppModel {
             if let id = opening, let row = s.projects.lazy.flatMap(\.threads).first(where: { $0.id == id || $0.id.hasSuffix("|" + id) }) {
                 opening = nil
                 act("select", row.id)
+            }
+            if let n = botting, let b = s.bots.first(where: { $0.name == n }) {
+                botting = nil
+                act(b.remote ? "remote" : "bot", b.id)
+            } else if let n = botting, let r = s.rooms.first(where: { $0.name == n }) {
+                botting = nil
+                act("room", r.id)
             }
             if opening == nil, let v = viewing, let t = s.thread, !t.viewer.choices.isEmpty {
                 viewing = nil
