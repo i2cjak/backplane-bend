@@ -84,9 +84,11 @@ def Hubs.rest(+v: String) -> String:
   Hubs.rest.k(String.split(v, '|'))
 
 # what a field of the screen holds: 1 left alone (a thread's entries, the
-# viewer's, model picker's and project picker's own values), 2 an id of this hub, 0 anything else
+# viewer's, model picker's and project picker's own values; the bot, room
+# or remote bot shown and the bot and room forms, all of the hub in focus,
+# whose actions go there), 2 an id of this hub, 0 anything else
 def Q.kind(+k: String) -> Nat:
-  Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["entries", "live", "viewer", "blocks", "picker", "folders", "asks", "menu", "diff", "term", "skills", "attaching", "find", "settings"], k), 14n), 1n,
+  Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["entries", "live", "viewer", "blocks", "picker", "folders", "asks", "menu", "diff", "term", "skills", "attaching", "find", "settings", "bot", "newBot", "newRoom"], k), 17n), 1n,
     Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["id", "value", "sel", "thread"], k), 4n), 2n, 0n))
 
 # a hub's screen (or alerts) with every id made that hub's
@@ -113,6 +115,10 @@ def Q.all(j: J.Json, +p: String) -> J.Json:
 # One hub's client
 # ----------------
 
+# a bot form shut (only those: the value names a scratch key)
+def One.close(+u: U.Ui, +k: String) -> U.Ui:
+  Bool.pick(U.Ui, Nat.is_lt(C.Codec.pos(["@bnew", "@rnew", "@onew"], k), 3n), U.Ui.scratch_set(u, k, ""), u)
+
 # an action, as a phone's one client takes it: "view" opens or closes the
 # board viewer ("board", "schematic", "3d", ""), "view-pick" inspects a
 # tap, "view-unpick" closes the card, "view-mention" puts the inspected
@@ -120,7 +126,8 @@ def Q.all(j: J.Json, +p: String) -> J.Json:
 # "picker-type" is its field's new text (typed, or a folder tapped),
 # "picker-mkdir" makes a folder and goes into it; "find-open" opens
 # thread search ("search") or the file picker ("files", which asks for the
-# thread's files), "find-q" sets its query, "find-close" closes it; any action that moves to another project re-aims
+# thread's files), "find-q" sets its query, "find-close" closes it; "form-close" shuts a bot
+# form ("@bnew", "@rnew", "@onew"; the phones' cancel); any action that moves to another project re-aims
 # the viewer
 def One.find(files: Bool, +u: U.Ui, +mode: String) -> U.Act:
   match files:
@@ -151,11 +158,13 @@ def One.act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
       U.Act{U.Palette.set(u, value, 0n), Nil{}}
     case 9n:
       U.Act{U.Ui.flag_off(u, "palette"), Nil{}}
+    case 10n:
+      U.Act{One.close(u, value), Nil{}}
     case _:
       VW.View.sync(U.Ui.act(u, action, value))
 
 def One.act(+u: U.Ui, +action: String, +value: String) -> U.Act:
-  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close"], action), u, action, value)
+  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close", "form-close"], action), u, action, value)
 
 # what a step does to one hub's client
 type Op is Data:
@@ -337,11 +346,19 @@ def Hubs.register(hs: Hubs, p: String, t: String, k: String, th: String, e: Stri
 # Actions
 # -------
 
-# actions whose value names a row, a project or (opening the project
-# picker, adding a project) a hub: they go to the hub it names; the first
-# three also bring it into focus, so the picker's own actions follow it
+# actions whose value names a row, a project, a bot or room, or (opening
+# the project picker or a bot or room form, adding a project) a hub: they
+# go to the hub it names; the first eight also bring it into focus, so the
+# picker's, the bot's and the forms' own actions follow it
 def Hubs.routed(+action: String) -> Nat:
-  C.Codec.pos(["select", "new-thread", "picker-open", "row-settle", "row-unsettle", "row-snooze", "row-delete", "toggle-settled", "add-project"], action)
+  C.Codec.pos(["select", "new-thread", "picker-open", "bot", "room", "remote", "bot-new", "room-new",
+    "row-settle", "row-unsettle", "row-snooze", "row-delete", "toggle-settled", "add-project"], action)
+
+def Hubs.moves() -> Nat:
+  8n
+
+def Hubs.routes() -> Nat:
+  14n
 
 # answers to what any hub may be showing (its error, a delete to confirm)
 def Hubs.everywhere(+action: String) -> Bool:
@@ -389,7 +406,7 @@ def Hubs.focus(move: Bool, hs: Hubs, +key: String, +op: Op) -> HAct:
 def Hubs.act.k(+hs: Hubs, +cur: String, known: Bool, +action: String, +value: String) -> HAct:
   match known:
     case True{}:
-      Hubs.focus(Bool.and(Nat.is_lt(Hubs.routed(action), 3n), Bool.not(String.eq(Hubs.key_of(value), cur))), hs, Hubs.key_of(value), Do{action, Hubs.rest(value)})
+      Hubs.focus(Bool.and(Nat.is_lt(Hubs.routed(action), Hubs.moves()), Bool.not(String.eq(Hubs.key_of(value), cur))), hs, Hubs.key_of(value), Do{action, Hubs.rest(value)})
     case False{}:
       Hubs.focus(False{}, hs, cur, Do{action, value})
 
@@ -411,7 +428,7 @@ def Hubs.act.r(routed: Bool, +hs: Hubs, +action: String, +value: String) -> HAct
       Hubs.act.k(hs, Hubs.cur(hs), False{}, action, value)
 
 def Hubs.act(+hs: Hubs, +action: String, +value: String) -> HAct:
-  Hubs.act.r(Nat.is_lt(Hubs.routed(action), 9n), hs, action, value)
+  Hubs.act.r(Nat.is_lt(Hubs.routed(action), Hubs.routes()), hs, action, value)
 
 def Hubs.self(+u: U.Ui) -> String:
   J.Json.get_str(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "machines")), J.Null{}), "self"), "name", "")
@@ -496,6 +513,14 @@ def Hubs.projects(ss: List<&2, Shown>, +many: Bool) -> List<&2, J.Json>:
     case Shown{_, +n, +j} <> t:
       List.append(&2, J.Json, Hubs.machines(J.Json.elems(J.Json.get_obj(j, "projects")), Bool.pick(String, many, n, "")), Hubs.projects(t, many))
 
+# every hub's list at k (bots, rooms), named by machine when there are several
+def Hubs.all(ss: List<&2, Shown>, +k: String, +many: Bool) -> List<&2, J.Json>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Shown{_, +n, +j} <> t:
+      List.append(&2, J.Json, Hubs.machines(J.Json.elems(J.Json.get_obj(j, k)), Bool.pick(String, many, n, "")), Hubs.all(t, k, many))
+
 def Hubs.lines(ss: List<&2, Shown>) -> List<&2, J.Json>:
   match ss:
     case Nil{}:
@@ -573,6 +598,11 @@ def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J
     J.KV{"find", J.Json.get_obj(Hubs.of(ss, cur), "find")},
     J.KV{"island", N.Note.island.k(Hubs.lines(ss))},
     J.KV{"thread", J.Json.get_obj(Hubs.of(ss, cur), "thread")},
+    J.KV{"bots", J.Json.arr(Hubs.all(ss, "bots", Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
+    J.KV{"rooms", J.Json.arr(Hubs.all(ss, "rooms", Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
+    J.KV{"newBot", J.Json.get_obj(Hubs.of(ss, cur), "newBot")},
+    J.KV{"newRoom", J.Json.get_obj(Hubs.of(ss, cur), "newRoom")},
+    J.KV{"bot", J.Json.get_obj(Hubs.of(ss, cur), "bot")},
     J.KV{"hub", J.Json.str(cur)},
     J.KV{"hubs", J.Json.arr(Hubs.rows(ss))},
     J.KV{"found", J.Json.arr(Hubs.found(list))}])

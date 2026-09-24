@@ -31,6 +31,15 @@ object Pairing {
         return "$scheme://$host$port/ws" + (token?.let { "?token=$it" } ?: "")
     }
 
+    // an HTTP address on the hub (its token along, unless token is false)
+    fun http(link: String, path: String, query: String = "", token: Boolean = true): String? {
+        val w = Uri.parse(socket(link) ?: return null)
+        val scheme = if (w.scheme == "wss") "https" else "http"
+        val port = if (w.port > 0) ":${w.port}" else ""
+        val q = listOfNotNull(if (token) w.getQueryParameter("token")?.let { "token=$it" } else null, query.ifEmpty { null })
+        return "$scheme://${w.host}$port$path" + (if (q.isEmpty()) "" else "?" + q.joinToString("&"))
+    }
+
     // the hub's key: host:port, the same for every link to it
     fun key(link: String): String? {
         val u = Uri.parse(socket(link) ?: return null)

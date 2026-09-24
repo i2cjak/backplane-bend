@@ -28,6 +28,16 @@ enum Pairing {
         return c.url
     }
 
+    // an HTTP address on the hub (its token along, unless token is false)
+    static func http(_ link: String, path: String, query: [URLQueryItem] = [], token: Bool = true) -> URL? {
+        guard let w = socket(link), var c = URLComponents(url: w, resolvingAgainstBaseURL: false) else { return nil }
+        c.scheme = c.scheme == "wss" ? "https" : "http"
+        c.path = path
+        let q = (token ? (c.queryItems ?? []).filter { $0.name == "token" } : []) + query
+        c.queryItems = q.isEmpty ? nil : q
+        return c.url
+    }
+
     static func socket(_ link: String) -> URL? {
         var s = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }

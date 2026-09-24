@@ -58,4 +58,6 @@ class Engine(private val source: String, private val cid: String, private val dr
     suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
     suspend fun online(key: String, b: Boolean) = out("Backplane.online(${q(key)}, $b)")
     suspend fun tick(now: Long) = out("Backplane.tick($now)")
+    // a cat's rig (JSON text) for its key ("look:mood")
+    suspend fun cat(key: String) = call("Backplane.cat(${q(key)})")
 }

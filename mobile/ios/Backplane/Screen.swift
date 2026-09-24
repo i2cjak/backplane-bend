@@ -281,6 +281,114 @@ struct Found: Decodable, Hashable {
     let name, url: String
 }
 
+// Bots (src/mobile/bots.bend). A cat in the list: "bot" (or, remote,
+// "remote") sends its id; mood and note say how it is; cat names its rig
+// ("look:mood"), which the bridge gives once (AppModel.cats).
+struct BotRow: Decodable, Identifiable {
+    let id, name, mood, note, peer, cat: String
+    let look: Int
+    let sel, remote: Bool
+    let machine: String?
+}
+
+// a room in the list ("room" sends its id)
+struct RoomRow: Decodable, Identifiable {
+    let id, name: String
+    let members: Int
+    let sel: Bool
+    let machine: String?
+}
+
+// the new bot form: its fields ("bfield" name, persona, provider),
+// "bot-create" makes it, "form-close" "@bnew" drops it
+struct ProviderChoice: Decodable, Hashable {
+    let label, provider: String
+    let on: Bool
+}
+
+struct NewBot: Decodable {
+    let name, persona, provider: String
+    let providers: [ProviderChoice]
+}
+
+// the new room form: "bfield" rname, "room-pick" a bot's id, "room-save"
+struct RoomPick: Decodable, Hashable {
+    let id, name: String
+    let on: Bool
+}
+
+struct NewRoom: Decodable {
+    let name: String
+    let picks: [RoomPick]
+}
+
+struct BotTab: Decodable, Hashable {
+    let id, label: String
+}
+
+struct BotMemory: Decodable, Hashable {
+    let key, kind, text, tags, updated: String
+}
+
+struct BotRoutine: Decodable, Hashable {
+    let id, name, cron, when, prompt, last: String
+    let on: Bool
+}
+
+// the routine form ("routine-edit" id, or "" for a new one, opens it)
+struct RoutineForm: Decodable {
+    let open: Bool
+    let id, name, cron, prompt: String
+}
+
+struct BotHook: Decodable, Hashable {
+    let id, name, path, last: String
+    let count: Int
+}
+
+struct BotPeer: Decodable, Hashable {
+    let id, name, url: String
+}
+
+// Google's sign-in state and the OAuth client's fields ("google" op)
+struct BotGoogle: Decodable {
+    let status, url, gid, gsecret, gpaste: String
+}
+
+struct BotSettings: Decodable {
+    let persona, personaField, invite, purl, join: String
+    let google: BotGoogle
+    let peers: [BotPeer]
+}
+
+// the hub's latest frame of the bot's page: n changes with every new one
+struct BotBrowser: Decodable {
+    let url, n: String
+}
+
+struct BotPost: Decodable, Identifiable {
+    let id, from, text, ago: String
+    let mine: Bool
+}
+
+// what the main area shows when it is not a thread: a bot (kind "bot",
+// its tab's content; the chat is the screen's thread), a room, or a bot
+// on a linked machine ("remote")
+struct BotView: Decodable {
+    let kind, id, name: String
+    let mood, note, tab, peer, members, draft, secret, secretFor, hname, cat: String?
+    let look: Int?
+    let tabs: [BotTab]?
+    let space: SpaceModel?
+    let browser: BotBrowser?
+    let memory: [BotMemory]?
+    let routines: [BotRoutine]?
+    let routine: RoutineForm?
+    let hooks: [BotHook]?
+    let settings: BotSettings?
+    let posts: [BotPost]?
+}
+
 struct Screen: Decodable {
     let online: Bool
     // hub: the one in focus (its thread is shown, its plots are drawn)
@@ -288,6 +396,11 @@ struct Screen: Decodable {
     let hubs: [HubRow]
     let found: [Found]
     let projects: [Project]
+    let bots: [BotRow]
+    let rooms: [RoomRow]
+    let newBot: NewBot?
+    let newRoom: NewRoom?
+    let bot: BotView?
     let deleting: Deleting?
     let folders: Folders?
     let settings: Settings?

@@ -93,12 +93,66 @@ data class HubRow(val key: String, val name: String, val online: Boolean)
 
 data class Found(val name: String, val url: String)
 
+// Bots (src/mobile/bots.bend). A cat in the list: "bot" (or, remote,
+// "remote") sends its id; mood and note say how it is; cat names its rig
+// ("look:mood"), which the bridge gives once (Core.cats).
+data class BotRow(
+    val id: String, val name: String, val mood: String, val note: String, val peer: String, val cat: String,
+    val look: Int, val sel: Boolean, val remote: Boolean, val machine: String,
+)
+
+// a room in the list ("room" sends its id)
+data class RoomRow(val id: String, val name: String, val members: Int, val sel: Boolean, val machine: String)
+
+// the new bot form: its fields ("bfield" name, persona, provider),
+// "bot-create" makes it, "form-close" "@bnew" drops it
+data class ProviderChoice(val label: String, val provider: String, val on: Boolean)
+data class NewBot(val name: String, val persona: String, val provider: String, val providers: List<ProviderChoice>)
+
+// the new room form: "bfield" rname, "room-pick" a bot's id, "room-save"
+data class RoomPick(val id: String, val name: String, val on: Boolean)
+data class NewRoom(val name: String, val picks: List<RoomPick>)
+
+data class BotTab(val id: String, val label: String)
+data class BotMemory(val key: String, val kind: String, val text: String, val tags: String, val updated: String)
+// schedule: the cron line described ("when")
+data class BotRoutine(
+    val id: String, val name: String, val cron: String, val schedule: String, val prompt: String,
+    val last: String, val on: Boolean,
+)
+// the routine form ("routine-edit" id, or "" for a new one, opens it)
+data class RoutineForm(val open: Boolean, val id: String, val name: String, val cron: String, val prompt: String)
+data class BotHook(val id: String, val name: String, val path: String, val last: String, val count: Int)
+data class BotPeer(val id: String, val name: String, val url: String)
+// Google's sign-in state and the OAuth client's fields ("google" op)
+data class BotGoogle(val status: String, val url: String, val gid: String, val gsecret: String, val gpaste: String)
+data class BotSettings(
+    val persona: String, val personaField: String, val invite: String, val purl: String, val join: String,
+    val google: BotGoogle, val peers: List<BotPeer>,
+)
+// the hub's latest frame of the bot's page: n changes with every new one
+data class BotBrowser(val url: String, val n: String)
+data class BotPost(val id: String, val from: String, val text: String, val ago: String, val mine: Boolean)
+
+// what the main area shows when it is not a thread: a bot (kind "bot",
+// its tab's content; the chat is the screen's thread), a room, or a bot
+// on a linked machine ("remote")
+data class BotView(
+    val kind: String, val id: String, val name: String, val mood: String, val note: String, val tab: String,
+    val peer: String, val members: String, val draft: String, val secret: String, val secretFor: String,
+    val cat: String, val tabs: List<BotTab>, val space: SpaceModel?, val browser: BotBrowser?,
+    val memory: List<BotMemory>, val routines: List<BotRoutine>, val routine: RoutineForm?,
+    val hooks: List<BotHook>, val settings: BotSettings?, val posts: List<BotPost>,
+)
+
 // hub: the one in focus (its thread is shown, its plots are drawn)
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
     val island: Island, val deleting: Deleting?, val folders: Folders?,
     val hub: String, val hubs: List<HubRow>, val found: List<Found>,
+    val bots: List<BotRow> = emptyList(), val rooms: List<RoomRow> = emptyList(),
+    val newBot: NewBot? = null, val newRoom: NewRoom? = null, val bot: BotView? = null,
 )
 
 data class Cmd(
@@ -174,6 +228,38 @@ private fun island(o: JSONObject?) = Island(
     o?.optJSONArray("lines").map { IslandLine(it.optString("thread"), it.optString("title"), it.optString("doing")) },
 )
 
+private fun botView(o: JSONObject) = BotView(
+    o.optString("kind"), o.optString("id"), o.optString("name"), o.optString("mood"), o.optString("note"),
+    o.optString("tab", "chat"), o.optString("peer"), o.optString("members"), o.optString("draft"),
+    o.optString("secret"), o.optString("secretFor"), o.optString("cat"),
+    o.optJSONArray("tabs").map { BotTab(it.optString("id"), it.optString("label")) },
+    o.optJSONObject("space")?.let(::spaceModel),
+    o.optJSONObject("browser")?.let { BotBrowser(it.optString("url"), it.optString("n")) },
+    o.optJSONArray("memory").map {
+        BotMemory(it.optString("key"), it.optString("kind"), it.optString("text"), it.optString("tags"), it.optString("updated"))
+    },
+    o.optJSONArray("routines").map {
+        BotRoutine(it.optString("id"), it.optString("name"), it.optString("cron"), it.optString("when"), it.optString("prompt"),
+            it.optString("last"), it.optBoolean("on"))
+    },
+    o.optJSONObject("routine")?.let {
+        RoutineForm(it.optBoolean("open"), it.optString("id"), it.optString("name"), it.optString("cron"), it.optString("prompt"))
+    },
+    o.optJSONArray("hooks").map {
+        BotHook(it.optString("id"), it.optString("name"), it.optString("path"), it.optString("last"), it.optInt("count"))
+    },
+    o.optJSONObject("settings")?.let { st ->
+        val g = st.optJSONObject("google") ?: JSONObject()
+        BotSettings(st.optString("persona"), st.optString("personaField"), st.optString("invite"), st.optString("purl"),
+            st.optString("join"),
+            BotGoogle(g.optString("status"), g.optString("url"), g.optString("gid"), g.optString("gsecret"), g.optString("gpaste")),
+            st.optJSONArray("peers").map { BotPeer(it.optString("id"), it.optString("name"), it.optString("url")) })
+    },
+    o.optJSONArray("posts").map {
+        BotPost(it.optString("id"), it.optString("from"), it.optString("text"), it.optString("ago"), it.optBoolean("mine"))
+    },
+)
+
 fun parseScreen(o: JSONObject) = Screen(
     o.optBoolean("online"), o.optString("version"), o.optString("error"), o.optString("note"),
     o.optString("sel"), o.optString("empty"),
@@ -194,6 +280,21 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optString("hub"),
     o.optJSONArray("hubs").map { HubRow(it.optString("key"), it.optString("name"), it.optBoolean("online")) },
     o.optJSONArray("found").map { Found(it.optString("name"), it.optString("url")) },
+    o.optJSONArray("bots").map {
+        BotRow(it.optString("id"), it.optString("name"), it.optString("mood"), it.optString("note"), it.optString("peer"),
+            it.optString("cat"), it.optInt("look"), it.optBoolean("sel"), it.optBoolean("remote"), it.optString("machine"))
+    },
+    o.optJSONArray("rooms").map {
+        RoomRow(it.optString("id"), it.optString("name"), it.optInt("members"), it.optBoolean("sel"), it.optString("machine"))
+    },
+    o.optJSONObject("newBot")?.let { f ->
+        NewBot(f.optString("name"), f.optString("persona"), f.optString("provider"),
+            f.optJSONArray("providers").map { ProviderChoice(it.optString("label"), it.optString("provider"), it.optBoolean("on")) })
+    },
+    o.optJSONObject("newRoom")?.let { f ->
+        NewRoom(f.optString("name"), f.optJSONArray("picks").map { RoomPick(it.optString("id"), it.optString("name"), it.optBoolean("on")) })
+    },
+    o.optJSONObject("bot")?.let(::botView),
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =
