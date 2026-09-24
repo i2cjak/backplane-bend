@@ -26,6 +26,7 @@ import ./src/core/fold.bend as FO
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
 import ./src/mobile/picker.bend as MP
+import ./src/mobile/hubs.bend as Hb
 import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
 
@@ -747,6 +748,12 @@ def Laws.alert_none_on_connect(ts, es):
       {==}
     case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
       Laws.alert_none_on_connect(t, es)
+
+def Laws.hubs_no_id(k):
+  {==}
+
+def Laws.hubs_unpaired_quiet(cid, now, cur, t):
+  {==}
 
 def Laws.island_idle_empty(ts, es, h):
   match ts:

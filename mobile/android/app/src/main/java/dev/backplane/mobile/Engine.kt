@@ -47,12 +47,14 @@ class Engine(private val source: String, private val cid: String) {
 
     private fun q(s: String) = JSONObject.quote(s)
 
-    suspend fun resume() = call("Backplane.resume()")
+    // the paired hubs' keys, in order
+    suspend fun hubs(keys: List<String>) = out("Backplane.hubs(${org.json.JSONArray(keys)})")
+    suspend fun resume(key: String) = call("Backplane.resume(${q(key)})")
     suspend fun screen() = out("Backplane.screen()")
-    // a binary frame from the hub, as base64
-    suspend fun recv(data: String) = out("Backplane.recv(${q(data)})")
+    // a binary frame from hub key, as base64
+    suspend fun recv(key: String, data: String) = out("Backplane.recv(${q(key)}, ${q(data)})")
     suspend fun act(action: String, value: String) = out("Backplane.act(${q(action)}, ${q(value)})")
     suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
-    suspend fun online(b: Boolean) = out("Backplane.online($b)")
+    suspend fun online(key: String, b: Boolean) = out("Backplane.online(${q(key)}, $b)")
     suspend fun tick(now: Long) = out("Backplane.tick($now)")
 }

@@ -16,8 +16,9 @@ data class Row(
     val lead: List<Swipe>, val trail: List<Swipe>,
 )
 
+// machine: the hub it is on, named when the phone has several
 data class Project(
-    val id: String, val title: String, val root: String, val open: Boolean,
+    val id: String, val title: String, val root: String, val machine: String, val open: Boolean,
     val threads: List<Row>, val snoozedShelf: String, val snoozed: List<Row>,
     val shelf: String, val settled: List<Row>,
 )
@@ -76,16 +77,24 @@ data class IslandLine(val thread: String, val title: String, val doing: String)
 
 data class Island(val running: Int, val headline: String, val lines: List<IslandLine>)
 
+// a paired hub (key: its host:port), and a machine a hub knows of that
+// this phone is not paired with yet
+data class HubRow(val key: String, val name: String, val online: Boolean)
+
+data class Found(val name: String, val url: String)
+
+// hub: the one in focus (its thread is shown, its plots are drawn)
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
     val island: Island, val deleting: Deleting?, val folders: Folders?,
+    val hub: String, val hubs: List<HubRow>, val found: List<Found>,
 )
 
 data class Cmd(
     val type: String, val text: String,
-    // a "send": the CBOR frame, as base64
-    val data: String = "",
+    // a "send": the CBOR frame, as base64, for the hub keyed hub
+    val data: String = "", val hub: String = "",
     // a "notify": the thread whose turn ended, its title, "done"/"fail", and what to say
     val thread: String = "", val title: String = "", val kind: String = "", val body: String = "",
 )
@@ -154,7 +163,7 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optBoolean("online"), o.optString("version"), o.optString("error"), o.optString("note"),
     o.optString("sel"), o.optString("empty"),
     o.optJSONArray("projects").map {
-        Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optBoolean("open"),
+        Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optString("machine"), it.optBoolean("open"),
             it.optJSONArray("threads").map(::row), it.optString("snoozedShelf"), it.optJSONArray("snoozed").map(::row),
             it.optString("shelf"), it.optJSONArray("settled").map(::row))
     },
@@ -167,10 +176,13 @@ fun parseScreen(o: JSONObject) = Screen(
         Folders(p.optString("text"), p.optString("hint"), p.optString("error"),
             p.optJSONArray("items").map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) })
     },
+    o.optString("hub"),
+    o.optJSONArray("hubs").map { HubRow(it.optString("key"), it.optString("name"), it.optBoolean("online")) },
+    o.optJSONArray("found").map { Found(it.optString("name"), it.optString("url")) },
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =
     o.optJSONArray("cmds").map {
-        Cmd(it.optString("type"), it.optString("text"), it.optString("data"),
+        Cmd(it.optString("type"), it.optString("text"), it.optString("data"), it.optString("hub"),
             it.optString("thread"), it.optString("title"), it.optString("kind"), it.optString("body"))
     }

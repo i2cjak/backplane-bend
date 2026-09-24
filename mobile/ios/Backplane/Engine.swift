@@ -74,14 +74,15 @@ final class Engine: @unchecked Sendable {
     }
 
     func start(_ cid: String) async -> Out? { await out("start", [cid]) }
-    func resume() async -> String { await call("resume", []) { $0 } }
+    func hubs(_ keys: [String]) async -> Out? { await out("hubs", [keys]) }
+    func resume(_ key: String) async -> String { await call("resume", [key]) { $0 } }
     func register(_ kind: String, _ token: String, env: String, bundle: String) async -> Out? {
         await out("register", ["ios", token, kind, "", env, bundle], screen: false)
     }
     func screen() async -> Out? { await out("screen", []) }
-    func recv(_ text: String) async -> Out? { await out("recv", [text]) }
+    func recv(_ key: String, _ text: String) async -> Out? { await out("recv", [key, text]) }
     func act(_ action: String, _ value: String) async -> Out? { await out("act", [action, value]) }
     func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
-    func online(_ b: Bool) async -> Out? { await out("online", [b]) }
+    func online(_ key: String, _ b: Bool) async -> Out? { await out("online", [key, b]) }
     func tick(_ now: Int) async -> Out? { await out("tick", [now]) }
 }

@@ -20,7 +20,8 @@ struct Row: Decodable, Identifiable, Hashable {
 }
 
 struct Project: Decodable, Identifiable {
-    let id, title, root: String
+    // machine: the hub it is on, named when the phone has several
+    let id, title, root, machine: String
     let open: Bool
     let threads: [Row]
     let snoozedShelf: String
@@ -120,9 +121,23 @@ struct Folders: Decodable {
     let items: [FolderRow]
 }
 
+// a paired hub (key: its host:port), and a machine a hub knows of that
+// this phone is not paired with yet
+struct HubRow: Decodable, Hashable {
+    let key, name: String
+    let online: Bool
+}
+
+struct Found: Decodable, Hashable {
+    let name, url: String
+}
+
 struct Screen: Decodable {
     let online: Bool
-    let version, error, note, sel, empty: String
+    // hub: the one in focus (its thread is shown, its plots are drawn)
+    let version, error, note, sel, empty, hub: String
+    let hubs: [HubRow]
+    let found: [Found]
     let projects: [Project]
     let deleting: Deleting?
     let folders: Folders?
@@ -133,8 +148,8 @@ struct Screen: Decodable {
 struct Cmd: Decodable {
     let type: String
     let text: String?
-    // send: the CBOR frame, as base64
-    let data: String?
+    // send: the CBOR frame, as base64, for the hub keyed hub
+    let data, hub: String?
     // notify
     let thread, title, kind, body: String?
 }

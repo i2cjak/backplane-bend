@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) threadFrom(intent)
         setContent {
             // once paired, ask to post alerts
-            LaunchedEffect(model.link.isNotEmpty()) { if (model.link.isNotEmpty()) askNotify() }
+            LaunchedEffect(model.links.isNotEmpty()) { if (model.links.isNotEmpty()) askNotify() }
             Theme { App(model) }
         }
     }
@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
         ask.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
-    // backplane://pair?url=... opens straight into that hub
+    // backplane://pair?url=... pairs with that hub too
     private fun pairFrom(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "backplane") model.pair(data.toString())

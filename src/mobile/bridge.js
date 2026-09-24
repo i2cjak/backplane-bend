@@ -131,66 +131,68 @@ function cbor(b) {
     return { $: "Null" };
   }
 }
-let ui = null;
+let hubs = null;
 
 // every call answers {"screen": <screen>, "cmds": [...]} as one string;
-// alerts ride along as {"type": "notify", ...} commands
+// a send names the hub it goes to; alerts ride along as
+// {"type": "notify", ...} commands
 function out(cmds, quiet, alerts) {
   const cs = [];
-  for (const c of each(cmds)) {
-    if (c.$ === "Send") cs.push({ type: "send", data: App.wire(c.text) });
+  for (const h of each(cmds)) {
+    const c = h.cmd;
+    if (c.$ === "Send") cs.push({ type: "send", hub: h.hub, data: App.wire(c.text) });
     else if (c.$ === "Copy") cs.push({ type: "copy", text: c.text });
     else if (c.$ === "Focus") cs.push({ type: "focus", id: c.id });
     else if (c.$ === "Scroll") cs.push({ type: "scroll" });
-    else if (c.$ === "Connect") cs.push({ type: "connect", url: c.url });
   }
   for (const a of alerts ?? []) cs.push({ type: "notify", ...a });
-  return '{"screen":' + (quiet ? "null" : App.screen(ui)) + ',"cmds":' + JSON.stringify(cs) + "}";
+  return '{"screen":' + (quiet ? "null" : App.screen(hubs)) + ',"cmds":' + JSON.stringify(cs) + "}";
+}
+
+// a step's answer: the hubs after it, its commands and alerts
+function step(r, quiet) {
+  hubs = r.hubs;
+  return out(r.cmds, quiet, JSON.parse(App.alerts(r)));
 }
 
 globalThis.Backplane = {
   // cid: this phone's id, part of every message id (a resend is stored once)
   start(cid) {
-    ui = App.init(secs(Date.now() / 1000), cid);
+    hubs = App.init(secs(Date.now() / 1000), cid);
     return out(null);
   },
-  // the socket's query: resume from what this app already holds
-  resume() {
-    return JSON.stringify({ since: App.seq(ui), origin: App.origin(ui) });
+  // the hubs paired, as their keys (host:port) in order
+  hubs(keys) {
+    hubs = App.hubs(hubs, JSON.stringify(keys));
+    return out(null);
+  },
+  // hub k's socket query: resume from what this app already holds
+  resume(k) {
+    return JSON.stringify({ since: App.seq(hubs, k), origin: App.origin(hubs, k) });
   },
   screen() {
     return out(null);
   },
-  // a binary frame from the hub, as base64
-  recv(data) {
-    const r = App.recv(ui, cbor(bytes(data)));
-    ui = r.act.ui;
-    return out(r.act.cmds, false, JSON.parse(r.alerts));
+  // a binary frame from hub k, as base64
+  recv(k, data) {
+    return step(App.recv(hubs, k, cbor(bytes(data))));
   },
   register(platform, token, kind, thread, env, bundle) {
-    const r = App.register(ui, platform, token, kind, thread, env, bundle);
-    ui = r.ui;
-    return out(r.cmds, true);
+    return step(App.register(hubs, platform, token, kind, thread, env, bundle), true);
   },
   act(action, value) {
-    const r = App.act(ui, action, value);
-    ui = r.ui;
-    return out(r.cmds);
+    return step(App.act(hubs, action, value));
   },
   // an action whose screen the native side already shows (typing a draft)
   quiet(action, value) {
-    const r = App.act(ui, action, value);
-    ui = r.ui;
-    return out(r.cmds, true);
+    return step(App.act(hubs, action, value), true);
   },
-  // a new connection re-asks for the viewer's plot
-  online(b) {
-    const r = App.online(ui, !!b);
-    ui = r.ui;
-    return out(r.cmds);
+  // hub k's socket opened or closed; a new connection re-asks for the
+  // viewer's plot
+  online(k, b) {
+    return step(App.online(hubs, k, !!b));
   },
   tick(now) {
-    ui = App.tick(ui, secs(now));
-    return out(null);
+    return step(App.tick(hubs, secs(now)));
   },
 };

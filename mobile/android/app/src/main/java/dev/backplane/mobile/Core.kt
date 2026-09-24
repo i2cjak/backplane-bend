@@ -20,16 +20,20 @@ import org.json.JSONObject
 import java.security.SecureRandom
 
 // The app's one Backplane client, alive as long as the process: the Bend
-// engine, the socket, the current screen and the composer. Activities
+// engine, a socket per paired hub (keyed by host:port, Pairing.key), the
+// current screen and the composer. Activities
 // come and go and only observe it; the live service keeps the process
 // (and so this) running while agents work.
 class Core(private val app: Application) : Application.ActivityLifecycleCallbacks {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences("backplane", Context.MODE_PRIVATE)
     private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid())
-    private var hub: Hub? = null
+    private val hubs = mutableMapOf<String, Hub>()
+    // the hub whose plots are drawn: frames from any other are dropped
+    private var shownHub = ""
 
-    var link by mutableStateOf(prefs.getString("link", "") ?: "")
+    // the pairing links, one per hub, in the order they were paired
+    var links by mutableStateOf(loadLinks())
         private set
     var screen by mutableStateOf<Screen?>(null)
         private set
@@ -65,31 +69,59 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             prefs.edit().putString("cid", it).apply()
         }
 
+    private fun loadLinks(): List<String> {
+        prefs.getString("links", null)?.let { j ->
+            val a = org.json.JSONArray(j)
+            return (0 until a.length()).map { a.optString(it) }
+        }
+        return listOfNotNull(prefs.getString("link", null)?.takeIf { it.isNotBlank() })
+    }
+
+    private fun save() {
+        prefs.edit().putString("links", org.json.JSONArray(links).toString()).remove("link").apply()
+    }
+
+    // a new hub, or a new link to one already paired (it replaces the old)
     fun pair(text: String) {
-        link = text.trim()
-        prefs.edit().putString("link", link).apply()
+        val l = text.trim()
+        val k = Pairing.key(l) ?: return
+        links = links.filter { Pairing.key(it) != k } + l
+        save()
         connect()
     }
 
+    fun unpair(key: String) {
+        links = links.filter { Pairing.key(it) != key }
+        save()
+        connect()
+    }
+
+    // one socket per paired hub: new hubs connect, unpaired ones hang up
     private fun connect() {
-        hub?.let {
-            it.stop()
-            scope.launch { apply(engine.online(false)) }
+        val keyed = LinkedHashMap<String, String>()
+        for (l in links) Pairing.key(l)?.let { k -> keyed.putIfAbsent(k, l) }
+        for (k in hubs.keys.toList()) if (k !in keyed) hubs.remove(k)?.stop()
+        scope.launch {
+            apply(engine.hubs(keyed.keys.toList()))
+            for ((k, l) in keyed) if (k !in hubs) open(k, l)
         }
-        hub = null
+    }
+
+    private fun open(key: String, link: String) {
         val base = Pairing.socket(link) ?: return
-        hub = Hub(scope,
-            url = { Pairing.resume(base, engine.resume()) },
+        hubs[key] = Hub(scope,
+            url = { Pairing.resume(base, engine.resume(key)) },
             onOpen = {
-                plots.reset()
-                scope.launch { apply(engine.online(true)) }
+                if (shownHub == key) plots.reset()
+                scope.launch { apply(engine.online(key, true)) }
             },
-            // plots go straight to the viewer, never through the Bend client
+            // plots go straight to the viewer, never through the Bend
+            // client, and only the hub in focus draws
             onMessage = { b ->
-                if (PlotStore.isPlot(b)) plots.receive(b)
-                else scope.launch { apply(engine.recv(Base64.encodeToString(b, Base64.NO_WRAP))) }
+                if (PlotStore.isPlot(b)) { if (shownHub == key) plots.receive(b) }
+                else scope.launch { apply(engine.recv(key, Base64.encodeToString(b, Base64.NO_WRAP))) }
             },
-            onClose = { scope.launch { apply(engine.online(false)) } },
+            onClose = { scope.launch { apply(engine.online(key, false)) } },
         ).also { it.start() }
     }
 
@@ -112,11 +144,15 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             if (typing == 0) composer = next.thread?.draft ?: ""
             val was = screen?.sel
             screen = next
+            if (next.hub != shownHub) {
+                shownHub = next.hub
+                plots.reset()
+            }
             if (foreground && next.sel.isNotEmpty() && next.sel != was) Notes.clear(app, next.sel)
             LiveService.sync(app, next.island, foreground)
         }
         for (c in out.cmds) when (c.type) {
-            "send" -> hub?.send(Base64.decode(c.data, Base64.DEFAULT))
+            "send" -> hubs[c.hub]?.send(Base64.decode(c.data, Base64.DEFAULT))
             "copy" -> {
                 val cm = app.getSystemService(ClipboardManager::class.java)
                 cm.setPrimaryClip(ClipData.newPlainText("Backplane", c.text))

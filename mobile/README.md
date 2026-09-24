@@ -23,6 +23,18 @@ a thread without taps.
 Pairing: paste the hub's tailnet link (`http://host:3787/#token=…`), or open
 `backplane://pair?url=<that link, URL-encoded>`.
 
+Several hubs: the phone stays connected to every hub it pairs with, one
+socket and one Bend client each (`src/mobile/hubs.bend`, keyed by
+host:port). The screen is all of them in one: each hub's projects, named
+by machine when there are several; alerts and the island from all; the
+thread of the hub in focus (the one whose thread was opened last). Ids on
+the screen carry their hub (`host:port|id`), and Bend routes each action
+by that prefix (laws `hubs_*`, test `test/hubs_test.bend`). The link
+button lists the paired hubs (unpair there), the owner's other machines
+they know of (one tap pairs), and takes a new link. Only the hub in focus
+draws plots. Debug builds take several links in `BACKPLANE_LINK`,
+separated by spaces.
+
 ## Board viewer
 
 A thread's toolbar opens its project's board, schematic or 3D model (the
