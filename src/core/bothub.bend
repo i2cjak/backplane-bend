@@ -288,10 +288,26 @@ def Bots.fire(+s: M.State, +now: Nat, +i: Nat, r: BT.Routine) -> B.Step:
 def Bots.methods() -> List<&2, String>:
   ["bots.create", "bots.edit", "bots.delete", "bots.say", "bots.room", "bots.room_delete", "bots.post", "bots.routine", "bots.routine_delete",
    "bots.routine_run", "bots.hook", "bots.hook_revoke", "bots.forget", "bots.remember", "bots.space", "bots.invite", "bots.join", "bots.unpeer",
-   "bots.google"]
+   "bots.google", "bots.tell"]
 
 def Bots.is(+m: String) -> Bool:
   String.starts_with(m, "bots.")
+
+def Bots.tell.k(m: Maybe<&2, BT.Peer>, +s: M.State, +now: Nat, +client: U32, +id: String, +to: String, +text: String) -> B.Step:
+  match m:
+    case Some{p}:
+      B.Step{[M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), BT.Room.dm("you", to), "you", text, 0n, now}],
+        [B.Reply.ok(client, id), B.BotFx{"send", Bots.peer.id(p), "/bots/deliver", Bots.remote.body("person", Bots.at.name(to), "", "", text, 0n)}]}
+    case None{}:
+      Bots.err(client, id, "no linked machine called " ++ Bots.at.peer(to))
+
+# a person writes to a bot on a linked machine
+def Bots.tell(remote: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +to: String, +text: String) -> B.Step:
+  match remote:
+    case True{}:
+      Bots.tell.k(Bots.peer(s, Bots.at.peer(to)), s, now, client, id, to, text)
+    case False{}:
+      Bots.err(client, id, "write to a bot here with bots.say")
 
 # a space's button or field: the bot hears it as a person's message
 def Bots.space.msg(+action: String, +value: String) -> String:
@@ -351,6 +367,8 @@ def Bots.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p
       B.Step{[M.PeerSet{J.Json.get_str(p, "peer", ""), "", "", True{}, now}], [B.Reply.ok(client, id), B.BotFx{"unpeer", J.Json.get_str(p, "peer", ""), "", ""}]}
     case 18n:
       B.Step.outs([B.BotFx{"google", J.Json.show(p), U32.show(client), id}])
+    case 19n:
+      Bots.tell(Bots.remote(J.Json.get_str(p, "to", "")), s, now, client, id, J.Json.get_str(p, "to", ""), J.Json.get_str(p, "text", ""))
     case _:
       Bots.err(client, id, "unknown bots request")
 
