@@ -284,19 +284,39 @@ def Ui.reply.k(u: Ui, +o: J.Json) -> Ui:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, Ui.reply.err(o), note, nf, Map.set(&2, String, ob, J.Json.as_raw(J.Json.get(o, "id"), ""), ""), tr}
 
-def Ui.diff(u: Ui, +r: J.Json) -> Ui:
+# The viewer belongs to a thread: what it shows for thread t is kept as
+# "view.kind:t" and "view.path:t" (a file an agent asked for, else the
+# thread's own board), its diff as "diff:t", and "view.n:t" counts the
+# changes, so the same file asked for twice still comes to the front.
+
+def Viewer.n(+nf: Map<&2, String>, +th: String) -> String:
+  Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n:" ++ th)), 0n))
+
+def Viewer.put(+nf: Map<&2, String>, +th: String, +kind: String, +path: String) -> Map<&2, String>:
+  Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "view.kind:" ++ th, kind), "view.path:" ++ th, path), "view.n:" ++ th, Viewer.n(nf, th))
+
+# the thread a view message is for: named, else the selected one (a hub
+# from before views were per thread names none)
+def Viewer.of(+th: String, +sel: String) -> String:
+  Bool.pick(String, String.is_empty(th), sel, th)
+
+# whether the viewer panel is open
+def Ui.panel(u: Ui) -> Bool:
+  match u:
+    case Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, nf, ob, tr}:
+      pa
+
+# the viewer switched to another kind by hand, for the selected thread
+def Ui.view_pick(u: Ui, +kind: String) -> Ui:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Viewer.put(nf, sel, kind, ""), ob, tr}
+
+def Ui.diff.k(u: Ui, +th: String, +r: J.Json) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
-        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "diff", J.Json.get_str(r, "diff", "")), "view.kind", "diff"), "view.path", ""),
-          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n))), ob, tr}
-
-def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
-  match has:
-    case True{}:
-      Ui.diff(Ui.reply.k(u, o), J.Json.get_obj(o, "result"))
-    case False{}:
-      Ui.reply.k(u, o)
+        Viewer.put(Map.set(&2, String, nf, "diff:" ++ th, J.Json.get_str(r, "diff", "")), th, "diff", ""), ob, tr}
 
 def Files.strs(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
@@ -333,14 +353,14 @@ def Ui.update(u: Ui, +o: J.Json) -> Ui:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w,
         J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", "")), nf, ob, tr}
 
-# an agent asked to show a file: the viewer opens on it (view.n counts
-# requests, so the same file asked for twice still comes to the front)
-def Ui.view(u: Ui, +o: J.Json) -> Ui:
+# an agent asked to show a file: its thread's viewer shows it, and opens
+# when that thread is the one on screen (another thread's request waits
+# for the user to go there)
+def Ui.view.k(u: Ui, +th: String, +o: J.Json) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
-      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
-        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "view.path", J.Json.get_str(o, "path", "")), "view.kind", J.Json.get_str(o, "kind", "")),
-          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n))), ob, tr}
+    case Ui{st, +sel, dr, live, op, on, now, ad, +pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, Bool.or(pa, String.eq(th, sel)), v, rid, w, er, note,
+        Viewer.put(nf, th, J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "path", "")), ob, tr}
 
 def Out.resend.k(skip: Bool, x: String, rest: List<&2, Cmd>) -> List<&2, Cmd>:
   match skip:
@@ -545,7 +565,7 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set"]
 
 # Reading the client state
 # ------------------------
@@ -554,6 +574,23 @@ def Ui.sel(u: Ui) -> String:
   match u:
     case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _, nf, ob, tr}:
       sel
+
+# the selected thread's view: its kind, path, change count and diff
+def Ui.view_get(+u: Ui, +k: String) -> String:
+  Ui.info(u, k ++ ":" ++ Ui.sel(u))
+
+def Ui.diff(+u: Ui, +r: J.Json) -> Ui:
+  Ui.diff.k(u, Viewer.of(J.Json.get_str(r, "thread", ""), Ui.sel(u)), r)
+
+def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.diff(Ui.reply.k(u, o), J.Json.get_obj(o, "result"))
+    case False{}:
+      Ui.reply.k(u, o)
+
+def Ui.view(+u: Ui, +o: J.Json) -> Ui:
+  Ui.view.k(u, Viewer.of(J.Json.get_str(o, "thread", ""), Ui.sel(u)), o)
 
 # the selected thread's draft
 def Ui.draft_text(u: Ui) -> String:
@@ -571,6 +608,17 @@ def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
     case M.State{ps, _, _, _, _, _, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
+
+def Ui.project_title.k(r: Map<&2, M.Project> & M.Project) -> String:
+  (_, p) = r
+  match p:
+    case M.Project{_, title, _, _, _}:
+      title
+
+def Ui.project_title(s: M.State, +id: String) -> String:
+  match s:
+    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+      Ui.project_title.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:
   match t:
@@ -636,6 +684,35 @@ def Models.strs(xs: List<&2, J.Json>) -> List<&2, String>:
 def Models.list(+info: String, +provider: String) -> List<&2, String>:
   Models.strs(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), provider)))
 
+def Models.menu.k(skip: Bool, +m: String, rest: List<&2, String>) -> List<&2, String>:
+  match skip:
+    case True{}:
+      rest
+    case False{}:
+      m <> rest
+
+def Models.menu.go(ms: List<&2, String>) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      Models.menu.k(Bool.or(String.is_empty(m), String.eq(m, "default")), m, Models.menu.go(t))
+
+# the model menu's entries: the provider's default ("") first, then each
+# model the CLI reports once (a CLI that lists "default" itself is the
+# same entry)
+def Models.menu(+info: String, +provider: String) -> List<&2, String>:
+  "" <> Models.menu.go(Models.list(info, provider))
+
+# The writing model: the small model that titles threads, names branches
+# and writes commit messages (settings text.provider, text.model; each
+# provider's light model unless set, like T3 Code's text generation model)
+def TextGen.provider(+st: M.State) -> String:
+  AG.Text.provider(st)
+
+def TextGen.model(+st: M.State) -> String:
+  AG.Text.model(st)
+
 def Models.label(+provider: String, +model: String) -> String:
   provider ++ " · " ++ Bool.pick(String, String.is_empty(model), "default", model)
 
@@ -665,6 +742,21 @@ def Tasks.title.k(t: M.Thread) -> String:
 
 def Tasks.title(s: M.State, +id: String) -> String:
   Tasks.title.k(Ui.thread(s, id))
+
+# A sidebar drag holds a thread id, or "project:<id>" for a project
+def Drag.project(+v: String) -> Bool:
+  String.starts_with(v, "project:")
+
+def Drag.title.k(project: Bool, +s: M.State, +v: String) -> String:
+  match project:
+    case True{}:
+      Ui.project_title(s, String.drop(v, 8n))
+    case False{}:
+      Tasks.title(s, v)
+
+# what the row being dragged is called
+def Drag.title(+s: M.State, +v: String) -> String:
+  Drag.title.k(Drag.project(v), s, v)
 
 def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
   match ts:
@@ -707,9 +799,10 @@ def Ui.answer(u: Ui, v: String) -> Act:
 
 # Sidebar model
 # -------------
-# Both clients draw the sidebar from these: projects by latest activity,
-# each with its threads on shelves (M.Sidebar.at: keys and snoozes), and the
-# visible order ctrl+1..9 counts in.
+# Both clients draw the sidebar from these: projects dragged into place
+# first (by order key), the rest by latest activity, each with its threads
+# on shelves (M.Sidebar.at: keys and snoozes), and the visible order
+# ctrl+1..9 counts in.
 
 type SRow is Data:
   SRow{rank: Nat, project: M.Project, shelves: M.Shelves}
@@ -719,6 +812,33 @@ def SRow.before(a: SRow, b: SRow) -> Bool:
     case SRow{ra, _, _} SRow{rb, _, _}:
       Nat.is_ge(ra, rb)
 
+# a row with its project's order key (Nil: none)
+type PSlot is Data:
+  PSlot{key: List<&2, Bool>, row: SRow}
+
+def PSlot.before.k(ka: List<&2, Bool>, kb: List<&2, Bool>, a: SRow, b: SRow) -> Bool:
+  match ka kb:
+    case Nil{} Nil{}:
+      SRow.before(a, b)
+    case Nil{} _ <> _:
+      False{}
+    case _ <> _ Nil{}:
+      True{}
+    case x <> xs y <> ys:
+      Cmp.is_le(M.Key.cmp(x <> xs, y <> ys))
+
+def PSlot.before(a: PSlot, b: PSlot) -> Bool:
+  match a b:
+    case PSlot{ka, ra} PSlot{kb, rb}:
+      PSlot.before.k(ka, kb, ra, rb)
+
+def PSlot.rows(xs: List<&2, PSlot>) -> List<&2, SRow>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case PSlot{_, r} <> t:
+      r <> PSlot.rows(t)
+
 def Side.latest(ts: List<&2, M.Thread>, +acc: Nat) -> Nat:
   match ts:
     case Nil{}:
@@ -726,24 +846,24 @@ def Side.latest(ts: List<&2, M.Thread>, +acc: Nat) -> Nat:
     case M.Thread{_, _, _, _, +a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
       Side.latest(t, M.Time.max(acc, a))
 
-def Side.rows.k(removed: Bool, p: M.Project, +mine: List<&2, M.Thread>, +c: Nat, +navs: Map<&2, M.Nav>, +now: Nat, rest: List<&2, SRow>) -> List<&2, SRow>:
+def Side.rows.k(removed: Bool, p: M.Project, +mine: List<&2, M.Thread>, +c: Nat, +navs: Map<&2, M.Nav>, +now: Nat, +key: String, rest: List<&2, PSlot>) -> List<&2, PSlot>:
   match removed:
     case True{}:
       rest
     case False{}:
-      SRow{Side.latest(mine, c), p, M.Sidebar.at(mine, navs, now)} <> rest
+      PSlot{M.Key.read(key), SRow{Side.latest(mine, c), p, M.Sidebar.at(mine, navs, now)}} <> rest
 
-def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat) -> List<&2, SRow>:
+def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat) -> List<&2, PSlot>:
   match ps:
     case Nil{}:
       Nil{}
     case M.Project{+id, ti, r, +c, +rm} <> t:
-      Side.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, navs, now, Side.rows.go(t, ts, navs, now))
+      Side.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, navs, now, M.Nav.project_key(navs, id), Side.rows.go(t, ts, navs, now))
 
 # the sidebar's projects in order, their threads on shelves (delegated
 # child threads live under their parent instead)
 def Side.rows(+st: M.State, +now: Nat) -> List<&2, SRow>:
-  List.sort(~SRow, ~SRow.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now))
+  PSlot.rows(List.sort(~PSlot, ~PSlot.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now)))
 
 def Side.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
   match ts:
@@ -934,6 +1054,30 @@ def Ui.reorder.pair(+u: Ui, s: Sect) -> Act:
 # "id|target"
 def Ui.reorder(+u: Ui, v: String) -> Act:
   Ui.reorder.pair(u, Side.pair(String.split(v, '|')))
+
+def Ui.reorder_project.k(ok: Bool, +u: Ui, +ids: List<&2, String>, +id: String, +to: Nat) -> Act:
+  match ok:
+    case True{}:
+      Ui.rpc(u, "project.reorder", [J.KV{"project", J.Str{id}}, J.KV{"ids", J.Json.arr(Side.strs(M.Order.move(ids, id, to)))}])
+    case False{}:
+      Act{u, Nil{}}
+
+def Ui.reorder_project.to(+u: Ui, +ids: List<&2, String>, +id: String, +target: String) -> Act:
+  Ui.reorder_project.k(Bool.and(Bool.and(Side.has(ids, id), Bool.not(String.eq(id, target))), Side.has(ids, target)), u, ids, id, M.Order.index(ids, target, 0n))
+
+# a project dropped on a row: the target is a project, or a thread standing
+# for its project
+def Ui.reorder_project.pair(+u: Ui, s: Sect) -> Act:
+  match s:
+    case Sect{+id, t}:
+      +ids = Side.projects(u)
+      +target = Side.first(t)
+      Ui.reorder_project.to(u, ids, id, Bool.pick(String, Side.has(ids, target), target, Ui.thread_project(Ui.thread(Side.st(u), target))))
+
+# "project|target": move project `id` to where `target` (a project or one
+# of its threads) sits in the sidebar
+def Ui.reorder_project(+u: Ui, v: String) -> Act:
+  Ui.reorder_project.pair(u, Side.pair(String.split(v, '|')))
 
 def Ui.move.go(+u: Ui, +id: String, +up: Bool, +ids: List<&2, String>) -> Act:
   +i = M.Order.index(ids, id, 0n)
@@ -1258,7 +1402,7 @@ def Palette.actions(+pid: String) -> List<&2, PItem>:
    PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""}, PItem{"Delete thread", "delete", ""},
    PItem{"Snooze 1 hour", "snooze", "1h"}, PItem{"Snooze until tomorrow 9:00", "snooze", "tomorrow"}, PItem{"Snooze 1 week", "snooze", "1w"}, PItem{"Unsnooze", "snooze", "off"},
    PItem{"Search threads", "key:search", ""}, PItem{"Find file", "key:files", ""},
-   PItem{"Viewer", "panel", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
+   PItem{"Viewer", "panel", ""}, PItem{"Open in KiCad", "kicad-open", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
 
 def Palette.words(ws: List<&2, String>, +l: String) -> Bool:
   match ws:
@@ -1465,6 +1609,13 @@ def Ui.scratch_set(u: Ui, +k: String, v: String) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, Map.set(&2, String, dr, k, v), live, op, on, now, ad, pa, ve, rid, w, er, note, nf, ob, tr}
+
+# A project's badge editor ("@look" is the project whose editor is open):
+# "look" opens it for a project, or closes it when it is open for that
+# one (or for ""); "look-set" sets project.color.<id> or project.icon.<id>
+# ("key=value") and leaves it open.
+def Ui.look(+u: Ui, +id: String) -> Ui:
+  Ui.scratch_set(u, "@look", Bool.pick(String, String.eq(Ui.scratch(u, "@look"), id), "", id))
 
 def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
   match u:
@@ -2075,6 +2226,17 @@ def Ui.delete(+u: Ui) -> Act:
 def Ui.on_row(u: Ui, +id: String, m: String) -> Act:
   Ui.rpc(u, m, [J.KV{"thread", J.Str{id}}])
 
+# a right-click on a sidebar row settles it, or brings a settled one back
+def Ui.row_toggle.m(sh: M.Shelf) -> String:
+  match sh:
+    case M.Settled{}:
+      "thread.unsettle"
+    case _:
+      "thread.settle"
+
+def Ui.row_toggle(+u: Ui, +id: String) -> Act:
+  Ui.on_row(u, id, Ui.row_toggle.m(M.Shelf.of(Ui.thread(Ui.state(u), id))))
+
 def Ui.row_snooze.k(u: Ui, s: Sect) -> Act:
   match s:
     case Sect{id, t}:
@@ -2222,6 +2384,16 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.row_delete(u, value)
     case 63n:
       Act{Ui.tool_fold(u, value), Nil{}}
+    case 64n:
+      Ui.row_toggle(u, value)
+    case 65n:
+      Ui.on_thread(u, "kicad.open")
+    case 66n:
+      Ui.reorder_project(u, value)
+    case 67n:
+      Act{Ui.look(u, value), Nil{}}
+    case 68n:
+      Ui.setting(u, value)
     case _:
       Act{u, Nil{}}
 

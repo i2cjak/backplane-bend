@@ -81,17 +81,25 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun App(m: AppModel) {
     var pairing by rememberSaveable { mutableStateOf(false) }
     val s = m.screen
     when {
-        m.link.isEmpty() || pairing -> Pair(m.link, cancel = if (m.link.isEmpty()) null else ({ pairing = false })) {
-            m.pair(it)
-            pairing = false
-        }
+        m.links.isEmpty() -> Pair("", cancel = null) { m.pair(it) }
         s == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        pairing -> {
+            BackHandler { pairing = false }
+            Hubs(m, s) { pairing = false }
+        }
         s.thread != null && s.thread.viewer.open.isNotEmpty() -> {
             BackHandler { m.act("view", "") }
             PlotScreen(m, s.thread.viewer)
@@ -119,6 +127,52 @@ private fun Pair(link: String, cancel: (() -> Unit)?, done: (String) -> Unit) {
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
             Button(onClick = { done(text) }, enabled = text.isNotBlank()) { Text("Connect") }
+        }
+    }
+}
+
+// the hubs this phone is paired with (the cross unpairs), the owner's
+// other machines they know of (one tap pairs), and a field for a new link
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Hubs(m: AppModel, s: Screen, back: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("Hubs") }, navigationIcon = {
+            IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        })
+    }) { pad ->
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+            items(s.hubs, key = { "h:" + it.key }) { h ->
+                ListItem(
+                    headlineContent = { Text(h.name) },
+                    supportingContent = { Text(h.key) },
+                    leadingContent = { Status(if (h.online) "idle" else "stop") },
+                    trailingContent = { IconButton(onClick = { m.unpair(h.key) }) { Icon(Icons.Filled.Close, "Unpair") } },
+                )
+            }
+            if (s.found.isNotEmpty()) {
+                item(key = "found") {
+                    Text("On your tailnet", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.outline)
+                }
+                items(s.found, key = { "f:" + it.url }) { f ->
+                    ListItem(
+                        headlineContent = { Text(f.name) },
+                        supportingContent = { Text(f.url) },
+                        trailingContent = { IconButton(onClick = { m.pair(f.url) }) { Icon(Icons.Filled.Add, "Pair") } },
+                    )
+                }
+            }
+            item(key = "add") {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+                        style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
+                    Button(onClick = { m.pair(text); text = "" }, enabled = text.isNotBlank()) { Text("Add hub") }
+                }
+            }
         }
     }
 }
@@ -223,7 +277,7 @@ private fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onCli
 @Composable
 private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
     val snacks = remember { SnackbarHostState() }
-    var adding by rememberSaveable { mutableStateOf(false) }
+    var choosing by remember { mutableStateOf(false) }
     Errors(m, s, snacks)
     Scaffold(
         topBar = {
@@ -237,8 +291,19 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { adding = true }) { Icon(Icons.Filled.CreateNewFolder, "Add project") }
-                    IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Pairing") }
+                    // with several hubs, the picker opens on the one chosen
+                    Box {
+                        IconButton(onClick = { if (s.hubs.size > 1) choosing = true else m.act("picker-open") }) {
+                            Icon(Icons.Filled.CreateNewFolder, "Add project")
+                        }
+                        DropdownMenu(choosing, { choosing = false }) {
+                            for (h in s.hubs) DropdownMenuItem(text = { Text(h.name) }, onClick = {
+                                choosing = false
+                                m.act("picker-open", h.key + "|")
+                            })
+                        }
+                    }
+                    IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Hubs") }
                 },
             )
         },
@@ -254,7 +319,10 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                 item(key = "p:" + p.id) {
                     ListItem(
                         headlineContent = { Text(p.title, style = MaterialTheme.typography.titleMedium) },
-                        supportingContent = { Text(p.root, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = {
+                            Text(if (p.machine.isEmpty()) p.root else p.machine + ": " + p.root,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
                         trailingContent = {
                             IconButton(onClick = { m.act("new-thread", p.id) }) { Icon(Icons.Filled.Add, "New thread") }
                         },
@@ -297,20 +365,57 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
     )
-    if (adding) {
-        var path by rememberSaveable { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { adding = false },
-            title = { Text("Add project") },
-            text = {
-                OutlinedTextField(path, { path = it }, singleLine = true,
-                    label = { Text("Path on the hub") }, placeholder = { Text("/path/to/project") })
+    s.folders?.let { FolderPicker(m, it) }
+}
+
+// the project picker: a path field over the listed folder's rows
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderPicker(m: AppModel, p: Folders) {
+    var text by remember { mutableStateOf(p.text) }
+    // what was typed here: a screen still echoing it never overwrites the field
+    val typed = remember { mutableSetOf<String>() }
+    LaunchedEffect(p.text) {
+        if (p.text !in typed) { typed.clear(); text = p.text }
+    }
+    Dialog(onDismissRequest = { m.act("proj-close") }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Add project") },
+                    navigationIcon = { IconButton(onClick = { m.act("proj-close") }) { Icon(Icons.Filled.Close, "Cancel") } },
+                )
             },
-            confirmButton = {
-                TextButton(onClick = { m.act("add-project", path); adding = false }, enabled = path.isNotBlank()) { Text("Add") }
-            },
-            dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
-        )
+        ) { pad ->
+            Column(Modifier.fillMaxSize().padding(pad).imePadding()) {
+                OutlinedTextField(text, { t ->
+                    text = t
+                    typed.add(t)
+                    m.act("picker-type", t)
+                }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), singleLine = true,
+                    placeholder = { Text(p.hint) }, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false))
+                if (p.error.isNotEmpty()) Text(p.error, Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(p.items) { r ->
+                        val icon = when (r.kind) {
+                            "up" -> Icons.Filled.ArrowUpward
+                            "add" -> Icons.Filled.AddCircleOutline
+                            "new", "mkdir" -> Icons.Filled.CreateNewFolder
+                            "off" -> Icons.Filled.Check
+                            else -> Icons.Filled.Folder
+                        }
+                        val tone = if (r.kind == "dir" || r.kind == "up") MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                        ListItem(
+                            headlineContent = { Text(r.label, maxLines = 1, overflow = TextOverflow.Ellipsis, color = tone) },
+                            leadingContent = { Icon(icon, null, tint = tone) },
+                            modifier = (if (r.action.isEmpty()) Modifier.alpha(0.5f) else Modifier.combinedClickableCompat { m.act(r.action, r.value) }),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -407,6 +512,30 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                         Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Box {
+                        var models by remember { mutableStateOf(false) }
+                        TextButton(onClick = { models = true }) {
+                            Text(t.picker.label, style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Icon(Icons.Filled.ExpandMore, "Choose the model and effort", Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.outline)
+                        }
+                        DropdownMenu(models, { models = false }) {
+                            for (c in t.picker.models) DropdownMenuItem(
+                                text = { Text(c.label) },
+                                leadingIcon = { if (c.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                                onClick = { models = false; m.act("model", c.value) },
+                            )
+                            if (t.picker.efforts.isNotEmpty()) {
+                                HorizontalDivider()
+                                for (c in t.picker.efforts) DropdownMenuItem(
+                                    text = { Text("Effort: ${c.label}") },
+                                    leadingIcon = { if (c.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                                    onClick = { models = false; m.act("effort", c.value) },
+                                )
+                            }
+                        }
+                    }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })

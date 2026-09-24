@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/agent.bend as AG
 import ./src/core/tailnet.bend as TN
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
@@ -30,6 +31,12 @@ import ./src/core/pcb3d.bend as P3
 import ./src/gfx/mesh.bend as MS
 import ./src/gfx/face.bend as FA
 import ./src/core/glb.bend as G
+import ./src/core/menu.bend as MN
+import ./src/app/win.bend as W
+import ./src/core/badge.bend as BG
+
+import ./src/mobile/picker.bend as MP
+import ./src/mobile/hubs.bend as Hb
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -161,6 +168,22 @@ law key_mid_below:
   for b: List<&2, Bool>
   for h: {M.Key.lt(a, b) == True{} : Bool}
   {M.Key.lt(M.Key.mid(a, b), b) == True{} : Bool}
+
+# a project dragged into place sits above every project never dragged
+law project_keyed_first:
+  for x: Bool
+  for xs: List<&2, Bool>
+  for a: U.SRow
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{x <> xs, a}, U.PSlot{Nil{}, b}) == True{} : Bool}
+
+# and one never dragged sits below every one that was
+law project_unkeyed_below:
+  for a: U.SRow
+  for y: Bool
+  for ys: List<&2, Bool>
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{Nil{}, a}, U.PSlot{y <> ys, b}) == False{} : Bool}
 
 # Sidebar status
 # --------------
@@ -571,6 +594,20 @@ law alert_none_on_connect:
   for +es: List<&2, M.Entry>
   {Nt.Note.alerts(ts, [], es) == [] : List<&2, J.Json>}
 
+# a phone paired with several hubs names every thread and project by its
+# hub ("key|id"), but "nothing selected" stays nothing, on any hub
+law hubs_no_id:
+  for +k: String
+  {Hb.Hubs.id(k, "") == "" : String}
+
+# a phone paired with no hub sends nothing, however time passes
+law hubs_unpaired_quiet:
+  for +cid: String
+  for now: Nat
+  for cur: String
+  for +t: Nat
+  {Hb.Hubs.cmds(Hb.Hubs.tick(Hb.Hubs{cid, now, cur, []}, t)) == [] : List<&2, Hb.HCmd>}
+
 # with no thread running the island is empty, so the Live Activity (iOS)
 # ends and the live service (Android) stops
 law island_idle_empty:
@@ -887,6 +924,19 @@ law row_delete_asks_first:
   for +id: String
   {U.Act.cmds(U.Ui.row_delete.k(False{}, u, id)) == Nil{} : List<&2, U.Cmd>}
 
+# a right-click on a row the user settled brings it back
+law row_toggle_unsettles:
+  for t: M.Thread
+  for +at: Nat
+  for h: {M.Thread.hidden(t) == False{} : Bool}
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.settled(True{}, at, t))) == "thread.unsettle" : String}
+
+# and on a row the user brought back it settles it again
+law row_toggle_settles:
+  for +at: Nat
+  for t: M.Thread
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.unsettled(at, t))) == "thread.settle" : String}
+
 # an answer to anything but the project picker's newest request leaves the
 # client as it was (a late listing never replaces a newer one)
 law picker_drops_stale:
@@ -1100,3 +1150,245 @@ law scene3_fade_ends:
 law scene3_stale_parts_dropped:
   {MS.Model.size(FA.Scene3.model(FA.Scene3.add_if(FA.Scene3.board(FA.FNone{}, 5000n), 4000n, [G.Tri3{0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 255}], 7000n)))
     == 0n : Nat}
+# The model picker
+# ----------------
+# Its pieces come from core/menu.bend for whatever models and effort
+# levels the CLIs report, so a new model can never make two collide.
+
+# model rows stack: each starts where the one above it ends
+law menu_rows_apart:
+  for n: Nat
+  for +x: Nat
+  for +y: Nat
+  for +w: Nat
+  {MN.Boxes.apart(MN.Menu.rows(n, x, y, w)) == True{} : Bool}
+
+# effort chips never overlap, however many and however wide, in a menu of
+# any width: each is right of the one before it or on a line below
+law menu_chips_apart:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Boxes.apart(MN.Flow.place(ws, left, right, x, y, h, gap)) == True{} : Bool}
+
+# and all of them end above the first model row
+law menu_chips_above_rows:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Boxes.above(MN.Flow.place(ws, left, right, x, y, h, gap), MN.Flow.under(ws, left, right, x, y, h, gap)) == True{} : Bool}
+
+# the rows shown take no more height than there is (the menu never covers
+# the thread's header; the rest scroll)
+law menu_rows_fit:
+  for +n: Nat
+  for +room: Nat
+  {Nat.is_ge(room, MN.Menu.span(n, room)) == True{} : Bool}
+
+# scrolled, the rows shown never run past the last model
+law menu_scroll_in_list:
+  for +off: Nat
+  for +n: Nat
+  for +shown: Nat
+  for h: {Nat.is_ge(n, shown) == True{} : Bool}
+  {Nat.is_ge(n, Nat.add(shown, MN.Menu.off(off, n, shown))) == True{} : Bool}
+
+# the menu is never wider than the room it opens in
+law menu_width_fits:
+  for +want: Nat
+  for +room: Nat
+  {Nat.is_ge(room, MN.Menu.width(want, room)) == True{} : Bool}
+
+# a model's label starts past the name column (names are clipped to it)
+law menu_label_clear:
+  for +name_x: Nat
+  for +widest: Nat
+  for +w: Nat
+  {Nat.is_ge(MN.Menu.label_x(name_x, MN.Menu.col(widest, w)), Nat.add(name_x, MN.Menu.col(widest, w))) == True{} : Bool}
+
+# every press in the window first closes a menu it lands outside of
+law menu_press_first:
+  for +n: N.Nui
+  for +x: U32
+  for +y: U32
+  {N.Nui.event(n, W.WButton{x, y, 1, True{}}) == N.Nui.press(N.Nui.in_viewer(n, x), N.Menu.press(N.Hit.find(N.Nui.hits(n), x, y), n), x, y) : N.Step}
+
+# a right-click too
+law menu_right_press_first:
+  for +n: N.Nui
+  for +x: U32
+  for +y: U32
+  {N.Nui.event(n, W.WButton{x, y, 3, True{}}) == N.Row.menu(N.Hit.find(N.Nui.hits(n), x, y), N.Menu.press(N.Hit.find(N.Nui.hits(n), x, y), n), x) : N.Step}
+
+# a press on nothing is outside
+law menu_press_nothing:
+  {N.Menu.inside(None{}) == False{} : Bool}
+
+# so is a press on anything that is not the menu's own
+law menu_press_elsewhere:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +a: String
+  for +v: String
+  for h: {N.Menu.own(a, v) == False{} : Bool}
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, a, v}}) == False{} : Bool}
+
+# the picker's own pieces keep it open: any model row, effort chip, or its box
+law menu_press_rows_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "model", v}}) == True{} : Bool}
+
+law menu_press_box_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "menu", v}}) == True{} : Bool}
+
+law menu_press_chips_inside:
+  for +x0: U32
+  for +y0: U32
+  for +x1: U32
+  for +y1: U32
+  for +v: String
+  {N.Menu.inside(Some{N.Hit{x0, y0, x1, y1, "effort", v}}) == True{} : Bool}
+
+# Project badges
+# --------------
+
+# every icon a project may take is in the set (and so draws: icons_all_draw)
+law badge_icons_exist:
+  {ICO.Icon.missing(BG.Badge.icons()) == Nil{} : List<&2, String>}
+
+# a project with no colour set gets one of the tints, whatever its id
+law badge_auto_tint:
+  for +k: Nat
+  {BG.Badge.has(BG.Badge.colors(), BG.Badge.nth(k)) == True{} : Bool}
+
+# a colour that is not a tint falls back to the project's own
+law badge_unknown_color:
+  for +id: String
+  {BG.Badge.color.of("mauve", id) == BG.Badge.auto(id) : String}
+
+# a set tint wins
+law badge_set_color:
+  for +id: String
+  {BG.Badge.color.of("teal", id) == "teal" : String}
+
+# no icon set, or one not in the set, is the folder
+law badge_default_icon:
+  {BG.Badge.icon.of("") == "folder" : String}
+
+law badge_unknown_icon:
+  {BG.Badge.icon.of("rocket-ship") == "folder" : String}
+
+# The project picker on a phone
+# ------------------------------
+
+# a closed picker draws nothing
+law mpick_closed_draws_nothing:
+  for +u: U.Ui
+  for h: {U.Ui.flag(u, "proj") == False{} : Bool}
+  {MP.MPick.json(u) == J.Null{} : J.Json}
+
+# typing within the folder already asked for only filters: the hub is
+# asked nothing
+law mpick_filter_asks_nothing:
+  for +u: U.Ui
+  for +text: String
+  for h: {String.eq(MP.MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")) == True{} : Bool}
+  {MP.MPick.type(u, text) == U.Act{U.Ui.scratch_set(u, "@mpick", text), Nil{}} : U.Act}
+
+# it opens at home, and a folder under home shows as ~
+law mpick_opens_home:
+  {MP.MPick.dir("~/") == "~/" : String}
+
+law mpick_tilde:
+  {MP.MPick.field("/home/h", "/home/h/docs") == "~/docs/" : String}
+
+# Thread titles
+# -------------
+
+# a written title never replaces a title the user gave the thread meanwhile
+law title_user_rename_wins:
+  for +current: String
+  for +placeholder: String
+  for +answer: String
+  for +thread: String
+  for +now: Nat
+  for h: {String.eq(current, placeholder) == False{} : Bool}
+  {H.Title.changes(current, placeholder, answer, thread, now) == [] : List<&2, M.Change>}
+
+# while the first message's placeholder stands, the cleaned answer is the title
+law title_applies_when_placeholder:
+  for +current: String
+  for +placeholder: String
+  for +answer: String
+  for +thread: String
+  for +now: Nat
+  for same: {String.eq(current, placeholder) == True{} : Bool}
+  for set: {String.is_empty(placeholder) == False{} : Bool}
+  for some: {String.is_empty(AG.Title.clean(answer)) == False{} : Bool}
+  {H.Title.changes(current, placeholder, answer, thread, now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+
+# an empty answer (the writer failed) changes nothing
+law title_empty_keeps:
+  for +current: String
+  for +placeholder: String
+  for +thread: String
+  for +now: Nat
+  {H.Title.changes(current, placeholder, "", thread, now) == [] : List<&2, M.Change>}
+
+# no text generation settings: Claude's haiku writes
+law text_model_default:
+  {AG.Text.of(M.State.empty()) == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+# an unknown provider is claude; an empty model is the provider's light one
+law text_model_unknown_provider:
+  {AG.Text.pick("gemini", "") == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+law text_model_light:
+  {AG.Text.pick("codex", " ") == AG.Tx{"codex", "gpt-6-luna"} : AG.Tx}
+
+# a text.model left over from another provider gives way to the chosen
+# provider's light model
+law text_model_mismatch:
+  for +provider: String
+  for +model: String
+  for h: {AG.Text.fits(AG.Text.norm(String.trim(provider)), String.trim(model)) == False{} : Bool}
+  {AG.Text.pick(provider, model) == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+
+law text_model_mismatch_codex:
+  {AG.Text.pick("codex", "haiku") == AG.Tx{"codex", "gpt-6-luna"} : AG.Tx}
+
+law text_model_mismatch_claude:
+  {AG.Text.pick("claude", "gpt-6-luna") == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+# a model the provider owns, or one no provider is known to own, is kept
+law text_model_kept:
+  {AG.Text.pick("claude", "claude-sonnet-5") == AG.Tx{"claude", "claude-sonnet-5"} : AG.Tx}
+
+# an agent's viewer_show opens the viewer only from the thread on screen:
+# another thread's request waits in that thread's view
+law view_other_stays_shut:
+  for u: U.Ui
+  for +th: String
+  for +o: J.Json
+  for p: {U.Ui.panel(u) == False{} : Bool}
+  for h: {String.eq(th, U.Ui.sel(u)) == False{} : Bool}
+  {U.Ui.panel(U.Ui.view.k(u, th, o)) == False{} : Bool}

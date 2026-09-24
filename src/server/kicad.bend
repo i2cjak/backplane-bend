@@ -244,6 +244,35 @@ def KiCad.install(+data: String) -> IO(String):
     +base : String = "https://github.com/i2cjak/Backplane_KiCad/releases/download/" ++ KiCad.release() ++ "/"
     mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
     r : P.Ran <- P.Proc.run("sh", ["-c",
-      "set -e; cd \"$1\"; curl -fsSL -o pkg.tgz \"$2$3\"; curl -fsSL -o SUMS \"$2SHA256SUMS\"; want=$(grep \" $3\" SUMS | cut -d' ' -f1); got=$(sha256sum pkg.tgz | cut -d' ' -f1); [ \"$want\" = \"$got\" ] || { echo checksum mismatch; exit 1; }; tar -xzf pkg.tgz --strip-components=1; rm pkg.tgz SUMS",
+      "set -e; cd \"$1\"; curl -fsSL -o pkg.tgz \"$2$3\"; curl -fsSL -o SUMS \"$2SHA256SUMS\"; want=$(awk -v n=\"$3\" '$2 == n || $2 == \"./\" n { print $1 }' SUMS); got=$(sha256sum pkg.tgz | cut -d' ' -f1); [ \"$want\" = \"$got\" ] || { echo checksum mismatch; exit 1; }; tar -xzf pkg.tgz --strip-components=1; rm pkg.tgz SUMS",
       "sh", dir, base, name], "/")
     return KiCad.install.k(r)
+
+# Opening a project
+# -----------------
+
+def KiCad.open.said(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, _}:
+      ""
+    case P.Ran{_, out}:
+      String.trim(out)
+
+def KiCad.open.k(fork: Bool, +cli: String, +fs: Files) -> IO(String):
+  match fork fs:
+    case True{} Files{+pro, +pcb, +sch}:
+      do IO<String>:
+        r : P.Ran <- P.Proc.run("sh", ["-c",
+          "r=\"$1\"; if [ -n \"$2\" ]; then set -- kicad \"$2\"; elif [ -n \"$3\" ]; then set -- pcbnew \"$3\"; elif [ -n \"$4\" ]; then set -- eeschema \"$4\"; else echo \"no KiCad project here\"; exit 1; fi; [ -x \"$r/bin/$1\" ] || { echo \"Backplane KiCad has no $1\"; exit 1; }; setsid -f \"$r/bin/$1\" \"$2\" </dev/null >/dev/null 2>&1",
+          "sh", Rt.root(cli), pro, pcb, sch], "/")
+        return KiCad.open.said(r)
+    case False{} _:
+      IO.pure(String, "Install Backplane KiCad (Settings) to open projects in it")
+
+# open a project's .kicad_pro in the bundled KiCad (its board or schematic
+# editor when there is no .kicad_pro), detached; answers "" or an error.
+# Only the Backplane fork: its launcher brings the official libraries
+def KiCad.open(rt: Rt, +fs: Files) -> IO(String):
+  match rt:
+    case Rt{+cli, fork, _, _}:
+      KiCad.open.k(fork, cli, fs)

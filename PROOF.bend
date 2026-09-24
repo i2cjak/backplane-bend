@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/agent.bend as AG
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
@@ -28,7 +29,10 @@ import ./src/core/pcb3d.bend as P3
 import ./src/gfx/mesh.bend as MS
 import ./src/gfx/face.bend as FA
 import ./src/core/glb.bend as G
+import ./src/mobile/picker.bend as MP
+import ./src/mobile/hubs.bend as Hb
 import ./src/core/client.bend as U
+import ./src/core/menu.bend as MN
 
 # Lemmas
 # ------
@@ -749,6 +753,12 @@ def Laws.alert_none_on_connect(ts, es):
     case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
       Laws.alert_none_on_connect(t, es)
 
+def Laws.hubs_no_id(k):
+  {==}
+
+def Laws.hubs_unpaired_quiet(cid, now, cur, t):
+  {==}
+
 def Laws.island_idle_empty(ts, es, h):
   match ts:
     case Nil{}:
@@ -912,6 +922,12 @@ def Laws.key_mid_below(a, b, h):
 
 # Sidebar status
 # --------------
+
+def Laws.project_keyed_first(x, xs, a, b):
+  {==}
+
+def Laws.project_unkeyed_below(a, y, ys, b):
+  {==}
 
 def Laws.status_approval_first(i, t, q):
   {==}
@@ -2324,6 +2340,21 @@ def Laws.delete_asks_first(u):
 def Laws.row_delete_asks_first(u, id):
   {==}
 
+def Laws.row_toggle_unsettles(t, at, h):
+  %Equal.sym(M.Shelf, M.Shelf.of(M.Thread.settled(True{}, at, t)), M.Settled{}, Laws.merge_settles(t, at, h)) : {U.Ui.row_toggle.m(_) == "thread.unsettle" : String}
+  {==}
+
+def Laws.row_toggle_settles(at, t):
+  match t:
+    case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, True{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, True{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, True{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, False{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+
 def Laws.picker_drops_stale(u, o):
   {==}
 
@@ -2682,3 +2713,497 @@ def Laws.scene3_fade_ends():
 
 def Laws.scene3_stale_parts_dropped():
   {==}
+# The model picker
+# ----------------
+
+# a + (b + c) is at least a + b
+law ge_add_mid:
+  for a: Nat
+  for +b: Nat
+  for +c: Nat
+  {Nat.is_ge(Nat.add(a, Nat.add(b, c)), Nat.add(a, b)) == True{} : Bool}
+
+def ge_add_mid(a, b, c):
+  match a:
+    case 0n:
+      ge_add(b, b, c, Nat.ge_refl(b))
+    case 1n+p:
+      ge_add_mid(p, b, c)
+
+law and_both:
+  for a: Bool
+  for b: Bool
+  for ha: {a == True{} : Bool}
+  for hb: {b == True{} : Bool}
+  {Bool.and(a, b) == True{} : Bool}
+
+def and_both(a, b, ha, hb):
+  %Equal.sym(Bool, a, True{}, ha) : {Bool.and(_, b) == True{} : Bool}
+  hb
+
+# 1 + y is at least y
+law ge_succ_self:
+  for y: Nat
+  {Nat.is_ge(1n+y, y) == True{} : Bool}
+
+def ge_succ_self(y):
+  match y:
+    case 0n:
+      {==}
+    case 1n+p:
+      ge_succ_self(p)
+
+law ge_trans:
+  for a: Nat
+  for b: Nat
+  for c: Nat
+  for h1: {Nat.is_ge(a, b) == True{} : Bool}
+  for h2: {Nat.is_ge(b, c) == True{} : Bool}
+  {Nat.is_ge(a, c) == True{} : Bool}
+
+def ge_trans(a, b, c, h1, h2):
+  match a b c:
+    case 0n 0n 0n:
+      {==}
+    case 0n 0n 1n+r:
+      Empty.absurd({Nat.is_ge(0n, 1n+r) == True{} : Bool}, false_ne_true(h2))
+    case 0n 1n+q 0n:
+      {==}
+    case 0n 1n+q 1n+r:
+      Empty.absurd({Nat.is_ge(0n, 1n+r) == True{} : Bool}, false_ne_true(h1))
+    case 1n+p 0n 0n:
+      {==}
+    case 1n+p 0n 1n+r:
+      Empty.absurd({Nat.is_ge(1n+p, 1n+r) == True{} : Bool}, false_ne_true(h2))
+    case 1n+p 1n+q 0n:
+      {==}
+    case 1n+p 1n+q 1n+r:
+      ge_trans(p, q, r, h1, h2)
+
+# p + x is at least x
+law ge_add_l:
+  for +p: Nat
+  for +x: Nat
+  {Nat.is_ge(Nat.add(p, x), x) == True{} : Bool}
+
+def ge_add_l(p, x):
+  match p:
+    case 0n:
+      Nat.ge_refl(x)
+    case 1n+q:
+      ge_trans(1n+Nat.add(q, x), Nat.add(q, x), x, ge_succ_self(Nat.add(q, x)), ge_add_l(q, x))
+
+# a >= b gives a + (h + g) >= b + h
+law ge_add_both:
+  for +a: Nat
+  for +b: Nat
+  for +h: Nat
+  for +g: Nat
+  for hab: {Nat.is_ge(a, b) == True{} : Bool}
+  {Nat.is_ge(Nat.add(a, Nat.add(h, g)), Nat.add(b, h)) == True{} : Bool}
+
+def ge_add_both(a, b, h, g, hab):
+  match a b:
+    case 0n 0n:
+      ge_add(h, h, g, Nat.ge_refl(h))
+    case 0n 1n+q:
+      Empty.absurd({Nat.is_ge(Nat.add(0n, Nat.add(h, g)), Nat.add(1n+q, h)) == True{} : Bool}, false_ne_true(hab))
+    case 1n+p 0n:
+      ge_trans(Nat.add(1n+p, Nat.add(h, g)), Nat.add(h, g), h, ge_add_l(1n+p, Nat.add(h, g)), ge_add(h, h, g, Nat.ge_refl(h)))
+    case 1n+p 1n+q:
+      ge_add_both(p, q, h, g, hab)
+
+# a >= r and a - r >= s give a >= r + s
+law sub_add_ge:
+  for a: Nat
+  for r: Nat
+  for +s: Nat
+  for h1: {Nat.is_ge(a, r) == True{} : Bool}
+  for h2: {Nat.is_ge(Nat.sub(a, r), s) == True{} : Bool}
+  {Nat.is_ge(a, Nat.add(r, s)) == True{} : Bool}
+
+def sub_add_ge(a, r, s, h1, h2):
+  match a r:
+    case 0n 0n:
+      h2
+    case 0n 1n+q:
+      Empty.absurd({Nat.is_ge(0n, Nat.add(1n+q, s)) == True{} : Bool}, false_ne_true(h1))
+    case 1n+p 0n:
+      h2
+    case 1n+p 1n+q:
+      sub_add_ge(p, q, s, h1, h2)
+
+# a <= b gives b >= a
+law le_ge:
+  for a: Nat
+  for b: Nat
+  for h: {Nat.is_le(a, b) == True{} : Bool}
+  {Nat.is_ge(b, a) == True{} : Bool}
+
+def le_ge(a, b, h):
+  match a b:
+    case 0n 0n:
+      {==}
+    case 0n 1n+q:
+      {==}
+    case 1n+p 0n:
+      Empty.absurd({Nat.is_ge(0n, 1n+p) == True{} : Bool}, false_ne_true(h))
+    case 1n+p 1n+q:
+      le_ge(p, q, h)
+
+law rows_apart_k:
+  for +k: Nat
+  for +x: Nat
+  for +y: Nat
+  for +w: Nat
+  {MN.Boxes.apart.k(MN.Menu.rows(k, x, Nat.add(y, MN.Menu.rh()), w), MN.Box{x, y, w, MN.Menu.rh()}) == True{} : Bool}
+
+def rows_apart_k(k, x, y, w):
+  match k:
+    case 0n:
+      {==}
+    case 1n+j:
+      and_both(MN.Box.apart(MN.Box{x, y, w, MN.Menu.rh()}, MN.Box{x, Nat.add(y, MN.Menu.rh()), w, MN.Menu.rh()}),
+        MN.Boxes.apart.k(MN.Menu.rows(j, x, Nat.add(Nat.add(y, MN.Menu.rh()), MN.Menu.rh()), w), MN.Box{x, Nat.add(y, MN.Menu.rh()), w, MN.Menu.rh()}),
+        %Equal.sym(Bool, Nat.is_ge(Nat.add(y, MN.Menu.rh()), Nat.add(y, MN.Menu.rh())), True{}, Nat.ge_refl(Nat.add(y, MN.Menu.rh())))
+          : {Bool.or(_, Nat.is_ge(x, Nat.add(x, w))) == True{} : Bool}
+        {==},
+        rows_apart_k(j, x, Nat.add(y, MN.Menu.rh()), w))
+
+def Laws.menu_rows_apart(n, x, y, w):
+  match n:
+    case 0n:
+      {==}
+    case 1n+k:
+      rows_apart_k(k, x, y, w)
+
+# the next chip, wrapped (c) or not, is apart from this one
+law flow_step_apart:
+  for c: Bool
+  for +left: Nat
+  for +cx: Nat
+  for +cy: Nat
+  for +w: Nat
+  for +w2: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Box.apart(MN.Box{cx, cy, w, h}, MN.Box{Bool.pick(Nat, c, left, Nat.add(cx, Nat.add(w, gap))), Bool.pick(Nat, c, Nat.add(cy, Nat.add(h, gap)), cy), w2, h}) == True{} : Bool}
+
+def flow_step_apart(c, left, cx, cy, w, w2, h, gap):
+  match c:
+    case True{}:
+      %Equal.sym(Bool, Nat.is_ge(Nat.add(cy, Nat.add(h, gap)), Nat.add(cy, h)), True{}, ge_add_mid(cy, h, gap)) : {Bool.or(_, Nat.is_ge(left, Nat.add(cx, w))) == True{} : Bool}
+      {==}
+    case False{}:
+      %Equal.sym(Bool, Nat.is_ge(Nat.add(cx, Nat.add(w, gap)), Nat.add(cx, w)), True{}, ge_add_mid(cx, w, gap)) : {Bool.or(Nat.is_ge(cy, Nat.add(cy, h)), _) == True{} : Bool}
+      or_true_r(Nat.is_ge(cy, Nat.add(cy, h)))
+
+law flow_apart_k:
+  for t: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +cx: Nat
+  for +cy: Nat
+  for +w: Nat
+  for +h: Nat
+  for +gap: Nat
+  {MN.Boxes.apart.k(MN.Flow.place(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap), MN.Box{cx, cy, w, h}) == True{} : Bool}
+
+def flow_apart_k(t, left, right, cx, cy, w, h, gap):
+  match t:
+    case Nil{}:
+      {==}
+    case +w2 <> +t2:
+      +c = MN.Flow.wraps(left, right, Nat.add(cx, Nat.add(w, gap)), w2)
+      +cx2 = Bool.pick(Nat, c, left, Nat.add(cx, Nat.add(w, gap)))
+      +cy2 = Bool.pick(Nat, c, Nat.add(cy, Nat.add(h, gap)), cy)
+      and_both(MN.Box.apart(MN.Box{cx, cy, w, h}, MN.Box{cx2, cy2, w2, h}),
+        MN.Boxes.apart.k(MN.Flow.place(t2, left, right, Nat.add(cx2, Nat.add(w2, gap)), cy2, h, gap), MN.Box{cx2, cy2, w2, h}),
+        flow_step_apart(c, left, cx, cy, w, w2, h, gap),
+        flow_apart_k(t2, left, right, cx2, cy2, w2, h, gap))
+
+def Laws.menu_chips_apart(ws, left, right, x, y, h, gap):
+  match ws:
+    case Nil{}:
+      {==}
+    case +w <> +t:
+      +c = MN.Flow.wraps(left, right, x, w)
+      flow_apart_k(t, left, right, Bool.pick(Nat, c, left, x), Bool.pick(Nat, c, Nat.add(y, Nat.add(h, gap)), y), w, h, gap)
+
+# a line's top, wrapped (c) or not, is at least the line before
+law flow_pick_ge:
+  for c: Bool
+  for +y: Nat
+  for +d: Nat
+  {Nat.is_ge(Bool.pick(Nat, c, Nat.add(y, d), y), y) == True{} : Bool}
+
+def flow_pick_ge(c, y, d):
+  match c:
+    case True{}:
+      ge_add(y, y, d, Nat.ge_refl(y))
+    case False{}:
+      Nat.ge_refl(y)
+
+# the flow's last line is at or below its first
+law flow_end_ge:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  {Nat.is_ge(MN.Flow.end(ws, left, right, x, y, h, gap), y) == True{} : Bool}
+
+def flow_end_ge(ws, left, right, x, y, h, gap):
+  match ws:
+    case Nil{}:
+      Nat.ge_refl(y)
+    case +w <> +t:
+      +c = MN.Flow.wraps(left, right, x, w)
+      +cx = Bool.pick(Nat, c, left, x)
+      +cy = Bool.pick(Nat, c, Nat.add(y, Nat.add(h, gap)), y)
+      ge_trans(MN.Flow.end(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap), cy, y,
+        flow_end_ge(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap),
+        flow_pick_ge(c, y, Nat.add(h, gap)))
+
+# every chip ends above any line at least a line and a gap past the last
+law flow_above:
+  for ws: List<&2, Nat>
+  for +left: Nat
+  for +right: Nat
+  for +x: Nat
+  for +y: Nat
+  for +h: Nat
+  for +gap: Nat
+  for +top: Nat
+  for +ht: {Nat.is_ge(top, Nat.add(MN.Flow.end(ws, left, right, x, y, h, gap), Nat.add(h, gap))) == True{} : Bool}
+  {MN.Boxes.above(MN.Flow.place(ws, left, right, x, y, h, gap), top) == True{} : Bool}
+
+def flow_above(ws, left, right, x, y, h, gap, top, ht):
+  match ws:
+    case Nil{}:
+      {==}
+    case +w <> +t:
+      +c = MN.Flow.wraps(left, right, x, w)
+      +cx = Bool.pick(Nat, c, left, x)
+      +cy = Bool.pick(Nat, c, Nat.add(y, Nat.add(h, gap)), y)
+      +e = MN.Flow.end(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap)
+      and_both(Nat.is_ge(top, Nat.add(cy, h)), MN.Boxes.above(MN.Flow.place(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap), top),
+        ge_trans(top, Nat.add(e, Nat.add(h, gap)), Nat.add(cy, h), ht,
+          ge_add_both(e, cy, h, gap, flow_end_ge(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap))),
+        flow_above(t, left, right, Nat.add(cx, Nat.add(w, gap)), cy, h, gap, top, ht))
+
+def Laws.menu_chips_above_rows(ws, left, right, x, y, h, gap):
+  match ws:
+    case Nil{}:
+      {==}
+    case +w <> +t:
+      flow_above(w <> t, left, right, x, y, h, gap, Nat.add(MN.Flow.end(w <> t, left, right, x, y, h, gap), Nat.add(h, gap)), Nat.ge_refl(Nat.add(MN.Flow.end(w <> t, left, right, x, y, h, gap), Nat.add(h, gap))))
+
+law span_fit_k:
+  for c: Bool
+  for +k: Nat
+  for +room: Nat
+  for hc: {Nat.is_ge(room, MN.Menu.rh()) == c : Bool}
+  for ih: {Nat.is_ge(Nat.sub(room, MN.Menu.rh()), MN.Menu.span(k, Nat.sub(room, MN.Menu.rh()))) == True{} : Bool}
+  {Nat.is_ge(room, Bool.pick(Nat, c, Nat.add(MN.Menu.rh(), MN.Menu.span(k, Nat.sub(room, MN.Menu.rh()))), 0n)) == True{} : Bool}
+
+def span_fit_k(c, k, room, hc, ih):
+  match c:
+    case True{}:
+      sub_add_ge(room, MN.Menu.rh(), MN.Menu.span(k, Nat.sub(room, MN.Menu.rh())), hc, ih)
+    case False{}:
+      ge_zero(room)
+
+def Laws.menu_rows_fit(n, room):
+  match n:
+    case 0n:
+      ge_zero(room)
+    case 1n+k:
+      span_fit_k(Nat.is_ge(room, MN.Menu.rh()), k, room, {==}, Laws.menu_rows_fit(k, Nat.sub(room, MN.Menu.rh())))
+
+law scroll_k:
+  for c: Bool
+  for +off: Nat
+  for +n: Nat
+  for +shown: Nat
+  for hc: {Nat.is_le(off, Nat.sub(n, shown)) == c : Bool}
+  for h: {Nat.is_ge(n, shown) == True{} : Bool}
+  {Nat.is_ge(n, Nat.add(shown, Bool.pick(Nat, c, off, Nat.sub(n, shown)))) == True{} : Bool}
+
+def scroll_k(c, off, n, shown, hc, h):
+  match c:
+    case True{}:
+      sub_add_ge(n, shown, off, h, le_ge(off, Nat.sub(n, shown), hc))
+    case False{}:
+      sub_add_ge(n, shown, Nat.sub(n, shown), h, Nat.ge_refl(Nat.sub(n, shown)))
+
+def Laws.menu_scroll_in_list(off, n, shown, h):
+  scroll_k(Nat.is_le(off, Nat.sub(n, shown)), off, n, shown, {==}, h)
+
+law width_k:
+  for c: Bool
+  for +want: Nat
+  for +room: Nat
+  for hc: {Nat.is_le(want, room) == c : Bool}
+  {Nat.is_ge(room, Bool.pick(Nat, c, want, room)) == True{} : Bool}
+
+def width_k(c, want, room, hc):
+  match c:
+    case True{}:
+      le_ge(want, room, hc)
+    case False{}:
+      Nat.ge_refl(room)
+
+def Laws.menu_width_fits(want, room):
+  width_k(Nat.is_le(want, room), want, room, {==})
+
+def Laws.menu_label_clear(name_x, widest, w):
+  ge_add_mid(name_x, MN.Menu.col(widest, w), 16n)
+
+def Laws.menu_press_first(n, x, y):
+  {==}
+
+def Laws.menu_right_press_first(n, x, y):
+  {==}
+
+def Laws.menu_press_nothing():
+  {==}
+
+def Laws.menu_press_elsewhere(x0, y0, x1, y1, a, v, h):
+  h
+
+def Laws.menu_press_rows_inside(x0, y0, x1, y1, v):
+  {==}
+
+def Laws.menu_press_box_inside(x0, y0, x1, y1, v):
+  {==}
+
+def Laws.menu_press_chips_inside(x0, y0, x1, y1, v):
+  {==}
+
+def Laws.badge_icons_exist():
+  {==}
+
+def Laws.badge_auto_tint(k):
+  match k:
+    case 0n:
+      {==}
+    case 1n+a:
+      match a:
+        case 0n:
+          {==}
+        case 1n+b:
+          match b:
+            case 0n:
+              {==}
+            case 1n+c:
+              match c:
+                case 0n:
+                  {==}
+                case 1n+d:
+                  match d:
+                    case 0n:
+                      {==}
+                    case 1n+e:
+                      match e:
+                        case 0n:
+                          {==}
+                        case 1n+f:
+                          match f:
+                            case 0n:
+                              {==}
+                            case 1n+g:
+                              match g:
+                                case 0n:
+                                  {==}
+                                case 1n+h:
+                                  match h:
+                                    case 0n:
+                                      {==}
+                                    case 1n+i:
+                                      {==}
+
+def Laws.badge_unknown_color(id):
+  {==}
+
+def Laws.badge_set_color(id):
+  {==}
+
+def Laws.badge_default_icon():
+  {==}
+
+def Laws.badge_unknown_icon():
+  {==}
+
+def Laws.mpick_closed_draws_nothing(u, h):
+  %Equal.sym(Bool, U.Ui.flag(u, "proj"), False{}, h) : {MP.MPick.json.k(_, u) == J.Null{} : J.Json}
+  {==}
+
+def Laws.mpick_filter_asks_nothing(u, text, h):
+  %Equal.sym(Bool, String.eq(MP.MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")), True{}, h) : {MP.MPick.list.k(_, U.Ui.scratch_set(u, "@mpick", text), MP.MPick.dir(text)) == U.Act{U.Ui.scratch_set(u, "@mpick", text), Nil{}} : U.Act}
+  {==}
+
+def Laws.mpick_opens_home():
+  {==}
+
+def Laws.mpick_tilde():
+  {==}
+
+law title_k_nil:
+  for same: Bool
+  for +thread: String
+  for +title: String
+  for +now: Nat
+  {H.Title.changes.k(same, False{}, thread, title, now) == [] : List<&2, M.Change>}
+
+def title_k_nil(same, thread, title, now):
+  match same:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.title_user_rename_wins(current, placeholder, answer, thread, now, h):
+  %Equal.sym(Bool, String.eq(current, placeholder), False{}, h) : {H.Title.changes.k(Bool.and(_, Bool.not(String.is_empty(placeholder))), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [] : List<&2, M.Change>}
+  {==}
+
+def Laws.title_applies_when_placeholder(current, placeholder, answer, thread, now, same, set, some):
+  %Equal.sym(Bool, String.eq(current, placeholder), True{}, same) : {H.Title.changes.k(Bool.and(_, Bool.not(String.is_empty(placeholder))), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  %Equal.sym(Bool, String.is_empty(placeholder), False{}, set) : {H.Title.changes.k(Bool.and(True{}, Bool.not(_)), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  %Equal.sym(Bool, String.is_empty(AG.Title.clean(answer)), False{}, some) : {H.Title.changes.k(True{}, Bool.not(_), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  {==}
+
+def Laws.title_empty_keeps(current, placeholder, thread, now):
+  title_k_nil(Bool.and(String.eq(current, placeholder), Bool.not(String.is_empty(placeholder))), thread, AG.Title.clean(""), now)
+
+def Laws.text_model_default():
+  {==}
+
+def Laws.text_model_unknown_provider():
+  {==}
+
+def Laws.text_model_light():
+  {==}
+
+def Laws.text_model_mismatch(provider, model, h):
+  %Equal.sym(Bool, AG.Text.fits(AG.Text.norm(String.trim(provider)), String.trim(model)), False{}, h) : {AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.pick.m(Bool.and(Bool.not(String.is_empty(String.trim(model))), _), AG.Text.norm(String.trim(provider)), String.trim(model))} == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+  %Equal.sym(Bool, Bool.and(Bool.not(String.is_empty(String.trim(model))), False{}), False{}, and_false_r(Bool.not(String.is_empty(String.trim(model))))) : {AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.pick.m(_, AG.Text.norm(String.trim(provider)), String.trim(model))} == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+  {==}
+
+def Laws.text_model_mismatch_codex():
+  {==}
+
+def Laws.text_model_mismatch_claude():
+  {==}
+
+def Laws.text_model_kept():
+  {==}
+
+def Laws.view_other_stays_shut(u, th, o, p, h):
+  match u:
+    case U.Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      %Equal.sym(Bool, pa, False{}, p) : {Bool.or(_, String.eq(th, sel)) == False{} : Bool}
+      %Equal.sym(Bool, String.eq(th, sel), False{}, h) : {Bool.or(False{}, _) == False{} : Bool}
+      {==}

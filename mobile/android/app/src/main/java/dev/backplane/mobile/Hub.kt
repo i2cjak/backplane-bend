@@ -31,6 +31,13 @@ object Pairing {
         return "$scheme://$host$port/ws" + (token?.let { "?token=$it" } ?: "")
     }
 
+    // the hub's key: host:port, the same for every link to it
+    fun key(link: String): String? {
+        val u = Uri.parse(socket(link) ?: return null)
+        val host = u.host ?: return null
+        return if (u.port > 0) "$host:${u.port}" else host
+    }
+
     // the socket address for a (re)connect: the client's resume point
     // ({"since", "origin"} from Backplane.resume()) as query parameters
     fun resume(socket: String, resume: String): String {

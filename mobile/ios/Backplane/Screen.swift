@@ -20,7 +20,8 @@ struct Row: Decodable, Identifiable, Hashable {
 }
 
 struct Project: Decodable, Identifiable {
-    let id, title, root: String
+    // machine: the hub it is on, named when the phone has several
+    let id, title, root, machine: String
     let open: Bool
     let threads: [Row]
     let snoozedShelf: String
@@ -84,6 +85,13 @@ struct Viewer: Decodable {
     let card: Card?
 }
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+struct ModelPicker: Decodable {
+    let label: String
+    let models, efforts: [Choice]
+}
+
 struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
@@ -93,6 +101,7 @@ struct ThreadView: Decodable {
     let queued: String
     let live: [Block]
     let working, draft, send: String
+    let picker: ModelPicker
     let viewer: Viewer
 }
 
@@ -101,11 +110,37 @@ struct Deleting: Decodable, Equatable {
     let id, title, body, yes, no: String
 }
 
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+struct FolderRow: Decodable, Hashable {
+    let label, action, value, kind: String
+}
+
+struct Folders: Decodable {
+    let text, hint, error: String
+    let items: [FolderRow]
+}
+
+// a paired hub (key: its host:port), and a machine a hub knows of that
+// this phone is not paired with yet
+struct HubRow: Decodable, Hashable {
+    let key, name: String
+    let online: Bool
+}
+
+struct Found: Decodable, Hashable {
+    let name, url: String
+}
+
 struct Screen: Decodable {
     let online: Bool
-    let version, error, note, sel, empty: String
+    // hub: the one in focus (its thread is shown, its plots are drawn)
+    let version, error, note, sel, empty, hub: String
+    let hubs: [HubRow]
+    let found: [Found]
     let projects: [Project]
     let deleting: Deleting?
+    let folders: Folders?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
 }
@@ -113,8 +148,8 @@ struct Screen: Decodable {
 struct Cmd: Decodable {
     let type: String
     let text: String?
-    // send: the CBOR frame, as base64
-    let data: String?
+    // send: the CBOR frame, as base64, for the hub keyed hub
+    let data, hub: String?
     // notify
     let thread, title, kind, body: String?
 }

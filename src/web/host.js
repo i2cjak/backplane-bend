@@ -48,7 +48,7 @@ function* each(list) {
 // DOM patch
 // ---------
 
-const EVENTS = ["click", "input"];
+const EVENTS = ["click", "input", "contextmenu"];
 
 // icons (src/web/icon.bend) are inline SVG, which needs its namespace
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -321,6 +321,36 @@ document.addEventListener("drop", (e) => {
   })();
 });
 
+// Row drags: a [data-drag] element dropped on a [data-drag-to] one with the
+// same data-drag-act sends that action "dragged|target" (app.bend decides
+// what moves where)
+const ROW = "application/x-backplane-row";
+document.addEventListener("dragstart", (e) => {
+  const el = e.target.closest?.("[data-drag]");
+  if (!el) return;
+  e.dataTransfer.setData(ROW, el.getAttribute("data-drag-act") + "\n" + el.getAttribute("data-drag"));
+  e.dataTransfer.effectAllowed = "move";
+});
+
+function rowTarget(e) {
+  if (![...(e.dataTransfer?.types || [])].includes(ROW)) return null;
+  return e.target.closest?.("[data-drag-to]") || null;
+}
+
+document.addEventListener("dragover", (e) => {
+  if (!rowTarget(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+});
+
+document.addEventListener("drop", (e) => {
+  const el = rowTarget(e);
+  if (!el) return;
+  e.preventDefault();
+  const [act, v] = e.dataTransfer.getData(ROW).split("\n");
+  if (act === el.getAttribute("data-drag-act")) dispatch(act, v + "|" + el.getAttribute("data-drag-to"));
+});
+
 document.addEventListener("paste", (e) => {
   const cd = e.clipboardData;
   if (!cd) return;
@@ -353,6 +383,7 @@ for (const ev of EVENTS) {
     const el = e.target.closest?.(`[data-on-${ev}]`);
     if (!el) return;
     const action = el.getAttribute(`data-on-${ev}`);
+    if (ev === "contextmenu") e.preventDefault();
     dispatch(action, ev === "input" ? el.value : valueOf(el));
   });
 }

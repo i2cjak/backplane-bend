@@ -5,7 +5,7 @@ struct RootView: View {
     @State private var pairing = false
 
     var body: some View {
-        if model.link.isEmpty {
+        if model.links.isEmpty {
             NavigationStack { PairView(link: "") { model.pair($0) } }
         } else if let s = model.screen {
             NavigationStack(path: Binding(get: { model.path }, set: { model.navigate($0) })) {
@@ -19,8 +19,8 @@ struct RootView: View {
             }
             .sheet(isPresented: $pairing) {
                 NavigationStack {
-                    PairView(link: model.link) { model.pair($0); pairing = false }
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { pairing = false } } }
+                    HubsView(model: model, screen: model.screen ?? s)
+                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { pairing = false } } }
                 }
             }
         } else {
@@ -48,6 +48,56 @@ struct PairView: View {
             Button("Connect") { done(link) }.disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
         }
         .navigationTitle("Pair with a hub")
+    }
+}
+
+// the hubs this phone is paired with (swipe to unpair), the owner's other
+// machines they know of (one tap pairs), and a field for a new link
+struct HubsView: View {
+    let model: AppModel
+    let screen: Screen
+    @State private var link = ""
+
+    var body: some View {
+        Form {
+            Section("Paired") {
+                ForEach(screen.hubs, id: \.key) { h in
+                    HStack {
+                        Image(systemName: h.online ? "circle.fill" : "circle.dotted")
+                            .font(.caption).foregroundStyle(h.online ? .green : .secondary)
+                        Text(h.name)
+                        Spacer()
+                        Text(h.key).font(.caption).foregroundStyle(.secondary)
+                    }
+                    .swipeActions { Button("Unpair", role: .destructive) { model.unpair(h.key) } }
+                }
+            }
+            if !screen.found.isEmpty {
+                Section("On your tailnet") {
+                    ForEach(screen.found, id: \.url) { f in
+                        Button { model.pair(f.url) } label: {
+                            HStack {
+                                Text(f.name)
+                                Spacer()
+                                Image(systemName: "plus.circle")
+                            }
+                        }
+                    }
+                }
+            }
+            Section {
+                TextField("Pairing link", text: $link, prompt: Text(verbatim: "http://host:3787/#token=…"))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                Button("Add hub") { model.pair(link); link = "" }.disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
+            } header: {
+                Text("Pair another")
+            } footer: {
+                Text("Paste the tailnet link Backplane shows under Settings, Remote access.")
+            }
+        }
+        .navigationTitle("Hubs")
     }
 }
 
@@ -124,8 +174,6 @@ struct ProjectsView: View {
     let model: AppModel
     let screen: Screen
     @Binding var pairing: Bool
-    @State private var adding = false
-    @State private var path = ""
     // a swipe whose choices are up (a snooze)
     @State private var choosing: Swipe?
     // the delete just answered: its dialog stays down until the screen drops it
@@ -155,7 +203,8 @@ struct ProjectsView: View {
                     HStack {
                         VStack(alignment: .leading) {
                             Text(p.title)
-                            Text(p.root).font(.caption2).textCase(nil).lineLimit(1).truncationMode(.head)
+                            Text(p.machine.isEmpty ? p.root : p.machine + ": " + p.root)
+                                .font(.caption2).textCase(nil).lineLimit(1).truncationMode(.head)
                         }
                         Spacer()
                         Button { model.act("new-thread", p.id) } label: { Image(systemName: "square.and.pencil") }
@@ -176,8 +225,16 @@ struct ProjectsView: View {
                     .font(.caption)
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button { adding = true } label: { Image(systemName: "folder.badge.plus") }.accessibilityLabel("Add project")
-                Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Pairing")
+                // with several hubs, the picker opens on the one chosen
+                if screen.hubs.count > 1 {
+                    Menu {
+                        ForEach(screen.hubs, id: \.key) { h in Button(h.name) { model.act("picker-open", h.key + "|") } }
+                    } label: { Image(systemName: "folder.badge.plus") }
+                    .accessibilityLabel("Add project")
+                } else {
+                    Button { model.act("picker-open") } label: { Image(systemName: "folder.badge.plus") }.accessibilityLabel("Add project")
+                }
+                Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Hubs")
             }
         }
         .confirmationDialog(choosing?.label ?? "", isPresented: Binding(get: { choosing != nil }, set: { if !$0 { choosing = nil } }),
@@ -192,12 +249,65 @@ struct ProjectsView: View {
             Text(d.body)
         }
         .onChange(of: screen.deleting?.id) { answered = "" }
-        .alert("Add project", isPresented: $adding) {
-            TextField("/path/to/project", text: $path).textInputAutocapitalization(.never).autocorrectionDisabled()
-            Button("Add") { model.act("add-project", path); path = "" }
-            Button("Cancel", role: .cancel) { path = "" }
-        } message: {
-            Text("A path on the hub.")
+        .sheet(isPresented: Binding(get: { screen.folders != nil }, set: { if !$0 { model.act("proj-close") } })) {
+            if let f = screen.folders { FoldersSheet(model: model, folders: f) }
+        }
+    }
+}
+
+// the project picker: a path field over the listed folder's rows
+private struct FoldersSheet: View {
+    let model: AppModel
+    let folders: Folders
+    @State private var text = ""
+    // what was typed here: a screen still echoing it never overwrites the field
+    @State private var typed: Set<String> = []
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    TextField(folders.hint, text: $text)
+                        .font(.body.monospaced())
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .onChange(of: text) { _, t in
+                            guard t != folders.text else { return }
+                            typed.insert(t)
+                            model.act("picker-type", t)
+                        }
+                    if !folders.error.isEmpty { Text(folders.error).font(.footnote).foregroundStyle(.red) }
+                }
+                Section {
+                    ForEach(folders.items, id: \.self) { r in
+                        Button { model.act(r.action, r.value) } label: {
+                            Label(r.label, systemImage: Self.icon(r.kind)).lineLimit(1).truncationMode(.head)
+                        }
+                        .disabled(r.action.isEmpty)
+                        .tint(r.kind == "dir" || r.kind == "up" ? .primary : .accentColor)
+                    }
+                }
+            }
+            .navigationTitle("Add project")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { model.act("proj-close") } }
+            }
+        }
+        .onAppear { text = folders.text }
+        .onChange(of: folders.text) { _, t in
+            if !typed.contains(t) { typed = []; text = t }
+        }
+    }
+
+    static func icon(_ kind: String) -> String {
+        switch kind {
+        case "up": "arrow.turn.left.up"
+        case "add": "plus.circle"
+        case "new": "folder.badge.plus"
+        case "mkdir": "folder.badge.plus"
+        case "off": "checkmark.circle"
+        default: "folder"
         }
     }
 }
@@ -282,6 +392,36 @@ struct ThreadScreen: View {
                 .padding(.horizontal).padding(.top, 8)
                 .accessibilityHint("Sends when this turn ends")
             }
+            HStack {
+                Menu {
+                    Section("Model") {
+                        ForEach(thread.picker.models, id: \.value) { c in
+                            Button { model.act("model", c.value) } label: {
+                                if c.on { Label(c.label, systemImage: "checkmark") } else { Text(c.label) }
+                            }
+                        }
+                    }
+                    if !thread.picker.efforts.isEmpty {
+                        Section("Effort") {
+                            ForEach(thread.picker.efforts, id: \.value) { c in
+                                Button { model.act("effort", c.value) } label: {
+                                    if c.on { Label(c.label, systemImage: "checkmark") } else { Text(c.label) }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(thread.picker.label).lineLimit(1)
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Model and effort: " + thread.picker.label)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal).padding(.top, 8)
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Ask the agent", text: Binding(get: { model.composer }, set: { model.draft($0) }), axis: .vertical)
                     .lineLimit(1...6)

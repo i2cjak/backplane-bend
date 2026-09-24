@@ -194,6 +194,9 @@ type Change is Data:
   # the thread's worktree was removed (settled long enough, or merged); its
   # branch stays, and its last state is a checkpoint
   WorktreeRemoved{id: String, at: Nat}
+  # a project's manual place in the sidebar: an order key (Key below, as
+  # hex); "" drops it
+  ProjectOrdered{id: String, key: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -443,6 +446,15 @@ def Nav.keyed(n: Nav, +section: String, +key: String) -> Nav:
   match n:
     case Nav{+u, +p, +a}:
       Bool.pick(Nav, String.eq(section, "pinned"), Nav{u, key, a}, Nav{u, p, key})
+
+# A project's order key lives in the same map under "project:<id>" (its
+# "active" key), a name no thread id takes
+def Nav.project(+id: String) -> String:
+  "project:" ++ id
+
+# a project's order key ("": none)
+def Nav.project_key(+m: Map<&2, Nav>, +id: String) -> String:
+  Nav.key(Nav.get(m, Nav.project(id)), "active")
 
 # Worktrees
 # ---------
@@ -844,6 +856,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case ProjectOrdered{+id, +key, _}:
+      State.nav((x => Nav.keyed(x, "active", key)), s, Nav.project(id))
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:

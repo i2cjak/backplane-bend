@@ -16,14 +16,21 @@ data class Row(
     val lead: List<Swipe>, val trail: List<Swipe>,
 )
 
+// machine: the hub it is on, named when the phone has several
 data class Project(
-    val id: String, val title: String, val root: String, val open: Boolean,
+    val id: String, val title: String, val root: String, val machine: String, val open: Boolean,
     val threads: List<Row>, val snoozedShelf: String, val snoozed: List<Row>,
     val shelf: String, val settled: List<Row>,
 )
 
 // a delete a row asked for, waiting for yes ("row-delete" id) or no
 data class Deleting(val id: String, val title: String, val body: String, val yes: String, val no: String)
+
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+data class FolderRow(val label: String, val action: String, val value: String, val kind: String)
+
+data class Folders(val text: String, val hint: String, val error: String, val items: List<FolderRow>)
 
 data class Tool(val label: String, val action: String, val on: Boolean)
 
@@ -55,27 +62,39 @@ data class Viewer(
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
 )
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>)
+
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
-    val sending: List<String>, val queued: String, val viewer: Viewer,
+    val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
 
 data class Island(val running: Int, val headline: String, val lines: List<IslandLine>)
 
+// a paired hub (key: its host:port), and a machine a hub knows of that
+// this phone is not paired with yet
+data class HubRow(val key: String, val name: String, val online: Boolean)
+
+data class Found(val name: String, val url: String)
+
+// hub: the one in focus (its thread is shown, its plots are drawn)
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
-    val island: Island, val deleting: Deleting?,
+    val island: Island, val deleting: Deleting?, val folders: Folders?,
+    val hub: String, val hubs: List<HubRow>, val found: List<Found>,
 )
 
 data class Cmd(
     val type: String, val text: String,
-    // a "send": the CBOR frame, as base64
-    val data: String = "",
+    // a "send": the CBOR frame, as base64, for the hub keyed hub
+    val data: String = "", val hub: String = "",
     // a "notify": the thread whose turn ended, its title, "done"/"fail", and what to say
     val thread: String = "", val title: String = "", val kind: String = "", val body: String = "",
 )
@@ -109,8 +128,14 @@ private fun thread(o: JSONObject) = ThreadView(
             it.optString("label"), blocks(it.optJSONArray("blocks")))
     },
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"), viewer(o.optJSONObject("viewer") ?: JSONObject()),
+    strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
+    viewer(o.optJSONObject("viewer") ?: JSONObject()),
 )
+
+private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }
+
+private fun picker(o: JSONObject) =
+    ModelPicker(o.optString("label"), choices(o.optJSONArray("models")), choices(o.optJSONArray("efforts")))
 
 private fun ints(a: JSONArray?): IntArray = if (a == null) IntArray(0) else IntArray(a.length()) { a.optInt(it) }
 
@@ -138,7 +163,7 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optBoolean("online"), o.optString("version"), o.optString("error"), o.optString("note"),
     o.optString("sel"), o.optString("empty"),
     o.optJSONArray("projects").map {
-        Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optBoolean("open"),
+        Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optString("machine"), it.optBoolean("open"),
             it.optJSONArray("threads").map(::row), it.optString("snoozedShelf"), it.optJSONArray("snoozed").map(::row),
             it.optString("shelf"), it.optJSONArray("settled").map(::row))
     },
@@ -147,10 +172,17 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optJSONObject("deleting")?.let {
         Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
     },
+    o.optJSONObject("folders")?.let { p ->
+        Folders(p.optString("text"), p.optString("hint"), p.optString("error"),
+            p.optJSONArray("items").map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) })
+    },
+    o.optString("hub"),
+    o.optJSONArray("hubs").map { HubRow(it.optString("key"), it.optString("name"), it.optBoolean("online")) },
+    o.optJSONArray("found").map { Found(it.optString("name"), it.optString("url")) },
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =
     o.optJSONArray("cmds").map {
-        Cmd(it.optString("type"), it.optString("text"), it.optString("data"),
+        Cmd(it.optString("type"), it.optString("text"), it.optString("data"), it.optString("hub"),
             it.optString("thread"), it.optString("title"), it.optString("kind"), it.optString("body"))
     }

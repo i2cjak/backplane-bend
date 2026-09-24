@@ -12,6 +12,12 @@ enum Pairing {
         return c.url
     }
 
+    // the hub's key: host:port, the same for every link to it
+    static func key(_ link: String) -> String? {
+        guard let u = socket(link), let host = u.host() else { return nil }
+        return u.port.map { "\(host):\($0)" } ?? host
+    }
+
     static func socket(_ link: String) -> URL? {
         var s = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }

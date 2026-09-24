@@ -7,5 +7,5 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root/tools/browser"
 bun install --frozen-lockfile 2>/dev/null || bun install
 mkdir -p "$root/dist"
-bun build --compile --minify --external chromium-bidi src/main.ts --outfile "$root/dist/backplane-browser"
+bun build.ts "$root/dist/backplane-browser"
 ls -la "$root/dist/backplane-browser"
