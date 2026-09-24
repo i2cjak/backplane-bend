@@ -29,6 +29,7 @@ import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
 import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
+import ./src/core/hier.bend as HI
 
 # Lemmas
 # ------
@@ -326,6 +327,16 @@ def u32_eq_refl(x):
   %Equal.sym(Cmp, U32.cmp(x, x), EQ{}, u32_cmp_refl(x)) : {Cmp.is_eq(_) == True{} : Bool}
   {==}
 
+# the scene order puts an item level with itself
+law scene_cmp_refl:
+  for +k: String
+  for +l: U32
+  {V.Scene.cmp.k(U32.cmp(l, l), k, k) == EQ{} : Cmp}
+
+def scene_cmp_refl(k, l):
+  %Equal.sym(Cmp, U32.cmp(l, l), EQ{}, u32_cmp_refl(l)) : {V.Scene.cmp.k(_, k, k) == EQ{} : Cmp}
+  key_cmp_refl(k)
+
 # Viewer laws
 # -----------
 
@@ -334,6 +345,30 @@ def Laws.fade_done(born, k):
     ge_add(Nat.add(born, V.Fade.ms()), Nat.add(born, V.Fade.ms()), k, Nat.ge_refl(Nat.add(born, V.Fade.ms()))))
     : {V.Fade.alpha.k(_, Nat.sub(Nat.add(Nat.add(born, V.Fade.ms()), k), born)) == 255 : U32}
   {==}
+
+def Laws.look_flip_none(kind, layer):
+  {==}
+
+def Laws.look_flip_hides():
+  {==}
+
+def Laws.look_flip_shows():
+  {==}
+
+def Laws.look_flip_twice():
+  {==}
+
+def Laws.ops_hidden_draws_nothing(p, l, v, c, now, born, kind, flip, rest, h):
+  %Equal.sym(Bool, V.Look.shows(kind, l, flip), False{}, h)
+    : {V.Ops.cull(Bool.and(_, Nat.is_lt(U32.to_nat(l), V.Look.count(kind))), p, l, v, c, V.Fade.alpha(now, born), kind, flip, rest) == rest : List<&2, R.Op>}
+  {==}
+
+def Laws.pick_hidden_skipped(hit, area, key, bk, ba):
+  match hit:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
 
 def Laws.fade_start(born):
   %Equal.sym(Bool, Nat.is_ge(born, Nat.add(born, V.Fade.ms())), False{}, ge_past(born, 219n))
@@ -346,7 +381,7 @@ def Laws.scene_merge_self(ss, now):
     case Nil{}:
       {==}
     case V.Seen{B.Item{+k, +s, +l, +p, +i}, +b} <> +t:
-      %Equal.sym(Cmp, V.Key.cmp(k, k), EQ{}, key_cmp_refl(k))
+      %Equal.sym(Cmp, V.Scene.cmp.k(U32.cmp(l, l), k, k), EQ{}, scene_cmp_refl(k, l))
         : {V.Scene.merge(V.Seen{B.Item{k, s, l, p, i}, b} <> t, B.Item{k, s, l, p, i} <> V.Scene.items(t), _, now) == V.Seen{B.Item{k, s, l, p, i}, b} <> t : List<&2, V.Seen>}
       %Equal.sym(Bool, U32.is_eq(s, s), True{}, u32_eq_refl(s))
         : {V.Scene.keep(_, B.Item{k, s, l, p, i}, b, now) <> V.Scene.merge(t, V.Scene.items(t), V.Scene.heads(t, V.Scene.items(t)), now) == V.Seen{B.Item{k, s, l, p, i}, b} <> t : List<&2, V.Seen>}
@@ -3183,3 +3218,28 @@ def Laws.view_other_stays_shut(u, th, o, p, h):
       %Equal.sym(Bool, pa, False{}, p) : {Bool.or(_, String.eq(th, sel)) == False{} : Bool}
       %Equal.sym(Bool, String.eq(th, sel), False{}, h) : {Bool.or(False{}, _) == False{} : Bool}
       {==}
+
+# Hierarchy laws
+# --------------
+
+def Laws.hier_resolve_absolute(parent, file, h):
+  %Equal.sym(Bool, String.starts_with(file, "/"), True{}, h) : {HI.Hier.resolve.k(_, parent, file) == file : String}
+  {==}
+
+def Laws.hier_resolve_beside():
+  {==}
+
+def Laws.hier_loop_listed_once():
+  {==}
+
+def Laws.hier_root_is_top(rs):
+  match rs:
+    case Nil{}:
+      {==}
+    case r <> t:
+      match r:
+        case HI.Row{d, n, f, l}:
+          {==}
+
+def Laws.hier_up_after_open():
+  {==}

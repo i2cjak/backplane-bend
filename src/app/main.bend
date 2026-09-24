@@ -18,6 +18,7 @@ import ../gfx/text.bend as X
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
 import ../core/schematic.bend as SC
+import ../core/hier.bend as HI
 import ../server/proc.bend as P
 import ./link.bend as LK
 import ./imgfx.bend as IF
@@ -39,6 +40,7 @@ type ShellMsg is Data:
   Board{key: String, items: List<&2, B.Item>}
   Mesh3{key: String, tris: List<&2, G.Tri3>}
   Status{key: String, text: String}
+  Sheets{key: String, text: String}
   Shot{key: String, bmp: BM.Bitmap}
   PicOk{tag: String, path: String, w: U32, h: U32, rgb: List<&2, U32>}
   PicErr{tag: String, path: String, why: String}
@@ -736,6 +738,50 @@ def Watch.mesh.k(glb: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> 
 def Watch.mesh(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   Watch.mesh.k(String.ends_with(path, ".glb"), path, key, q)
 
+# The sheet tree
+# --------------
+# Each schematic read also reads the tree it belongs to: the project's
+# root schematic (or the file on show, when the project has none) and
+# every sheet it reaches, each file once (HI.Hier.todo), at most 64.
+
+def Tree.next(todo: List<&2, String>, +tab: List<&2, HI.Kids>, k: List<&2, HI.Kids> -> List<&2, String> -> IO(List<&2, HI.Kids>)) -> IO(List<&2, HI.Kids>):
+  match todo:
+    case Nil{}:
+      IO.pure(List<&2, HI.Kids>, tab)
+    case +p <> rest:
+      do IO<List<&2, HI.Kids>>:
+        bs : List<&2, U32> <- S.Files.read(p)
+        +kd : HI.Kids = HI.Hier.kids(p, bs)
+        k(kd <> tab, HI.Hier.todo(HI.Hier.kids.sheets(kd), kd <> tab, rest))
+
+def Tree.load(fuel: Nat, +todo: List<&2, String>, +tab: List<&2, HI.Kids>) -> IO(List<&2, HI.Kids>):
+  match fuel:
+    case 0n:
+      IO.pure(List<&2, HI.Kids>, tab)
+    case 1n+f:
+      Tree.next(todo, tab, t2 => d2 => Tree.load(f, d2, t2))
+
+def Tree.root(f: K.Files, +path: String) -> String:
+  match f:
+    case K.Files{_, _, +sch}:
+      Bool.pick(String, String.is_empty(sch), path, sch)
+
+def Tree.send(+root: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    tab : List<&2, HI.Kids> <- Tree.load(64n, [root], Nil{})
+    ok : Bool <- Chan.send(ShellMsg, q, Sheets{key, HI.Hier.show(HI.Hier.rows(tab, root))})
+    return Unit{}
+
+def Watch.tree(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  IO.bind(K.Files, Unit, K.Files.read(Src.at(key, 1n)), f => Tree.send(Tree.root(f, path), key, q))
+
+def Watch.tree.if(sch: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  match sch:
+    case True{}:
+      Watch.tree(path, key, q)
+    case False{}:
+      IO.pure(Unit, Unit{})
+
 def Watch.read.k(three: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match three:
     case True{}:
@@ -744,6 +790,7 @@ def Watch.read.k(three: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -
       do IO<Unit>:
         bs : List<&2, U32> <- S.Files.read(path)
         Watch.sent(Watch.sorted(Watch.parse(Src.kind(key), bs)), key, q)
+        Watch.tree.if(U32.is_eq(Src.kind(key), 1), path, key, q)
 
 # read, parse (in parallel) and send; a half-written file sends nothing
 def Watch.read(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
@@ -904,6 +951,12 @@ def Shell.shot(a: Shell, +key: String, b: BM.Bitmap) -> IO(Shell):
     case Shell{n, w, _, qd, q, i, wa}:
       Shell.later(Shell{N.Nui.shot(n, key, b), w, True{}, qd, q, i, wa})
 
+# the schematic's sheet tree, for the viewer's sheet list and trail
+def Shell.sheets(a: Shell, +text: String) -> IO(Shell):
+  match a:
+    case Shell{+n, w, _, qd, q, i, wa}:
+      Shell.later(Shell{N.Nui.with_ui(n, U.Ui.scratch_set(N.Nui.ui(n), "@vw.tree", text)), w, True{}, qd, q, i, wa})
+
 def Shell.status(a: Shell, +key: String, +text: String) -> IO(Shell):
   match a:
     case Shell{n, w, _, qd, q, i, wa}:
@@ -931,7 +984,7 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base):
 # a 3D model rendered into the panel, or the board/schematic's items
-def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, x: V.Vx) -> Image:
+def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
       MS.Mesh.render.at(ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, 526603)
@@ -939,25 +992,25 @@ def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, 
       Shell.shot.base(ww, hh, x0, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
       R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
-        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k)), T.Th.bg())
+        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), T.Th.bg())
 
-def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
+def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match redraw vw:
     case True{} V.Vw{+ss, +v, f, r, d, lx, ly, _, _, _, +vx}:
-      V.Vw{ss, v, f, r, d, lx, ly, Shell.base(ww, hh, x0, ss, v, now, vx), True{}, now, vx}
+      V.Vw{ss, v, f, r, d, lx, ly, Shell.base(ww, hh, x0, ss, v, now, flip, vx), True{}, now, vx}
     case False{} _:
       vw
 
 # refresh the base if the scene or view changed, or fades ended since
-def Shell.vw(+vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat) -> V.Vw:
+def Shell.vw(+vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match vw:
     case V.Vw{+ss, +v, f, r, d, lx, ly, b, +fr, +cut, vx}:
-      Shell.vw.k(Bool.or(Bool.not(fr), V.Vw.late(ss, cut, now)), V.Vw{ss, v, f, r, d, lx, ly, b, fr, cut, vx}, ww, hh, x0, now)
+      Shell.vw.k(Bool.or(Bool.not(fr), V.Vw.late(ss, cut, now)), V.Vw{ss, v, f, r, d, lx, ly, b, fr, cut, vx}, ww, hh, x0, now, flip)
 
-def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat) -> V.Vw:
+def Shell.vw.if(open: Bool, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +ms: Nat, +flip: U32) -> V.Vw:
   match open:
     case True{}:
-      Shell.vw(vw, ww, hh, x0, ms)
+      Shell.vw(vw, ww, hh, x0, ms, flip)
     case False{}:
       vw
 
@@ -968,19 +1021,19 @@ def Vx.pick(x: V.Vx) -> String:
 
 # UI ops over the fading items and the picked item, over the base; tiles
 # the last frame drew the same way are kept (TI.Frame.again)
-def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
       TI.Frame.again(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
-        List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx))),
+        List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
         Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev)
 
 # the frame: UI ops over the fading items over the base
-def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
   match pa:
     case True{}:
-      Shell.image.over(ops, vw, ww, hh, x0, now, hs, pics, prev)
+      Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev)
     case False{}:
       TI.Frame.again(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev)
 
@@ -1059,7 +1112,7 @@ def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +n: N.Nui, w
       IO.bind(Window & Image, Shell, W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms)),
         r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms))
     case False{}:
-      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
         L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
@@ -1078,7 +1131,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
   match n0:
     case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, _, vw0}:
       Shell.paint.go(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
-        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms)}, w, q, i, wa, epoch, ms)
+        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.flip(n0))}, w, q, i, wa, epoch, ms)
 
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   Shell.paint.k(N.Lbx.stamp(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), ms), w, q, i, wa, epoch, ms)
@@ -1114,6 +1167,8 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.mesh(a, key, ts)
     case Status{key, text}:
       Shell.status(a, key, text)
+    case Sheets{key, text}:
+      Shell.sheets(a, text)
     case Shot{key, b}:
       Shell.shot(a, key, b)
     case PicOk{tag, path, w, h, rgb}:
