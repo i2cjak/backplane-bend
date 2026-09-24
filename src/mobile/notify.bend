@@ -73,23 +73,30 @@ def Note.pick(hit: Bool, +text: String, +acc: String) -> String:
     case False{}:
       acc
 
-def Note.said(es: List<&2, M.Entry>, +id: String, +acc: String) -> String:
-  match es:
-    case Nil{}:
+# entries are newest first, so each walk stops at its thread's first
+# match (done): walking the whole log per thread made every phone screen
+# cost seconds on a hub with a long history
+def Note.said(es: List<&2, M.Entry>, +id: String, done: Bool, +acc: String) -> String:
+  match es done:
+    case _ True{}:
       acc
-    case M.Msg{_, th, M.Assistant{}, +text, _} <> t:
-      Note.said(t, id, Note.pick(String.eq(th, id), text, acc))
-    case _ <> t:
-      Note.said(t, id, acc)
+    case Nil{} False{}:
+      acc
+    case M.Msg{_, +th, M.Assistant{}, +text, _} <> t False{}:
+      Note.said(t, id, String.eq(th, id), Note.pick(String.eq(th, id), text, acc))
+    case _ <> t False{}:
+      Note.said(t, id, False{}, acc)
 
-def Note.doing(es: List<&2, M.Entry>, +id: String, +acc: String) -> String:
-  match es:
-    case Nil{}:
+def Note.doing(es: List<&2, M.Entry>, +id: String, done: Bool, +acc: String) -> String:
+  match es done:
+    case _ True{}:
       acc
-    case M.Act{_, th, _, kind, summary, _} <> t:
-      Note.doing(t, id, Note.pick(String.eq(th, id), kind ++ " " ++ summary, acc))
-    case _ <> t:
-      Note.doing(t, id, acc)
+    case Nil{} False{}:
+      acc
+    case M.Act{_, +th, _, kind, summary, _} <> t False{}:
+      Note.doing(t, id, String.eq(th, id), Note.pick(String.eq(th, id), kind ++ " " ++ summary, acc))
+    case _ <> t False{}:
+      Note.doing(t, id, False{}, acc)
 
 def Note.clip(+s: String, +n: Nat) -> String:
   Bool.pick(String, Nat.is_gt(String.length(s), n), String.take(s, n) ++ "…", s)
@@ -119,9 +126,19 @@ def Note.body(+kind: String, +said: String) -> String:
   Bool.pick(String, String.eq(kind, "fail"), "Failed", Bool.pick(String, String.is_empty(said), "Finished", Note.line(said, 180n)))
 
 def Note.alert.k(+kind: String, +id: String, +title: String, +said: String, +rest: List<&2, J.Json>) -> List<&2, J.Json>:
-  Bool.pick(List<&2, J.Json>, String.is_empty(kind), rest,
-    J.Json.obj([J.KV{"thread", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"kind", J.Json.str(kind)},
-      J.KV{"body", J.Json.str(Note.body(kind, said))}]) <> rest)
+  J.Json.obj([J.KV{"thread", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"kind", J.Json.str(kind)},
+    J.KV{"body", J.Json.str(Note.body(kind, said))}]) <> rest
+
+# what the thread last said is read only for a thread that alerts
+def Note.alert.q(none: Bool, +kind: String, +id: String, +title: String, +es: List<&2, M.Entry>, +rest: List<&2, J.Json>) -> List<&2, J.Json>:
+  match none:
+    case True{}:
+      rest
+    case False{}:
+      Note.alert.k(kind, id, title, Note.said(es, id, False{}, ""), rest)
+
+def Note.alert(+kind: String, +id: String, +title: String, +es: List<&2, M.Entry>, +rest: List<&2, J.Json>) -> List<&2, J.Json>:
+  Note.alert.q(String.is_empty(kind), kind, id, title, es, rest)
 
 # the alerts a server message raised: every thread seen running before it
 # that has now finished or failed
@@ -130,7 +147,19 @@ def Note.alerts(ts: List<&2, M.Thread>, +seen: List<&2, Seen>, +es: List<&2, M.E
     case Nil{}:
       Nil{}
     case M.Thread{+id, _, title, _, _, turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
-      Note.alert.k(Note.kind(Note.was(seen, id), turn), id, title, Note.said(es, id, ""), Note.alerts(t, seen, es))
+      Note.alert(Note.kind(Note.was(seen, id), turn), id, title, es, Note.alerts(t, seen, es))
+
+def Note.doing.line(+d: String) -> String:
+  Note.line(Bool.pick(String, String.is_empty(d), "Working", d), 80n)
+
+# one running thread's island line; an idle thread reads no entries
+def Note.one(running: Bool, +id: String, +title: String, +es: List<&2, M.Entry>) -> List<&2, J.Json>:
+  match running:
+    case True{}:
+      [J.Json.obj([J.KV{"thread", J.Json.str(id)}, J.KV{"title", J.Json.str(Note.line(title, 60n))},
+        J.KV{"doing", J.Json.str(Note.doing.line(Note.doing(es, id, False{}, "")))}])]
+    case False{}:
+      Nil{}
 
 # the island: every running thread with what it is doing now
 def Note.lines(ts: List<&2, M.Thread>, +es: List<&2, M.Entry>) -> List<&2, J.Json>:
@@ -138,10 +167,7 @@ def Note.lines(ts: List<&2, M.Thread>, +es: List<&2, M.Entry>) -> List<&2, J.Jso
     case Nil{}:
       Nil{}
     case M.Thread{+id, _, title, _, _, turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
-      List.append(&2, J.Json, Bool.pick(List<&2, J.Json>, Note.running(turn),
-        [J.Json.obj([J.KV{"thread", J.Json.str(id)}, J.KV{"title", J.Json.str(Note.line(title, 60n))},
-          J.KV{"doing", J.Json.str(Note.line(Bool.pick(String, String.is_empty(Note.doing(es, id, "")), "Working", Note.doing(es, id, "")), 80n))}])],
-        Nil{}), Note.lines(t, es))
+      List.append(&2, J.Json, Note.one(Note.running(turn), id, title, es), Note.lines(t, es))
 
 def Note.headline(n: Nat, +first: String) -> String:
   match n:
