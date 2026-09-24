@@ -599,7 +599,7 @@ def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
    "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
-   "ask.answer", "device.register", "device.drop", "kicad.info"]
+   "ask.answer", "device.register", "device.drop", "kicad.info", "queue.resume"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -884,6 +884,30 @@ def Hub.turn.m(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: Strin
 def Hub.turn(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +text: String, +msg: String) -> Step:
   Hub.turn.m(s, now, client, id, thread, text, Bool.pick(String, String.is_empty(msg), Hub.id("m", now, Hub.seq(s)), msg), Bool.not(String.is_empty(msg)))
 
+# Stopping a turn
+# ---------------
+# Claude takes an interrupt on its input and stays up; a Codex or Grok turn
+# is a process of its own, which is stopped. Only a running turn is
+# stopped (law interrupt_idle_nothing).
+
+def Stop.outs(+provider: String, +thread: String, +rid: String) -> List<&2, Out>:
+  Bool.pick(List<&2, Out>, String.eq(provider, "claude"), [AgentSend{thread, Claude.interrupt(rid)}], [AgentStop{thread}])
+
+def Hub.interrupt.k(run: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String) -> Step:
+  match run:
+    case True{}:
+      Step{[M.TurnChanged{thread, M.Interrupted{}, now}], Reply.ok(client, id) <> Stop.outs(Hub.provider(Hub.thread(s, thread)), thread, Hub.id("i", now, Hub.seq(s)))}
+    case False{}:
+      Step.outs([Reply.ok(client, id)])
+
+def Hub.interrupt(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String) -> Step:
+  Hub.interrupt.k(Hub.running(Hub.thread(s, thread)), s, now, client, id, thread)
+
+# the held queue of an idle thread (kept across a restart, or after a
+# stop) starts now
+def Hub.resume(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String) -> Step:
+  Step.before(Nil{}, [Reply.ok(client, id)], Wt.start(s, now, thread, False{}))
+
 def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +m: String) -> Step:
   match i:
     case 0n:
@@ -895,7 +919,7 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 3n:
       Hub.turn(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "text", ""), J.Json.get_str(p, "msg", ""))
     case 4n:
-      Step{[M.TurnChanged{J.Json.get_str(p, "thread", ""), M.Interrupted{}, now}], [Reply.ok(client, id), AgentSend{J.Json.get_str(p, "thread", ""), Claude.interrupt(Hub.id("i", now, Hub.seq(s)))}]}
+      Hub.interrupt(s, now, client, id, J.Json.get_str(p, "thread", ""))
     case 5n:
       Step.reply(client, id, [M.ThreadSettled{J.Json.get_str(p, "thread", ""), True{}, now}])
     case 6n:
@@ -931,6 +955,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 21n:
       Step.outs([PlotInfo{client, id, J.Json.get_str(p, "key", ""), Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "at"), "0")), 0n),
         Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "idx"), "0")), 0n)}])
+    case 22n:
+      Hub.resume(s, now, client, id, J.Json.get_str(p, "thread", ""))
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 
@@ -967,12 +993,21 @@ def Hub.settle.k(auto: Bool, sh: M.Shelf, t: M.Thread, +now: Nat, rest: List<&2,
 # Settle tick
 # -----------
 
-def Hub.settle.go(ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat, +w: Nat) -> List<&2, M.Change>:
+# whether a thread has a delegated task still at work: its parent waits
+# for it, so it does not settle (law settle_waits_for_children)
+def Kids.busy(ts: List<&2, M.Task>, +parent: String) -> Bool:
+  match ts:
+    case Nil{}:
+      False{}
+    case M.Task{_, p, _, _, st, _, _, _, _} <> t:
+      Bool.or(Bool.and(String.eq(p, parent), Bool.not(M.TaskState.terminal(st))), Kids.busy(t, parent))
+
+def Hub.settle.go(ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +tasks: List<&2, M.Task>, +now: Nat, +w: Nat) -> List<&2, M.Change>:
   match ts:
     case Nil{}:
       Nil{}
     case +t <> rest:
-      Hub.settle.k(M.Settle.auto.at(now, w, t, M.Nav.until(M.Nav.get(navs, M.Thread.id(t)))), M.Shelf.of(t), t, now, Hub.settle.go(rest, navs, now, w))
+      Hub.settle.k(Bool.and(M.Settle.auto.at(now, w, t, M.Nav.until(M.Nav.get(navs, M.Thread.id(t)))), Bool.not(Kids.busy(tasks, M.Thread.id(t)))), M.Shelf.of(t), t, now, Hub.settle.go(rest, navs, tasks, now, w))
 
 # the settle window in seconds: the "settle.days" setting (1..90), else 3 days
 def Hub.settle.window(+s: M.State) -> Nat:
@@ -1129,10 +1164,19 @@ def Codex.line.parsed(m: Maybe<&2, J.Json>, +s: M.State, +thread: String, +now: 
     case None{}:
       Step.none()
 
+# a Codex or Grok line counts only while its thread's turn runs: what a
+# stopped turn's process still says is old news (law stopped_turn_quiet)
+def Hub.agent_line.c(run: Bool, +s: M.State, +now: Nat, +thread: String, line: String) -> Step:
+  match run:
+    case True{}:
+      Codex.line.parsed(J.Json.parse(line), s, thread, now)
+    case False{}:
+      Step.none()
+
 def Hub.agent_line.k(codex: Bool, +s: M.State, +now: Nat, +thread: String, line: String) -> Step:
   match codex:
     case True{}:
-      Codex.line.parsed(J.Json.parse(line), s, thread, now)
+      Hub.agent_line.c(Hub.running(Hub.thread(s, thread)), s, now, thread, line)
     case False{}:
       Claude.line.parsed(J.Json.parse(line), s, thread, now)
 
@@ -1391,7 +1435,205 @@ def Drop.asks(ts: List<&2, M.Thread>, +s: M.State, +now: Nat, +w: Nat) -> List<&
 # stranded worktree waits run
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{ps, +ts, _, _, _, _, _, _, _, _}:
-      Step.before(Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), now, Hub.settle.window(s)),
+    case M.State{ps, +ts, _, _, +tk, _, _, _, _, _}:
+      Step.before(Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), Map.values(&2, M.Task, tk), now, Hub.settle.window(s)),
         List.append(&2, Out, Merge.asks(Map.values(&2, M.Project, ps), Map.values(&2, M.Thread, ts), s), Drop.asks(Map.values(&2, M.Thread, ts), s, now, Hub.wt.window(s))),
         Wt.stale(Map.values(&2, M.Thread, ts), s, now))
+
+# Asks keep their thread busy
+# ---------------------------
+# A thread with an open ask (an approval, a question, a plan) waits on the
+# user: every step that opens or closes one also sets the thread's pending
+# count to its open asks, so it never auto-settles meanwhile (laws
+# ask_makes_pending, answer_clears_pending).
+
+def Pend.one(hit: Bool, n: Nat) -> Nat:
+  match hit:
+    case True{}:
+      1n+n
+    case False{}:
+      n
+
+def Pend.open(as: List<&2, M.Ask>, +th: String) -> Nat:
+  match as:
+    case Nil{}:
+      0n
+    case M.Ask{_, t, _, _, _, _, op, _} <> rest:
+      Pend.one(Bool.and(op, String.eq(t, th)), Pend.open(rest, th))
+
+def Pend.thread(a: M.Ask) -> String:
+  match a:
+    case M.Ask{_, th, _, _, _, _, _, _}:
+      th
+
+def Pend.go(cs: List<&2, M.Change>, +before: M.State, +after: M.State) -> List<&2, M.Change>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case M.AskOpened{_, +th, _, _, _, _, +at} <> t:
+      M.PendingChanged{th, Pend.open(M.Asks.all(after), th), at} <> Pend.go(t, before, after)
+    case M.AskClosed{+id, _, +at} <> t:
+      M.PendingChanged{Pend.thread(Ask.find(M.Asks.all(before), id)), Pend.open(M.Asks.all(after), Pend.thread(Ask.find(M.Asks.all(before), id))), at} <> Pend.go(t, before, after)
+    case _ <> t:
+      Pend.go(t, before, after)
+
+# a step's changes with the pending counts they move
+def Pend.fix(+s: M.State, +cs: List<&2, M.Change>) -> List<&2, M.Change>:
+  List.append(&2, M.Change, cs, Pend.go(cs, s, M.State.replay(cs, s)))
+
+# Recovery
+# --------
+# After a restart nothing the old process held is left: no agent runs, no
+# request waits parked for an answer. Every turn still marked running ends
+# as interrupted (a delegated child's task fails, and its parent hears of
+# it) and every open ask closes unanswered (laws recover_*). Queued
+# messages stay held until the user resumes them (queue.resume) or sends
+# another.
+
+type Rec is Data:
+  Rec{s: M.State, cs: List<&2, M.Change>, os: List<&2, Out>}
+
+def Rec.add(r: Rec, st: Step) -> Rec:
+  match r st:
+    case Rec{s, cs, os} Step{+c2, o2}:
+      Rec{M.State.replay(c2, s), List.append(&2, M.Change, cs, c2), List.append(&2, Out, os, o2)}
+
+def Rec.note(+th: String, +now: Nat, +seq: Nat, +text: String) -> M.Change:
+  M.ActivityLogged{th, Hub.id("r", now, seq), "error", "restart", text, now}
+
+def Rec.turn.k(run: Bool, +s: M.State, +now: Nat, +th: String) -> Step:
+  match run:
+    case True{}:
+      Task.finish(s, now, th, Step{[Rec.note(th, now, Hub.seq(s), "Backplane restarted before this turn finished"), M.TurnChanged{th, M.Interrupted{}, now}], Nil{}})
+    case False{}:
+      Step.none()
+
+def Rec.turn(r: Rec, +now: Nat, +th: String) -> Rec:
+  match r:
+    case Rec{+s, cs, os}:
+      Rec.add(Rec{s, cs, os}, Rec.turn.k(Hub.running(Hub.thread(s, th)), s, now, th))
+
+def Rec.turns(ts: List<&2, String>, r: Rec, +now: Nat) -> Rec:
+  match ts:
+    case Nil{}:
+      r
+    case +th <> t:
+      Rec.turns(t, Rec.turn(r, now, th), now)
+
+def Rec.ask.k(a: M.Ask, +s: M.State, +now: Nat) -> Step:
+  match a:
+    case M.Ask{+id, +th, _, _, _, _, True{}, _}:
+      Step{[M.AskClosed{id, "", now}, Rec.note(th, now, Hub.seq(s), "Backplane restarted: this request can no longer be answered")], Nil{}}
+    case _:
+      Step.none()
+
+def Rec.ask(r: Rec, a: M.Ask, +now: Nat) -> Rec:
+  match r:
+    case Rec{+s, cs, os}:
+      Rec.add(Rec{s, cs, os}, Rec.ask.k(a, s, now))
+
+def Rec.asks(as: List<&2, M.Ask>, r: Rec, +now: Nat) -> Rec:
+  match as:
+    case Nil{}:
+      r
+    case a <> t:
+      Rec.asks(t, Rec.ask(r, a, now), now)
+
+def Rec.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case t <> rest:
+      M.Thread.id(t) <> Rec.ids(rest)
+
+def Rec.threads(s: M.State) -> List<&2, M.Thread>:
+  match s:
+    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+      Map.values(&2, M.Thread, ts)
+
+def Rec.step(r: Rec) -> Step:
+  match r:
+    case Rec{_, cs, os}:
+      Step{cs, os}
+
+# what a hub that just started from its log does first
+def Hub.recover(+s: M.State, +now: Nat) -> Step:
+  Rec.step(Rec.turns(Rec.ids(Rec.threads(s)), Rec.asks(M.Asks.all(s), Rec{s, Nil{}, Nil{}}, now), now))
+
+# Turn processes
+# --------------
+# A Codex or Grok turn is a process of its own. Its lines reach the hub
+# tagged "<thread>\t<pid>", and only the process the hub last started for a
+# thread is heard (a stopped one may still be talking). Thread ids hold no
+# tab; an untagged line (Claude's) is always heard.
+
+def Tag.of(+thread: String, +pid: U32) -> String:
+  thread ++ "\t" ++ U32.show(pid)
+
+def Tag.thread.k(ps: List<&2, String>) -> String:
+  match ps:
+    case th <> _:
+      th
+    case Nil{}:
+      ""
+
+def Tag.thread(+tag: String) -> String:
+  Tag.thread.k(String.split(tag, '\t'))
+
+def Tag.digit(+c: U32) -> Bool:
+  Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
+
+# a pid's digits as a number (None for anything else)
+def Tag.num(s: String, acc: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match s acc:
+    case SNil{} _:
+      acc
+    case SCon{Chr{+c}, t} Some{+n}:
+      Tag.num(t, Bool.pick(Maybe<&2, U32>, Tag.digit(c), Some{((n * 10 : U32) + (c - 48 : U32) : U32)}, None{}))
+    case SCon{Chr{+c}, t} None{}:
+      None{}
+
+def Tag.num.k(empty: Bool, p: String) -> Maybe<&2, U32>:
+  match empty:
+    case True{}:
+      None{}
+    case False{}:
+      Tag.num(p, Some{0})
+
+def Tag.pid.k(ps: List<&2, String>) -> Maybe<&2, U32>:
+  match ps:
+    case _ <> +p <> Nil{}:
+      Tag.num.k(String.is_empty(p), p)
+    case _:
+      None{}
+
+# the process a tag names (None: untagged)
+def Tag.pid(+tag: String) -> Maybe<&2, U32>:
+  Tag.pid.k(String.split(tag, '\t'))
+
+# whether a line from this tag is heard, given the pid the hub runs for
+# its thread (None: none)
+def Tag.heard(m: Maybe<&2, U32>, run: Maybe<&2, U32>) -> Bool:
+  match m run:
+    case None{} _:
+      True{}
+    case Some{+p} Some{+q}:
+      U32.is_eq(p, q)
+    case Some{_} None{}:
+      False{}
+
+def Hub.pending(t: M.Thread) -> Nat:
+  match t:
+    case M.Thread{_, _, _, _, _, _, pe, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      pe
+
+# Scenarios the recovery laws are stated over: a Codex thread whose turn
+# runs (or finished), with an approval open
+def Rec.demo.base() -> List<&2, M.Change>:
+  [M.ProjectCreated{"p1", "p", "/p", 1n}, M.ThreadCreated{"t1", "p1", "x", M.Local{}, "", "", "codex", "", 1n}]
+
+def Rec.demo(+st: M.TurnState) -> M.State:
+  M.State.replay(List.append(&2, M.Change, Rec.demo.base(), [M.TurnChanged{"t1", st, 2n}, M.AskOpened{"a1", "t1", "approval", "Bash", "ls", "", 3n}]), M.State.empty())
+
+def Rec.after(+s: M.State, +now: Nat) -> M.State:
+  M.State.replay(Queue.changes(Hub.recover(s, now)), s)
