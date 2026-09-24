@@ -49,7 +49,7 @@ def View.rows(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>) -> List<&2, PRow
 # a sidebar row: its status dot, title and age (a snoozed row: the time
 # left); rows of a shelf with manual order get move buttons on hover
 def View.row.k(+id: String, +title: String, +ago: String, +dot: String, +sel: String, +movable: Bool) -> D.Node:
-  D.El{"div", id, [D.At{"class", Bool.pick(String, String.eq(id, sel), "thread on", "thread")}, D.At{"data-value", id}, D.On{"click", "select"}],
+  D.El{"div", id, [D.At{"class", Bool.pick(String, String.eq(id, sel), "thread on", "thread")}, D.At{"data-value", id}, D.On{"click", "select"}, D.On{"contextmenu", "row-toggle"}],
     D.Dom.cat([D.Dom.span("dot " ++ dot, ""), D.Dom.span("title", title)],
       D.Dom.cat(Bool.pick(List<&2, D.Node>, movable, [D.El{"span", "", [D.At{"class", "moves"}], [D.Dom.button("move", "move", id ++ "|up", "Move up", "↑"), D.Dom.button("move", "move", id ++ "|down", "Move down", "↓")]}], Nil{}),
         [D.Dom.span("ago", ago)]))}

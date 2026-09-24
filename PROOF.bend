@@ -2321,6 +2321,21 @@ def Laws.delete_asks_first(u):
 def Laws.row_delete_asks_first(u, id):
   {==}
 
+def Laws.row_toggle_unsettles(t, at, h):
+  %Equal.sym(M.Shelf, M.Shelf.of(M.Thread.settled(True{}, at, t)), M.Settled{}, Laws.merge_settles(t, at, h)) : {U.Ui.row_toggle.m(_) == "thread.unsettle" : String}
+  {==}
+
+def Laws.row_toggle_settles(at, t):
+  match t:
+    case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, True{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, True{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, True{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, False{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+
 def Laws.picker_drops_stale(u, o):
   {==}
 
