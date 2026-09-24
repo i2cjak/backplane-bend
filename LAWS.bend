@@ -42,6 +42,9 @@ import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
 import ./src/core/hier.bend as HI
 
+import ./src/core/boot.bend as BT
+import ./src/core/store.bend as ST
+
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
 # one without the user's explicit consent.
@@ -1828,3 +1831,38 @@ law wait_at_least_a_second:
 
 law wait_at_most_ten_minutes:
   {MC.Wait.clamp(9000000n) == 600n : Nat}
+# Start-up
+# --------
+# The window opens before the providers are probed; until they answer,
+# the hub serves the model list it found last time.
+
+# the cached list reads back as it was written
+law models_cache_json:
+  for +ms: String
+  for +mt: String
+  {BT.Cache.json(BT.Cache.of(ms, mt)) == BT.Cache.one(ms) : String}
+
+# and so does the prompt's text after it
+law models_cache_text:
+  for +ms: String
+  for +mt: String
+  {BT.Cache.text(BT.Cache.of(ms, mt)) == mt : String}
+
+# a probe that finds the list clients already have tells no one
+law models_quiet:
+  for +ms: String
+  {BT.Models.news(ms, ms) == False{} : Bool}
+
+# the log is read in one pass, each line parsed once: the state it gives
+# is exactly the replay of the log's changes
+law store_state_is_replay:
+  for ls: List<&2, String>
+  for +a: ST.Loaded
+  {ST.Loaded.st(ST.Store.load(ls, a)) == M.State.replay(ST.Store.changes(ls), ST.Loaded.st(a)) : M.State}
+
+# and a log read in two parts is the log read whole
+law store_load_append:
+  for xs: List<&2, String>
+  for +ys: List<&2, String>
+  for +a: ST.Loaded
+  {ST.Store.load(List.append(&2, String, xs, ys), a) == ST.Store.load(ys, ST.Store.load(xs, a)) : ST.Loaded}

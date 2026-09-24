@@ -1441,7 +1441,15 @@ def Shell.loop(fuel: Nat, a: Shell) -> IO(Unit):
 # -----
 
 
-def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
+# the fonts, loaded while the hub starts (Start.fonts)
+def Shell.fonts(m: Maybe<&1, L.Ty>) -> IO(L.Ty):
+  match m:
+    case Some{ty}:
+      IO.pure(L.Ty, ty)
+    case None{}:
+      L.Ty.load()
+
+def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):
   (ev, pw) = r
   do IO<Unit>:
     +q : Chan(ShellMsg) <- Chan.new(ShellMsg, 8192)
@@ -1450,29 +1458,38 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String) -> IO(U
     ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out, 0n, ""})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
-    ty : L.Ty <- L.Ty.load()
+    got : Maybe<&1, L.Ty> <- Chan.recv(L.Ty, fq)
+    ty : L.Ty <- Shell.fonts(got)
     ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
     a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, L.TL.memo.none()}}})
     Shell.loop(S.Fuel.forever(), a)
 
-def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
+def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):
   match r:
     case Done{w}:
-      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox, drafts))
+      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox, drafts, fq))
     case Fail{e}:
       Shell.nowin(e)
 
-def Shell.run(+inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
-  IO.bind(Result<&1, &1, U32 & String, Window>, Unit, W.Win.open("Backplane", 1400, 900), r => Shell.opened(r, inbox, drafts))
+def Start.fonts(+fq: Chan(L.Ty)) -> IO(Unit):
+  do IO<Unit>:
+    ty : L.Ty <- L.Ty.load()
+    ok : Bool <- Chan.send(L.Ty, fq, ty)
+    return Unit{}
 
+# the window opens first and the fonts load beside the hub's start, so
+# the first frame waits only for the log
 def start(args: List<String>) -> IO(Unit):
   do IO<Unit>:
+    +fq : Chan(L.Ty) <- Chan.new(L.Ty, 1)
+    IO.spawn(Unit, Start.fonts(fq))
+    r : Result<&1, &1, U32 & String, Window> <- W.Win.open("Backplane", 1400, 900)
     +user : String <- S.Env.get("HOME", "/tmp")
     +exe : String <- S.Sys.exe_dir.io()
     b : S.Boot <- S.Main.prepare(user, exe)
     +cfg : S.Cfg = S.Main.config(user, exe, args, b)
     +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
-    S.Main.boot(cfg, False{}, i => Shell.run(i, drafts))
+    S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq))
 
 # (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
 def main() -> IO(Unit):
