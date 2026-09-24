@@ -74,7 +74,7 @@ def main() -> IO(Unit):
     +y1 : U32 = head_y(nhits(n), "p1")
     +y3 : U32 = head_y(nhits(n), "p3")
     +n1 : N.Nui = again(ty, ev(n, W.WButton{100, y1, 1, True{}}))
-    +n2 : N.Nui = again(ty, ev(n1, W.WMove{100, y3}))
+    +n2 : N.Nui = again(ty, ev(n1, W.WMove{100, y3, 0}))
     C.Check.str("order before", String.join(U.Side.projects(N.Nui.ui(n)), ","), "p3,p2,p1")
     C.Check.str("heads drawn", Bool.show(Bool.and(U32.is_gt(y1, y3), U32.is_gt(y3, 0))), "True")
     C.Check.str("press arms", U.Ui.scratch(N.Nui.ui(n1), "@drag"), "project:p1")

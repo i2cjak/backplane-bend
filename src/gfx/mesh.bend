@@ -10,7 +10,9 @@ import ./raster.bend as R
 # just its box). The regions are then drawn in parallel, dealt out in
 # bit-reversed order so every core gets a fair sample of the screen, not
 # one busy corner. A region splits to 16-px tiles and 4x4 blocks that walk
-# their short list once, keeping the nearest hit per pixel. Depth is 1/z,
+# their short list once, keeping the nearest hit per pixel; a fine frame
+# (the view at rest) splits once more, to 2x2 blocks of four samples a
+# pixel, averaged. Edges are watertight (STri). Depth is 1/z,
 # linear in screen space, taken from the triangle's first vertex so thin
 # layers stay apart. A translucent triangle (a see-through material, or a
 # part still fading in) is kept as one extra layer per pixel.
@@ -22,23 +24,30 @@ import ./raster.bend as R
 # parts on it are not; Face.key() pixels are not board (outside the outline,
 # holes) and let what is behind show through.
 
-# yaw and pitch in radians (pitch 0 looks level, pi/2 straight down),
-# distance from the target, vertical field of view in radians
+# the camera: an orthonormal right and up (forward is up x right), the
+# pivot it turns around, the eye's distance to the pivot's plane, the pan
+# of the view off the pivot (along right and up) and the vertical field of
+# view in radians. Nothing is locked to the world's up, so a model tumbles
+# freely about the screen's axes, as in SolidWorks.
 type Cam is Data:
-  Cam{yaw: F32, pitch: F32, dist: F32, tx: F32, ty: F32, tz: F32, fov: F32}
+  Cam{rx: F32, ry: F32, rz: F32, ux: F32, uy: F32, uz: F32, px: F32, py: F32, pz: F32, dist: F32, sx: F32, sy: F32, fov: F32}
 
 # the camera resolved for a frame: eye, right, up and forward axes, focal
-# length and centre in pixels, near plane, frame size, and the unit vector
-# towards the light
+# length and centre in pixels, near plane, frame size, the unit vector
+# towards the light, and lo, the first sample's offset in a pixel (0.5
+# for one sample a pixel, 0.25 for four: a fine frame)
 type View is Data:
   View{ex: F32, ey: F32, ez: F32, rx: F32, ry: F32, rz: F32, ux: F32, uy: F32, uz: F32, fx: F32, fy: F32, fz: F32,
-    focal: F32, cx: F32, cy: F32, near: F32, w: F32, h: F32, lx: F32, ly: F32, lz: F32}
+    focal: F32, cx: F32, cy: F32, near: F32, w: F32, h: F32, lx: F32, ly: F32, lz: F32, lo: F32}
 
-# a screen triangle: pixel box (inclusive), three edge functions a*x+b*y+c
-# (all >= 0 inside), the 1/z plane, the shaded colour and its opacity
+# a screen triangle: pixel box (inclusive), three edge functions
+# a*(x-ex)+b*(y-ey) (all >= 0 inside), the 1/z plane za*x+zb*y+zc, the
+# shaded colour and its opacity. An edge is measured from whichever of its
+# ends comes first (by x, then y), so the two triangles that share it get
+# exactly opposite values: no sample falls between them (no cracks)
 type STri is Data:
-  STri{x0: U32, y0: U32, x1: U32, y1: U32, a0: F32, b0: F32, c0: F32, a1: F32, b1: F32, c1: F32, a2: F32, b2: F32, c2: F32,
-    za: F32, zb: F32, zc: F32, color: U32, alpha: U32}
+  STri{x0: U32, y0: U32, x1: U32, y1: U32, a0: F32, b0: F32, ex0: F32, ey0: F32, a1: F32, b1: F32, ex1: F32, ey1: F32,
+    a2: F32, b2: F32, ex2: F32, ey2: F32, za: F32, zb: F32, zc: F32, color: U32, alpha: U32}
 
 # a pixel's nearest opaque hit and nearest translucent hit (depth is 1/z;
 # 0 is the background at infinity)
@@ -69,20 +78,108 @@ def U32.pick(c: Bool, +a: U32, +b: U32) -> U32:
 # Camera
 # ------
 
-def Cam.orbit.k(c: Cam, +dx: F32, +dy: F32) -> Cam:
-  match c:
-    case Cam{yaw, pitch, dist, tx, ty, tz, fov}:
-      Cam{F32.add(yaw, dx), F32.clamp(F32.add(pitch, dy), F32.neg(1.55), 1.55), dist, tx, ty, tz, fov}
+def V3.len(+x: F32, +y: F32, +z: F32) -> F32:
+  F32.max(F32.sqrt(F32.add(F32.add(F32.mul(x, x), F32.mul(y, y)), F32.mul(z, z))), 0.00000000001)
 
-# turn the camera around its target by dx (yaw) and dy (pitch), radians
+def Cam.put.k(c: Cam, +ax: F32, +ay: F32, +az: F32, +bx: F32, +by: F32, +bz: F32, +bl: F32) -> Cam:
+  match c:
+    case Cam{_, _, _, _, _, _, px, py, pz, dist, sx, sy, fov}:
+      Cam{ax, ay, az, F32.div(bx, bl), F32.div(by, bl), F32.div(bz, bl), px, py, pz, dist, sx, sy, fov}
+
+def Cam.put.u(c: Cam, +ax: F32, +ay: F32, +az: F32, +ux: F32, +uy: F32, +uz: F32) -> Cam:
+  +d = F32.add(F32.add(F32.mul(ax, ux), F32.mul(ay, uy)), F32.mul(az, uz))
+  +bx = F32.sub(ux, F32.mul(ax, d))
+  +by = F32.sub(uy, F32.mul(ay, d))
+  +bz = F32.sub(uz, F32.mul(az, d))
+  Cam.put.k(c, ax, ay, az, bx, by, bz, V3.len(bx, by, bz))
+
+# a new right and up, made orthonormal again (turns never drift)
+def Cam.put(c: Cam, +rx: F32, +ry: F32, +rz: F32, +ux: F32, +uy: F32, +uz: F32) -> Cam:
+  +l = V3.len(rx, ry, rz)
+  Cam.put.u(c, F32.div(rx, l), F32.div(ry, l), F32.div(rz, l), ux, uy, uz)
+
+# the axes of a camera at yaw and pitch around the y-up world (pitch 0
+# looks level, pi/2 straight down; yaw 0 looks along -z)
+def Cam.at(+yaw: F32, +pitch: F32, +px: F32, +py: F32, +pz: F32, +dist: F32, +fov: F32) -> Cam:
+  +cy = F32.cos(yaw)
+  +sy = F32.sin(yaw)
+  +cp = F32.cos(pitch)
+  +sp = F32.sin(pitch)
+  Cam{cy, 0.0, F32.neg(sy), F32.neg(F32.mul(sy, sp)), cp, F32.neg(F32.mul(cy, sp)), px, py, pz, dist, 0.0, 0.0, fov}
+
+# the side a model is first seen from: the front, about 55 degrees down
+# (glTF is Y up; a KiCad board lies in XZ)
+def Cam.first() -> Cam:
+  Cam.at(0.3, 0.95, 0.0, 0.0, 0.0, 1.0, 0.7)
+
+# turn the camera about its own up axis by a
+def Cam.spin.u(c: Cam, +a: F32) -> Cam:
+  match c:
+    case Cam{+rx, +ry, +rz, +ux, +uy, +uz, px, py, pz, dist, sx, sy, fov}:
+      +co = F32.cos(a)
+      +si = F32.sin(a)
+      Cam.put(Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, sx, sy, fov},
+        F32.add(F32.mul(rx, co), F32.mul(F32.sub(F32.mul(uy, rz), F32.mul(uz, ry)), si)),
+        F32.add(F32.mul(ry, co), F32.mul(F32.sub(F32.mul(uz, rx), F32.mul(ux, rz)), si)),
+        F32.add(F32.mul(rz, co), F32.mul(F32.sub(F32.mul(ux, ry), F32.mul(uy, rx)), si)), ux, uy, uz)
+
+# turn the camera about its own right axis by b
+def Cam.spin.r(c: Cam, +b: F32) -> Cam:
+  match c:
+    case Cam{+rx, +ry, +rz, +ux, +uy, +uz, px, py, pz, dist, sx, sy, fov}:
+      +co = F32.cos(b)
+      +si = F32.sin(b)
+      Cam.put(Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, sx, sy, fov}, rx, ry, rz,
+        F32.sub(F32.mul(ux, co), F32.mul(F32.sub(F32.mul(uy, rz), F32.mul(uz, ry)), si)),
+        F32.sub(F32.mul(uy, co), F32.mul(F32.sub(F32.mul(uz, rx), F32.mul(ux, rz)), si)),
+        F32.sub(F32.mul(uz, co), F32.mul(F32.sub(F32.mul(ux, ry), F32.mul(uy, rx)), si)))
+
+# turn the model about the pivot as if dragged: dx to the right turns its
+# near side right, dy down tips its top towards the viewer (radians)
 def Cam.orbit(c: Cam, +dx: F32, +dy: F32) -> Cam:
-  Cam.orbit.k(c, dx, dy)
+  Cam.spin.r(Cam.spin.u(c, F32.neg(dx)), F32.neg(dy))
 
-# move towards (f < 1) or away from (f > 1) the target
-def Cam.zoom(c: Cam, +f: F32) -> Cam:
+# roll the model clockwise about the line of sight by t (radians)
+def Cam.roll(c: Cam, +t: F32) -> Cam:
   match c:
-    case Cam{yaw, pitch, dist, tx, ty, tz, fov}:
-      Cam{yaw, pitch, F32.mul(dist, f), tx, ty, tz, fov}
+    case Cam{+rx, +ry, +rz, +ux, +uy, +uz, px, py, pz, dist, sx, sy, fov}:
+      +co = F32.cos(t)
+      +si = F32.sin(t)
+      Cam.put(Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, sx, sy, fov},
+        F32.add(F32.mul(rx, co), F32.mul(ux, si)), F32.add(F32.mul(ry, co), F32.mul(uy, si)), F32.add(F32.mul(rz, co), F32.mul(uz, si)),
+        F32.sub(F32.mul(ux, co), F32.mul(rx, si)), F32.sub(F32.mul(uy, co), F32.mul(ry, si)), F32.sub(F32.mul(uz, co), F32.mul(rz, si)))
+
+# world units per pixel at the pivot's depth in a w x h view
+def Cam.unit(c: Cam, +w: U32, +h: U32) -> F32:
+  match c:
+    case Cam{_, _, _, _, _, _, _, _, _, dist, _, _, fov}:
+      F32.div(F32.mul(dist, F32.tan(F32.mul(0.5, fov))), F32.mul(0.5, F32.max(F32.min(U32.to_f32(w), U32.to_f32(h)), 1.0)))
+
+# move the view by (dx, dy) pixels, s world units each: the model follows
+def Cam.pan(c: Cam, +dx: F32, +dy: F32, +s: F32) -> Cam:
+  match c:
+    case Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, sx, sy, fov}:
+      Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, F32.sub(sx, F32.mul(dx, s)), F32.add(sy, F32.mul(dy, s)), fov}
+
+# move towards (f < 1) or away from (f > 1) the pivot's plane, keeping the
+# point (ox, oy) pixels off the view's centre where it is (s world units a
+# pixel before the move)
+def Cam.zoom_at(c: Cam, +f: F32, +ox: F32, +oy: F32, +s: F32) -> Cam:
+  match c:
+    case Cam{rx, ry, rz, ux, uy, uz, px, py, pz, dist, sx, sy, fov}:
+      +k = F32.mul(s, F32.sub(1.0, f))
+      Cam{rx, ry, rz, ux, uy, uz, px, py, pz, F32.mul(dist, f), F32.add(sx, F32.mul(ox, k)), F32.sub(sy, F32.mul(oy, k)), fov}
+
+# move towards (f < 1) or away from (f > 1) the view's centre
+def Cam.zoom(c: Cam, +f: F32) -> Cam:
+  Cam.zoom_at(c, f, 0.0, 0.0, 0.0)
+
+# the same pivot, distance and field of view, looking from yaw and pitch,
+# centred (the standard views)
+def Cam.face(c: Cam, +yaw: F32, +pitch: F32) -> Cam:
+  match c:
+    case Cam{_, _, _, _, _, _, px, py, pz, dist, _, _, fov}:
+      Cam.at(yaw, pitch, px, py, pz, dist, fov)
 
 type Box3 is Data:
   Box3{x0: F32, y0: F32, z0: F32, x1: F32, y1: F32, z1: F32}
@@ -103,20 +200,21 @@ def Box3.go(ts: List<&2, G.Tri3>, b: Box3) -> Box3:
     case G.Tri3{ax, ay, az, bx, by, bz, cx, cy, cz, _} <> t:
       Box3.go(t, Box3.put(Box3.put(Box3.put(b, ax, ay, az), bx, by, bz), cx, cy, cz))
 
-def Cam.of_box(b: Box3, +fov: F32) -> Cam:
-  match b:
-    case Box3{+x0, +y0, +z0, +x1, +y1, +z1}:
+# the camera c turned as it is, showing the whole box, centred on it (its
+# centre is the pivot)
+def Cam.of_box(b: Box3, c: Cam) -> Cam:
+  match b c:
+    case Box3{+x0, +y0, +z0, +x1, +y1, +z1} Cam{rx, ry, rz, ux, uy, uz, _, _, _, _, _, _, +fov}:
       +dx = F32.sub(x1, x0)
       +dy = F32.sub(y1, y0)
       +dz = F32.sub(z1, z0)
       +r = F32.max(F32.mul(0.5, F32.sqrt(F32.add(F32.mul(dx, dx), F32.add(F32.mul(dy, dy), F32.mul(dz, dz))))), 0.000001)
-      Cam{0.3, 0.95, F32.div(r, F32.sin(F32.mul(fov, 0.5))), F32.mul(0.5, F32.add(x0, x1)), F32.mul(0.5, F32.add(y0, y1)),
-        F32.mul(0.5, F32.add(z0, z1)), fov}
+      Cam{rx, ry, rz, ux, uy, uz, F32.mul(0.5, F32.add(x0, x1)), F32.mul(0.5, F32.add(y0, y1)), F32.mul(0.5, F32.add(z0, z1)),
+        F32.div(r, F32.sin(F32.mul(fov, 0.5))), 0.0, 0.0, fov}
 
-# a camera that shows every triangle, looking down at the target from the
-# front at about 55 degrees (glTF is Y up; a KiCad board lies in XZ)
+# a camera that shows every triangle, from the first side (Cam.first)
 def Cam.fit(ts: List<&2, G.Tri3>) -> Cam:
-  Cam.of_box(Box3.go(ts, Box3.empty()), 0.7)
+  Cam.of_box(Box3.go(ts, Box3.empty()), Cam.first())
 
 # Models
 # ------
@@ -206,10 +304,14 @@ def Model.size(m: Model) -> Nat:
     case Model{n, _, _, _, _}:
       n
 
-def Model.fit(m: Model) -> Cam:
+# zoom to fit, turned as c is (SolidWorks' F)
+def Model.refit(m: Model, c: Cam) -> Cam:
   match m:
     case Model{_, box, _, _, _}:
-      Cam.of_box(box, 0.7)
+      Cam.of_box(box, c)
+
+def Model.fit(m: Model) -> Cam:
+  Model.refit(m, Cam.first())
 
 def Model.tree(m: Model) -> MTree:
   match m:
@@ -261,35 +363,42 @@ def Proj.flip(neg: Bool, +v: F32) -> F32:
 def Proj.floor(+f: F32) -> U32:
   F32.to_u32(F32.max(f, 0.0))
 
-# the triangle once its box has pixel centres in it
+# the triangle once its box has sample points in it; s flips the edges of
+# a clockwise one so inside is >= 0
 def Proj.keep(ok: Bool, +x0: F32, +y0: F32, +x1: F32, +y1: F32, +s: Bool,
-    +a0: F32, +b0: F32, +c0: F32, +a1: F32, +b1: F32, +c1: F32, +a2: F32, +b2: F32, +c2: F32,
+    +a0: F32, +b0: F32, +ex0: F32, +ey0: F32, +a1: F32, +b1: F32, +ex1: F32, +ey1: F32, +a2: F32, +b2: F32, +ex2: F32, +ey2: F32,
     +za: F32, +zb: F32, +zc: F32, +col: U32, +alpha: U32, acc: List<&2, STri>) -> List<&2, STri>:
   match ok:
     case True{}:
       STri{Proj.floor(x0), Proj.floor(y0), Proj.floor(x1), Proj.floor(y1),
-        Proj.flip(s, a0), Proj.flip(s, b0), Proj.flip(s, c0), Proj.flip(s, a1), Proj.flip(s, b1), Proj.flip(s, c1),
-        Proj.flip(s, a2), Proj.flip(s, b2), Proj.flip(s, c2), za, zb, zc, col, alpha} <> acc
+        Proj.flip(s, a0), Proj.flip(s, b0), ex0, ey0, Proj.flip(s, a1), Proj.flip(s, b1), ex1, ey1,
+        Proj.flip(s, a2), Proj.flip(s, b2), ex2, ey2, za, zb, zc, col, alpha} <> acc
     case False{}:
       acc
 
-# pixel box: the pixel centres (i + 0.5) the triangle's bounds contain
-def Proj.box(+area: F32, +xa: F32, +ya: F32, +xb: F32, +yb: F32, +xc: F32, +yc: F32, +w: F32, +h: F32,
-    +a0: F32, +b0: F32, +c0: F32, +a1: F32, +b1: F32, +c1: F32, +a2: F32, +b2: F32, +c2: F32,
+# pixel box: the pixels with a sample (i + lo, or i + 1 - lo) inside the
+# triangle's bounds
+def Proj.box(+area: F32, +xa: F32, +ya: F32, +xb: F32, +yb: F32, +xc: F32, +yc: F32, +w: F32, +h: F32, +lo: F32,
+    +a0: F32, +b0: F32, +ex0: F32, +ey0: F32, +a1: F32, +b1: F32, +ex1: F32, +ey1: F32, +a2: F32, +b2: F32, +ex2: F32, +ey2: F32,
     +za: F32, +zb: F32, +zc: F32, +col: U32, +alpha: U32, acc: List<&2, STri>) -> List<&2, STri>:
-  +x0 = F32.max(F32.ceil(F32.sub(F32.min(xa, F32.min(xb, xc)), 0.5)), 0.0)
-  +y0 = F32.max(F32.ceil(F32.sub(F32.min(ya, F32.min(yb, yc)), 0.5)), 0.0)
-  +x1 = F32.min(F32.floor(F32.sub(F32.max(xa, F32.max(xb, xc)), 0.5)), F32.sub(w, 1.0))
-  +y1 = F32.min(F32.floor(F32.sub(F32.max(ya, F32.max(yb, yc)), 0.5)), F32.sub(h, 1.0))
+  +x0 = F32.max(F32.ceil(F32.sub(F32.min(xa, F32.min(xb, xc)), F32.sub(1.0, lo))), 0.0)
+  +y0 = F32.max(F32.ceil(F32.sub(F32.min(ya, F32.min(yb, yc)), F32.sub(1.0, lo))), 0.0)
+  +x1 = F32.min(F32.floor(F32.sub(F32.max(xa, F32.max(xb, xc)), lo)), F32.sub(w, 1.0))
+  +y1 = F32.min(F32.floor(F32.sub(F32.max(ya, F32.max(yb, yc)), lo)), F32.sub(h, 1.0))
   Proj.keep(Bool.and(Bool.and(F32.is_le(x0, x1), F32.is_le(y0, y1)), F32.is_gt(F32.abs(area), 0.0001)), x0, y0, x1, y1,
-    F32.is_lt(area, 0.0), a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, col, alpha, acc)
+    F32.is_lt(area, 0.0), a0, b0, ex0, ey0, a1, b1, ex1, ey1, a2, b2, ex2, ey2, za, zb, zc, col, alpha, acc)
 
-# edges AB, BC, CA and the 1/z plane of a screen triangle. The plane's
-# slopes come from differences to vertex A and its offset from A itself:
-# solving it from the edge functions' constant terms (pixel coordinates
-# squared) loses the depth that keeps copper, mask and silk apart.
+# whether (px, py) comes before (qx, qy): by x, then y
+def Proj.first(+px: F32, +py: F32, +qx: F32, +qy: F32) -> Bool:
+  Bool.or(F32.is_lt(px, qx), Bool.and(F32.is_eq(px, qx), F32.is_le(py, qy)))
+
+# edges AB, BC, CA (each measured from its first end) and the 1/z plane
+# of a screen triangle. The plane's slopes come from differences to vertex
+# A and its offset from A itself: solving it from the edge functions'
+# constant terms (pixel coordinates squared) loses the depth that keeps
+# copper, mask and silk apart.
 def Proj.edges(+xa: F32, +ya: F32, +ia: F32, +xb: F32, +yb: F32, +ib: F32, +xc: F32, +yc: F32, +ic: F32,
-    +w: F32, +h: F32, +col: U32, +alpha: U32, acc: List<&2, STri>) -> List<&2, STri>:
+    +w: F32, +h: F32, +lo: F32, +col: U32, +alpha: U32, acc: List<&2, STri>) -> List<&2, STri>:
   +e1x = F32.sub(xb, xa)
   +e1y = F32.sub(yb, ya)
   +e2x = F32.sub(xc, xa)
@@ -299,19 +408,22 @@ def Proj.edges(+xa: F32, +ya: F32, +ia: F32, +xb: F32, +yb: F32, +ib: F32, +xc: 
   +area = F32.sub(F32.mul(e1x, e2y), F32.mul(e2x, e1y))
   +gx = F32.div(F32.sub(F32.mul(d1, e2y), F32.mul(d2, e1y)), area)
   +gy = F32.div(F32.sub(F32.mul(d2, e1x), F32.mul(d1, e2x)), area)
-  Proj.box(area, xa, ya, xb, yb, xc, yc, w, h,
-    F32.sub(ya, yb), F32.sub(xb, xa), F32.sub(F32.mul(xa, yb), F32.mul(xb, ya)),
-    F32.sub(yb, yc), F32.sub(xc, xb), F32.sub(F32.mul(xb, yc), F32.mul(xc, yb)),
-    F32.sub(yc, ya), F32.sub(xa, xc), F32.sub(F32.mul(xc, ya), F32.mul(xa, yc)),
+  +ab = Proj.first(xa, ya, xb, yb)
+  +bc = Proj.first(xb, yb, xc, yc)
+  +ca = Proj.first(xc, yc, xa, ya)
+  Proj.box(area, xa, ya, xb, yb, xc, yc, w, h, lo,
+    F32.sub(ya, yb), F32.sub(xb, xa), Bool.pick(F32, ab, xa, xb), Bool.pick(F32, ab, ya, yb),
+    F32.sub(yb, yc), F32.sub(xc, xb), Bool.pick(F32, bc, xb, xc), Bool.pick(F32, bc, yb, yc),
+    F32.sub(yc, ya), F32.sub(xa, xc), Bool.pick(F32, ca, xc, xa), Bool.pick(F32, ca, yc, ya),
     gx, gy, F32.sub(ia, F32.add(F32.mul(gx, xa), F32.mul(gy, ya))), col, alpha, acc)
 
 # three view-space points (all past the near plane) on screen
 def Proj.screen(+v: View, a: VP, b: VP, c: VP, +col: U32, +alpha: U32, acc: List<&2, STri>) -> List<&2, STri>:
   match v a b c:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, w, h, _, _, _} VP{xa, ya, +za} VP{xb, yb, +zb} VP{xc, yc, +zc}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, w, h, _, _, _, lo} VP{xa, ya, +za} VP{xb, yb, +zb} VP{xc, yc, +zc}:
       Proj.edges(F32.add(cx, F32.div(F32.mul(f, xa), za)), F32.sub(cy, F32.div(F32.mul(f, ya), za)), F32.div(1.0, za),
         F32.add(cx, F32.div(F32.mul(f, xb), zb)), F32.sub(cy, F32.div(F32.mul(f, yb), zb)), F32.div(1.0, zb),
-        F32.add(cx, F32.div(F32.mul(f, xc), zc)), F32.sub(cy, F32.div(F32.mul(f, yc), zc)), F32.div(1.0, zc), w, h, col, alpha, acc)
+        F32.add(cx, F32.div(F32.mul(f, xc), zc)), F32.sub(cy, F32.div(F32.mul(f, yc), zc)), F32.div(1.0, zc), w, h, lo, col, alpha, acc)
 
 def VP.lerp(+t: F32, +a: F32, +b: F32) -> F32:
   F32.add(a, F32.mul(t, F32.sub(b, a)))
@@ -325,7 +437,7 @@ def VP.cut(+p: VP, +q: VP, +near: F32) -> VP:
 
 def View.near(v: View) -> F32:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, n, _, _, _, _, _}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, n, _, _, _, _, _, _}:
       n
 
 # a triangle with one vertex (a) in front of the near plane: the corner
@@ -364,7 +476,7 @@ def Proj.dot(+a: F32, +b: F32, +c: F32, +x: F32, +y: F32, +z: F32) -> F32:
 # a world point in view space (x right, y up, z forward)
 def View.pt(+v: View, +x: F32, +y: F32, +z: F32) -> VP:
   match v:
-    case View{+ex, +ey, +ez, +rx, +ry, +rz, +ux, +uy, +uz, +fx, +fy, +fz, _, _, _, _, _, _, _, _, _}:
+    case View{+ex, +ey, +ez, +rx, +ry, +rz, +ux, +uy, +uz, +fx, +fy, +fz, _, _, _, _, _, _, _, _, _, _}:
       +dx = F32.sub(x, ex)
       +dy = F32.sub(y, ey)
       +dz = F32.sub(z, ez)
@@ -396,45 +508,49 @@ def Light.u() -> F32:
 def Light.b() -> F32:
   0.78
 
-def View.k(+ex: F32, +ey: F32, +ez: F32, +cy: F32, +sy: F32, +cp: F32, +sp: F32, +dist: F32, +fov: F32, +w: F32, +h: F32) -> View:
-  View{ex, ey, ez, cy, 0.0, F32.neg(sy), F32.neg(F32.mul(sy, sp)), cp, F32.neg(F32.mul(cy, sp)),
-    F32.neg(F32.mul(cp, sy)), F32.neg(sp), F32.neg(F32.mul(cp, cy)),
+def View.k(+ex: F32, +ey: F32, +ez: F32, +rx: F32, +ry: F32, +rz: F32, +ux: F32, +uy: F32, +uz: F32, +fx: F32, +fy: F32, +fz: F32,
+    +dist: F32, +fov: F32, +w: F32, +h: F32) -> View:
+  View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz,
     F32.div(F32.mul(0.5, F32.min(w, h)), F32.tan(F32.mul(0.5, fov))), F32.mul(0.5, w), F32.mul(0.5, h),
     F32.mul(dist, 0.001), w, h,
-    F32.add(F32.mul(Light.r(), cy), F32.add(F32.mul(Light.u(), F32.neg(F32.mul(sy, sp))), F32.mul(Light.b(), F32.mul(cp, sy)))),
-    F32.add(F32.mul(Light.u(), cp), F32.mul(Light.b(), sp)),
-    F32.add(F32.mul(Light.r(), F32.neg(sy)), F32.add(F32.mul(Light.u(), F32.neg(F32.mul(cy, sp))), F32.mul(Light.b(), F32.mul(cp, cy))))}
+    F32.sub(F32.add(F32.mul(Light.r(), rx), F32.mul(Light.u(), ux)), F32.mul(Light.b(), fx)),
+    F32.sub(F32.add(F32.mul(Light.r(), ry), F32.mul(Light.u(), uy)), F32.mul(Light.b(), fy)),
+    F32.sub(F32.add(F32.mul(Light.r(), rz), F32.mul(Light.u(), uz)), F32.mul(Light.b(), fz)), 0.5}
+
+# forward is up x right; the eye is back from the panned target
+def View.of.k(+rx: F32, +ry: F32, +rz: F32, +ux: F32, +uy: F32, +uz: F32, +tx: F32, +ty: F32, +tz: F32, +dist: F32, +fov: F32, +w: U32, +h: U32) -> View:
+  +fx = F32.sub(F32.mul(uy, rz), F32.mul(uz, ry))
+  +fy = F32.sub(F32.mul(uz, rx), F32.mul(ux, rz))
+  +fz = F32.sub(F32.mul(ux, ry), F32.mul(uy, rx))
+  View.k(F32.sub(tx, F32.mul(fx, dist)), F32.sub(ty, F32.mul(fy, dist)), F32.sub(tz, F32.mul(fz, dist)),
+    rx, ry, rz, ux, uy, uz, fx, fy, fz, dist, fov, U32.to_f32(w), U32.to_f32(h))
 
 def View.of(c: Cam, +w: U32, +h: U32) -> View:
   match c:
-    case Cam{+yaw, +pitch, +dist, tx, ty, tz, +fov}:
-      +cy = F32.cos(yaw)
-      +sy = F32.sin(yaw)
-      +cp = F32.cos(pitch)
-      +sp = F32.sin(pitch)
-      View.k(F32.add(tx, F32.mul(dist, F32.mul(cp, sy))), F32.add(ty, F32.mul(dist, sp)), F32.add(tz, F32.mul(dist, F32.mul(cp, cy))),
-        cy, sy, cp, sp, dist, fov, U32.to_f32(w), U32.to_f32(h))
+    case Cam{+rx, +ry, +rz, +ux, +uy, +uz, px, py, pz, dist, +sx, +sy, fov}:
+      View.of.k(rx, ry, rz, ux, uy, uz, F32.add(px, F32.add(F32.mul(rx, sx), F32.mul(ux, sy))),
+        F32.add(py, F32.add(F32.mul(ry, sx), F32.mul(uy, sy))), F32.add(pz, F32.add(F32.mul(rz, sx), F32.mul(uz, sy))), dist, fov, w, h)
 
 # a copy of its own for each parallel lane (a shared value costs every
 # lane an atomic per read)
 def View.copy(+v: View) -> View:
   match v:
-    case View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz}:
-      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz}
+    case View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz, lo}:
+      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz, lo}
 
 def View.focal(v: View) -> F32:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, f, _, _, _, _, _, _, _, _}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, f, _, _, _, _, _, _, _, _, _}:
       f
 
 def View.light_y(v: View) -> F32:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, ly, _}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, ly, _, _}:
       ly
 
 def View.eye_y(v: View) -> F32:
   match v:
-    case View{_, ey, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case View{_, ey, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       ey
 
 def View.screen.k(p: VP, +f: F32, +cx: F32, +cy: F32) -> VP:
@@ -445,13 +561,13 @@ def View.screen.k(p: VP, +f: F32, +cx: F32, +cy: F32) -> VP:
 # a world point on screen (x, y, and view depth z; z <= near is behind)
 def View.screen(+v: View, +x: F32, +y: F32, +z: F32) -> VP:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, _, _, _, _, _}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, _, _, _, _, _, _}:
       View.screen.k(View.pt(v, x, y, z), f, cx, cy)
 
 # a view-space point on screen (z kept)
 def View.proj(+v: View, p: VP) -> VP:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, _, _, _, _, _}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, +f, +cx, +cy, _, _, _, _, _, _, _}:
       View.screen.k(p, f, cx, cy)
 
 # the 1/z plane of the horizontal plane at world height y: along the ray
@@ -459,7 +575,7 @@ def View.proj(+v: View, p: VP) -> VP:
 # (px - cx) / f - uy (py - cy) / f)
 def Plane.at_y(+v: View, +y: F32) -> Plane:
   match v:
-    case View{_, +ey, _, _, +ry, _, _, +uy, _, _, +fy, _, +f, +cx, +cy, _, _, _, _, _, _}:
+    case View{_, +ey, _, _, +ry, _, _, +uy, _, _, +fy, _, +f, +cx, +cy, _, _, _, _, _, _, _}:
       +k = F32.div(1.0, F32.mul(F32.sub(y, ey), f))
       Plane{F32.mul(ry, k), F32.neg(F32.mul(uy, k)), F32.mul(F32.add(F32.sub(F32.mul(fy, f), F32.mul(ry, cx)), F32.mul(uy, cy)), k)}
 
@@ -479,7 +595,7 @@ def Proj.shade(+c: U32, +facing: Bool, +nx: F32, +ny: F32, +nz: F32, +lx: F32, +
 
 def Proj.light(v: View, +c: U32, +facing: Bool, +nx: F32, +ny: F32, +nz: F32) -> U32:
   match v:
-    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, lx, ly, lz}:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, lx, ly, lz, _}:
       Proj.shade(c, facing, nx, ny, nz, lx, ly, lz)
 
 # the material's opacity (from 0xTTRRGGBB) times the chunk's fade
@@ -497,7 +613,7 @@ def Proj.front(keep: Bool, +facing: Bool, +v: View, +ax: F32, +ay: F32, +az: F32
 # the eye is on the triangle's front side (glTF fronts wind CCW)
 def Proj.facing(+v: View, +ax: F32, +ay: F32, +az: F32, +nx: F32, +ny: F32, +nz: F32) -> Bool:
   match v:
-    case View{ex, ey, ez, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+    case View{ex, ey, ez, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       F32.is_gt(Proj.dot(nx, ny, nz, F32.sub(ex, ax), F32.sub(ey, ay), F32.sub(ez, az)), 0.0)
 
 def Proj.normal(+cull: Bool, +v: View, +ax: F32, +ay: F32, +az: F32, +bx: F32, +by: F32, +bz: F32, +cx: F32, +cy: F32, +cz: F32,
@@ -534,16 +650,21 @@ def Edge.reaches(+a: F32, +b: F32, +c: F32, +x0: F32, +y0: F32, +x1: F32, +y1: F
   F32.is_ge(F32.add(F32.add(c, F32.max(F32.mul(a, x0), F32.mul(a, x1))), F32.add(F32.max(F32.mul(b, y0), F32.mul(b, y1)),
     F32.mul(0.5, F32.add(F32.abs(a), F32.abs(b))))), 0.0)
 
+# an edge's constant term, for the rough test above (its half-pixel spare
+# covers the rounding, and the samples within a pixel)
+def Edge.c(+a: F32, +b: F32, +ex: F32, +ey: F32) -> F32:
+  F32.neg(F32.add(F32.mul(a, ex), F32.mul(b, ey)))
+
 # does the triangle reach a pixel centre of the h x h square at (qx, qy)?
 def STri.meets(+t: STri, +qx: U32, +qy: U32, +h: U32) -> Bool:
   match t:
-    case STri{+x0, +y0, +x1, +y1, +a0, +b0, +c0, +a1, +b1, +c1, +a2, +b2, +c2, _, _, _, _, _}:
+    case STri{+x0, +y0, +x1, +y1, +a0, +b0, +e0, +f0, +a1, +b1, +e1, +f1, +a2, +b2, +e2, +f2, _, _, _, _, _}:
       +fx0 = F32.add(U32.to_f32(qx), 0.5)
       +fy0 = F32.add(U32.to_f32(qy), 0.5)
       +fx1 = F32.sub(U32.to_f32((qx + h : U32)), 0.5)
       +fy1 = F32.sub(U32.to_f32((qy + h : U32)), 0.5)
-      Bool.and(Q4.hits(x0, y0, x1, y1, qx, qy, h), Bool.and(Edge.reaches(a0, b0, c0, fx0, fy0, fx1, fy1),
-        Bool.and(Edge.reaches(a1, b1, c1, fx0, fy0, fx1, fy1), Edge.reaches(a2, b2, c2, fx0, fy0, fx1, fy1))))
+      Bool.and(Q4.hits(x0, y0, x1, y1, qx, qy, h), Bool.and(Edge.reaches(a0, b0, Edge.c(a0, b0, e0, f0), fx0, fy0, fx1, fy1),
+        Bool.and(Edge.reaches(a1, b1, Edge.c(a1, b1, e1, f1), fx0, fy0, fx1, fy1), Edge.reaches(a2, b2, Edge.c(a2, b2, e2, f2), fx0, fy0, fx1, fy1))))
 
 # Rasterizing
 # -----------
@@ -571,12 +692,13 @@ def Hit.put(inside: Bool, opaque: Bool, +iz: F32, +col: U32, +alpha: U32, h: Hit
     case _ _ _:
       h
 
-# one triangle over one pixel centre (px, py)
-def Hit.step(+a0: F32, +b0: F32, +c0: F32, +a1: F32, +b1: F32, +c1: F32, +a2: F32, +b2: F32, +c2: F32,
+def Hit.edge(+a: F32, +b: F32, +ex: F32, +ey: F32, +px: F32, +py: F32) -> Bool:
+  F32.is_ge(F32.add(F32.mul(a, F32.sub(px, ex)), F32.mul(b, F32.sub(py, ey))), 0.0)
+
+# one triangle over one sample (px, py)
+def Hit.step(+a0: F32, +b0: F32, +ex0: F32, +ey0: F32, +a1: F32, +b1: F32, +ex1: F32, +ey1: F32, +a2: F32, +b2: F32, +ex2: F32, +ey2: F32,
     +za: F32, +zb: F32, +zc: F32, +col: U32, +alpha: U32, +px: F32, +py: F32, h: Hit) -> Hit:
-  Hit.put(Bool.and(F32.is_ge(F32.add(F32.add(F32.mul(a0, px), F32.mul(b0, py)), c0), 0.0),
-      Bool.and(F32.is_ge(F32.add(F32.add(F32.mul(a1, px), F32.mul(b1, py)), c1), 0.0),
-        F32.is_ge(F32.add(F32.add(F32.mul(a2, px), F32.mul(b2, py)), c2), 0.0))),
+  Hit.put(Bool.and(Hit.edge(a0, b0, ex0, ey0, px, py), Bool.and(Hit.edge(a1, b1, ex1, ey1, px, py), Hit.edge(a2, b2, ex2, ey2, px, py))),
     U32.is_gt(alpha, 229), F32.add(F32.add(F32.mul(za, px), F32.mul(zb, py)), zc), col, alpha, h)
 
 def Hit.color(h: Hit) -> U32:
@@ -612,10 +734,19 @@ def Hit.face(key: Bool, +fc: U32, +px: F32, +py: F32, +pl: Plane, +bg: U32) -> H
     case False{} Plane{+a, +b, +c}:
       Hit{F32.mul(F32.add(F32.add(F32.mul(a, px), F32.mul(b, py)), c), 0.99999), fc, 0.0, bg, 0}
 
+# the hit a sample starts with: the face at pixel (i, j) of a face image
+# 2^d pixels across, its depth at the sample (px, py)
+def Hit.init.q(+f: Image, +d: Nat, +i: U32, +j: U32, +px: F32, +py: F32, +pl: Plane, +bg: U32) -> Hit:
+  +fc = R.Img.at(d, f, i, j)
+  Hit.face(U32.is_eq(fc, Face.key()), fc, px, py, pl, bg)
+
 # the hit a pixel starts with: the face at (i, j) of a 4x4 face image
 def Hit.init(+f: Image, +i: U32, +j: U32, +px: F32, +py: F32, +pl: Plane, +bg: U32) -> Hit:
-  +fc = R.Img.at(2n, f, i, j)
-  Hit.face(U32.is_eq(fc, Face.key()), fc, px, py, pl, bg)
+  Hit.init.q(f, 2n, i, j, px, py, pl, bg)
+
+# a sample of a 2x2 block (4x4 samples) starts at its pixel's face
+def Hit.init2(+f: Image, +i: U32, +j: U32, +px: F32, +py: F32, +pl: Plane, +bg: U32) -> Hit:
+  Hit.init.q(f, 1n, U32.shr(i), U32.shr(j), px, py, pl, bg)
 
 # a face image where no triangle reaches: its board pixels as they are
 def Face.bare(f: Image, +bg: U32) -> Image:
@@ -625,37 +756,57 @@ def Face.bare(f: Image, +bg: U32) -> Image:
     case Qua{a, b, c, d}:
       Qua{Face.bare(a, bg), Face.bare(b, bg), Face.bare(c, bg), Face.bare(d, bg)}
 
+def Avg.ch(+a: U32, +b: U32, +c: U32, +d: U32, +s: Nat) -> U32:
+  U32.shln(U32.shrn((U32.and(U32.shrn(a, s), 255) + U32.and(U32.shrn(b, s), 255) + U32.and(U32.shrn(c, s), 255) + U32.and(U32.shrn(d, s), 255) + 2 : U32), 2n), s)
+
+def Avg.rgb(+a: U32, +b: U32, +c: U32, +d: U32) -> U32:
+  U32.or(Avg.ch(a, b, c, d, 16n), U32.or(Avg.ch(a, b, c, d, 8n), Avg.ch(a, b, c, d, 0n)))
+
+# one pixel from its four samples
+def Hit.avg(a: Hit, b: Hit, c: Hit, d: Hit) -> Image:
+  Pix{Avg.rgb(Hit.color(a), Hit.color(b), Hit.color(c), Hit.color(d))}
+
 def Blk.img(h00: Hit, h10: Hit, h20: Hit, h30: Hit, h01: Hit, h11: Hit, h21: Hit, h31: Hit,
     h02: Hit, h12: Hit, h22: Hit, h32: Hit, h03: Hit, h13: Hit, h23: Hit, h33: Hit) -> Image:
   Qua{Qua{Hit.pix(h00), Hit.pix(h10), Hit.pix(h01), Hit.pix(h11)}, Qua{Hit.pix(h20), Hit.pix(h30), Hit.pix(h21), Hit.pix(h31)},
     Qua{Hit.pix(h02), Hit.pix(h12), Hit.pix(h03), Hit.pix(h13)}, Qua{Hit.pix(h22), Hit.pix(h32), Hit.pix(h23), Hit.pix(h33)}}
 
-# a 4x4 block: one walk over its triangles, sixteen pixels at once; x0..x3
-# and y0..y3 are the pixel centres
-def Blk.go(ts: List<&2, STri>, +x0: F32, +x1: F32, +x2: F32, +x3: F32, +y0: F32, +y1: F32, +y2: F32, +y3: F32,
+# sixteen pixels, or (fine) four pixels of four samples each
+def Blk.out(fine: Bool, h00: Hit, h10: Hit, h20: Hit, h30: Hit, h01: Hit, h11: Hit, h21: Hit, h31: Hit,
+    h02: Hit, h12: Hit, h22: Hit, h32: Hit, h03: Hit, h13: Hit, h23: Hit, h33: Hit) -> Image:
+  match fine:
+    case True{}:
+      Qua{Hit.avg(h00, h10, h01, h11), Hit.avg(h20, h30, h21, h31), Hit.avg(h02, h12, h03, h13), Hit.avg(h22, h32, h23, h33)}
+    case False{}:
+      Blk.img(h00, h10, h20, h30, h01, h11, h21, h31, h02, h12, h22, h32, h03, h13, h23, h33)
+
+# a 4x4 grid of samples: one walk over its triangles, sixteen at once;
+# x0..x3 and y0..y3 are the sample points (pixel centres, or when fine the
+# quarter points of a 2x2 block's pixels)
+def Blk.go(ts: List<&2, STri>, +fine: Bool, +x0: F32, +x1: F32, +x2: F32, +x3: F32, +y0: F32, +y1: F32, +y2: F32, +y3: F32,
     h00: Hit, h10: Hit, h20: Hit, h30: Hit, h01: Hit, h11: Hit, h21: Hit, h31: Hit,
     h02: Hit, h12: Hit, h22: Hit, h32: Hit, h03: Hit, h13: Hit, h23: Hit, h33: Hit) -> Image:
   match ts:
     case Nil{}:
-      Blk.img(h00, h10, h20, h30, h01, h11, h21, h31, h02, h12, h22, h32, h03, h13, h23, h33)
-    case STri{_, _, _, _, +a0, +b0, +c0, +a1, +b1, +c1, +a2, +b2, +c2, +za, +zb, +zc, +k, +al} <> t:
-      Blk.go(t, x0, x1, x2, x3, y0, y1, y2, y3,
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x0, y0, h00),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x1, y0, h10),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x2, y0, h20),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x3, y0, h30),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x0, y1, h01),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x1, y1, h11),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x2, y1, h21),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x3, y1, h31),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x0, y2, h02),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x1, y2, h12),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x2, y2, h22),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x3, y2, h32),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x0, y3, h03),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x1, y3, h13),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x2, y3, h23),
-        Hit.step(a0, b0, c0, a1, b1, c1, a2, b2, c2, za, zb, zc, k, al, x3, y3, h33))
+      Blk.out(fine, h00, h10, h20, h30, h01, h11, h21, h31, h02, h12, h22, h32, h03, h13, h23, h33)
+    case STri{_, _, _, _, +a0, +b0, +e0, +f0, +a1, +b1, +e1, +f1, +a2, +b2, +e2, +f2, +za, +zb, +zc, +k, +al} <> t:
+      Blk.go(t, fine, x0, x1, x2, x3, y0, y1, y2, y3,
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x0, y0, h00),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x1, y0, h10),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x2, y0, h20),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x3, y0, h30),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x0, y1, h01),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x1, y1, h11),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x2, y1, h21),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x3, y1, h31),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x0, y2, h02),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x1, y2, h12),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x2, y2, h22),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x3, y2, h32),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x0, y3, h03),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x1, y3, h13),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x2, y3, h23),
+        Hit.step(a0, b0, e0, f0, a1, b1, e1, f1, a2, b2, e2, f2, za, zb, zc, k, al, x3, y3, h33))
 
 def Blk.draw(ts: List<&2, STri>, +f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
   match ts:
@@ -670,11 +821,31 @@ def Blk.draw(ts: List<&2, STri>, +f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: P
       +y1 = F32.add(y0, 1.0)
       +y2 = F32.add(y0, 2.0)
       +y3 = F32.add(y0, 3.0)
-      Blk.go(ts, x0, x1, x2, x3, y0, y1, y2, y3,
+      Blk.go(ts, False{}, x0, x1, x2, x3, y0, y1, y2, y3,
         Hit.init(f, 0, 0, x0, y0, pl, bg), Hit.init(f, 1, 0, x1, y0, pl, bg), Hit.init(f, 2, 0, x2, y0, pl, bg), Hit.init(f, 3, 0, x3, y0, pl, bg),
         Hit.init(f, 0, 1, x0, y1, pl, bg), Hit.init(f, 1, 1, x1, y1, pl, bg), Hit.init(f, 2, 1, x2, y1, pl, bg), Hit.init(f, 3, 1, x3, y1, pl, bg),
         Hit.init(f, 0, 2, x0, y2, pl, bg), Hit.init(f, 1, 2, x1, y2, pl, bg), Hit.init(f, 2, 2, x2, y2, pl, bg), Hit.init(f, 3, 2, x3, y2, pl, bg),
         Hit.init(f, 0, 3, x0, y3, pl, bg), Hit.init(f, 1, 3, x1, y3, pl, bg), Hit.init(f, 2, 3, x2, y3, pl, bg), Hit.init(f, 3, 3, x3, y3, pl, bg))
+
+# a 2x2 block of four samples a pixel (f is its 2x2 face image)
+def Blk.fine(ts: List<&2, STri>, +f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
+  match ts:
+    case Nil{}:
+      Face.bare(f, bg)
+    case _:
+      +x0 = F32.add(U32.to_f32(rx), 0.25)
+      +y0 = F32.add(U32.to_f32(ry), 0.25)
+      +x1 = F32.add(x0, 0.5)
+      +x2 = F32.add(x0, 1.0)
+      +x3 = F32.add(x0, 1.5)
+      +y1 = F32.add(y0, 0.5)
+      +y2 = F32.add(y0, 1.0)
+      +y3 = F32.add(y0, 1.5)
+      Blk.go(ts, True{}, x0, x1, x2, x3, y0, y1, y2, y3,
+        Hit.init2(f, 0, 0, x0, y0, pl, bg), Hit.init2(f, 1, 0, x1, y0, pl, bg), Hit.init2(f, 2, 0, x2, y0, pl, bg), Hit.init2(f, 3, 0, x3, y0, pl, bg),
+        Hit.init2(f, 0, 1, x0, y1, pl, bg), Hit.init2(f, 1, 1, x1, y1, pl, bg), Hit.init2(f, 2, 1, x2, y1, pl, bg), Hit.init2(f, 3, 1, x3, y1, pl, bg),
+        Hit.init2(f, 0, 2, x0, y2, pl, bg), Hit.init2(f, 1, 2, x1, y2, pl, bg), Hit.init2(f, 2, 2, x2, y2, pl, bg), Hit.init2(f, 3, 2, x3, y2, pl, bg),
+        Hit.init2(f, 0, 3, x0, y3, pl, bg), Hit.init2(f, 1, 3, x1, y3, pl, bg), Hit.init2(f, 2, 3, x2, y3, pl, bg), Hit.init2(f, 3, 3, x3, y3, pl, bg))
 
 def Q4.keep(hit: Bool, +t: STri, rest: List<&2, STri>) -> List<&2, STri>:
   match hit:
@@ -707,36 +878,48 @@ def Four.with(q: Q4, f: Image, k: List<&2, STri> -> List<&2, STri> -> List<&2, S
     case Q4{a, b, c, d} Qua{fa, fb, fc, fd}:
       k(a, b, c, d, fa, fb, fc, fd)
 
-def Tile.b8(ts: List<&2, STri>, f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
+# a 4x4 pixel block: one sample a pixel, or (fine) four
+def Blk.four(fine: Bool, ts: List<&2, STri>, f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
+  match fine ts:
+    case _ Nil{}:
+      Face.bare(f, bg)
+    case True{} _:
+      Four.with(Q4.go(ts, rx, ry, 2), f, a => b => c => d => fa => fb => fc => fd =>
+        Qua{Blk.fine(a, fa, rx, ry, bg, pl), Blk.fine(b, fb, (rx + 2 : U32), ry, bg, pl),
+          Blk.fine(c, fc, rx, (ry + 2 : U32), bg, pl), Blk.fine(d, fd, (rx + 2 : U32), (ry + 2 : U32), bg, pl)})
+    case False{} _:
+      Blk.draw(ts, f, rx, ry, bg, pl)
+
+def Tile.b8(ts: List<&2, STri>, f: Image, +fine: Bool, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
   match ts:
     case Nil{}:
       Face.bare(f, bg)
     case _:
       Four.with(Q4.go(ts, rx, ry, 4), f, a => b => c => d => fa => fb => fc => fd =>
-        Qua{Blk.draw(a, fa, rx, ry, bg, pl), Blk.draw(b, fb, (rx + 4 : U32), ry, bg, pl),
-          Blk.draw(c, fc, rx, (ry + 4 : U32), bg, pl), Blk.draw(d, fd, (rx + 4 : U32), (ry + 4 : U32), bg, pl)})
+        Qua{Blk.four(fine, a, fa, rx, ry, bg, pl), Blk.four(fine, b, fb, (rx + 4 : U32), ry, bg, pl),
+          Blk.four(fine, c, fc, rx, (ry + 4 : U32), bg, pl), Blk.four(fine, d, fd, (rx + 4 : U32), (ry + 4 : U32), bg, pl)})
 
 # a 16-px tile: split to blocks
-def Tile.b16(ts: List<&2, STri>, f: Image, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
+def Tile.b16(ts: List<&2, STri>, f: Image, +fine: Bool, +rx: U32, +ry: U32, +bg: U32, +pl: Plane) -> Image:
   Four.with(Q4.go(ts, rx, ry, 8), f, a => b => c => d => fa => fb => fc => fd =>
-    Qua{Tile.b8(a, fa, rx, ry, bg, pl), Tile.b8(b, fb, (rx + 8 : U32), ry, bg, pl),
-      Tile.b8(c, fc, rx, (ry + 8 : U32), bg, pl), Tile.b8(d, fd, (rx + 8 : U32), (ry + 8 : U32), bg, pl)})
+    Qua{Tile.b8(a, fa, fine, rx, ry, bg, pl), Tile.b8(b, fb, fine, (rx + 8 : U32), ry, bg, pl),
+      Tile.b8(c, fc, fine, rx, (ry + 8 : U32), bg, pl), Tile.b8(d, fd, fine, (rx + 8 : U32), (ry + 8 : U32), bg, pl)})
 
 # the n-px square at (rx, ry), 16 * 2^k pixels, on one core
-def Seq.go(k: Nat, ts: List<&2, STri>, f: Image, +rx: U32, +ry: U32, +n: U32, +bg: U32, +pl: Plane) -> Image:
+def Seq.go(k: Nat, ts: List<&2, STri>, f: Image, +fine: Bool, +rx: U32, +ry: U32, +n: U32, +bg: U32, +pl: Plane) -> Image:
   match k ts:
     case _ Nil{}:
       Face.bare(f, bg)
     case 0n _:
-      Tile.b16(ts, f, rx, ry, bg, pl)
+      Tile.b16(ts, f, fine, rx, ry, bg, pl)
     case 1n+e0 _:
       +e = e0
       +h = U32.shr(n)
       +x2 = (rx + h : U32)
       +y2 = (ry + h : U32)
       Four.with(Q4.go(ts, rx, ry, h), f, a => b => c => d => fa => fb => fc => fd =>
-        Qua{Seq.go(e, a, fa, rx, ry, h, bg, pl), Seq.go(e, b, fb, x2, ry, h, bg, pl),
-          Seq.go(e, c, fc, rx, y2, h, bg, pl), Seq.go(e, d, fd, x2, y2, h, bg, pl)})
+        Qua{Seq.go(e, a, fa, fine, rx, ry, h, bg, pl), Seq.go(e, b, fb, fine, x2, ry, h, bg, pl),
+          Seq.go(e, c, fc, fine, rx, y2, h, bg, pl), Seq.go(e, d, fd, fine, x2, y2, h, bg, pl)})
 
 # Regions
 # -------
@@ -970,22 +1153,22 @@ def Face.region(+f: Image, +under: List<&2, R.Op>, +x: U32, +y: U32, +n: U32, +d
   Face.under(Img.has(f, Face.open()), f, under, x, y, n, d)
 
 # the face first (the 2D rasterizer, over no board), then the triangles
-def Reg.draw(r: Reg, +k: Nat, +n: U32, +bg: U32, +pl: Plane) -> Image:
+def Reg.draw(r: Reg, +fine: Bool, +k: Nat, +n: U32, +bg: U32, +pl: Plane) -> Image:
   match r:
     case Reg{+x, +y, c, +ops, +under}:
       Seq.go(k, Chunks.list(c, Nil{}),
         Face.region(R.Region.node(Nat.add(k, 4n), R.Region.leaf(ops, x, y, n), ops, x, y, n, Pix{Face.key()}), under, x, y, n, Nat.add(k, 4n)),
-        x, y, n, bg, pl)
+        fine, x, y, n, bg, pl)
 
 # every region drawn, both halves at once
-def Sched.run(t: STree, +k: Nat, +n: U32, +bg: U32, +pl: Plane) -> ITree:
+def Sched.run(t: STree, +fine: Bool, +k: Nat, +n: U32, +bg: U32, +pl: Plane) -> ITree:
   match t:
     case DNone{}:
       INil{}
     case DOne{r}:
-      ILeaf{Reg.draw(r, k, n, bg, pl)}
+      ILeaf{Reg.draw(r, fine, k, n, bg, pl)}
     case DTwo{a, b}:
-      i j = Sched.run(a, k, n, bg, Plane.copy(pl)) Sched.run(b, k, n, bg, Plane.copy(pl))
+      i j = Sched.run(a, fine, k, n, bg, Plane.copy(pl)) Sched.run(b, fine, k, n, bg, Plane.copy(pl))
       INode{i, j}
 
 def Inter.go(xs: List<&2, Image>, ys: List<&2, Image>) -> List<&2, Image>:
@@ -1035,8 +1218,22 @@ def Img.up(k: Nat, xs: List<&2, Image>) -> Image:
 # the view of a pw x ph panel whose corner is at (x0, y0) in a W x H frame
 def View.at(v: View, +x0: U32, +y0: U32, +ww: U32, +hh: U32) -> View:
   match v:
-    case View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, _, _, lx, ly, lz}:
-      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, F32.add(cx, U32.to_f32(x0)), F32.add(cy, U32.to_f32(y0)), n, U32.to_f32(ww), U32.to_f32(hh), lx, ly, lz}
+    case View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, _, _, lx, ly, lz, lo}:
+      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, F32.add(cx, U32.to_f32(x0)), F32.add(cy, U32.to_f32(y0)), n, U32.to_f32(ww), U32.to_f32(hh), lx, ly, lz, lo}
+
+# the view with four samples a pixel (fine) or as it is
+def View.fine(fine: Bool, v: View) -> View:
+  match fine v:
+    case True{} View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz, _}:
+      View{ex, ey, ez, rx, ry, rz, ux, uy, uz, fx, fy, fz, f, cx, cy, n, w, h, lx, ly, lz, 0.25}
+    case _ _:
+      v
+
+# whether the view takes four samples a pixel
+def View.is_fine(v: View) -> Bool:
+  match v:
+    case View{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, lo}:
+      F32.is_lt(lo, 0.5)
 
 # the view of a panel of a larger frame
 def Mesh.view(+ww: U32, +hh: U32, +x0: U32, +y0: U32, +pw: U32, +ph: U32, +c: Cam) -> View:
@@ -1046,12 +1243,14 @@ def Mesh.draw.k(+w: U32, +h: U32, m: Model, +v: View, +now: Nat, fops: List<&2, 
   +d = R.Frame.depth(w, h)
   +lv = Nat.sub(d, 6n)
   +rd = Nat.sub(d, lv)
+  +fine = View.is_fine(v)
   Img.up(lv, Sched.flat(Sched.run(Sched.tree(Nat.mul(2n, lv),
     Reg.zip(Bins.flat(lv, Proj.tree(Model.tree(m), True{}, v, now, lv, U32.shln(1, d)), 0, 0, U32.shln(1, d), Nil{}),
       Ops.flat(lv, fops, 0, 0, U32.shln(1, d)), Ops.flat(lv, under, 0, 0, U32.shln(1, d)))),
-    Nat.sub(rd, 4n), U32.shln(1, rd), bg, pl)))
+    fine, Nat.sub(rd, 4n), U32.shln(1, rd), bg, pl)))
 
-# a w x h frame of the model through v, over a face (2D ops, topmost
+# a w x h frame of the model through v (four samples a pixel when the view
+# is fine, View.fine), over a face (2D ops, topmost
 # first, over Face.key() where there is no board) lying on plane pl, over
 # bg; the image spans 2^R.Frame.depth(w, h) pixels, like the 2D
 # rasterizer's

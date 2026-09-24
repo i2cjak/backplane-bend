@@ -8,7 +8,7 @@
 //
 // Events are five words (kind, a, b, c, d):
 //   0 key (keysym, code point typed, mods, down)   1 button (x, y, button, down)
-//   2 move (x, y)   3 wheel (x, y, dir)   4 size (w, h)   5 expose
+//   2 move (x, y, mods)   3 wheel (x, y, dir)   4 size (w, h)   5 expose
 //   6 quit   7 paste (text via Win.pasted)
 //   8 drag over (x, y)   9 drag left   10 drop (text/uri-list via Win.dropped)
 //   11 focus lost
@@ -290,7 +290,7 @@ static void win_pump(AppWin* a) {
       }
       case MotionNotify:
         win_push(a, 2, ev.xmotion.x < 0 ? 0 : (u32)ev.xmotion.x,
-          ev.xmotion.y < 0 ? 0 : (u32)ev.xmotion.y, 0, 0);
+          ev.xmotion.y < 0 ? 0 : (u32)ev.xmotion.y, win_mods(ev.xmotion.state), 0);
         break;
       case FocusOut:
         win_push(a, 11, 0, 0, 0, 0);

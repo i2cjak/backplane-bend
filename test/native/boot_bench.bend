@@ -141,7 +141,7 @@ def moves(+i: Nat, +ty: L.Ty, k: Kept) -> IO(Kept):
     case 0n:
       IO.pure(Kept, k)
     case 1n+j:
-      IO.bind(Kept, Kept, step("move", W.WMove{(100 + U32.from_nat(Nat.mul(j, 23n)) : U32), (200 + U32.from_nat(Nat.mul(j, 17n)) : U32)}, ty, k), k2 => moves(j, ty, k2))
+      IO.bind(Kept, Kept, step("move", W.WMove{(100 + U32.from_nat(Nat.mul(j, 23n)) : U32), (200 + U32.from_nat(Nat.mul(j, 17n)) : U32), 0}, ty, k), k2 => moves(j, ty, k2))
 
 def switch(+id: String, +ty: L.Ty, k: Kept) -> IO(Kept):
   match k:

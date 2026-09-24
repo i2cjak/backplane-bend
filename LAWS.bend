@@ -2031,3 +2031,53 @@ law usage_same_nothing:
 
 law usage_change_logged:
   {H.Usage.used.k(M.State.replay([M.UsageSet{"t1", 7n, 0n, 1n}], M.State.empty()), "t1", 2n, 8n) == [M.UsageSet{"t1", 8n, 0n, 2n}] : List<&2, M.Change>}
+
+# The 3D viewer's controls (SolidWorks)
+# -------------------------------------
+
+# a drag rotates; with ctrl it pans, with shift zooms, with alt rolls
+law view_drag_rotates:
+  {N.Drag.mode(0) == 0 : U32}
+
+law view_drag_ctrl_pans:
+  {N.Drag.mode(2) == 1 : U32}
+
+law view_drag_shift_zooms:
+  {N.Drag.mode(1) == 2 : U32}
+
+law view_drag_alt_rolls:
+  {N.Drag.mode(4) == 3 : U32}
+
+# 1-7 are the standard views (5 top, 7 isometric); ctrl+digit stays the
+# thread switch
+law view_key_top:
+  {N.Key3.act(53, 0) == 5 : U32}
+
+law view_key_iso:
+  {N.Key3.act(55, 0) == 7 : U32}
+
+law view_key_ctrl_digit_free:
+  {N.Key3.act(49, 2) == 0 : U32}
+
+# arrows turn 15 degrees, 90 with shift; alt rolls, ctrl pans
+law view_key_arrow_turns:
+  {N.Key3.act(65361, 0) == 10 : U32}
+
+law view_key_shift_arrow_quarter:
+  {N.Key3.act(65361, 1) == 14 : U32}
+
+law view_key_alt_arrow_rolls:
+  {N.Key3.act(65363, 4) == 19 : U32}
+
+law view_key_ctrl_arrow_pans:
+  {N.Key3.act(65364, 2) == 23 : U32}
+
+# z zooms out, shift+z in; other letters do nothing
+law view_key_z_out:
+  {N.Key3.act(122, 0) == 8 : U32}
+
+law view_key_shift_z_in:
+  {N.Key3.act(90, 1) == 9 : U32}
+
+law view_key_other_none:
+  {N.Key3.act(97, 0) == 0 : U32}

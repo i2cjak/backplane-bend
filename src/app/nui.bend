@@ -615,33 +615,190 @@ def Nui.flip.key(+n: Nui) -> String:
 def Nui.flip(+n: Nui) -> U32:
   Maybe.default(&2, U32, U32.read(U.Ui.scratch(Nui.ui(n), Nui.flip.key(n))), 0)
 
-def Vx.orbit(x: V.Vx, +dx: F32, +dy: F32) -> V.Vx:
+# SolidWorks' view controls (the 3D viewer)
+# -----------------------------------------
+# A drag (left or middle button) rotates the model about its centre; with
+# ctrl it pans, with shift it zooms (up is in), with alt it rolls. The
+# wheel zooms at the pointer, forward out. Keys: 1-7 the standard views,
+# arrows turn 15 degrees (90 with shift), alt+left/right roll, ctrl+arrows
+# pan, z out, shift+z in, f fits without turning.
+
+# the drag's mode from the modifiers held: 0 rotate, 1 pan, 2 zoom, 3 roll
+def Drag.mode(+mods: U32) -> U32:
+  Bool.pick(U32, U32.is_ne(U32.and(mods, 2), 0), 1,
+    Bool.pick(U32, U32.is_ne(U32.and(mods, 1), 0), 2,
+      Bool.pick(U32, U32.is_ne(U32.and(mods, 4), 0), 3, 0)))
+
+# the change of distance for a wheel notch: forward (dir 0) zooms out
+def Wheel.dist(+dir: U32) -> F32:
+  Bool.pick(F32, U32.is_eq(dir, 0), 1.2, 0.8333333)
+
+# an arrow key as 0 left, 1 right, 2 up, 3 down; 4 for any other key
+def Key3.arrow(+code: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(code, Key.left()), 0, Bool.pick(U32, U32.is_eq(code, Key.right()), 1,
+    Bool.pick(U32, U32.is_eq(code, Key.up()), 2, Bool.pick(U32, U32.is_eq(code, Key.down()), 3, 4))))
+
+def Key3.arrow.k(+ar: U32, +mods: U32) -> U32:
+  Bool.pick(U32, U32.is_ne(U32.and(mods, 2), 0), (20 + ar : U32),
+    Bool.pick(U32, U32.is_ne(U32.and(mods, 4), 0), Bool.pick(U32, U32.is_lt(ar, 2), (18 + ar : U32), 0),
+      Bool.pick(U32, U32.is_ne(U32.and(mods, 1), 0), (14 + ar : U32), (10 + ar : U32))))
+
+def Key3.act.k(+ar: U32, +code: U32, +mods: U32) -> U32:
+  Bool.pick(U32, U32.is_lt(ar, 4), Key3.arrow.k(ar, mods),
+    Bool.pick(U32, U32.is_ne(U32.and(mods, 6), 0), 0,
+      Bool.pick(U32, Bool.and(U32.is_ge(code, 49), U32.is_le(code, 55)), (code - 48 : U32),
+        Bool.pick(U32, U32.is_eq(code, 122), 8, Bool.pick(U32, U32.is_eq(code, 90), 9, 0)))))
+
+# a key's view action, 0 for none: 1-7 front, back, left, right, top,
+# bottom, isometric (SolidWorks' ctrl+1..7; bare here, as ctrl+digit picks a
+# thread); 8 zoom out (z), 9 in (shift+z); arrows 10-13 turn 15 degrees
+# (left, right, up, down), 14-17 with shift 90; 18, 19 alt+left/right roll;
+# 20-23 ctrl+arrows pan
+def Key3.act(+code: U32, +mods: U32) -> U32:
+  Key3.act.k(Key3.arrow(code), code, mods)
+
+# a key's action (Key3.act) on the camera; s world units a pixel
+# 15 and 90 degrees
+def Key3.q() -> F32:
+  0.2617994
+
+def Key3.h() -> F32:
+  1.5707964
+
+def Cam.key(+a: U32, c: MS.Cam, +s: F32) -> MS.Cam:
+  match a:
+    case 1:
+      MS.Cam.face(c, 0.0, 0.0)
+    case 2:
+      MS.Cam.face(c, 3.1415927, 0.0)
+    case 3:
+      MS.Cam.face(c, F32.neg(Key3.h()), 0.0)
+    case 4:
+      MS.Cam.face(c, Key3.h(), 0.0)
+    case 5:
+      MS.Cam.face(c, 0.0, Key3.h())
+    case 6:
+      MS.Cam.face(c, 0.0, F32.neg(Key3.h()))
+    case 7:
+      MS.Cam.face(c, 0.7853982, 0.6154797)
+    case 8:
+      MS.Cam.zoom(c, 1.25)
+    case 9:
+      MS.Cam.zoom(c, 0.8)
+    case 10:
+      MS.Cam.orbit(c, F32.neg(Key3.q()), 0.0)
+    case 11:
+      MS.Cam.orbit(c, Key3.q(), 0.0)
+    case 12:
+      MS.Cam.orbit(c, 0.0, F32.neg(Key3.q()))
+    case 13:
+      MS.Cam.orbit(c, 0.0, Key3.q())
+    case 14:
+      MS.Cam.orbit(c, F32.neg(Key3.h()), 0.0)
+    case 15:
+      MS.Cam.orbit(c, Key3.h(), 0.0)
+    case 16:
+      MS.Cam.orbit(c, 0.0, F32.neg(Key3.h()))
+    case 17:
+      MS.Cam.orbit(c, 0.0, Key3.h())
+    case 18:
+      MS.Cam.roll(c, F32.neg(Key3.q()))
+    case 19:
+      MS.Cam.roll(c, Key3.q())
+    case 20:
+      MS.Cam.pan(c, F32.neg(48.0), 0.0, s)
+    case 21:
+      MS.Cam.pan(c, 48.0, 0.0, s)
+    case 22:
+      MS.Cam.pan(c, 0.0, F32.neg(48.0), s)
+    case 23:
+      MS.Cam.pan(c, 0.0, 48.0, s)
+    case _:
+      c
+
+# a drag of (dx, dy) pixels in mode m (Drag.mode), s world units a pixel;
+# (ox, oy) is the press, off the panel's centre (shift zooms about it)
+def Cam.drag(+m: U32, c: MS.Cam, +dx: F32, +dy: F32, +s: F32, +ox: F32, +oy: F32) -> MS.Cam:
+  match m:
+    case 1:
+      MS.Cam.pan(c, dx, dy, s)
+    case 2:
+      MS.Cam.zoom_at(c, F32.max(0.2, F32.add(1.0, F32.mul(dy, 0.005))), ox, oy, s)
+    case 3:
+      MS.Cam.roll(c, F32.mul(dx, 0.01))
+    case _:
+      MS.Cam.orbit(c, F32.mul(dx, 0.01), F32.mul(dy, 0.01))
+
+# the panel the model is drawn in: its left edge, width and height (its
+# top is at 52)
+type Pnl is Data:
+  Pnl{x0: U32, w: U32, h: U32}
+
+def Pnl.cx(+p: Pnl, +x: U32) -> F32:
+  match p:
+    case Pnl{x0, w, _}:
+      F32.sub(U32.to_f32(x), F32.add(U32.to_f32(x0), F32.mul(0.5, U32.to_f32(w))))
+
+def Pnl.cy(+p: Pnl, +y: U32) -> F32:
+  match p:
+    case Pnl{_, _, h}:
+      F32.sub(U32.to_f32(y), F32.add(52.0, F32.mul(0.5, U32.to_f32(h))))
+
+def Pnl.unit(+p: Pnl, +c: MS.Cam) -> F32:
+  match p:
+    case Pnl{_, w, h}:
+      MS.Cam.unit(c, w, h)
+
+def Vx.drag(x: V.Vx, +m: U32, +dx: F32, +dy: F32, +pn: Pnl) -> V.Vx:
   match x:
-    case V.Vx{k, p, t, c, sh, bu, px, py, pa, se, bm}:
-      V.Vx{k, p, t, MS.Cam.orbit(c, F32.mul(dx, 0.01), F32.mul(dy, 0.01)), sh, bu, px, py, pa, se, bm}
+    case V.Vx{k, p, t, +c, sh, bu, +px, +py, pa, se, bm}:
+      V.Vx{k, p, t, Cam.drag(m, c, dx, dy, Pnl.unit(pn, c), Pnl.cx(pn, px), Pnl.cy(pn, py)), sh, bu, px, py, pa, se, bm}
+
+def Vx.wheel(x: V.Vx, +f: F32, +mx: U32, +my: U32, +pn: Pnl) -> V.Vx:
+  match x:
+    case V.Vx{k, p, t, +c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, MS.Cam.zoom_at(c, f, Pnl.cx(pn, mx), Pnl.cy(pn, my), Pnl.unit(pn, c)), sh, bu, px, py, pa, se, bm}
+
+def Vx.key(x: V.Vx, +a: U32, +pn: Pnl) -> V.Vx:
+  match x:
+    case V.Vx{k, p, t, +c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, Cam.key(a, c, Pnl.unit(pn, c)), sh, bu, px, py, pa, se, bm}
 
 def Vx.zoom(x: V.Vx, +f: F32) -> V.Vx:
   match x:
     case V.Vx{k, p, t, c, sh, bu, px, py, pa, se, bm}:
       V.Vx{k, p, t, MS.Cam.zoom(c, F32.div(1.0, f)), sh, bu, px, py, pa, se, bm}
 
-def Vx.refit(x: V.Vx) -> V.Vx:
+# a new scene, seen from the first side
+def Vx.fit(x: V.Vx) -> V.Vx:
   match x:
     case V.Vx{k, p, +t, _, sh, bu, px, py, pa, se, bm}:
       V.Vx{k, p, t, FA.Scene3.fit(t), sh, bu, px, py, pa, se, bm}
 
-# a drag pans a board or schematic and orbits a 3D model
-def Vw.moved.k(three: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+# zoom to fit, turned as it is
+def Vx.refit(x: V.Vx) -> V.Vx:
+  match x:
+    case V.Vx{k, p, +t, c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, t, FA.Scene3.refit(t, c), sh, bu, px, py, pa, se, bm}
+
+# a drag pans a board or schematic and moves a 3D model's camera (the
+# modifiers pick how, Drag.mode)
+def Vw.moved.k(three: Bool, v: V.Vw, +x: U32, +y: U32, +mods: U32, +pn: Pnl) -> V.Vw:
   match three v:
     case False{} V.Vw{s, vi, f, r, True{}, +lx, +ly, b, _, cu, vx}:
       V.Vw{s, V.View.pan(vi, F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly))), f, r, True{}, x, y, b, False{}, cu, vx}
     case True{} V.Vw{s, vi, f, r, True{}, +lx, +ly, b, _, cu, vx}:
-      V.Vw{s, vi, f, r, True{}, x, y, b, False{}, cu, Vx.orbit(vx, F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly)))}
+      V.Vw{s, vi, f, r, True{}, x, y, b, False{}, cu, Vx.drag(vx, Drag.mode(mods), F32.sub(U32.to_f32(x), U32.to_f32(lx)), F32.sub(U32.to_f32(y), U32.to_f32(ly)), pn)}
     case _ _:
       v
 
-def Vw.moved(+v: V.Vw, +x: U32, +y: U32) -> V.Vw:
-  Vw.moved.k(U32.is_eq(Vw.kind(v), 2), v, x, y)
+def Vw.moved(+v: V.Vw, +x: U32, +y: U32, +mods: U32, +pn: Pnl) -> V.Vw:
+  Vw.moved.k(U32.is_eq(Vw.kind(v), 2), v, x, y, mods, pn)
+
+def Vw.key(v: V.Vw, +a: U32, +pn: Pnl) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, Vx.key(vx, a, pn)}
 
 def Vw.zoom.k(three: Bool, v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
   match three v:
@@ -665,6 +822,18 @@ def Vw.zoom.d(diff: Bool, +v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
 
 def Vw.zoom(+v: V.Vw, +f: F32, +x: U32, +y: U32) -> V.Vw:
   Vw.zoom.d(U32.is_eq(Vw.kind(v), 4), v, f, x, y)
+
+# the wheel zooms a 3D model at the pointer (SolidWorks: forward is out)
+# and a board or schematic as before
+def Vw.wheel.k(three: Bool, v: V.Vw, +dir: U32, +x: U32, +y: U32, +pn: Pnl) -> V.Vw:
+  match three v:
+    case True{} V.Vw{s, vi, fi, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, fi, r, d, lx, ly, b, False{}, cu, Vx.wheel(vx, Wheel.dist(dir), x, y, pn)}
+    case False{} _:
+      Vw.zoom(v, Bool.pick(F32, U32.is_eq(dir, 0), 1.25, 0.8), x, y)
+
+def Vw.wheel(+v: V.Vw, +dir: U32, +x: U32, +y: U32, +pn: Pnl) -> V.Vw:
+  Vw.wheel.k(U32.is_eq(Vw.kind(v), 2), v, dir, x, y, pn)
 
 def Vw.refit(v: V.Vw) -> V.Vw:
   match v:
@@ -959,7 +1128,7 @@ def Vw.board.k(same: Bool, v: V.Vw, +root: String, +items: List<&2, B.Item>, +no
 def Vx.mesh.k(fit: Bool, x: V.Vx) -> V.Vx:
   match fit:
     case True{}:
-      Vx.refit(x)
+      Vx.fit(x)
     case False{}:
       x
 
@@ -1370,11 +1539,15 @@ def Nui.dragging(n: Nui) -> Bool:
     case Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{_, _, _, _, d, _, _, _, _, _, vx}}:
       d
 
-def Nui.view_move(+n: Nui, +x: U32, +y: U32) -> Step:
-  Step{Nui.with_vw(n, Vw.moved(Nui.vw(n), x, y)), Nil{}, Nui.dragging(n)}
+# the viewer's panel
+def Nui.pnl(+n: Nui) -> Pnl:
+  Pnl{Nui.vx0(n), (Nui.width(n) - Nui.vx0(n) : U32), (Nui.height(n) - 52 : U32)}
+
+def Nui.view_move(+n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
+  Step{Nui.with_vw(n, Vw.moved(Nui.vw(n), x, y, mods, Nui.pnl(n))), Nil{}, Nui.dragging(n)}
 
 def Nui.view_wheel(+n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
-  Step{Nui.with_vw(n, Vw.zoom(Nui.vw(n), Bool.pick(F32, U32.is_eq(dir, 0), 1.25, 0.8), x, y)), Nil{}, True{}}
+  Step{Nui.with_vw(n, Vw.wheel(Nui.vw(n), dir, x, y, Nui.pnl(n))), Nil{}, True{}}
 
 def Nui.nohit(m: Maybe<&2, Hit>) -> Bool:
   match m:
@@ -1452,10 +1625,10 @@ def Row.move(on: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
     case False{}:
       Nui.moved(n, x, y)
 
-def Nui.move.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+def Nui.move.k(drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
   match drag:
     case True{}:
-      Nui.view_move(n, x, y)
+      Nui.view_move(n, x, y, mods)
     case False{}:
       Row.move(Bool.not(String.is_empty(Row.id(n))), n, x, y)
 
@@ -1642,10 +1815,27 @@ def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
 def Nui.paste(+n: Nui, text: String) -> Step:
   Nui.paste.t(String.eq(Nui.focus_of(n), "terminal"), n, text)
 
+def Nui.key.3d.k(none: Bool, +n: Nui, +a: U32) -> Step:
+  match none:
+    case True{}:
+      Step{n, Nil{}, False{}}
+    case False{}:
+      Step{Nui.with_vw(n, Vw.key(Nui.vw(n), a, Nui.pnl(n))), Nil{}, True{}}
+
+# the 3D viewer's keys (Key3.act), when it is open and no field has focus
+def Nui.key.3d(on: Bool, +n: Nui, +code: U32, +mods: U32) -> Step:
+  match on:
+    case True{}:
+      Nui.key.3d.k(U32.is_eq(Key3.act(code, mods), 0), n, Key3.act(code, mods))
+    case False{}:
+      Step{n, Nil{}, False{}}
+
 def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match nofocus fit:
     case True{} True{}:
       Step{Nui.with_vw(n, Vw.refit(Nui.vw(n))), Nil{}, True{}}
+    case True{} False{}:
+      Nui.key.3d(Bool.and(Nui.panel(n), U32.is_eq(Vw.kind(Nui.vw(n)), 2)), n, code, mods)
     case _ _:
       Nui.field.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, Nui.mark(n), code, text, mods)
 
@@ -1902,15 +2092,15 @@ def Sel.line(hs: List<&2, Hit>, +x: U32, +y: U32) -> Maybe<&2, Hit>:
 def Sel.on(+n: Nui) -> Bool:
   String.eq(U.Ui.scratch(Nui.ui(n), "@ts.on"), "1")
 
-def Nui.move.s(sel: Bool, drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+def Nui.move.s(sel: Bool, drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
   match sel:
     case True{}:
       Sel.to(Sel.line(Nui.hits(n), x, y), n, x)
     case False{}:
-      Nui.move.k(drag, n, x, y)
+      Nui.move.k(drag, n, x, y, mods)
 
-def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
-  Nui.move.s(Sel.on(n), drag, n, x, y)
+def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
+  Nui.move.s(Sel.on(n), drag, n, x, y, mods)
 
 def Sel.end(s: Step) -> Step:
   match s:
@@ -1982,6 +2172,14 @@ def Row.menu(m: Maybe<&2, Hit>, +n: Nui, +x: U32) -> Step:
 def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   Nui.press.k(Bool.and(viewer, Nui.nohit(Hit.find(Nui.hits(n), x, y))), n, x, y)
 
+# the middle button drags in the viewer too (SolidWorks rotates with it)
+def Nui.mpress(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
+  match viewer:
+    case True{}:
+      Nui.view_press(n, x, y, True{})
+    case False{}:
+      Step{n, Nil{}, False{}}
+
 # Hotkey hints
 # ------------
 # While alt is held the sidebar numbers its projects (alt+1..9), while
@@ -2039,10 +2237,14 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
       Sel.end(Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y))
     case W.WButton{+x, +y, 3, True{}}:
       Row.menu(Hit.find(Nui.hits(n), x, y), Menu.press(Hit.find(Nui.hits(n), x, y), n), x)
+    case W.WButton{+x, +y, 2, True{}}:
+      Nui.mpress(Nui.in_viewer(n, x), n, x, y)
+    case W.WButton{+x, +y, 2, False{}}:
+      Nui.view_press(n, x, y, False{})
     case W.WButton{_, _, _, _}:
       Step{n, Nil{}, False{}}
-    case W.WMove{+x, +y}:
-      Nui.move(Nui.dragging(n), n, x, y)
+    case W.WMove{+x, +y, +mods}:
+      Nui.move(Nui.dragging(n), n, x, y, mods)
     case W.WWheel{+x, +y, +dir}:
       Menu.spin(String.is_empty(Menu.box(Nui.hits(n), x, y)), Menu.box(Nui.hits(n), x, y), n, x, y, dir)
     case W.WSize{w, h}:
@@ -2148,7 +2350,7 @@ def Lbx.event(+n: Nui, e: W.WinEv) -> Step:
       Lbx.step(n, LB.Lb.press(Lbx.get(n), U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
     case W.WButton{+x, +y, 1, False{}}:
       Lbx.release(Bool.or(LB.Lb.closes(Lbx.get(n), U32.to_nat(x), U32.to_nat(y)), LB.Lb.close_hit(U32.to_nat(x), U32.to_nat(y), U32.to_nat(Nui.width(n)))), n, x, y)
-    case W.WMove{+x, +y}:
+    case W.WMove{+x, +y, _}:
       Lbx.move(LB.Lb.is_down(Lbx.get(n)), n, x, y)
     case W.WWheel{+x, +y, +dir}:
       Lbx.step(n, LB.Lb.wheel(Lbx.get(n), U32.is_eq(dir, 0), 100n, True{}, U32.to_nat(x), U32.to_nat(y), Lbx.box(n), Nui.ms_of(n)))
