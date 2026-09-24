@@ -35,6 +35,21 @@ they know of (one tap pairs), and takes a new link. Only the hub in focus
 draws plots. Debug builds take several links in `BACKPLANE_LINK`,
 separated by spaces.
 
+## A thread on the phone
+
+The screen carries what the web client's thread view has, decided in
+`src/mobile/screen.bend`: asks (approve, answer, implement a plan), runs
+of tool calls folded (`fold`), subagents and links between threads,
+attachments (the app reads a photo or file and sends it through `attach`
+in the pieces the screen names), the images a reply names (served by the
+hub at `/img` with the pairing token; only the newest 40 entries look,
+since finding them walks the text), `$skill` completion, the diff and git
+actions, the terminal (the hub's VT emulator, keys through `term-key` and
+`term-paste`), search and the file picker (`find-open`), settings, and
+the archived shelf. Debug builds read `BACKPLANE_ACTS`
+(`action=value;;…`, two seconds apart once the thread is open;
+`@attach` uploads a test image) to drive these without hands.
+
 ## Board viewer
 
 A thread's toolbar opens its project's board, schematic or 3D model (the

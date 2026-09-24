@@ -42,6 +42,9 @@ final class AppModel {
     @ObservationIgnored private var opening = ProcessInfo.processInfo.environment["BACKPLANE_SELECT"]
     // and SIMCTL_CHILD_BACKPLANE_VIEW=board (or schematic) opens its viewer
     @ObservationIgnored private var viewing = ProcessInfo.processInfo.environment["BACKPLANE_VIEW"]
+    // and SIMCTL_CHILD_BACKPLANE_ACTS="diff;;term-toggle=$SIZE;;…" runs
+    // actions two seconds apart once the thread is open
+    @ObservationIgnored private var acting = ProcessInfo.processInfo.environment["BACKPLANE_ACTS"]
     #endif
 
     // this install's id, part of every message id (a resend is stored once)
@@ -184,6 +187,34 @@ final class AppModel {
         run { await $0.act(action, value) }
     }
 
+    // where the hub in focus serves a path ("/img?path=…"), with its token
+    func web(_ path: String) -> URL? {
+        guard let s = screen, let l = links.first(where: { Pairing.key($0) == s.hub }) ?? links.first else { return nil }
+        return Pairing.web(l, path)
+    }
+
+    // a file for the next message, sent to the thread's hub in the pieces
+    // the screen asks for ("attach" decides what goes out)
+    func attach(_ data: Data, name: String) {
+        guard !data.isEmpty else { return }
+        let size = max(screen?.thread?.chunk ?? 196_608, 1024)
+        let key = String(format: "%08x", UInt32.random(in: 0 ... UInt32.max))
+        let e = engine
+        Task {
+            var i = 0, off = 0
+            while off < data.count {
+                let end = min(off + size, data.count)
+                let piece: [String: Any] = ["key": key, "name": name, "size": data.count, "i": i, "last": end >= data.count,
+                                            "data": data.subdata(in: off ..< end).base64EncodedString()]
+                if let j = try? JSONSerialization.data(withJSONObject: piece), let text = String(data: j, encoding: .utf8) {
+                    apply(await e.act("attach", text))
+                }
+                i += 1
+                off = end
+            }
+        }
+    }
+
     func navigate(_ p: [String]) {
         path = p
         act("select", p.last ?? "")
@@ -238,6 +269,29 @@ final class AppModel {
             if opening == nil, let v = viewing, let t = s.thread, !t.viewer.choices.isEmpty {
                 viewing = nil
                 act("view", v)
+            }
+            if opening == nil, let a = acting, s.thread != nil {
+                acting = nil
+                Task {
+                    for step in a.components(separatedBy: ";;") where !step.isEmpty {
+                        try? await Task.sleep(for: .seconds(2))
+                        let kv = step.split(separator: "=", maxSplits: 1).map(String.init)
+                        // "@attach": a noisy PNG big enough to go up in several pieces
+                        if kv[0] == "@attach" {
+                            let img = UIGraphicsImageRenderer(size: CGSize(width: 400, height: 400)).image { c in
+                                for y in stride(from: 0, to: 400, by: 2) {
+                                    for x in stride(from: 0, to: 400, by: 2) {
+                                        UIColor(hue: .random(in: 0 ... 1), saturation: 0.8, brightness: 0.9, alpha: 1).setFill()
+                                        c.fill(CGRect(x: x, y: y, width: 2, height: 2))
+                                    }
+                                }
+                            }
+                            if let d = img.pngData() { attach(d, name: "noise.png") }
+                            continue
+                        }
+                        act(kv[0], kv.count > 1 ? kv[1].replacingOccurrences(of: "$SIZE", with: TermSheet.size()) : "")
+                    }
+                }
             }
             #endif
         }

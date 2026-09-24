@@ -62,6 +62,7 @@ Backplane stands. Updated as features land.
 - **Models:** the pickers show what each CLI offers now. Claude Code's /model list comes from an `initialize` control request, which calls no model. Codex's list comes from its cache and Grok's from `grok models`. The lists are read again every 15 minutes and pushed to clients. The effort chips follow the model.
 - **Viewers:** board, schematic and 3D (KiCad), STEP (through step2glb), and the agents' browser (Chrome). Clicking inspects an item.
 - **Board viewer on phones:** a thread's board, schematic or 3D model, live, on the GPU (Metal, GLES 3). The hub sends chunks once, as CBOR, then only the ones a save changed; the 5.6 MB KiCad "video" demo board arrives as 528 KB, and a moved track as one ~1 KB delta. Tapping inspects an item (net, ref, value, footprint...) with Mention in chat; 3D shows the board's body and parts with its copper, mask and silk on the faces.
+- **The iOS app:** what the web client's thread view has: approvals, questions and plans to answer; runs of tool calls folded; links between threads, subagents and the thread that delegated; attachments from Photos or Files (sent in pieces) and images in replies, zoomable; `$skill` completion; the diff with Commit & push, Open PR and Revert; the thread's terminal; snooze, delete and unarchive; thread search and the file picker; the archived shelf; each row's status dot; the hub's settings. Android draws the new rows plainly for now.
 
 ## Not yet
 

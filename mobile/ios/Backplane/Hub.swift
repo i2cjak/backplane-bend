@@ -18,6 +18,16 @@ enum Pairing {
         return u.port.map { "\(host):\($0)" } ?? host
     }
 
+    // where the hub serves path ("/img?path=…"), over http(s), with the link's token
+    static func web(_ link: String, _ path: String) -> URL? {
+        guard let w = socket(link), var c = URLComponents(url: w, resolvingAgainstBaseURL: false),
+              let p = URLComponents(string: path) else { return nil }
+        c.scheme = w.scheme == "wss" ? "https" : "http"
+        c.path = p.path
+        c.percentEncodedQuery = [p.percentEncodedQuery, c.percentEncodedQuery].compactMap { $0 }.joined(separator: "&")
+        return c.url
+    }
+
     static func socket(_ link: String) -> URL? {
         var s = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return nil }
