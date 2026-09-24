@@ -206,6 +206,23 @@ def Mob.picker(+info: String, +provider: String, +model: String, +effort: String
     J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.list(info, provider), info, provider, model))},
     J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort))}])
 
+def Mob.qbtns(bs: List<&2, U.QBtn>) -> List<&2, J.Json>:
+  match bs:
+    case Nil{}:
+      Nil{}
+    case U.QBtn{l, a, v} <> t:
+      J.Json.obj([J.KV{"label", J.Json.str(l)}, J.KV{"action", J.Json.str(a)}, J.KV{"value", J.Json.str(v)}]) <> Mob.qbtns(t)
+
+# the queue above the composer: each waiting message with its buttons
+# (U.Qu.buttons)
+def Mob.queue(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, J.Json>:
+  match qs:
+    case Nil{}:
+      Nil{}
+    case M.QItem{+msg, text} <> t:
+      J.Json.obj([J.KV{"msg", J.Json.str(msg)}, J.KV{"text", J.Json.str(text)}, J.KV{"tag", J.Json.str(Bool.pick(String, run, "Queued", "Held"))},
+        J.KV{"buttons", J.Json.arr(Mob.qbtns(U.Qu.buttons(run, first, msg)))}]) <> Mob.queue(t, False{}, run)
+
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
@@ -215,10 +232,11 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Js
         J.KV{"entries", J.Json.arr(Mob.entries(V.View.mine(U.Ui.entries(st), id, Nil{})))},
         J.KV{"sending", J.Json.arr(Mob.strs(pend))},
         J.KV{"queued", J.Json.str(M.Queue.of(st, id))},
+        J.KV{"queue", J.Json.arr(Mob.queue(M.Queue.items(st, id), True{}, V.View.running(turn)))},
         J.KV{"live", J.Json.arr(Mob.nodes(D.Md.render(U.Str.get(live, id))))},
         J.KV{"working", J.Json.str(Mob.live(String.is_empty(U.Str.get(live, id)), V.View.running(turn)))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},
-        J.KV{"send", J.Json.str(Bool.pick(String, V.View.running(turn), "Queue", "Send"))},
+        J.KV{"send", J.Json.str(U.Follow.label(st, sel, V.View.running(turn)))},
         J.KV{"picker", Mob.picker(U.Str.get(nf, "models"), pr, mo, U.Effort.of(st, sel))},
         J.KV{"viewer", vw}])
 

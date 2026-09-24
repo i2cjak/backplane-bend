@@ -3407,3 +3407,51 @@ def Laws.tag_old_process_unheard():
 
 def Laws.tag_untagged_heard(r):
   {==}
+
+def Laws.follow_default_claude():
+  {==}
+
+def Laws.follow_default_codex():
+  {==}
+
+def Laws.follow_setting_queue(p):
+  {==}
+
+def Laws.follow_setting_steer(p):
+  {==}
+
+def Laws.follow_alt_flips(s, p):
+  {==}
+
+def Laws.queue_mode_waits():
+  {==}
+
+def Laws.steer_claude_in_place(th):
+  {==}
+
+def Laws.steer_codex_restarts():
+  {==}
+
+def Laws.queue_joined():
+  {==}
+
+def Laws.queue_edit_in_place():
+  {==}
+
+def Laws.queue_remove_one():
+  {==}
+
+def Laws.queue_move_first():
+  {==}
+
+def Laws.queue_move_unknown():
+  {==}
+
+def Laws.queue_steer_one_leaves_rest():
+  {==}
+
+def Laws.queue_row_running(m):
+  {==}
+
+def Laws.queue_row_held(m):
+  {==}

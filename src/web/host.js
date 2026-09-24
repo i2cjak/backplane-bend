@@ -432,7 +432,9 @@ document.addEventListener("keydown", (e) => {
   const el = e.target.closest?.("[data-enter]");
   if (!el || e.key !== "Enter" || e.shiftKey || e.isComposing) return;
   e.preventDefault();
-  dispatch(el.getAttribute("data-enter"), valueOf(el));
+  // ctrl/cmd+Enter: the element's other action (send with the other follow-up mode)
+  const alt = (e.ctrlKey || e.metaKey) && el.getAttribute("data-enter-alt");
+  dispatch(alt || el.getAttribute("data-enter"), valueOf(el));
 });
 
 // Lightbox

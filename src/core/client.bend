@@ -533,13 +533,49 @@ def Ui.also(a: Act, more: List<&2, Cmd>) -> Act:
 def Ui.msg_id(+cid: String, +now: Nat, +rid: Nat) -> String:
   "c" ++ cid ++ Nat.show(now) ++ "-" ++ Nat.show(rid)
 
-def Ui.send.k(empty: Bool, u: Ui, text: String) -> Act:
+# Follow-ups
+# ----------
+# While a turn runs, a message either waits in the queue or steers the
+# turn. The "followup" setting picks ("queue" or "steer"); unset, each
+# provider keeps its way (Claude steers, Codex and Grok queue). Ctrl+Enter
+# does the other one for that message (laws follow_*).
+
+def Follow.flip(+m: String) -> String:
+  Bool.pick(String, String.eq(m, "queue"), "steer", "queue")
+
+def Follow.base(+setting: String, +provider: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(setting, "queue"), String.eq(setting, "steer")), setting,
+    Bool.pick(String, String.eq(provider, "claude"), "steer", "queue"))
+
+def Follow.mode.k(alt: Bool, +m: String) -> String:
+  match alt:
+    case True{}:
+      Follow.flip(m)
+    case False{}:
+      m
+
+# the mode a message is sent with
+def Follow.mode(+setting: String, +provider: String, alt: Bool) -> String:
+  Follow.mode.k(alt, Follow.base(setting, provider))
+
+# what the send button says: Send, or while a turn runs what Enter does
+def Follow.label.k(run: Bool, +mode: String) -> String:
+  match run:
+    case True{}:
+      Bool.pick(String, String.eq(mode, "queue"), "Queue", "Steer")
+    case False{}:
+      "Send"
+
+def Follow.label(+st: M.State, +sel: String, run: Bool) -> String:
+  Follow.label.k(run, Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), False{}))
+
+def Ui.send.k(empty: Bool, u: Ui, text: String, +mode: String) -> Act:
   match empty u:
     case True{} _:
       Act{u, Nil{}}
     case False{} Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
       Ui.also(Ui.rpc.keep(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@att:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
-        "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}]), List.append(&2, Cmd, Draft.keep(sel, ""), [Scroll{}]))
+        "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}, J.KV{"mode", J.Str{mode}}]), List.append(&2, Cmd, Draft.keep(sel, ""), [Scroll{}]))
 
 def Ui.new_thread(u: Ui, +pid: String) -> Act:
   match u:
@@ -618,7 +654,8 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set",
+   "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt"]
 
 # Reading the client state
 # ------------------------
@@ -2005,11 +2042,13 @@ def Att.nonblank(ls: List<&2, String>) -> List<&2, String>:
       Att.keep(String.is_empty(String.trim(l)), String.trim(l), Att.nonblank(t))
 
 # the draft, then a line per attachment (attach.bend's format)
-def Ui.send(u: Ui) -> Act:
+# the draft sent; alt: the other follow-up mode (ctrl+Enter)
+def Ui.send(u: Ui, alt: Bool) -> Act:
   match u:
-    case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+    case Ui{+st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
-      Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text)
+      Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text,
+        Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), alt))
 
 def Att.drop(ps: List<&2, String>, +p: String) -> List<&2, String>:
   match ps:
@@ -2335,6 +2374,60 @@ def Ui.row_deleting(+u: Ui) -> String:
 def Ui.row_delete(+u: Ui, +id: String) -> Act:
   Ui.row_delete.k(Bool.and(Bool.not(String.is_empty(id)), String.eq(Ui.row_deleting(u), id)), u, id)
 
+# The queue above the composer
+# ----------------------------
+
+# where a queued message sits (0: next)
+def Qu.index(qs: List<&2, M.QItem>, +msg: String) -> Nat:
+  match qs:
+    case Nil{}:
+      0n
+    case M.QItem{+m, _} <> t:
+      Bool.pick(Nat, String.eq(m, msg), 0n, 1n+Qu.index(t, msg))
+
+type QBtn is Data:
+  QBtn{label: String, action: String, value: String}
+
+def Qu.first(+first: Bool, +run: Bool) -> List<&2, QBtn>:
+  Bool.pick(List<&2, QBtn>, Bool.and(first, Bool.not(run)), [QBtn{"Resume", "q-resume", ""}], Nil{})
+
+# a queued row's buttons, left to right: while the turn runs, Steer sends
+# it into the turn; while none runs (the queue is held, after a stop or a
+# restart), Send starts it alone and the first row can resume them all
+# (laws queue_row_*)
+def Qu.buttons(+run: Bool, +first: Bool, +msg: String) -> List<&2, QBtn>:
+  List.append(&2, QBtn, Qu.first(first, run),
+    [QBtn{Bool.pick(String, run, "Steer", "Send"), "q-steer", msg}, QBtn{"Edit", "q-edit", msg}, QBtn{"Up", "q-up", msg}, QBtn{"Remove", "q-remove", msg}])
+
+# how many queued rows show (the rest are counted on the last)
+def Qu.shown() -> Nat:
+  4n
+
+# a queued message one place earlier
+def Ui.q_up(+u: Ui, +msg: String) -> Act:
+  Ui.on_thread.p(u, "queue.move", [J.KV{"msg", J.Str{msg}}, J.KV{"to", J.Num{Nat.show(Nat.sub(Qu.index(M.Queue.items(Ui.state(u), Ui.sel(u)), msg), 1n))}}])
+
+def Qu.text(m: Maybe<&2, M.QItem>) -> String:
+  match m:
+    case Some{M.QItem{_, t}}:
+      t
+    case None{}:
+      ""
+
+# the draft with a queued message's text after it (a blank line between)
+def Qu.merge(+draft: String, +text: String) -> String:
+  Bool.pick(String, String.is_empty(String.trim(draft)), text, draft ++ "\n\n" ++ text)
+
+def Ui.q_edit.k(a: Act, +msg: String) -> Act:
+  match a:
+    case Act{u2, cs}:
+      Ui.also(Ui.on_thread.p(u2, "queue.remove", [J.KV{"msg", J.Str{msg}}]), cs)
+
+# a queued message back in the composer to change (it leaves the queue;
+# sending it again queues or steers it as any message)
+def Ui.q_edit(+u: Ui, +msg: String) -> Act:
+  Ui.q_edit.k(Ui.draft.set(u, Qu.merge(Ui.draft_text(u), Qu.text(M.Queue.find(M.Queue.items(Ui.state(u), Ui.sel(u)), msg)))), msg)
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2344,7 +2437,7 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 2n:
       Ui.draft(u, value)
     case 3n:
-      Ui.send(u)
+      Ui.send(u, False{})
     case 4n:
       Ui.add_project(u, value)
     case 5n:
@@ -2463,6 +2556,18 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Act{Ui.look(u, value), Nil{}}
     case 68n:
       Ui.setting(u, value)
+    case 69n:
+      Ui.on_thread.p(u, "queue.steer", [J.KV{"msg", J.Str{value}}])
+    case 70n:
+      Ui.on_thread.p(u, "queue.remove", [J.KV{"msg", J.Str{value}}])
+    case 71n:
+      Ui.q_up(u, value)
+    case 72n:
+      Ui.q_edit(u, value)
+    case 73n:
+      Ui.on_thread(u, "queue.resume")
+    case 74n:
+      Ui.send(u, True{})
     case _:
       Act{u, Nil{}}
 
