@@ -6,6 +6,7 @@ import ./viewer.bend as V
 import ../core/board.bend as B
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
+import ../gfx/face.bend as FA
 import ../gfx/bitmap.bend as BM
 import ../core/vt.bend as VT
 import ../core/attach.bend as AT
@@ -533,7 +534,7 @@ def Vx.zoom(x: V.Vx, +f: F32) -> V.Vx:
 def Vx.refit(x: V.Vx) -> V.Vx:
   match x:
     case V.Vx{k, p, +t, _, sh, bu, px, py, pa, se, bm}:
-      V.Vx{k, p, t, MS.Cam.fit(t), sh, bu, px, py, pa, se, bm}
+      V.Vx{k, p, t, FA.Scene3.fit(t), sh, bu, px, py, pa, se, bm}
 
 # a drag pans a board or schematic and orbits a 3D model
 def Vw.moved.k(three: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
@@ -859,12 +860,32 @@ def Vw.board.k(same: Bool, v: V.Vw, +root: String, +items: List<&2, B.Item>, +no
     case False{} V.Vw{_, vi, _, _, d, lx, ly, b, _, cu, vx}:
       V.Vw{V.Scene.update(Nil{}, items, now), vi, False{}, root, d, lx, ly, b, False{}, cu, Vx.busy(vx, "")}
 
-def Vx.mesh(x: V.Vx, ts: List<&2, G.Tri3>) -> V.Vx:
-  match x:
-    case V.Vx{k, p, _, c, sh, _, px, py, pa, se, bm}:
-      Vx.refit(V.Vx{k, p, ts, c, sh, "", px, py, pa, se, bm})
+def Vx.mesh.k(fit: Bool, x: V.Vx) -> V.Vx:
+  match fit:
+    case True{}:
+      Vx.refit(x)
+    case False{}:
+      x
 
-def Vw.mesh(v: V.Vw, ts: List<&2, G.Tri3>) -> V.Vw:
+# a new scene; the camera fits it only when there was none (a board
+# saved again keeps the view)
+def Vx.mesh(x: V.Vx, ts: FA.Scene3) -> V.Vx:
+  match x:
+    case V.Vx{k, p, old, c, sh, _, px, py, pa, se, bm}:
+      Vx.mesh.k(FA.Scene3.is_empty(old), V.Vx{k, p, ts, c, sh, "", px, py, pa, se, bm})
+
+# parts of the scene's board, arrived at `now`
+def Vx.parts(x: V.Vx, +t0: Nat, ts: List<&2, G.Tri3>, +now: Nat) -> V.Vx:
+  match x:
+    case V.Vx{k, p, s, c, sh, bu, px, py, pa, se, bm}:
+      V.Vx{k, p, FA.Scene3.add_if(s, t0, ts, now), c, sh, bu, px, py, pa, se, bm}
+
+def Vw.parts(v: V.Vw, +t0: Nat, ts: List<&2, G.Tri3>, +now: Nat) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
+      V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, Vx.parts(vx, t0, ts, now)}
+
+def Vw.mesh(v: V.Vw, ts: FA.Scene3) -> V.Vw:
   match v:
     case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
       V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, Vx.mesh(vx, ts)}
@@ -896,8 +917,11 @@ def Vw.board.same(+v: V.Vw, +key: String, +items: List<&2, B.Item>, +now: Nat) -
 def Nui.board(+n: Nui, +key: String, +items: List<&2, B.Item>, +now: Nat) -> Nui:
   Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.board.same(v, key, items, now)))
 
-def Nui.mesh(+n: Nui, +key: String, ts: List<&2, G.Tri3>) -> Nui:
+def Nui.mesh(+n: Nui, +key: String, ts: FA.Scene3) -> Nui:
   Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.mesh(v, ts)))
+
+def Nui.parts(+n: Nui, +key: String, +t0: Nat, ts: List<&2, G.Tri3>, +now: Nat) -> Nui:
+  Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.parts(v, t0, ts, now)))
 
 def Vw.shot(v: V.Vw, b: BM.Bitmap) -> V.Vw:
   match v:
@@ -1153,7 +1177,8 @@ def Nui.prepare(+n: Nui) -> Nui:
   Nui.prepare.k(Nui.panel(n), Nui.request(n))
 
 # pointer events on the viewer: drag pans (or orbits), the wheel zooms at
-# the pointer, and a press released where it began picks an item
+# the pointer, and a press released where it began picks an item; a 3D
+# view drawn in draft while dragging is drawn again in full on release
 def Vw.press(v: V.Vw, +x: U32, +y: U32) -> V.Vw:
   match v:
     case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, V.Vx{k, p, t, c, sh, bu, _, _, pa, se, bm}}:
@@ -1163,8 +1188,8 @@ def Vw.release.k(click: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
   match click v:
     case True{} V.Vw{+s, +vi, f, r, _, lx, ly, b, fr, cu, V.Vx{+k, _, t, c, sh, bu, px, py, pa, se, bm}}:
       V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k)), t, c, sh, bu, px, py, pa, se, bm}}
-    case False{} V.Vw{s, vi, f, r, _, lx, ly, b, fr, cu, vx}:
-      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, vx}
+    case False{} V.Vw{s, vi, f, r, _, lx, ly, b, fr, cu, +vx}:
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, Bool.and(fr, Bool.not(U32.is_eq(Vx.kind(vx), 2))), cu, vx}
 
 def Vx.press_at(x: V.Vx) -> U32 & U32:
   match x:
