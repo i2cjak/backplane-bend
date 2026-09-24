@@ -1274,12 +1274,81 @@ def Nui.move.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
     case False{}:
       Row.move(Bool.not(String.is_empty(Row.id(n))), n, x, y)
 
+# The composer grows with its draft from 2 to Cs.most() lines; a longer
+# draft scrolls. Its first shown line follows the caret unless the wheel
+# chose one: "@cs" holds that choice while the field, thread and caret it
+# was made with do (as "@mark" does). Layout names the composer's current
+# top and furthest top in a zero-size "cs" region ("top,max").
+
+def Cs.most() -> Nat:
+  8n
+
+# how many lines the composer shows for a draft of n wrapped lines
+def Cs.rows(+n: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_le(n, 2n), 2n, Bool.pick(Nat, Nat.is_ge(n, Cs.most()), Cs.most(), n))
+
+# the first shown line that keeps the caret's line (crow) in view
+def Cs.follow(+n: Nat, +crow: Nat) -> Nat:
+  +m = Nat.sub(n, Cs.rows(n))
+  +c = Nat.sub(crow, Nat.sub(Cs.rows(n), 1n))
+  Bool.pick(Nat, Nat.is_le(m, c), m, c)
+
+# the first shown line: the wheel's choice (held) while it holds, else
+# the caret's; never past the last full view
+def Cs.top(+held: String, +n: Nat, +crow: Nat) -> Nat:
+  +m = Nat.sub(n, Cs.rows(n))
+  +t = Maybe.default(&2, Nat, Nat.read(held), Cs.follow(n, crow))
+  Bool.pick(Nat, Nat.is_le(t, m), t, m)
+
+# the first shown line after a wheel notch, 3 lines, within 0..max
+def Cs.wheel(up: Bool, +top: Nat, +max: Nat) -> Nat:
+  match up:
+    case True{}:
+      Nat.sub(top, 3n)
+    case False{}:
+      Bool.pick(Nat, Nat.is_le(Nat.add(top, 3n), max), Nat.add(top, 3n), max)
+
+# the wheel's choice while it still holds ("" when it does not)
+def Cs.held(+n: Nui) -> String:
+  +r = U.Ui.scratch(Nui.ui(n), "@cs")
+  Bool.pick(String, String.starts_with(r, Mark.sig(n)), String.drop(r, String.length(Mark.sig(n))), "")
+
+def Cs.region(hs: List<&2, Hit>) -> String:
+  match hs:
+    case Nil{}:
+      ""
+    case Hit{_, _, _, _, +a, +v} <> t:
+      Bool.pick(String, String.eq(a, "cs"), v, Cs.region(t))
+
+def Cs.num(+v: String, +i: Nat) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(v, ','), i), "")), 0n)
+
+def Cs.over(m: Maybe<&2, Hit>) -> Bool:
+  match m:
+    case Some{Hit{_, _, _, _, +a, +v}}:
+      Bool.and(String.eq(a, "focus"), String.eq(v, "composer"))
+    case None{}:
+      False{}
+
+def Cs.spin.k(on: Bool, +n: Nui, +x: U32, +dir: U32, +v: String) -> Step:
+  match on:
+    case True{}:
+      Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@cs", Mark.sig(n) ++ Nat.show(Cs.wheel(U32.is_eq(dir, 0), Cs.num(v, 0n), Cs.num(v, 1n))))), Nil{}, True{}}
+    case False{}:
+      Nui.wheel(n, x, dir)
+
+# the wheel over a composer too short for its draft scrolls the draft;
+# anywhere else it moves the sidebar or the timeline
+def Cs.spin(+n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
+  +v = Cs.region(Nui.hits(n))
+  Cs.spin.k(Bool.and(Cs.over(Hit.find(Nui.hits(n), x, y)), Nat.is_gt(Cs.num(v, 1n), 0n)), n, x, dir, v)
+
 def Nui.spin(viewer: Bool, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
   match viewer:
     case True{}:
       Nui.view_wheel(n, x, y, dir)
     case False{}:
-      Nui.wheel(n, x, dir)
+      Cs.spin(n, x, y, dir)
 
 def Nui.ms_of(n: Nui) -> Nat:
   match n:

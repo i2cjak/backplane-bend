@@ -1139,28 +1139,52 @@ def Comp.sel(on: Bool, +ty: Ty, +shown: List<&2, String>, +top: Nat, +draft: Str
     case False{}:
       Out.none()
 
-def Lay.composer(+ty: Ty, +draft: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String,
+# how much taller than two lines the composer is for n wrapped lines
+def Comp.eh(+n: Nat) -> U32:
+  (U32.from_nat(Nat.sub(S.Cs.rows(n), 2n)) * 23 : U32)
+
+# the draft wrapped as the composer shows it, cw wide
+def Comp.wrap(+ty: Ty, +draft: String, +cw: U32) -> List<&2, String>:
+  Ty.wrap(ty, 3n, draft, (cw - 40 : U32))
+
+# a scrollbar at x beside v of n lines from top, the view th tall
+def Comp.bar(on: Bool, +n: Nat, +v: Nat, +top: Nat, +x: U32, +y: U32, +th: U32) -> Out:
+  match on:
+    case True{}:
+      +bh = {U32.max(16, U32.from_nat(Nat.div(Nat.mul(U32.to_nat(th), v), n))) : U32}
+      +by = {U32.from_nat(Nat.div(Nat.mul(U32.to_nat((th - bh : U32)), top), Nat.sub(n, v))) : U32}
+      Out.ops([D.Draw.rect(D.Clip.all(), x, y, 4, th, T.Th.raise(), 255), D.Draw.rect(D.Clip.all(), x, (y + by : U32), 4, bh, T.Th.dim(), 255)])
+    case False{}:
+      Out.none()
+
+# the composer grows upward with its draft (its footer stays put); held
+# is the wheel's choice of first line (nui.bend's Cs)
+def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String,
     +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>) -> Out:
   +tw = {(x1 - x0 - 40 : U32) : U32}
-  +ls = Ty.wrap(ty, 3n, draft, tw)
+  +n = List.length(&2, String, ls)
+  +v = S.Cs.rows(n)
+  +eh = Comp.eh(n)
   +crow = Comp.row(ty, draft, caret, tw)
-  +top = Nat.min(Nat.sub(List.length(&2, String, ls), 2n), Nat.sub(crow, 1n))
-  +shown = List.take(&2, String, List.drop(&2, String, ls, top), 2n)
+  +top = S.Cs.top(held, n, crow)
+  +shown = List.take(&2, String, List.drop(&2, String, ls, top), v)
   +row = Nat.sub(crow, top)
   +cx = Comp.x(ty, draft, caret, tw)
-  +y = {(h - 120 : U32) : U32}
+  +y = {(h - 120 - eh : U32) : U32}
+  +fy = {(h - 56 : U32) : U32}
   +send = Bool.pick(String, running, "Queue", "Send")
   Out.all([
-    Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 100, 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
+    Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), (100 + eh : U32), 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
     Comp.sel(Bool.and(focused, Bool.not(Nat.is_eq(caret, mark))), ty, shown, top, draft, ED.Edit.lo(caret, mark), ED.Edit.hi(caret, mark), tw, (x0 + 16 : U32), (y + 12 : U32)),
     Bool.pick(Out, String.is_empty(draft),
       Out.ops(Ty.text(ty, 3n, "Ask anything, @tag files, $skill, or describe the change", D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
-      Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
-    Bool.pick(Out, Bool.and(focused, blink), Out.ops([D.Draw.rect(D.Clip.all(), (x0 + 16 + cx : U32), (y + 14 + (U32.from_nat(row) * 23 : U32) : U32), 1, 16, T.Th.accent(), 255)]), Out.none()),
-    Out{Nil{}, [Lay.hit(x0, y, (x1 - x0 : U32), 64, "focus", "composer")]},
-    Out{List.append(&2, R.Op, Ty.text(ty, 2n, models, D.Clip.all(), (x0 + 16 : U32), (y + 64 : U32), 28, T.Th.dim()), Lay.icon(ty, "chevron-down", D.Clip.all(), (x0 + 22 + Ty.width(ty, 2n, models) : U32), (y + 70 : U32), T.Th.dim())), [Lay.hit((x0 + 8 : U32), (y + 64 : U32), (Ty.width(ty, 2n, models) + 36 : U32), 28, "flag", "models")]},
-    Lay.button(ty, D.Clip.all(), (x1 - 12 - Lay.button.w(ty, send) : U32), (y + 64 : U32), send, T.Th.accent(), "send", ""),
-    Lay.picker(ty, picking, "" <> ms, model, info, prov, (x0 + 8 : U32), (y + 64 : U32), es, effort),
+      Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 + eh : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
+    Bool.pick(Out, Bool.and(Bool.and(focused, blink), Bool.and(Nat.is_ge(crow, top), Nat.is_lt(row, v))), Out.ops([D.Draw.rect(D.Clip.all(), (x0 + 16 + cx : U32), (y + 14 + (U32.from_nat(row) * 23 : U32) : U32), 1, 16, T.Th.accent(), 255)]), Out.none()),
+    Comp.bar(Nat.is_gt(n, v), n, v, top, (x1 - 12 : U32), (y + 12 : U32), (U32.from_nat(v) * 23 - 4 : U32)),
+    Out{Nil{}, [Lay.hit(x0, y, (x1 - x0 : U32), (64 + eh : U32), "focus", "composer"), Lay.hit(0, 0, 0, 0, "cs", Nat.show(top) ++ "," ++ Nat.show(Nat.sub(n, v)))]},
+    Out{List.append(&2, R.Op, Ty.text(ty, 2n, models, D.Clip.all(), (x0 + 16 : U32), fy, 28, T.Th.dim()), Lay.icon(ty, "chevron-down", D.Clip.all(), (x0 + 22 + Ty.width(ty, 2n, models) : U32), (fy + 6 : U32), T.Th.dim())), [Lay.hit((x0 + 8 : U32), fy, (Ty.width(ty, 2n, models) + 36 : U32), 28, "flag", "models")]},
+    Lay.button(ty, D.Clip.all(), (x1 - 12 - Lay.button.w(ty, send) : U32), fy, send, T.Th.accent(), "send", ""),
+    Lay.picker(ty, picking, "" <> ms, model, info, prov, (x0 + 8 : U32), fy, es, effort),
     Lay.skills(ty, rs, x0, x1, (y - 4 : U32))])
 
 # whether the head line ends above top (it is out of view)
@@ -2115,17 +2139,18 @@ def Lay.attach_field(+ty: Ty, on: Bool, +path: String, +caret: Nat, +mark: Nat, 
       Out.none()
 
 # the composer with its attachments
-def Lay.composer.a(+ty: Ty, +draft: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String,
+def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +running: Bool, +models: String, +picking: Bool, +ms: List<&2, String>, +model: String,
     +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>, +atts: List<&2, String>, +up: String, +path: String) -> Out:
   +send = Bool.pick(String, running, "Queue", "Send")
-  +y = {(h - 120 : U32) : U32}
+  +y = {(h - 120 - Comp.eh(List.length(&2, String, ls)) : U32) : U32}
+  +fy = {(h - 56 : U32) : U32}
   Out.all([
-    Lay.composer(ty, draft, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, running, models, picking, ms, model, info, prov, es, effort, rs),
-    Lay.atts(ty, atts, up, (x0 + 24 + Ty.width(ty, 2n, models) + 36 : U32), (y + 64 : U32)),
-    Lay.ibutton(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - 28 : U32), (y + 64 : U32), "paperclip", T.Th.soft(), "focus", "attach-path"),
+    Lay.composer(ty, draft, ls, held, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, running, models, picking, ms, model, info, prov, es, effort, rs),
+    Lay.atts(ty, atts, up, (x0 + 24 + Ty.width(ty, 2n, models) + 36 : U32), fy),
+    Lay.ibutton(ty, D.Clip.all(), (x1 - 20 - Lay.button.w(ty, send) - 28 : U32), fy, "paperclip", T.Th.soft(), "focus", "attach-path"),
     Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, mark, x0, x1, (y - 36 : U32))])
 
-def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
+def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
     +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel) -> Out:
   match t:
@@ -2139,38 +2164,42 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +st: M.Sta
       +asks = U.Asks.open(st, sel)
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
+      # the composer grows by eh, and all above it moves up
+      +ls = Comp.wrap(ty, draft, cw)
+      +eh = Comp.eh(List.length(&2, String, ls))
       # the timeline and what sits around it are laid out at once
       tl ch = Lay.timeline(ty,
         List.concat(&2, TLine, [TL.memo.shown(ty, memo, st, sel, cw, pics), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
-        cx0, cx1, top, (h - ah - qh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del),
+        cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
-          Lay.composer.a(ty, draft, caret, mark, focus, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo, info, pr,
+          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), picking, U.Models.list(info, pr), mo, info, pr,
             U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), rs, atts, up, path),
-          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, h),
-          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh + 4 : U32))])
+          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, (h - eh : U32)),
+          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32))])
       Out.cat(tl, ch)
 
 # while files dragged in hover over the window, an accent ring around the
 # composer (placed as Lay.thread.k places it) shows where they drop
-def Lay.drop_mark(on: Bool, +x0: U32, +x1: U32, +h: U32) -> Out:
+def Lay.drop_mark(on: Bool, +ty: Ty, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   match on:
     case True{}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
       +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) - 5 : U32) : U32}
-      +y = {(h - 125 : U32) : U32}
+      +eh = Comp.eh(List.length(&2, String, Comp.wrap(ty, draft, cw)))
+      +y = {(h - 125 - eh : U32) : U32}
       Out.ops([D.Draw.rect(D.Clip.all(), cx0, y, (cw + 10 : U32), 2, T.Th.accent(), 255),
-        D.Draw.rect(D.Clip.all(), cx0, (y + 108 : U32), (cw + 10 : U32), 2, T.Th.accent(), 255),
-        D.Draw.rect(D.Clip.all(), cx0, y, 2, 110, T.Th.accent(), 255),
-        D.Draw.rect(D.Clip.all(), (cx0 + cw + 8 : U32), y, 2, 110, T.Th.accent(), 255)])
+        D.Draw.rect(D.Clip.all(), cx0, (y + 108 + eh : U32), (cw + 10 : U32), 2, T.Th.accent(), 255),
+        D.Draw.rect(D.Clip.all(), cx0, y, 2, (110 + eh : U32), T.Th.accent(), 255),
+        D.Draw.rect(D.Clip.all(), (cx0 + cw + 8 : U32), y, 2, (110 + eh : U32), T.Th.accent(), 255)])
     case False{}:
       Out.none()
 
 def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
+      Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
         U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel)))
 
