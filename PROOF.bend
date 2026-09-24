@@ -3329,3 +3329,57 @@ def Laws.draft_restore_fills(saved):
 
 def Laws.draft_restore_keeps_typing(c, t, saved):
   {==}
+
+def Laws.interrupt_idle_nothing(s, now, client, id, thread):
+  {==}
+
+def Laws.interrupt_claude_input(th, r):
+  {==}
+
+def Laws.interrupt_codex_stops(th, r):
+  {==}
+
+def Laws.interrupt_grok_stops(th, r):
+  {==}
+
+def Laws.stopped_turn_quiet(s, now, thread, line):
+  {==}
+
+def Laws.recover_interrupts_running():
+  {==}
+
+def Laws.recover_closes_asks():
+  {==}
+
+def Laws.recover_leaves_idle():
+  {==}
+
+def Laws.recover_empty_nothing(now):
+  {==}
+
+def Laws.ask_makes_pending():
+  {==}
+
+def Laws.answer_clears_pending():
+  {==}
+
+def Laws.settle_waits_for_children():
+  {==}
+
+def Laws.settle_children_done():
+  {==}
+
+def Laws.tag_thread():
+  {==}
+
+def Laws.tag_pid():
+  {==}
+
+def Laws.tag_untagged():
+  {==}
+
+def Laws.tag_old_process_unheard():
+  {==}
+
+def Laws.tag_untagged_heard(r):
+  {==}
