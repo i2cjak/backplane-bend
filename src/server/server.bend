@@ -1011,10 +1011,22 @@ def WtJob.again.k(+r: String, +inbox: Chan(Msg), +thread: String, +branch: Strin
   Bool.pick(IO(Unit), Bool.or(GT.Git.failed(r), GT.Git.skipped(r)), WtJob.done(r, inbox, thread, "worktree", branch, False{}),
     IO.bind(Nat, Unit, GitJob.count(r, thread), n => IO.bind(Unit, Unit, WtJob.restore.k(n, inbox, thread, r), _ => WtJob.done(r, inbox, thread, "worktree", branch, False{}))))
 
+# a fork's worktree: a new branch like any thread's, then the source
+# thread's last checkpoint restored into it, so the fork starts from the
+# files as the source left them
+def WtJob.fork.k(+r: String, +inbox: Chan(Msg), +thread: String, +src: String, +branch: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Bool.or(GT.Git.failed(r), GT.Git.skipped(r)), WtJob.done(r, inbox, thread, "fork", branch, False{}),
+    IO.bind(Nat, Unit, GitJob.count(r, src), n => IO.bind(Unit, Unit, WtJob.restore.k(n, inbox, src, r), _ => WtJob.done(r, inbox, thread, "fork", branch, False{}))))
+
+def WtJob.fork(+inbox: Chan(Msg), +thread: String, +root: String, +src: String) -> IO(Unit):
+  IO.bind(String, Unit, GT.Git.thread_wt(root, False{}, GT.Git.branch.temp(B.Wt.seed(thread))),
+    r => WtJob.fork.k(r, inbox, thread, src, GT.Git.branch.sanitize(GT.Git.branch.temp(B.Wt.seed(thread)))))
+
 def WtJob.run(+inbox: Chan(Msg), +thread: String, +root: String, +mode: String, +branch: String) -> IO(Unit):
   Bool.pick(IO(Unit), String.eq(mode, "again"),
     IO.bind(String, Unit, GT.Git.thread_wt.again(root, branch), r => WtJob.again.k(r, inbox, thread, branch)),
-    IO.bind(List<&2, String>, Unit, K.Io.names(root), ns => WtJob.go(B.Wt.hardware(ns), inbox, thread, root, mode)))
+    Bool.pick(IO(Unit), String.eq(mode, "fork"), WtJob.fork(inbox, thread, root, branch),
+      IO.bind(List<&2, String>, Unit, K.Io.names(root), ns => WtJob.go(B.Wt.hardware(ns), inbox, thread, root, mode))))
 
 # Removing a thread's worktree (M.Worktree.drop): its state is kept first as
 # a checkpoint (a hidden ref, so nothing is lost; the branch stays too),

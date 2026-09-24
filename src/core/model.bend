@@ -205,6 +205,8 @@ type Change is Data:
   QueueMoved{thread: String, msg: String, to: Nat, at: Nat}
   # one queued message taken out to be sent now (a steer)
   QueueTakenOne{thread: String, msg: String, at: Nat}
+  # a thread made as a fork of `source`: it starts with the source's\nconversation as handed-over context, and in a worktree from the\nsource's last checkpoint
+  ThreadForked{id: String, source: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -819,6 +821,19 @@ def State.get.k(r: Map<&2, String> & String) -> String:
   v
 
 # what waits to be sent in a thread ("" for nothing)
+def Queue.real(qs: List<&2, QItem>) -> Bool:
+  match qs:
+    case Nil{}:
+      False{}
+    case QItem{+m, _} <> t:
+      Bool.or(Bool.not(String.starts_with(m, "handoff:")), Queue.real(t))
+
+# whether a thread has a message waiting (handed-over context alone waits
+# for a message to go with: it never starts a turn by itself, law
+# handoff_never_runs_alone)
+def Queue.waiting(s: State, +th: String) -> Bool:
+  Queue.real(Queue.items(s, th))
+
 def Queue.of(s: State, +th: String) -> String:
   Queue.texts(Queue.items(s, th))
 
@@ -826,6 +841,17 @@ def Setting.get(s: State, +k: String, d: String) -> String:
   match s:
     case State{_, _, _, _, _, sg, qu, ak, _, _}:
       State.get.k(Map.get(String, d, sg, k))
+
+# Forks
+# -----
+# A fork remembers its source thread (the setting fork.<id>).
+
+def Fork.key(+id: String) -> String:
+  "fork." ++ id
+
+# the thread a fork was made from ("" for a thread that is no fork)
+def Fork.source(s: State, +id: String) -> String:
+  Setting.get(s, Fork.key(id), "")
 
 def Merge.branch(t: Thread) -> String:
   match t:
@@ -965,6 +991,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case ThreadForked{+id, +src, _}:
+      State.setting(s, Fork.key(id), src)
     case QueueEdited{+th, +msg, +text, _}:
       State.queue((qs => Queue.edit(qs, msg, text)), s, th)
     case QueueRemoved{+th, +msg, _}:

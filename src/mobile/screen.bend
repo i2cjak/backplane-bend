@@ -219,16 +219,16 @@ def Mob.queue(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, J.Jso
   match qs:
     case Nil{}:
       Nil{}
-    case M.QItem{+msg, text} <> t:
-      J.Json.obj([J.KV{"msg", J.Json.str(msg)}, J.KV{"text", J.Json.str(text)}, J.KV{"tag", J.Json.str(Bool.pick(String, run, "Queued", "Held"))},
-        J.KV{"buttons", J.Json.arr(Mob.qbtns(U.Qu.buttons(run, first, msg)))}]) <> Mob.queue(t, False{}, run)
+    case M.QItem{+msg, +text} <> t:
+      J.Json.obj([J.KV{"msg", J.Json.str(msg)}, J.KV{"text", J.Json.str(U.Qu.label(msg, text))}, J.KV{"tag", J.Json.str(U.Qu.tag(run, msg))},
+        J.KV{"buttons", J.Json.arr(Mob.qbtns(U.Qu.row_buttons(run, first, msg)))}]) <> Mob.queue(t, False{}, run)
 
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"branch", J.Json.str(branch)},
         J.KV{"state", J.Json.str(Mob.state(turn))},
-        J.KV{"tools", J.Json.arr(List.append(&2, J.Json, Mob.stop(V.View.running(turn)), [Mob.pin(pinned), Mob.settle(o, Nat.is_gt(sa, ua)), Mob.tool("Archive", "archive", False{})]))},
+        J.KV{"tools", J.Json.arr(List.concat(&2, J.Json, [Mob.stop(V.View.running(turn)), [Mob.pin(pinned), Mob.settle(o, Nat.is_gt(sa, ua)), Mob.tool("Archive", "archive", False{}), Mob.tool("Fork", "fork", False{})], Bool.pick(List<&2, J.Json>, String.is_empty(M.Fork.source(st, id)), Nil{}, [Mob.tool("Bring back", "back", False{})])]))},
         J.KV{"entries", J.Json.arr(Mob.entries(V.View.mine(U.Ui.entries(st), id, Nil{})))},
         J.KV{"sending", J.Json.arr(Mob.strs(pend))},
         J.KV{"queued", J.Json.str(M.Queue.of(st, id))},

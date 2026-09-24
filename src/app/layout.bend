@@ -1146,10 +1146,11 @@ def Lay.del(on: Bool) -> List<&2, S.Hit>:
     case False{}:
       [S.Hit{0, 0, 0, 0, "Delete", "delete"}]
 
-def Lay.header.bs(turn: M.TurnState, override: M.Override, +sa: Nat, +ua: Nat, pinned: Bool, panel: Bool, +archived: Bool, +snoozed: Bool, del: Bool) -> List<&2, S.Hit>:
+def Lay.header.bs(turn: M.TurnState, override: M.Override, +sa: Nat, +ua: Nat, pinned: Bool, panel: Bool, +archived: Bool, +snoozed: Bool, del: Bool, +fork: Bool) -> List<&2, S.Hit>:
   List.concat(&2, S.Hit, [
     [S.Hit{0, 0, 0, 0, Bool.pick(String, panel, "Hide viewer", "Viewer"), "panel"},
-     S.Hit{0, 0, 0, 0, "Diff", "diff"}],
+     S.Hit{0, 0, 0, 0, "Diff", "diff"}, S.Hit{0, 0, 0, 0, "Fork", "fork"}],
+    Bool.pick(List<&2, S.Hit>, fork, [S.Hit{0, 0, 0, 0, "Bring back", "back"}], Nil{}),
     Lay.del(del),
     [
      Bool.pick(S.Hit, archived, S.Hit{0, 0, 0, 0, "Unarchive", "unarchive"}, S.Hit{0, 0, 0, 0, "Archive", "archive"}),
@@ -1178,8 +1179,8 @@ def Lay.header.k(+ty: Ty, +title: String, +branch: String, +icon: String, +tint:
 
 def Lay.header(+ty: Ty, t: M.Thread, +st: M.State, +x0: U32, +x1: U32, panel: Bool, +snoozed: Bool, del: Bool) -> Out:
   match t:
-    case M.Thread{_, +p, +title, _, _, turn, _, +archived, override, +sa, +ua, pinned, _, +branch, _, _, _, _, _, _, _}:
-      Lay.header.k(ty, title, branch, BG.Badge.icon(st, p), BG.Badge.rgb_of(st, p), Lay.header.bs(turn, override, sa, ua, pinned, panel, archived, snoozed, del), x0, x1)
+    case M.Thread{+id, +p, +title, _, _, turn, _, +archived, override, +sa, +ua, pinned, _, +branch, _, _, _, _, _, _, _}:
+      Lay.header.k(ty, title, branch, BG.Badge.icon(st, p), BG.Badge.rgb_of(st, p), Lay.header.bs(turn, override, sa, ua, pinned, panel, archived, snoozed, del, Bool.not(String.is_empty(M.Fork.source(st, id)))), x0, x1)
 
 def Lay.lines(+ty: Ty, ls: List<&2, String>, +c: D.Clip, +x: U32, +y: U32) -> Out:
   match ls:
@@ -1616,13 +1617,13 @@ def Lay.qhits(bs: List<&2, U.QBtn>, acc: List<&2, S.Hit>) -> List<&2, S.Hit>:
 def Lay.qrow(+ty: Ty, q: M.QItem, +first: Bool, +run: Bool, +more: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
   match q:
     case M.QItem{+msg, +text}:
-      +bs = Lay.qhits(U.Qu.buttons(run, first, msg), Nil{})
-      +tag = Bool.pick(String, run, "Queued", "Held")
+      +bs = Lay.qhits(U.Qu.row_buttons(run, first, msg), Nil{})
+      +tag = U.Qu.tag(run, msg)
       +tail = Bool.pick(String, Nat.is_eq(more, 0n), "", "  +" ++ Nat.show(more) ++ " more")
       +tw = (x1 - x0 - Lay.buttons.w(ty, bs) - Ty.width(ty, 2n, tag ++ tail) - 40 : U32)
       Out.cat(Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 30, 0, T.Th.raise(), T.Th.line()),
           Ty.text(ty, 2n, tag, D.Clip.all(), (x0 + 12 : U32), y, 30, T.Th.queued()),
-          Ty.text(ty, 2n, Ty.fit(ty, 2n, String.join(String.split(text, '\n'), " "), tw) ++ tail, D.Clip.all(), (x0 + 24 + Ty.width(ty, 2n, tag) : U32), y, 30, T.Th.dim())])),
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, String.join(String.split(U.Qu.label(msg, text), '\n'), " "), tw) ++ tail, D.Clip.all(), (x0 + 24 + Ty.width(ty, 2n, tag) : U32), y, 30, T.Th.dim())])),
         Lay.buttons(ty, bs, (y + 1 : U32), (x1 - 4 : U32)))
 
 def Lay.qrows(qs: List<&2, M.QItem>, +ty: Ty, +i: Nat, +n: Nat, +run: Bool, +more: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:

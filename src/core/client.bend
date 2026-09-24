@@ -582,6 +582,12 @@ def Ui.new_thread(u: Ui, +pid: String) -> Act:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, _, er, note, nf, ob, tr}:
       Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note, nf, ob, tr}, "thread.create", [J.KV{"project", J.Str{pid}}, J.KV{"title", J.Str{"New thread"}}])
 
+# a fork of the selected thread; the new thread is selected when it comes
+def Ui.fork(u: Ui) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, _, er, note, nf, ob, tr}:
+      Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, True{}, er, note, nf, ob, tr}, "thread.fork", [J.KV{"thread", J.Str{sel}}])
+
 def Ui.add_project(u: Ui, +path: String) -> Act:
   match u:
     case Ui{st, sel, dr, live, op, on, now, _, pa, v, rid, w, er, note, nf, ob, tr}:
@@ -655,7 +661,7 @@ def Ui.actions() -> List<&2, String>:
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
    "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set",
-   "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt"]
+   "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back"]
 
 # Reading the client state
 # ------------------------
@@ -1679,7 +1685,7 @@ def Side.status(+st: M.State, t: M.Thread) -> M.Status:
     case M.Thread{+id, _, _, _, _, turn, +pending, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       M.Status.of(Bool.or(Nat.is_gt(pending, 0n), Asks.kind(Asks.open(st, id), "approval")),
         Bool.or(Asks.kind(Asks.open(st, id), "input"), Asks.kind(Asks.open(st, id), "plan")), turn,
-        Bool.not(String.is_empty(M.Queue.of(st, id))))
+        M.Queue.waiting(st, id))
 
 # how many of a thread's child tasks are not finished
 def Side.live(ts: List<&2, M.Task>) -> Nat:
@@ -1695,7 +1701,7 @@ def Side.phase(+st: M.State, t: M.Thread) -> M.Phase:
     case M.Thread{+id, _, _, _, _, turn, +pending, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       M.Phase.of(Bool.or(Nat.is_gt(pending, 0n), Asks.kind(Asks.open(st, id), "approval")),
         Bool.or(Asks.kind(Asks.open(st, id), "input"), Asks.kind(Asks.open(st, id), "plan")), Side.live(Tasks.of(st, id)), turn,
-        Bool.not(String.is_empty(M.Queue.of(st, id))))
+        M.Queue.waiting(st, id))
 
 # when a thread's snooze ends (0: not snoozed)
 def Side.until(+st: M.State, +id: String) -> Nat:
@@ -2399,6 +2405,19 @@ def Qu.buttons(+run: Bool, +first: Bool, +msg: String) -> List<&2, QBtn>:
   List.append(&2, QBtn, Qu.first(first, run),
     [QBtn{Bool.pick(String, run, "Steer", "Send"), "q-steer", msg}, QBtn{"Edit", "q-edit", msg}, QBtn{"Up", "q-up", msg}, QBtn{"Remove", "q-remove", msg}])
 
+# a queued row as shown: handed-over context (a fork's start, a fork
+# brought back, a provider switch) can only be removed; it goes with the
+# next message
+def Qu.row_buttons(+run: Bool, +first: Bool, +msg: String) -> List<&2, QBtn>:
+  Bool.pick(List<&2, QBtn>, String.starts_with(msg, "handoff:"), [QBtn{"Remove", "q-remove", msg}], Qu.buttons(run, first, msg))
+
+def Qu.tag(+run: Bool, +msg: String) -> String:
+  Bool.pick(String, String.starts_with(msg, "handoff:"), "Context", Bool.pick(String, run, "Queued", "Held"))
+
+# a queued row's text: context says what it is, a message itself
+def Qu.label(+msg: String, +text: String) -> String:
+  Bool.pick(String, String.starts_with(msg, "handoff:"), Maybe.default(&2, String, List.head(&2, String, String.lines(String.drop(text, 12n))), "") ++ " (goes with the next message)", text)
+
 # how many queued rows show (the rest are counted on the last)
 def Qu.shown() -> Nat:
   4n
@@ -2568,6 +2587,10 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.on_thread(u, "queue.resume")
     case 74n:
       Ui.send(u, True{})
+    case 75n:
+      Ui.fork(u)
+    case 76n:
+      Ui.on_thread(u, "thread.back")
     case _:
       Act{u, Nil{}}
 
