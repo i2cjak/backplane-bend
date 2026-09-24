@@ -229,9 +229,11 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 .ask-detail { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
 .ask .body { max-height: 40vh; overflow: auto; }
 .ask-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.queued { display: flex; gap: 8px; align-items: baseline; margin: 0 16px; padding: 6px 10px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; }
-.queued.none { display: none; }
-.queued .label { color: var(--warn); } .queued .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .queued .note { color: var(--faint); }
+.queue { display: flex; flex-direction: column; gap: 4px; margin: 0 16px; }
+.queue:empty { display: none; }
+.queued { display: flex; gap: 8px; align-items: center; padding: 4px 6px 4px 10px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; }
+.queued .q-acts { display: flex; gap: 4px; } .queued .q-acts button { font-size: 11px; padding: 2px 8px; }
+.queued .label { color: var(--warn); } .queued .text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .msg.sending { opacity: 0.6; } .msg .note { color: var(--faint); font-size: 11px; }
 .link { align-self: flex-start; background: none; border: 0; border-left: 2px solid var(--accent); color: var(--accent); padding: 2px 8px; font-size: 12px; max-width: 860px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link.in { align-self: flex-end; border-left: 0; border-right: 2px solid var(--accent); }

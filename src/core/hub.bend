@@ -599,7 +599,8 @@ def Hub.methods() -> List<&2, String>:
   ["project.add", "project.remove", "thread.create", "turn.start", "turn.interrupt",
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
    "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
-   "ask.answer", "device.register", "device.drop", "kicad.info", "queue.resume"]
+   "ask.answer", "device.register", "device.drop", "kicad.info", "queue.resume",
+   "queue.edit", "queue.remove", "queue.move", "queue.steer"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -884,6 +885,110 @@ def Hub.turn.m(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: Strin
 def Hub.turn(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +text: String, +msg: String) -> Step:
   Hub.turn.m(s, now, client, id, thread, text, Bool.pick(String, String.is_empty(msg), Hub.id("m", now, Hub.seq(s)), msg), Bool.not(String.is_empty(msg)))
 
+# Follow-ups: queue or steer
+# --------------------------
+# A message sent while a turn runs either waits in the queue for a later
+# turn or steers the running one. Claude takes it in place, on its input;
+# a Codex or Grok turn cannot, so its process stops and the turn starts
+# again on the same session with the steering message (law
+# steer_codex_restarts). With no turn running, either starts at once.
+# "auto" (or no mode) keeps the provider's default: Claude steers, the
+# others queue.
+
+def Steer.stop(+provider: String, +thread: String) -> List<&2, Out>:
+  Bool.pick(List<&2, Out>, String.eq(provider, "claude"), Nil{}, [AgentStop{thread}])
+
+def Steer.note(+provider: String, +thread: String, +now: Nat, +seq: Nat) -> List<&2, M.Change>:
+  Bool.pick(List<&2, M.Change>, String.eq(provider, "claude"), Nil{},
+    [M.ActivityLogged{thread, Hub.id("s", now, seq), "info", "steer", "Steered: the turn starts again with this message", now}])
+
+# the running turn takes `text` now (the message itself is already posted)
+def Steer.go(+t: M.Thread, +cwd: String, +now: Nat, +seq: Nat, +thread: String, +text: String) -> Step:
+  Step{List.append(&2, M.Change, Steer.note(Hub.provider(t), thread, now, seq), [M.TurnChanged{thread, M.Running{}, now}]),
+    List.append(&2, Out, Steer.stop(Hub.provider(t), thread), Hub.run(t, cwd, text))}
+
+def Hub.post.q(run: Bool, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  match run:
+    case True{}:
+      Step{[M.MessagePosted{thread, msg, role, text, now}, M.TurnQueued{thread, msg, text, now}], Nil{}}
+    case False{}:
+      Hub.post(s, now, thread, msg, role, text)
+
+def Hub.post.st(run: Bool, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  match run:
+    case True{}:
+      Step.before([M.MessagePosted{thread, msg, role, text, now}], Nil{}, Steer.go(Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), now, Hub.seq(s), thread, text))
+    case False{}:
+      Hub.post(s, now, thread, msg, role, text)
+
+def Hub.post.mode.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  match i:
+    case 0n:
+      Hub.post.q(Hub.running(Hub.thread(s, thread)), s, now, thread, msg, role, text)
+    case 1n:
+      Hub.post.st(Hub.running(Hub.thread(s, thread)), s, now, thread, msg, role, text)
+    case _:
+      Hub.post(s, now, thread, msg, role, text)
+
+# a message with its follow-up mode: "queue", "steer", or "auto"
+def Hub.post.mode(+mode: String, +s: M.State, +now: Nat, +thread: String, +msg: String, role: M.Role, +text: String) -> Step:
+  Hub.post.mode.k(C.Codec.pos(["queue", "steer"], mode), s, now, thread, msg, role, text)
+
+def Hub.turnx.go(+mode: String, +s: M.State, +t: M.Thread, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
+  match t:
+    case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      Step.before(Hub.title.k(String.eq(title, "New thread"), thread, text, now, Nil{}),
+        Reply.ok(client, id) <> List.append(&2, Out, Name.out(Hub.thread(s, thread), text), Title.out(String.eq(title, "New thread"), thread, text)),
+        Hub.post.mode(mode, s, now, thread, msg, M.User{}, text))
+
+def Hub.turnx.k(dup: Bool, +mode: String, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
+  match dup:
+    case True{}:
+      Step.outs([Reply.ok(client, id)])
+    case False{}:
+      Hub.turnx.go(mode, s, Hub.thread(s, thread), now, client, id, thread, msg, text)
+
+# a user message with an explicit follow-up mode (Hub.turn is "auto")
+def Hub.turnx(+mode: String, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +text: String, +msg: String) -> Step:
+  Hub.turnx.k(Bool.and(Bool.not(String.is_empty(msg)), Hub.has_msg(Hub.entries(s), msg)), mode, s, now, client, id, thread,
+    Bool.pick(String, String.is_empty(msg), Hub.id("m", now, Hub.seq(s)), msg), text)
+
+def Hub.turn.mode(auto: Bool, +mode: String, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +text: String, +msg: String) -> Step:
+  match auto:
+    case True{}:
+      Hub.turn(s, now, client, id, thread, text, msg)
+    case False{}:
+      Hub.turnx(mode, s, now, client, id, thread, text, msg)
+
+# The queue, message by message
+# -----------------------------
+
+def Queue.steer.k(m: Maybe<&2, M.QItem>, +run: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String) -> Step:
+  match m run:
+    case Some{M.QItem{+msg, +text}} True{}:
+      Step.before([M.QueueTakenOne{thread, msg, now}], [Reply.ok(client, id)], Steer.go(Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), now, Hub.seq(s), thread, text))
+    case Some{M.QItem{+msg, +text}} False{}:
+      Step{[M.QueueTakenOne{thread, msg, now}, M.TurnChanged{thread, M.Running{}, now}],
+        Reply.ok(client, id) <> Git{0, "", "checkpoint0", thread, Hub.cwd(s, Hub.thread(s, thread)), "", ""} <> Hub.run(Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), text)}
+    case None{} _:
+      Step.outs([Reply.err(client, id, "no such queued message")])
+
+# a queued message sent now: into the running turn (a steer), or as a turn
+# of its own when none runs
+def Queue.steer(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String) -> Step:
+  Queue.steer.k(M.Queue.find(M.Queue.items(s, thread), msg), Hub.running(Hub.thread(s, thread)), s, now, client, id, thread)
+
+def Queue.op(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  match i:
+    case 0n:
+      Step.reply(client, id, [M.QueueEdited{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "msg", ""), J.Json.get_str(p, "text", ""), now}])
+    case 1n:
+      Step.reply(client, id, [M.QueueRemoved{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "msg", ""), now}])
+    case 2n:
+      Step.reply(client, id, [M.QueueMoved{J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "msg", ""), Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "to"), "0")), 0n), now}])
+    case _:
+      Queue.steer(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "msg", ""))
+
 # Stopping a turn
 # ---------------
 # Claude takes an interrupt on its input and stays up; a Codex or Grok turn
@@ -917,7 +1022,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
     case 2n:
       Hub.thread_create(s, now, client, id, p)
     case 3n:
-      Hub.turn(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "text", ""), J.Json.get_str(p, "msg", ""))
+      Hub.turn.mode(Bool.or(String.is_empty(J.Json.get_str(p, "mode", "")), String.eq(J.Json.get_str(p, "mode", ""), "auto")), J.Json.get_str(p, "mode", ""),
+        s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "text", ""), J.Json.get_str(p, "msg", ""))
     case 4n:
       Hub.interrupt(s, now, client, id, J.Json.get_str(p, "thread", ""))
     case 5n:
@@ -957,6 +1063,14 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
         Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(p, "idx"), "0")), 0n)}])
     case 22n:
       Hub.resume(s, now, client, id, J.Json.get_str(p, "thread", ""))
+    case 23n:
+      Queue.op(0n, s, now, client, id, p)
+    case 24n:
+      Queue.op(1n, s, now, client, id, p)
+    case 25n:
+      Queue.op(2n, s, now, client, id, p)
+    case 26n:
+      Queue.op(3n, s, now, client, id, p)
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 
@@ -1637,3 +1751,7 @@ def Rec.demo(+st: M.TurnState) -> M.State:
 
 def Rec.after(+s: M.State, +now: Nat) -> M.State:
   M.State.replay(Queue.changes(Hub.recover(s, now)), s)
+
+# a thread "t1" on `provider` whose turn is in state st (for laws)
+def Demo.state(+provider: String, +st: M.TurnState) -> M.State:
+  M.State.replay([M.ProjectCreated{"p1", "p", "/p", 1n}, M.ThreadCreated{"t1", "p1", "x", M.Local{}, "", "", provider, "", 1n}, M.TurnChanged{"t1", st, 2n}], M.State.empty())

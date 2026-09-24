@@ -409,10 +409,30 @@ def View.asks(as: List<&2, M.Ask>, +draft: String) -> List<&2, D.Node>:
     case a <> t:
       View.ask(a, draft) <> View.asks(t, draft)
 
-# what waits for the running turn (already stored on the server)
-def View.queued(+q: String) -> D.Node:
-  Bool.pick(D.Node, String.is_empty(q), D.El{"div", "", [D.At{"class", "queued none"}], Nil{}},
-    D.El{"div", "", [D.At{"class", "queued"}], [D.Dom.span("label", "Queued"), D.Dom.span("text", q), D.Dom.span("note", "sends when this turn ends")]})
+def View.qbtns(bs: List<&2, U.QBtn>) -> List<&2, D.Node>:
+  match bs:
+    case Nil{}:
+      Nil{}
+    case U.QBtn{+l, a, v} <> t:
+      D.Dom.button("", a, v, l, l) <> View.qbtns(t)
+
+def View.qrow(q: M.QItem, +first: Bool, +run: Bool) -> D.Node:
+  match q:
+    case M.QItem{+msg, text}:
+      D.El{"div", "", [D.At{"class", "queued"}], [D.Dom.span("label", Bool.pick(String, run, "Queued", "Held")), D.Dom.span("text", text),
+        D.El{"span", "", [D.At{"class", "q-acts"}], View.qbtns(U.Qu.buttons(run, first, msg))}]}
+
+def View.qrows(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, D.Node>:
+  match qs:
+    case Nil{}:
+      Nil{}
+    case q <> t:
+      View.qrow(q, first, run) <> View.qrows(t, False{}, run)
+
+# what waits for a later turn (stored on the server), next first, each
+# with its buttons (U.Qu.buttons)
+def View.queued(qs: List<&2, M.QItem>, +run: Bool) -> D.Node:
+  D.El{"div", "", [D.At{"class", "queue"}], View.qrows(qs, True{}, run)}
 
 # Settings
 # --------
@@ -446,6 +466,8 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
     D.El{"header", "", [D.At{"class", "thread-head"}], [D.Dom.span("title", "Settings"), D.Dom.span("meta", ""), D.Dom.button("", "flag", "settings", "Close settings", "Close")]},
     D.El{"div", "", [D.At{"class", "settings"}], [
       View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
+      View.setrow("Follow-ups while a turn runs", "Queue waits for the turn to end; steer sends into it. Ctrl+Enter does the other. Default: Claude steers, Codex and Grok queue.",
+        View.chips(["", "queue", "steer"], M.Setting.get(st, "followup", ""), "followup")),
       View.setrow("Provider for new threads", Bool.pick(String, String.is_empty(U.Models.cli(U.Str.get(nf, "models"), prov)), prov ++ " is not installed", U.Models.cli(U.Str.get(nf, "models"), prov)) ++ ". Each thread keeps its own; change it from the composer.", View.chips(["claude", "codex", "grok"], prov, "agent.provider")),
       View.setrow("Model for new threads", Bool.pick(String, String.is_empty(M.Setting.get(st, "agent.model", "")), "default", M.Setting.get(st, "agent.model", "")) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), prov, M.Setting.get(st, "agent.model", "")), View.chips(U.Models.menu(U.Str.get(nf, "models"), prov), M.Setting.get(st, "agent.model", ""), "agent.model")),
       View.setrow("Writing: provider", "Titles threads, names branches and writes commit messages. A small model keeps this cheap.", View.chips(["claude", "codex", "grok"], U.TextGen.provider(st), "text.provider")),
@@ -707,17 +729,17 @@ def View.attaching(+ps: List<&2, String>, +up: String) -> List<&2, D.Node>:
     [D.El{"div", "", [D.At{"class", "chips"}], D.Dom.cat(View.pending(ps),
       Bool.pick(List<&2, D.Node>, String.is_empty(up), Nil{}, [D.Dom.span("chip up", up ++ " …")]))}])
 
-def View.composer(+draft: String, running: Bool, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
+def View.composer(+draft: String, +send: String, +label: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
     +atts: List<&2, String>, +up: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
     View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(View.attaching(atts, up), [
     D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
-      D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
+      D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-enter-alt", "send-alt"}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
       WI.WIcon.after("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort), "chevron-down", 14),
       D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [WI.WIcon.svg("paperclip", 16),
         D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
-      D.Dom.button("primary", "send", "", "Send (Enter)", Bool.pick(String, running, "Queue", "Send"))]}])))}
+      D.Dom.button("primary", "send", "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send)]}])))}
 
 def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool) -> D.Node:
   match u t:
@@ -730,8 +752,8 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), U.Side.phase(st, U.Ui.thread(st, id)), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
-        View.queued(M.Queue.of(st, id)),
-        View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
+        View.queued(M.Queue.items(st, id), View.running(turn)),
+        View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
           U.Effort.chips(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 

@@ -1602,3 +1602,74 @@ law tag_old_process_unheard:
 law tag_untagged_heard:
   for r: Maybe<&2, U32>
   {H.Tag.heard(None{}, r) == True{} : Bool}
+
+# Follow-ups: queue or steer
+# --------------------------
+
+# unset, Claude steers and the others queue; a setting wins; ctrl+Enter
+# does the other
+law follow_default_claude:
+  {U.Follow.mode("", "claude", False{}) == "steer" : String}
+
+law follow_default_codex:
+  {U.Follow.mode("", "codex", False{}) == "queue" : String}
+
+law follow_setting_queue:
+  for +p: String
+  {U.Follow.mode("queue", p, False{}) == "queue" : String}
+
+law follow_setting_steer:
+  for +p: String
+  {U.Follow.mode("steer", p, False{}) == "steer" : String}
+
+law follow_alt_flips:
+  for +s: String
+  for +p: String
+  {U.Follow.mode(s, p, True{}) == U.Follow.flip(U.Follow.mode(s, p, False{})) : String}
+
+# with a turn running, "queue" stores the message for later and runs
+# nothing, even for Claude, which would take it in place
+law queue_mode_waits:
+  {H.Hub.post.mode("queue", H.Demo.state("claude", M.Running{}), 5n, "t1", "m1", M.User{}, "hi")
+    == H.Step{[M.MessagePosted{"t1", "m1", M.User{}, "hi", 5n}, M.TurnQueued{"t1", "m1", "hi", 5n}], []} : H.Step}
+
+# steering Claude sends into its running process; a Codex or Grok turn is
+# stopped and starts again with the message
+law steer_claude_in_place:
+  for +th: String
+  {H.Steer.stop("claude", th) == [] : List<&2, H.Out>}
+
+law steer_codex_restarts:
+  {List.head(&2, H.Out, H.Step.outs_of(H.Hub.post.mode("steer", H.Demo.state("codex", M.Running{}), 5n, "t1", "m1", M.User{}, "hi"))) == Some{H.AgentStop{"t1"}} : Maybe<&2, H.Out>}
+
+# the queue, message by message: joined as it always was, edited in
+# place, removed, moved
+law queue_joined:
+  {M.Queue.texts([M.QItem{"a", "x"}, M.QItem{"b", "y"}]) == "x\n\ny" : String}
+
+law queue_edit_in_place:
+  {M.Queue.edit([M.QItem{"a", "x"}, M.QItem{"b", "y"}], "b", "z") == [M.QItem{"a", "x"}, M.QItem{"b", "z"}] : List<&2, M.QItem>}
+
+law queue_remove_one:
+  {M.Queue.drop([M.QItem{"a", "x"}, M.QItem{"b", "y"}], "a") == [M.QItem{"b", "y"}] : List<&2, M.QItem>}
+
+law queue_move_first:
+  {M.Queue.move([M.QItem{"a", "x"}, M.QItem{"b", "y"}, M.QItem{"c", "z"}], "c", 0n) == [M.QItem{"c", "z"}, M.QItem{"a", "x"}, M.QItem{"b", "y"}] : List<&2, M.QItem>}
+
+law queue_move_unknown:
+  {M.Queue.move([M.QItem{"a", "x"}], "q", 0n) == [M.QItem{"a", "x"}] : List<&2, M.QItem>}
+
+# steering one queued message leaves the others waiting, in order
+law queue_steer_one_leaves_rest:
+  {M.Queue.items(M.State.replay([M.TurnQueued{"t1", "a", "x", 1n}, M.TurnQueued{"t1", "b", "y", 1n}, M.TurnQueued{"t1", "c", "z", 1n}, M.QueueTakenOne{"t1", "b", 2n}], M.State.empty()), "t1")
+    == [M.QItem{"a", "x"}, M.QItem{"c", "z"}] : List<&2, M.QItem>}
+
+# a row's first button steers while a turn runs; with none running the
+# first row can resume the held queue
+law queue_row_running:
+  for +m: String
+  {List.head(&2, U.QBtn, U.Qu.buttons(True{}, True{}, m)) == Some{U.QBtn{"Steer", "q-steer", m}} : Maybe<&2, U.QBtn>}
+
+law queue_row_held:
+  for +m: String
+  {List.head(&2, U.QBtn, U.Qu.buttons(False{}, True{}, m)) == Some{U.QBtn{"Resume", "q-resume", ""}} : Maybe<&2, U.QBtn>}

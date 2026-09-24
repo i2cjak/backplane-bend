@@ -197,6 +197,14 @@ type Change is Data:
   # a project's manual place in the sidebar: an order key (Key below, as
   # hex); "" drops it
   ProjectOrdered{id: String, key: String, at: Nat}
+  # a queued message's text changed before it was sent
+  QueueEdited{thread: String, msg: String, text: String, at: Nat}
+  # a queued message dropped before it was sent
+  QueueRemoved{thread: String, msg: String, at: Nat}
+  # a queued message moved to place `to` (0 is next) in its thread's queue
+  QueueMoved{thread: String, msg: String, to: Nat, at: Nat}
+  # one queued message taken out to be sent now (a steer)
+  QueueTakenOne{thread: String, msg: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -556,6 +564,10 @@ def Merge.due.k(sh: Shelf, +branch: String, +merged: String) -> Bool:
 # Projection
 # ----------
 
+# a message waiting in a thread's queue: its id and text
+type QItem is Data:
+  QItem{msg: String, text: String}
+
 type State is Data:
   State{
     projects: Map<&2, Project>,
@@ -564,17 +576,17 @@ type State is Data:
     seq: Nat,
     tasks: Map<&2, Task>,
     settings: Map<&2, String>,
-    queued: Map<&2, String>,
+    queued: Map<&2, List<&2, QItem>>,
     asks: Map<&2, Ask>,
     devices: Map<&2, Device>,
     nav: Map<&2, Nav>
   }
 
 def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, String), Map.new(&2, Ask), Map.new(&2, Device), Map.new(&2, Nav)}
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, List<&2, QItem>), Map.new(&2, Ask), Map.new(&2, Device), Map.new(&2, Nav)}
 
 # apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Thread> & Thread) -> State:
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Thread> & Thread) -> State:
   (ts, t) = r
   State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu, ak, dv, nv}
 
@@ -592,7 +604,7 @@ def State.put_project(s: State, p: Project) -> State:
   Project{+id, ti, r, c, rm} = p
   State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu, ak, dv, nv}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
   State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu, ak, dv, nv}
@@ -616,7 +628,7 @@ def State.message(s: State, +thread: String, msg: String, role: Role, text: Stri
     case _:
       State.post(s, Msg{msg, thread, role, text, at})
 
-def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, String>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Task> & Task) -> State:
+def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, id: String, r: Map<&2, Task> & Task) -> State:
   (tk, t) = r
   State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu, ak, dv, nv}
 
@@ -690,17 +702,116 @@ def Link.from(+id: String) -> String:
 def Queue.join(+a: String, +b: String) -> String:
   Bool.pick(String, String.is_empty(a), b, a ++ "\n\n" ++ b)
 
-def State.enqueue.k(r: Map<&2, String> & String, +th: String, +text: String) -> Map<&2, String>:
-  (m, cur) = r
-  Map.set(&2, String, m, th, Queue.join(cur, text))
+def Queue.text(q: QItem) -> String:
+  match q:
+    case QItem{_, t}:
+      t
 
-def State.enqueue(s: State, +th: String, +text: String) -> State:
+def Queue.msg(q: QItem) -> String:
+  match q:
+    case QItem{m, _}:
+      m
+
+# the waiting messages as one text, oldest first, a blank line between
+def Queue.texts.go(qs: List<&2, QItem>, +acc: String) -> String:
+  match qs:
+    case Nil{}:
+      acc
+    case QItem{_, t} <> rest:
+      Queue.texts.go(rest, Queue.join(acc, t))
+
+def Queue.texts(qs: List<&2, QItem>) -> String:
+  Queue.texts.go(qs, "")
+
+def Queue.edit.k(same: Bool, q: QItem, +text: String) -> QItem:
+  match same q:
+    case True{} QItem{m, _}:
+      QItem{m, text}
+    case False{} _:
+      q
+
+# the message `msg` with a new text; the rest as they were
+def Queue.edit(qs: List<&2, QItem>, +msg: String, +text: String) -> List<&2, QItem>:
+  match qs:
+    case Nil{}:
+      Nil{}
+    case QItem{+m, t} <> rest:
+      Queue.edit.k(String.eq(m, msg), QItem{m, t}, text) <> Queue.edit(rest, msg, text)
+
+def Queue.drop.k(same: Bool, q: QItem, rest: List<&2, QItem>) -> List<&2, QItem>:
+  match same:
+    case True{}:
+      rest
+    case False{}:
+      q <> rest
+
+# without the message `msg`
+def Queue.drop(qs: List<&2, QItem>, +msg: String) -> List<&2, QItem>:
+  match qs:
+    case Nil{}:
+      Nil{}
+    case QItem{+m, t} <> rest:
+      Queue.drop.k(String.eq(m, msg), QItem{m, t}, Queue.drop(rest, msg))
+
+def Queue.find.k(same: Bool, q: QItem, rest: Maybe<&2, QItem>) -> Maybe<&2, QItem>:
+  match same:
+    case True{}:
+      Some{q}
+    case False{}:
+      rest
+
+def Queue.find(qs: List<&2, QItem>, +msg: String) -> Maybe<&2, QItem>:
+  match qs:
+    case Nil{}:
+      None{}
+    case QItem{+m, t} <> rest:
+      Queue.find.k(String.eq(m, msg), QItem{m, t}, Queue.find(rest, msg))
+
+# q put at place i (past the end: last)
+def Queue.insert(i: Nat, qs: List<&2, QItem>, q: QItem) -> List<&2, QItem>:
+  match i qs:
+    case 0n _:
+      q <> qs
+    case _ Nil{}:
+      [q]
+    case 1n+j x <> rest:
+      x <> Queue.insert(j, rest, q)
+
+def Queue.move.k(m: Maybe<&2, QItem>, +qs: List<&2, QItem>, +msg: String, to: Nat) -> List<&2, QItem>:
+  match m:
+    case Some{q}:
+      Queue.insert(to, Queue.drop(qs, msg), q)
+    case None{}:
+      qs
+
+# the message `msg` moved to place `to`; an unknown message moves nothing
+def Queue.move(+qs: List<&2, QItem>, +msg: String, to: Nat) -> List<&2, QItem>:
+  Queue.move.k(Queue.find(qs, msg), qs, msg, to)
+
+def State.queue.k(f: List<&2, QItem> -> List<&2, QItem>, r: Map<&2, List<&2, QItem>> & List<&2, QItem>, +th: String) -> Map<&2, List<&2, QItem>>:
+  (m, cur) = r
+  Map.set(&2, List<&2, QItem>, m, th, f(cur))
+
+# apply f to a thread's queue
+def State.queue(f: List<&2, QItem> -> List<&2, QItem>, s: State, +th: String) -> State:
   State{ps, ts, es, n, tk, sg, qu, ak, dv, nv} = s
-  State{ps, ts, es, n, tk, sg, State.enqueue.k(Map.get(String, "", qu, th), th, text), ak, dv, nv}
+  State{ps, ts, es, n, tk, sg, State.queue.k(f, Map.get(List<&2, QItem>, Nil{}, qu, th), th), ak, dv, nv}
+
+def State.enqueue(s: State, +th: String, +msg: String, +text: String) -> State:
+  State.queue((qs => List.append(&2, QItem, qs, [QItem{msg, text}])), s, th)
 
 def State.take(s: State, +th: String) -> State:
-  State{ps, ts, es, n, tk, sg, qu, ak, dv, nv} = s
-  State{ps, ts, es, n, tk, sg, Map.set(&2, String, qu, th, ""), ak, dv, nv}
+  State.queue((qs => Nil{}), s, th)
+
+def Queue.items.k(r: Map<&2, List<&2, QItem>> & List<&2, QItem>) -> List<&2, QItem>:
+  (_, v) = r
+  v
+
+# a thread's waiting messages, next first
+def Queue.items(s: State, +th: String) -> List<&2, QItem>:
+  match s:
+    case State{_, _, _, _, _, _, qu, _, _, _}:
+      Queue.items.k(Map.get(List<&2, QItem>, Nil{}, qu, th))
 
 # a setting's value, or d when unset
 def State.get.k(r: Map<&2, String> & String) -> String:
@@ -709,9 +820,7 @@ def State.get.k(r: Map<&2, String> & String) -> String:
 
 # what waits to be sent in a thread ("" for nothing)
 def Queue.of(s: State, +th: String) -> String:
-  match s:
-    case State{_, _, _, _, _, _, qu, ak, _, _}:
-      State.get.k(Map.get(String, "", qu, th))
+  Queue.texts(Queue.items(s, th))
 
 def Setting.get(s: State, +k: String, d: String) -> String:
   match s:
@@ -834,8 +943,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.task((t => Task.delivered_set(t)), s, id)
     case SettingSet{k, v, _}:
       State.setting(s, k, v)
-    case TurnQueued{th, _, text, _}:
-      State.enqueue(s, th, text)
+    case TurnQueued{th, msg, text, _}:
+      State.enqueue(s, th, msg, text)
     case QueueTaken{th, _}:
       State.take(s, th)
     case AskOpened{id, th, k, tool, d, o, _}:
@@ -856,6 +965,14 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case QueueEdited{+th, +msg, +text, _}:
+      State.queue((qs => Queue.edit(qs, msg, text)), s, th)
+    case QueueRemoved{+th, +msg, _}:
+      State.queue((qs => Queue.drop(qs, msg)), s, th)
+    case QueueMoved{+th, +msg, to, _}:
+      State.queue((qs => Queue.move(qs, msg, to)), s, th)
+    case QueueTakenOne{+th, +msg, _}:
+      State.queue((qs => Queue.drop(qs, msg)), s, th)
     case ProjectOrdered{+id, +key, _}:
       State.nav((x => Nav.keyed(x, "active", key)), s, Nav.project(id))
 
@@ -902,6 +1019,11 @@ def Sidebar.split(ts: List<&2, Thread>) -> Shelves:
 def Shelves.count(s: Shelves) -> Nat:
   Shelves{p, a, st, h, sn} = s
   Nat.add(List.length(&2, Thread, p), Nat.add(List.length(&2, Thread, a), Nat.add(List.length(&2, Thread, st), Nat.add(List.length(&2, Thread, h), List.length(&2, Thread, sn)))))
+
+def Thread.provider(t: Thread) -> String:
+  match t:
+    case Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, pr, _, _, _, _, _}:
+      pr
 
 def Thread.id(t: Thread) -> String:
   match t:

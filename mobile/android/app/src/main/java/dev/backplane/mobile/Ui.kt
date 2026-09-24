@@ -508,10 +508,15 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
-                    if (t.queued.isNotEmpty()) Text("Queued: ${t.queued} · sends when this turn ends",
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
-                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    for (q in t.queue) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(q.tag, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+                        Text(q.text, Modifier.weight(1f).padding(horizontal = 8.dp),
+                            style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        for (b in q.buttons) TextButton(onClick = { m.act(b.action, b.value) }) {
+                            Text(b.label, style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
                     Box {
                         var models by remember { mutableStateOf(false) }
                         TextButton(onClick = { models = true }) {
@@ -539,8 +544,12 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })
-                        IconButton(onClick = { m.act("send") }, enabled = m.composer.isNotBlank()) {
-                            Icon(Icons.AutoMirrored.Filled.Send, t.send)
+                        // a long press sends with the other follow-up mode (queue or steer)
+                        Box(Modifier.size(48.dp).combinedClickableCompat(onLong = { if (m.composer.isNotBlank()) m.act("send-alt") }) {
+                            if (m.composer.isNotBlank()) m.act("send")
+                        }, contentAlignment = Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Filled.Send, t.send,
+                                tint = if (m.composer.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
                         }
                     }
                 }

@@ -92,6 +92,17 @@ struct ModelPicker: Decodable {
     let models, efforts: [Choice]
 }
 
+// a message waiting in the thread's queue and its buttons (each sends
+// action with value)
+struct QButton: Decodable {
+    let label, action, value: String
+}
+
+struct QueueRow: Decodable {
+    let msg, text, tag: String
+    let buttons: [QButton]
+}
+
 struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
@@ -99,6 +110,7 @@ struct ThreadView: Decodable {
     // sent, not yet stored by the hub; and a message waiting for this turn
     let sending: [String]
     let queued: String
+    let queue: [QueueRow]?
     let live: [Block]
     let working, draft, send: String
     let picker: ModelPicker
