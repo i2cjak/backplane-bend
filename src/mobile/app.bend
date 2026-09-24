@@ -28,6 +28,28 @@ def hubs.k(+hs: H.Hubs, j: J.Json) -> H.Hubs:
 def hubs(+hs: H.Hubs, text: String) -> H.Hubs:
   hubs.k(hs, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{}))
 
+# Drafts the phone kept (keep commands, named "<hub>|<thread>"), read back
+# into the client of the hub they belong to once the hubs are known
+
+def restore.one(hit: Bool, u: U.Ui, +id: String, +text: String) -> U.Ui:
+  match hit:
+    case True{}:
+      U.Ui.restore(u, id, text)
+    case False{}:
+      u
+
+def restore.go(hs: List<&2, H.Hub>, +key: String, +id: String, +text: String) -> List<&2, H.Hub>:
+  match hs:
+    case Nil{}:
+      Nil{}
+    case H.Hub{+k, u} <> t:
+      H.Hub{k, restore.one(String.eq(k, key), u, id, text)} <> restore.go(t, key, id, text)
+
+def restore(hs: H.Hubs, +key: String, +id: String, +text: String) -> H.Hubs:
+  match hs:
+    case H.Hubs{c, n, cur, l}:
+      H.Hubs{c, n, cur, restore.go(l, key, id, text)}
+
 # the alerts a step raised, as JSON text
 def alerts(a: H.HAct) -> String:
   match a:

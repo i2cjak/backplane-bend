@@ -49,6 +49,8 @@ type NCmd is Data:
   NConnect{url: String}
   # open a web address in the system's browser
   NOpen{url: String}
+  # write a thread's draft down now ("" forgets it)
+  NKeep{thread: String, text: String}
 
 type Step is Data:
   Step{nui: Nui, cmds: List<&2, NCmd>, dirty: Bool}
@@ -106,6 +108,8 @@ def Nui.cmd(c: U.Cmd, rest: List<&2, NCmd>) -> List<&2, NCmd>:
       NCopy{t} <> rest
     case U.Connect{url}:
       NConnect{url} <> rest
+    case U.Keep{id, t}:
+      NKeep{id, t} <> rest
     case _:
       rest
 

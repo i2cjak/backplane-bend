@@ -52,6 +52,16 @@ final class AppModel {
         return c
     }
 
+    // a thread's draft, written at once (a crash loses nothing typed); "" forgets it
+    private static func keep(_ thread: String, _ text: String) {
+        let d = UserDefaults.standard
+        var o = (try? JSONSerialization.jsonObject(with: Data((d.string(forKey: "drafts") ?? "{}").utf8))) as? [String: String] ?? [:]
+        o[thread] = text.isEmpty ? nil : text
+        if let data = try? JSONSerialization.data(withJSONObject: o), let s = String(data: data, encoding: .utf8) {
+            d.set(s, forKey: "drafts")
+        }
+    }
+
     private static var env: String {
         #if DEBUG
         "sandbox"
@@ -68,7 +78,7 @@ final class AppModel {
         notifier.viewing = { [weak self] id in self?.active == true && self?.screen?.sel == id }
         let e = engine
         Task {
-            apply(await e.start(Self.cid))
+            apply(await e.start(Self.cid, UserDefaults.standard.string(forKey: "drafts") ?? "{}"))
             ready = true
             island = IslandController { [weak self] kind, token in self?.register(kind, token) }
             connect()
@@ -236,6 +246,7 @@ final class AppModel {
             case "send": if let d = Data(base64Encoded: c.data ?? "") { hubs[c.hub ?? ""]?.send(d) }
             case "copy": UIPasteboard.general.string = c.text ?? ""
             case "scroll": scrolls += 1
+            case "keep": Self.keep(c.thread ?? "", c.text ?? "")
             // while asleep the hub's push carries the alert instead
             case "notify": if active { notifier.post(thread: c.thread ?? "", title: c.title ?? "", body: c.body ?? "") }
             default: break

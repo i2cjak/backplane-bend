@@ -96,6 +96,10 @@ button.fold { align-self: flex-start; display: flex; align-items: center; gap: 6
 button.fold:hover { color: var(--text); }
 button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .working { color: var(--faint); font-size: 12px; }
+.phase { display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 12px; }
+.dot.monitoring { background: var(--accent); }
+.dot.complete { background: var(--ok); }
+.dot.stopped { background: var(--faint); }
 .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
 .composer textarea { resize: none; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; min-height: 60px; max-height: 40vh; field-sizing: content; overflow-y: auto; }
 .composer-foot { display: flex; justify-content: space-between; align-items: center; }

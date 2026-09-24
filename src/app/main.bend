@@ -508,6 +508,65 @@ def Shell.connect(a: Shell, +url: String) -> IO(Shell):
 def Shell.open(+url: String) -> IO(Unit):
   IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "${BACKPLANE_OPEN:-xdg-open} \"$1\" >/dev/null 2>&1 &", "sh", url], "/"), r => IO.pure(Unit, Unit{}))
 
+# Drafts: each thread's draft is a file in <home>/drafts, rewritten on
+# every change (a temporary file renamed over it, so a crash mid-write
+# leaves the last whole draft) and read back when the window opens
+
+def Drafts.done(r: Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+  IO.pure(Unit, Unit{})
+
+def Drafts.wrote(w: File & Result<&1, &1, U32 & String, Unit>, +tmp: String, +path: String) -> IO(Unit):
+  (f, _) = w
+  do IO<Unit>:
+    File.close(f)
+    r : Result<&1, &1, U32 & String, Unit> <- H.FS.rename(tmp, path)
+    return Unit{}
+
+def Drafts.opened(r: Result<&1, &1, U32 & String, File>, +text: String, +tmp: String, +path: String) -> IO(Unit):
+  match r:
+    case Done{f}:
+      IO.bind(File & Result<&1, &1, U32 & String, Unit>, Unit, File.write(f, text), w => Drafts.wrote(w, tmp, path))
+    case Fail{_}:
+      IO.pure(Unit, Unit{})
+
+def Drafts.put(empty: Bool, +text: String, +path: String) -> IO(Unit):
+  match empty:
+    case True{}:
+      IO.bind(Result<&1, &1, U32 & String, Unit>, Unit, H.FS.remove(path), Drafts.done)
+    case False{}:
+      IO.bind(Result<&1, &1, U32 & String, File>, Unit, File.open(path ++ ".tmp", "w"), r => Drafts.opened(r, text, path ++ ".tmp", path))
+
+def Drafts.write(+dir: String, +id: String, +text: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(dir), IO.pure(Unit, Unit{}), Drafts.put(String.is_empty(text), text, dir ++ "/" ++ id))
+
+def Drafts.one(skip: Bool, u: U.Ui, +dir: String, +name: String) -> IO(U.Ui):
+  match skip:
+    case True{}:
+      IO.pure(U.Ui, u)
+    case False{}:
+      IO.bind(String, U.Ui, S.Files.text(dir ++ "/" ++ name), t => IO.pure(U.Ui, U.Ui.restore(u, name, t)))
+
+def Drafts.each(ns: List<String>, u: U.Ui, +dir: String) -> IO(U.Ui):
+  match ns:
+    case Nil{}:
+      IO.pure(U.Ui, u)
+    case +n <> t:
+      IO.bind(U.Ui, U.Ui, Drafts.one(Bool.not(U.Draft.safe(n)), u, dir, n), u2 => Drafts.each(t, u2, dir))
+
+def Drafts.listed(r: Result<&1, &1, U32 & String, List<String>>, u: U.Ui, +dir: String) -> IO(U.Ui):
+  match r:
+    case Done{ns}:
+      Drafts.each(ns, u, dir)
+    case Fail{_}:
+      IO.pure(U.Ui, u)
+
+# the kept drafts, into a fresh client (which also learns where they live)
+def Drafts.load(u: U.Ui, +dir: String) -> IO(U.Ui):
+  do IO<U.Ui>:
+    mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(dir)
+    ns : Result<&1, &1, U32 & String, List<String>> <- H.FS.list(dir)
+    Drafts.listed(ns, U.Ui.info_set(u, "local.drafts", dir), dir)
+
 def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
   match a c:
     case Shell{n, w, d, qd, q, +i, wa} N.NSend{t}:
@@ -529,6 +588,10 @@ def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
     case Shell{n, w, d, qd, q, i, wa} N.NOpen{url}:
       do IO<Shell>:
         IO.spawn(Unit, Shell.open(url))
+        return Shell{n, w, d, qd, q, i, wa}
+    case Shell{+n, w, d, qd, q, i, wa} N.NKeep{id, t}:
+      do IO<Shell>:
+        Drafts.write(U.Ui.info(N.Nui.ui(n), "local.drafts"), id, t)
         return Shell{n, w, d, qd, q, i, wa}
 
 # a connection closed: this machine's own hub means the app is ending;
@@ -1378,7 +1441,7 @@ def Shell.loop(fuel: Nat, a: Shell) -> IO(Unit):
 # -----
 
 
-def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
+def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
   (ev, pw) = r
   do IO<Unit>:
     +q : Chan(ShellMsg) <- Chan.new(ShellMsg, 8192)
@@ -1388,25 +1451,28 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg)) -> IO(Unit):
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     ty : L.Ty <- L.Ty.load()
-    a : Shell <- Shell.later(Shell{N.Nui.init(U.Ui.init(U32.to_nat(t)), 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, L.TL.memo.none()}}})
+    ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
+    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, L.TL.memo.none()}}})
     Shell.loop(S.Fuel.forever(), a)
 
-def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg)) -> IO(Unit):
+def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
   match r:
     case Done{w}:
-      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox))
+      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox, drafts))
     case Fail{e}:
       Shell.nowin(e)
 
-def Shell.run(+inbox: Chan(S.Msg)) -> IO(Unit):
-  IO.bind(Result<&1, &1, U32 & String, Window>, Unit, W.Win.open("Backplane", 1400, 900), r => Shell.opened(r, inbox))
+def Shell.run(+inbox: Chan(S.Msg), +drafts: String) -> IO(Unit):
+  IO.bind(Result<&1, &1, U32 & String, Window>, Unit, W.Win.open("Backplane", 1400, 900), r => Shell.opened(r, inbox, drafts))
 
 def start(args: List<String>) -> IO(Unit):
   do IO<Unit>:
     +user : String <- S.Env.get("HOME", "/tmp")
     +exe : String <- S.Sys.exe_dir.io()
     b : S.Boot <- S.Main.prepare(user, exe)
-    S.Main.boot(S.Main.config(user, exe, args, b), False{}, i => Shell.run(i))
+    +cfg : S.Cfg = S.Main.config(user, exe, args, b)
+    +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
+    S.Main.boot(cfg, False{}, i => Shell.run(i, drafts))
 
 # (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
 def main() -> IO(Unit):

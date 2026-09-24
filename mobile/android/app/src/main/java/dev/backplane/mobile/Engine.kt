@@ -11,8 +11,9 @@ import java.util.concurrent.atomic.AtomicInteger
 // The Bend client (bridge.js) in QuickJS, on one thread of its own.
 // Every call answers {"screen": ..., "cmds": [...]} as a string, except
 // resume(), which answers {"since": "<n>", "origin": "<o>"}. The client is
-// started with this install's id before anything else runs.
-class Engine(private val source: String, private val cid: String) {
+// started with this install's id and its kept drafts before anything
+// else runs.
+class Engine(private val source: String, private val cid: String, private val drafts: String) {
     private val thread = Executors.newSingleThreadExecutor { Thread(null, it, "bend", 64L shl 20) }
     private val dispatcher = thread.asCoroutineDispatcher()
     private var ctx: QuickJSContext? = null
@@ -23,7 +24,7 @@ class Engine(private val source: String, private val cid: String) {
             QuickJSContext.create().also {
                 it.setMaxStackSize(48 shl 20)
                 it.evaluate(source, "bridge.js")
-                it.evaluate("Backplane.start(${q(cid)})")
+                it.evaluate("Backplane.start(${q(cid)}, ${q(drafts)})")
                 ctx = it
             }
         }

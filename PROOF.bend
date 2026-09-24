@@ -1003,6 +1003,69 @@ def Laws.status_approval_top(a, i, t, q):
             case M.Interrupted{} False{}:
               {==}
 
+def Laws.phase_approval_first(i, n, t, q):
+  {==}
+
+def Laws.phase_input_before_work(n, t, q):
+  {==}
+
+def Laws.phase_working_before_tasks(n, q):
+  {==}
+
+def Laws.phase_monitoring_before_complete(n, q):
+  {==}
+
+def Laws.phase_complete():
+  {==}
+
+def Laws.phase_failed_before_queued():
+  {==}
+
+def Laws.phase_silent_only_idle(a, i, n, t, q):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      match i:
+        case True{}:
+          {==}
+        case False{}:
+          match n:
+            case 0n:
+              match t q:
+                case M.Idle{} True{}:
+                  {==}
+                case M.Idle{} False{}:
+                  {==}
+                case M.Running{} True{}:
+                  {==}
+                case M.Running{} False{}:
+                  {==}
+                case M.Completed{} True{}:
+                  {==}
+                case M.Completed{} False{}:
+                  {==}
+                case M.Interrupted{} True{}:
+                  {==}
+                case M.Interrupted{} False{}:
+                  {==}
+                case M.Failed{} True{}:
+                  {==}
+                case M.Failed{} False{}:
+                  {==}
+            case 1n+k:
+              match t:
+                case M.Idle{}:
+                  {==}
+                case M.Running{}:
+                  {==}
+                case M.Completed{}:
+                  {==}
+                case M.Interrupted{}:
+                  {==}
+                case M.Failed{}:
+                  {==}
+
 def Laws.fuzzy_empty_matches(s):
   match s:
     case SNil{}:
@@ -3266,4 +3329,81 @@ def Laws.hier_root_is_top(rs):
           {==}
 
 def Laws.hier_up_after_open():
+  {==}
+
+def Laws.draft_kept(u, text):
+  match u:
+    case U.Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      {==}
+
+def Laws.draft_keep_thread(text):
+  {==}
+
+def Laws.draft_keep_no_thread(text):
+  {==}
+
+def Laws.draft_keep_no_scratch(text):
+  {==}
+
+def Laws.draft_keep_no_path(text):
+  {==}
+
+def Laws.draft_restore_fills(saved):
+  {==}
+
+def Laws.draft_restore_keeps_typing(c, t, saved):
+  {==}
+
+def Laws.interrupt_idle_nothing(s, now, client, id, thread):
+  {==}
+
+def Laws.interrupt_claude_input(th, r):
+  {==}
+
+def Laws.interrupt_codex_stops(th, r):
+  {==}
+
+def Laws.interrupt_grok_stops(th, r):
+  {==}
+
+def Laws.stopped_turn_quiet(s, now, thread, line):
+  {==}
+
+def Laws.recover_interrupts_running():
+  {==}
+
+def Laws.recover_closes_asks():
+  {==}
+
+def Laws.recover_leaves_idle():
+  {==}
+
+def Laws.recover_empty_nothing(now):
+  {==}
+
+def Laws.ask_makes_pending():
+  {==}
+
+def Laws.answer_clears_pending():
+  {==}
+
+def Laws.settle_waits_for_children():
+  {==}
+
+def Laws.settle_children_done():
+  {==}
+
+def Laws.tag_thread():
+  {==}
+
+def Laws.tag_pid():
+  {==}
+
+def Laws.tag_untagged():
+  {==}
+
+def Laws.tag_old_process_unheard():
+  {==}
+
+def Laws.tag_untagged_heard(r):
   {==}

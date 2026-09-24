@@ -27,7 +27,7 @@ import java.security.SecureRandom
 class Core(private val app: Application) : Application.ActivityLifecycleCallbacks {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences("backplane", Context.MODE_PRIVATE)
-    private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid())
+    private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid(), prefs.getString("drafts", "{}") ?: "{}")
     private val hubs = mutableMapOf<String, Hub>()
     // the hub whose plots are drawn: frames from any other are dropped
     private var shownHub = ""
@@ -158,8 +158,16 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
                 cm.setPrimaryClip(ClipData.newPlainText("Backplane", c.text))
             }
             "scroll" -> scrolls += 1
+            "keep" -> keep(c.thread, c.text)
             "notify" -> if (!(foreground && screen?.sel == c.thread)) Notes.turn(app, c)
         }
+    }
+
+    // a thread's draft, written at once (a crash loses nothing typed); "" forgets it
+    private fun keep(thread: String, text: String) {
+        val o = try { JSONObject(prefs.getString("drafts", "{}") ?: "{}") } catch (e: Exception) { JSONObject() }
+        if (text.isEmpty()) o.remove(thread) else o.put(thread, text)
+        prefs.edit().putString("drafts", o.toString()).commit()
     }
 
     override fun onActivityStarted(activity: Activity) {

@@ -60,6 +60,13 @@ type Msg is Data:
   UpdateCheck{}
   ModelsFound{models: String, text: String}
   MachinesFound{machines: String}
+  # a Codex or Grok turn's process started: the one the hub now hears (and
+  # stops) for the thread; its lines come tagged (B.Tag)
+  TurnPid{thread: String, pid: U32, input: Chan(String)}
+  # a turn's process exited (tagged)
+  TurnDone{tag: String}
+  # the hub just started from its log (B.Hub.recover)
+  Recover{}
 
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
@@ -1390,21 +1397,22 @@ def Grok.lines(ls: List<&2, String>, a: AC.Acp, +t: AC.AcpTurn, +thread: String,
 
 # a per-turn process is done: its turn already ended through its own
 # events, so its exit tells the hub nothing (a queued turn may be running)
-def Turn.end(s: Socket, +pid: U32) -> IO(Unit):
+def Turn.end(s: Socket, +pid: U32, +tag: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     Socket.close(s)
     code : U32 <- H.Proc.wait(pid)
+    ok : Bool <- Chan.send(Msg, inbox, TurnDone{tag})
     return Unit{}
 
 # output closed: a turn that never ended fails; the exit itself is not news
 def Codex.end(s: Socket, +pid: U32, ended: Bool, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   match ended:
     case True{}:
-      Turn.end(s, pid)
+      Turn.end(s, pid, thread, inbox)
     case False{}:
       do IO<Unit>:
         ok : Bool <- Chan.send(Msg, inbox, AgentLine{thread, AC.Acp.failed("codex exited before the turn ended")})
-        Turn.end(s, pid)
+        Turn.end(s, pid, thread, inbox)
 
 def Codex.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, carry: U.Lines, +ended: Bool, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> Bool -> IO(Unit)) -> IO(Unit):
   (s, res) = r
@@ -1428,7 +1436,9 @@ def Codex.read(started: U32 & Socket, +thread: String, +inbox: Chan(Msg)) -> IO(
   (+pid, s) = started
   do IO<Unit>:
     s2 : Socket <- H.Sock.shutdown(s)
-    Codex.reader(Fuel.forever(), s2, U.Lines.new(), False{}, pid, thread, inbox)
+    +input : Chan(String) <- Chan.new(String, 1)
+    ok : Bool <- Chan.send(Msg, inbox, TurnPid{thread, pid, input})
+    Codex.reader(Fuel.forever(), s2, U.Lines.new(), False{}, pid, B.Tag.of(thread, pid), inbox)
 
 def Codex.started(r: Result<&1, &1, U32 & String, U32 & Socket>, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   match r:
@@ -1443,7 +1453,7 @@ def Codex.run(+args: List<&2, String>, +cwd: String, +thread: String, +inbox: Ch
 def Grok.stop(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     H.Proc.kill(pid, 15)
-    Turn.end(s, pid)
+    Turn.end(s, pid, thread, inbox)
 
 def Grok.next(done: Bool, s: Socket, carry: U.Lines, a: AC.Acp, +pid: U32, +thread: String, +inbox: Chan(Msg), k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
   match done:
@@ -1464,7 +1474,7 @@ def Grok.fed(r: U.Lines & List<&2, String>, s: Socket, a: AC.Acp, +t: AC.AcpTurn
 def Grok.gone(s: Socket, +pid: U32, +thread: String, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     Grok.report([AC.Acp.failed("grok exited before the turn ended (is it signed in? run `grok login`)")], thread, inbox)
-    Turn.end(s, pid)
+    Turn.end(s, pid, thread, inbox)
 
 def Grok.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, carry: U.Lines, a: AC.Acp, +t: AC.AcpTurn, +pid: U32, +thread: String, +input: Chan(String), +inbox: Chan(Msg),
     k: Socket -> U.Lines -> AC.Acp -> IO(Unit)) -> IO(Unit):
@@ -1492,8 +1502,9 @@ def Grok.duped(r: Socket & Result<&1, &1, U32 & String, Socket>, +pid: U32, +t: 
       do IO<Unit>:
         +input : Chan(String) <- Chan.new(String, 64)
         IO.spawn(Unit, Agent.writer(Fuel.forever(), wr, input))
-        ok : Bool <- Chan.send(String, input, AC.Acp.init())
-        Grok.reader(Fuel.forever(), rd, U.Lines.new(), AC.Acp.new(), t, pid, thread, input, inbox)
+        ok : Bool <- Chan.send(Msg, inbox, TurnPid{thread, pid, input})
+        ok2 : Bool <- Chan.send(String, input, AC.Acp.init())
+        Grok.reader(Fuel.forever(), rd, U.Lines.new(), AC.Acp.new(), t, pid, B.Tag.of(thread, pid), input, inbox)
     case Fail{_}:
       Socket.close(rd)
 
@@ -3121,13 +3132,19 @@ def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
     case o <> t:
       IO.bind(Hub, Hub, Hub.out(h, o), h2 => Hub.outs(t, h2))
 
+def Hub.step.k(p: M.State & Hub, cs: List<&2, M.Change>, os: List<&2, B.Out>) -> IO(Hub):
+  (st, h) = p
+  do IO<Hub>:
+    r : Hub & List<&2, String> <- Hub.commit(B.Pend.fix(st, cs), h, Nil{})
+    h2 : Hub <- Hub.announce(r)
+    Hub.outs(os, h2)
+
+# a step's changes are stored (with the pending counts they move), then
+# its effects run
 def Hub.step(h: Hub, s: B.Step) -> IO(Hub):
   match s:
     case B.Step{cs, os}:
-      do IO<Hub>:
-        r : Hub & List<&2, String> <- Hub.commit(cs, h, Nil{})
-        h2 : Hub <- Hub.announce(r)
-        Hub.outs(os, h2)
+      Hub.step.k(Hub.state(h), cs, os)
 
 def Hub.rpc.k(p: M.State & Hub, +client: U32, +text: String, +now: Nat) -> IO(Hub):
   (st, h) = p
@@ -3199,6 +3216,64 @@ def Hub.update_check(h: Hub) -> IO(Hub):
         IO.spawn(Unit, Media.check(M.Setting.get(st, "update.channel", "stable"), inbox, 0, ""))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
+# a line from an agent: a turn process's only while it is the one the hub
+# runs for its thread (B.Tag.heard)
+def Hub.tagged.k(heard: Bool, h: Hub, +thread: String, line: String, +now: Nat) -> IO(Hub):
+  match heard:
+    case True{}:
+      Hub.line(h, thread, line, now)
+    case False{}:
+      IO.pure(Hub, h)
+
+def Agent.pid_of(m: Maybe<&2, Agent>) -> Maybe<&2, U32>:
+  match m:
+    case Some{Agent{_, _, p, _}}:
+      Some{p}
+    case None{}:
+      None{}
+
+def Hub.tagged(h: Hub, +tag: String, line: String, +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      Hub.tagged.k(B.Tag.heard(B.Tag.pid(tag), Agent.pid_of(Agents.get(as, B.Tag.thread(tag)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Tag.thread(tag), line, now)
+
+def Hub.turn_pid.k(run: Bool, h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
+  match run h:
+    case True{} Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      do IO<Hub>:
+        Hub.agent_stop(Agents.get(as, thread))
+        return Hub{st, f, ls, cl, Agent{thread, input, pid, "turn"} <> Agents.drop(as, thread), inbox, cfg, note}
+    case False{} _:
+      do IO<Hub>:
+        Chan.close(String, input)
+        H.Proc.kill(pid, 15)
+        return h
+
+# a turn process started: it replaces whatever ran for the thread before;
+# one whose turn was stopped before it came up is stopped at once
+def Hub.turn_pid(h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.turn_pid.k(B.Hub.running(B.Hub.thread(st, thread)), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, pid, input)
+
+def Hub.turn_done.k(same: Bool, h: Hub, +thread: String) -> Hub:
+  match same h:
+    case True{} Hub{st, f, ls, cl, as, inbox, cfg, note}:
+      Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
+    case False{} _:
+      h
+
+# a turn process exited: forgotten, unless another replaced it already
+def Hub.turn_done(h: Hub, +tag: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      IO.pure(Hub, Hub.turn_done.k(B.Tag.heard(B.Tag.pid(tag), Agent.pid_of(Agents.get(as, B.Tag.thread(tag)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Tag.thread(tag)))
+
+def Hub.recover(h: Hub, +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.recover(st, now))
+
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
     case AgentWrite{thread, line}:
@@ -3206,7 +3281,7 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
     case UpdateCheck{}:
       Hub.update_check(h)
     case Mcp{thread, body, reply}:
-      Hub.mcp(h, thread, body, reply, now)
+      Hub.mcp(h, B.Tag.thread(thread), body, reply, now)
     case Announce{text}:
       Hub.note(h, text)
     case Join{client, out, since, origin}:
@@ -3215,8 +3290,14 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.leave(h, client)
     case Rpc{client, text}:
       Hub.rpc(h, client, text, now)
-    case AgentLine{thread, line}:
-      Hub.line(h, thread, line, now)
+    case AgentLine{tag, line}:
+      Hub.tagged(h, tag, line, now)
+    case TurnPid{thread, pid, input}:
+      Hub.turn_pid(h, thread, pid, input)
+    case TurnDone{tag}:
+      Hub.turn_done(h, tag)
+    case Recover{}:
+      Hub.recover(h, now)
     case AgentGone{thread, code, pid}:
       Hub.gone(h, thread, code, pid, now)
     case Tick{}:
@@ -3287,6 +3368,7 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
     case Done{f} Cfg{+home, +web, +host, +port, +pr, +ds, +v, nt0}:
       do IO<Unit>:
         +inbox : Chan(Msg) <- Chan.new(Msg, 4096)
+        rc : Bool <- Chan.send(Msg, inbox, Recover{})
         +bq : Chan(BR.BMsg) <- Chan.new(BR.BMsg, 256)
         bexe : String <- Browser.exe()
         IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, BR.Br.new(bexe, home ++ "/browser.rgb")))

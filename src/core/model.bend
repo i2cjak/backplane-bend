@@ -1359,3 +1359,104 @@ def Status.name(s: Status) -> String:
       "queued"
     case StReady{}:
       "ready"
+
+# Thread phase
+# ------------
+# The line at the end of a thread's timeline says what the thread is doing
+# now: an approval waiting > a question or plan waiting > a turn working >
+# child tasks still running after the turn (monitoring) > a failed turn >
+# messages queued > a finished turn > a stopped turn > nothing yet (laws
+# phase_*).
+
+type Phase is Data:
+  PhApproval{}
+  PhInput{}
+  PhWorking{}
+  PhMonitoring{n: Nat}
+  PhFailed{}
+  PhQueued{}
+  PhComplete{}
+  PhStopped{}
+  PhIdle{}
+
+def Phase.of.t(t: TurnState, queued: Bool) -> Phase:
+  match t queued:
+    case Failed{} _:
+      PhFailed{}
+    case _ True{}:
+      PhQueued{}
+    case Completed{} False{}:
+      PhComplete{}
+    case Interrupted{} False{}:
+      PhStopped{}
+    case _ False{}:
+      PhIdle{}
+
+def Phase.of.w(+tasks: Nat, t: TurnState, queued: Bool) -> Phase:
+  match t:
+    case Running{}:
+      PhWorking{}
+    case _:
+      Bool.pick(Phase, Nat.is_gt(tasks, 0n), PhMonitoring{tasks}, Phase.of.t(t, queued))
+
+def Phase.of.i(input: Bool, +tasks: Nat, t: TurnState, queued: Bool) -> Phase:
+  match input:
+    case True{}:
+      PhInput{}
+    case False{}:
+      Phase.of.w(tasks, t, queued)
+
+# tasks: the thread's child tasks not yet finished
+def Phase.of(approval: Bool, input: Bool, +tasks: Nat, t: TurnState, queued: Bool) -> Phase:
+  match approval:
+    case True{}:
+      PhApproval{}
+    case False{}:
+      Phase.of.i(input, tasks, t, queued)
+
+# the word for a phase (the web's class, the color's key)
+def Phase.name(p: Phase) -> String:
+  match p:
+    case PhApproval{}:
+      "approval"
+    case PhInput{}:
+      "input"
+    case PhWorking{}:
+      "working"
+    case PhMonitoring{_}:
+      "monitoring"
+    case PhFailed{}:
+      "failed"
+    case PhQueued{}:
+      "queued"
+    case PhComplete{}:
+      "complete"
+    case PhStopped{}:
+      "stopped"
+    case PhIdle{}:
+      "idle"
+
+def Phase.tasks(+n: Nat) -> String:
+  Nat.show(n) ++ Bool.pick(String, Nat.is_eq(n, 1n), " task", " tasks")
+
+# what the line says ("" for a thread with nothing to say)
+def Phase.label(p: Phase) -> String:
+  match p:
+    case PhApproval{}:
+      "Waiting for approval"
+    case PhInput{}:
+      "Waiting for input"
+    case PhWorking{}:
+      "Working…"
+    case PhMonitoring{+n}:
+      "Monitoring " ++ Phase.tasks(n)
+    case PhFailed{}:
+      "Failed"
+    case PhQueued{}:
+      "Queued"
+    case PhComplete{}:
+      "Complete"
+    case PhStopped{}:
+      "Stopped"
+    case PhIdle{}:
+      ""

@@ -598,6 +598,8 @@ def TL.h.k(k: Nat) -> U32:
       23
     case 14n:
       24
+    case 15n:
+      22
     case _:
       10
 
@@ -899,6 +901,8 @@ def TL.draw.k(+ty: Ty, k: Nat, +text: String, +color: U32, +copy: String, +bw: U
         [Lay.hit(x0, y, (Ty.width(ty, 2n, text) + 26 : U32), 24, "fold", copy)]}
     case 5n:
       Out.ops(Ty.text(ty, 1n, text, c, x0, y, 28, color))
+    case 15n:
+      Out.ops(D.Draw.disc(c, U32.to_f32((x0 + 4 : U32)), U32.to_f32((y + 11 : U32)), 3.0, color, 255) <> Ty.text(ty, 2n, text, c, (x0 + 14 : U32), y, 22, T.Th.faint()))
     case _:
       Out.ops(Ty.text(ty, 3n, text, c, x0, y, 23, color))
 
@@ -956,11 +960,11 @@ def TL.textual(+k: Nat) -> Bool:
   Bool.not(Bool.or(Bool.or(Bool.or(Nat.is_eq(k, 4n), Nat.is_eq(k, 6n)), Bool.or(Nat.is_eq(k, 7n), Nat.is_eq(k, 9n))), Nat.is_eq(k, 12n)))
 
 def TL.face(+k: Nat) -> Nat:
-  Bool.pick(Nat, Nat.is_eq(k, 1n), 4n, Bool.pick(Nat, Bool.or(Bool.or(Nat.is_eq(k, 8n), Nat.is_eq(k, 3n)), Bool.or(Nat.is_eq(k, 10n), Nat.is_eq(k, 11n))), 2n,
+  Bool.pick(Nat, Nat.is_eq(k, 1n), 4n, Bool.pick(Nat, Bool.or(Bool.or(Nat.is_eq(k, 8n), Nat.is_eq(k, 3n)), Bool.or(Bool.or(Nat.is_eq(k, 10n), Nat.is_eq(k, 11n)), Nat.is_eq(k, 15n))), 2n,
     Bool.pick(Nat, Nat.is_eq(k, 5n), 1n, 3n)))
 
 def TL.tx(+ty: Ty, +k: Nat, +text: String, +bw: U32, +x0: U32, +x1: U32) -> U32:
-  Bool.pick(U32, Bool.or(Nat.is_eq(k, 1n), Nat.is_eq(k, 8n)), (x0 + 14 : U32), Bool.pick(U32, Nat.is_eq(k, 2n), (x1 - bw + 20 : U32),
+  Bool.pick(U32, Bool.or(Bool.or(Nat.is_eq(k, 1n), Nat.is_eq(k, 8n)), Nat.is_eq(k, 15n)), (x0 + 14 : U32), Bool.pick(U32, Nat.is_eq(k, 2n), (x1 - bw + 20 : U32),
     Bool.pick(U32, Nat.is_eq(k, 10n), (x0 + 10 : U32), Bool.pick(U32, Nat.is_eq(k, 11n), (x1 - Ty.width(ty, 2n, text) : U32), x0))))
 
 # the characters of text before window x (text starting at tx)
@@ -1050,14 +1054,40 @@ def TL.draw_all(+ty: Ty, ls: List<&2, TLine>, more: Bool, +c: D.Clip, +x0: U32, 
     case _ _:
       Out.none()
 
-def TL.live.k(+ty: Ty, empty: Bool, running: Bool, text: String, +px: U32) -> List<&2, TLine>:
-  match empty running:
-    case False{} _:
-      TL.blocks(ty, N.Md.render(text), px)
-    case True{} True{}:
-      [TLine{"Working…", T.Th.faint(), 3, "", 0}]
-    case True{} False{}:
+# the phase line's dot color (M.Phase.of orders the phases)
+def Lay.phase(p: M.Phase) -> U32:
+  match p:
+    case M.PhApproval{}:
+      T.Th.warn()
+    case M.PhInput{}:
+      T.Th.input()
+    case M.PhWorking{}:
+      T.Th.accent()
+    case M.PhMonitoring{_}:
+      T.Th.accent()
+    case M.PhFailed{}:
+      T.Th.bad()
+    case M.PhQueued{}:
+      T.Th.queued()
+    case M.PhComplete{}:
+      T.Th.ok()
+    case _:
+      T.Th.faint()
+
+def TL.phase.k(idle: Bool, +label: String, +dot: U32) -> List<&2, TLine>:
+  match idle:
+    case True{}:
       Nil{}
+    case False{}:
+      [TLine{label, dot, 15, "", 0}]
+
+# the line under the timeline: the reply streaming in, else the phase
+def TL.live.k(+ty: Ty, empty: Bool, +ph: M.Phase, text: String, +px: U32) -> List<&2, TLine>:
+  match empty:
+    case False{}:
+      TL.blocks(ty, N.Md.render(text), px)
+    case True{}:
+      TL.phase.k(String.is_empty(M.Phase.label(ph)), M.Phase.label(ph), Lay.phase(ph))
 
 # Main area
 # ---------
@@ -2514,7 +2544,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String
 
 def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
-    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String) -> Out:
+    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
@@ -2532,7 +2562,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       # the timeline and what sits around it are laid out at once
       tl ch = Lay.timeline(ty,
         List.concat(&2, TLine, [TL.memo.shown(ty, memo, st, sel, cw, pics), TL.sending(ty, pend, cw),
-          TL.live.k(ty, String.is_empty(live), Lay.running(turn), live, cw)]),
+          TL.live.k(ty, String.is_empty(live), ph, live, cw)]),
         cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
@@ -2563,7 +2593,7 @@ def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
       Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off")))
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel))))
 
 # only the screen shown is laid out (a Bool.pick would lay out all three)
 def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:

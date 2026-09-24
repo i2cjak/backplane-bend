@@ -221,6 +221,53 @@ law status_approval_top:
   for q: Bool
   {Nat.is_ge(M.Status.rank(M.StApproval{}), M.Status.rank(M.Status.of(a, i, t, q))) == True{} : Bool}
 
+# Thread phase
+# ------------
+
+# an approval waiting outranks everything on a thread's phase line
+law phase_approval_first:
+  for i: Bool
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {M.Phase.of(True{}, i, n, t, q) == M.PhApproval{} : M.Phase}
+
+# then a question or plan waiting, even while a turn or tasks run
+law phase_input_before_work:
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {M.Phase.of(False{}, True{}, n, t, q) == M.PhInput{} : M.Phase}
+
+# a running turn is working, whatever its child tasks do
+law phase_working_before_tasks:
+  for n: Nat
+  for q: Bool
+  {M.Phase.of(False{}, False{}, n, M.Running{}, q) == M.PhWorking{} : M.Phase}
+
+# a finished turn with child tasks still running is monitoring them, not complete
+law phase_monitoring_before_complete:
+  for n: Nat
+  for q: Bool
+  {M.Phase.of(False{}, False{}, 1n+n, M.Completed{}, q) == M.PhMonitoring{1n+n} : M.Phase}
+
+# a finished turn with nothing left running or queued is complete
+law phase_complete:
+  {M.Phase.of(False{}, False{}, 0n, M.Completed{}, False{}) == M.PhComplete{} : M.Phase}
+
+# a failed turn shows as failed even with messages queued
+law phase_failed_before_queued:
+  {M.Phase.of(False{}, False{}, 0n, M.Failed{}, True{}) == M.PhFailed{} : M.Phase}
+
+# only a thread with nothing yet has no phase line
+law phase_silent_only_idle:
+  for a: Bool
+  for i: Bool
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {String.is_empty(M.Phase.label(M.Phase.of(a, i, n, t, q))) == String.eq(M.Phase.name(M.Phase.of(a, i, n, t, q)), "idle") : Bool}
+
 # Board viewer
 # ------------
 
@@ -1471,3 +1518,128 @@ law hier_up_after_open:
   {HI.Hier.parent([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}],
       Maybe.default(&2, Nat, HI.Hier.child([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}], 2n, "adc"), 0n))
     == 2n : Nat}
+
+# Drafts kept
+# -----------
+
+# every change to a thread's draft asks the host to write it down at once
+law draft_kept:
+  for u: U.Ui
+  for +text: String
+  {U.Act.cmds(U.Ui.draft.set(u, text)) == U.Draft.keep(U.Ui.sel(u), text) : List<&2, U.Cmd>}
+
+# a thread's id is kept, word for word
+law draft_keep_thread:
+  for +text: String
+  {U.Draft.keep("t1790175755-9", text) == [U.Keep{"t1790175755-9", text}] : List<&2, U.Cmd>}
+
+# no thread, a scratch key or anything path-like is never written
+law draft_keep_no_thread:
+  for +text: String
+  {U.Draft.keep("", text) == Nil{} : List<&2, U.Cmd>}
+
+law draft_keep_no_scratch:
+  for +text: String
+  {U.Draft.keep("@del", text) == Nil{} : List<&2, U.Cmd>}
+
+law draft_keep_no_path:
+  for +text: String
+  {U.Draft.keep("../x", text) == Nil{} : List<&2, U.Cmd>}
+
+# a draft read back after a restart fills an empty composer and never
+# replaces what is typed there
+law draft_restore_fills:
+  for +saved: String
+  {U.Draft.pick("", saved) == saved : String}
+
+law draft_restore_keeps_typing:
+  for +c: Char
+  for +t: String
+  for +saved: String
+  {U.Draft.pick(SCon{c, t}, saved) == SCon{c, t} : String}
+
+# Restarts, stops and waiting asks
+# --------------------------------
+
+# a stop reaches only a running turn
+law interrupt_idle_nothing:
+  for s: M.State
+  for now: Nat
+  for +client: U32
+  for +id: String
+  for thread: String
+  {H.Hub.interrupt.k(False{}, s, now, client, id, thread) == H.Step{[], [H.Reply.ok(client, id)]} : H.Step}
+
+# Claude takes the interrupt on its input; a Codex or Grok turn's process
+# is stopped
+law interrupt_claude_input:
+  for +th: String
+  for +r: String
+  {H.Stop.outs("claude", th, r) == [H.AgentSend{th, H.Claude.interrupt(r)}] : List<&2, H.Out>}
+
+law interrupt_codex_stops:
+  for +th: String
+  for r: String
+  {H.Stop.outs("codex", th, r) == [H.AgentStop{th}] : List<&2, H.Out>}
+
+law interrupt_grok_stops:
+  for +th: String
+  for r: String
+  {H.Stop.outs("grok", th, r) == [H.AgentStop{th}] : List<&2, H.Out>}
+
+# what a stopped turn's process still says changes nothing
+law stopped_turn_quiet:
+  for s: M.State
+  for now: Nat
+  for thread: String
+  for line: String
+  {H.Hub.agent_line.c(False{}, s, now, thread, line) == H.Step{[], []} : H.Step}
+
+# after a restart a turn left running is interrupted, and an open ask is
+# closed, so nothing waits on what died with the old process
+law recover_interrupts_running:
+  {H.Hub.running(H.Hub.thread(H.Rec.after(H.Rec.demo(M.Running{}), 10n), "t1")) == False{} : Bool}
+
+law recover_closes_asks:
+  {H.Pend.open(M.Asks.all(H.Rec.after(H.Rec.demo(M.Running{}), 10n)), "t1") == 0n : Nat}
+
+# a thread that was not running is left as it was
+law recover_leaves_idle:
+  {H.Hub.running(H.Hub.thread(H.Rec.after(H.Rec.demo(M.Completed{}), 10n), "t1")) == False{} : Bool}
+
+law recover_empty_nothing:
+  for now: Nat
+  {H.Hub.recover(M.State.empty(), now) == H.Step{[], []} : H.Step}
+
+# an open ask makes its thread pending (so it never auto-settles); the
+# answer clears it
+law ask_makes_pending:
+  {H.Hub.pending(H.Hub.thread(M.State.replay(H.Pend.fix(M.State.replay(H.Rec.demo.base(), M.State.empty()), [M.AskOpened{"a1", "t1", "approval", "Bash", "ls", "", 3n}]), M.State.replay(H.Rec.demo.base(), M.State.empty())), "t1")) == 1n : Nat}
+
+law answer_clears_pending:
+  {H.Hub.pending(H.Hub.thread(M.State.replay(H.Pend.fix(H.Rec.demo(M.Completed{}), [M.AskClosed{"a1", "allow", 4n}]), H.Rec.demo(M.Completed{})), "t1")) == 0n : Nat}
+
+# a parent whose delegated task still works does not settle
+law settle_waits_for_children:
+  {H.Kids.busy([M.Task{"k1", "t1", "t2", 1n, M.TaskRunning{}, "", False{}, "codex", ""}], "t1") == True{} : Bool}
+
+law settle_children_done:
+  {H.Kids.busy([M.Task{"k1", "t1", "t2", 1n, M.TaskDone{}, "", False{}, "codex", ""}], "t1") == False{} : Bool}
+
+# a turn process's tag names its thread and process; only the process the
+# hub runs for the thread is heard, and an untagged line always is
+law tag_thread:
+  {H.Tag.thread(H.Tag.of("t1790175755-9", 4242)) == "t1790175755-9" : String}
+
+law tag_pid:
+  {H.Tag.pid(H.Tag.of("t1790175755-9", 4242)) == Some{4242} : Maybe<&2, U32>}
+
+law tag_untagged:
+  {H.Tag.pid("t1790175755-9") == None{} : Maybe<&2, U32>}
+
+law tag_old_process_unheard:
+  {H.Tag.heard(Some{41}, Some{42}) == False{} : Bool}
+
+law tag_untagged_heard:
+  for r: Maybe<&2, U32>
+  {H.Tag.heard(None{}, r) == True{} : Bool}
