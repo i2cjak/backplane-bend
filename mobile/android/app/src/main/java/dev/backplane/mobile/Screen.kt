@@ -64,7 +64,7 @@ data class Viewer(
 
 // the composer's model chip: its label, the models ("model" sends one)
 // and the efforts the current one takes ("effort")
-data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>)
+data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>, val providers: List<Choice> = emptyList())
 
 // a message waiting in the thread's queue and its buttons (each sends
 // action with value)
@@ -145,7 +145,7 @@ private fun thread(o: JSONObject) = ThreadView(
 private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }
 
 private fun picker(o: JSONObject) =
-    ModelPicker(o.optString("label"), choices(o.optJSONArray("models")), choices(o.optJSONArray("efforts")))
+    ModelPicker(o.optString("label"), choices(o.optJSONArray("models")), choices(o.optJSONArray("efforts")), choices(o.optJSONArray("providers")))
 
 private fun ints(a: JSONArray?): IntArray = if (a == null) IntArray(0) else IntArray(a.length()) { a.optInt(it) }
 

@@ -103,6 +103,7 @@ Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/sn
 - The glyph cache's string-keyed `Map` is slow per glyph; `Text.get` reads ASCII from the face's `GTab` (filled by `Face.tabled` once warmed).
 - A long-lived native process gets slower at the same allocation-heavy work each time it repeats it, memory flat (bendlang/bend#1007: free chains lose address order; a board parse 0.2 s → 1.6 s over six runs). Keep big repeated work out of the hub: parse in a child process (`backplane --plot`, src/server/plot.bend) and keep bulky data out of hub memory (plot info tables live in files). `BACKPLANE_BENCH_RUNS=6 build/plot_bench FILE` shows it.
 - "an arity over 255" at `-o` (not at `--check-only`) means a value held in the app's state flattened into too many fields: a deep record type (the board face inside the viewer's `Vx`). Put the deep part behind a `List` (`Scene3.face`).
+- `Nat.read` (and `Maybe.map` over it) in anything a law normalizes makes `bend PROOF.bend` crawl for minutes. Parse digits yourself (`Switch.num` in model.bend, `Tag.num` in hub.bend), and time a new law alone before the full run.
 - CPU forks are dealt out once, not stolen: fork over one flat balanced tree of work items (all primitives of all nodes) rather than nesting forks per group; nested forks inside a heavy group barely spread.
 
 ## House rules

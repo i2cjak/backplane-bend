@@ -207,6 +207,8 @@ type Change is Data:
   QueueTakenOne{thread: String, msg: String, at: Nat}
   # a thread made as a fork of `source`: it starts with the source's\nconversation as handed-over context, and in a worktree from the\nsource's last checkpoint
   ThreadForked{id: String, source: String, at: Nat}
+  # the thread goes on with another provider (and model) from its next turn:\nthe provider left keeps its session and how much of the thread it saw;\nthe one taken up gets back its own session, if it had one
+  ProviderSet{id: String, provider: String, model: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -842,6 +844,91 @@ def Setting.get(s: State, +k: String, d: String) -> String:
     case State{_, _, _, _, _, sg, qu, ak, _, _}:
       State.get.k(Map.get(String, d, sg, k))
 
+# Providers in turn
+# -----------------
+# A thread may go on with another provider between turns (V2's provider
+# switch). Each provider keeps its own session of the thread (the setting
+# session.<thread>.<provider>) and how many of the thread's entries it had
+# seen when it was left (seen.<thread>.<provider>), so coming back resumes
+# its own conversation and it is handed only what it missed (laws
+# switch_*).
+
+def Switch.session.key(+th: String, +p: String) -> String:
+  "session." ++ th ++ "." ++ p
+
+def Switch.seen.key(+th: String, +p: String) -> String:
+  "seen." ++ th ++ "." ++ p
+
+def Switch.count.k(hit: Bool, n: Nat) -> Nat:
+  match hit:
+    case True{}:
+      1n+n
+    case False{}:
+      n
+
+def Switch.of(e: Entry) -> String:
+  match e:
+    case Msg{_, t, _, _, _}:
+      t
+    case Act{_, t, _, _, _, _}:
+      t
+
+# how many entries a thread has
+def Switch.count(es: List<&2, Entry>, +th: String) -> Nat:
+  match es:
+    case Nil{}:
+      0n
+    case +e <> t:
+      Switch.count.k(String.eq(Switch.of(e), th), Switch.count(t, th))
+
+def Switch.prov(t: Thread) -> String:
+  match t:
+    case Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, pr, _, _, _, _, _}:
+      pr
+
+def Switch.sess(t: Thread) -> String:
+  match t:
+    case Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, se, _}:
+      se
+
+def Switch.set(p: String, m: String, se: String, t: Thread) -> Thread:
+  Thread{id, pj, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, _, _, rm, im, _, de} = t
+  Thread{id, pj, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, p, m, rm, im, se, de}
+
+def State.entries.all(s: State) -> List<&2, Entry>:
+  match s:
+    case State{_, _, es, _, _, _, _, _, _, _}:
+      es
+
+def State.thread.get.k(r: Map<&2, Thread> & Thread) -> Thread:
+  (_, t) = r
+  t
+
+def State.thread.get(s: State, +id: String) -> Thread:
+  match s:
+    case State{_, ts, _, _, _, _, _, _, _, _}:
+      State.thread.get.k(Map.get(Thread, Thread.blank(id), ts, id))
+
+def State.switch.k(+s: State, +th: String, +old: String, +oldse: String, +p: String, m: String) -> State:
+  +s1 = State.setting(State.setting(s, Switch.session.key(th, old), oldse), Switch.seen.key(th, old), Nat.show(Switch.count(State.entries.all(s), th)))
+  State.thread((t => Switch.set(p, m, Setting.get(s1, Switch.session.key(th, p), ""), t)), s1, th)
+
+def State.switch(+s: State, +th: String, +p: String, m: String) -> State:
+  State.switch.k(s, th, Switch.prov(State.thread.get(s, th)), Switch.sess(State.thread.get(s, th)), p, m)
+
+# how many of a thread's entries a provider had seen when it was left
+# (0: it never took part)
+# a count written in decimal (Nat.read is slow to check in laws)
+def Switch.num(s: String, +acc: Nat) -> Nat:
+  match s:
+    case SNil{}:
+      acc
+    case SCon{Chr{+c}, t}:
+      Switch.num(t, Nat.add(Nat.mul(acc, 10n), U32.to_nat((c - 48 : U32))))
+
+def Switch.seen(s: State, +th: String, +p: String) -> Nat:
+  Switch.num(Setting.get(s, Switch.seen.key(th, p), "0"), 0n)
+
 # Forks
 # -----
 # A fork remembers its source thread (the setting fork.<id>).
@@ -991,6 +1078,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case ProviderSet{+id, +p, m, _}:
+      State.switch(s, id, p, m)
     case ThreadForked{+id, +src, _}:
       State.setting(s, Fork.key(id), src)
     case QueueEdited{+th, +msg, +text, _}:

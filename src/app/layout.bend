@@ -1213,7 +1213,7 @@ def Picker.chip_ws(+ty: Ty, es: List<&2, String>) -> List<&2, Nat>:
     case Nil{}:
       Nil{}
     case +e <> t:
-      U32.to_nat(Lay.button.w(ty, U.Effort.name(e))) <> Picker.chip_ws(ty, t)
+      U32.to_nat(Lay.button.w(ty, U.Chip.name(e))) <> Picker.chip_ws(ty, t)
 
 def Picker.line_w(ws: List<&2, Nat>) -> Nat:
   match ws:
@@ -1223,7 +1223,7 @@ def Picker.line_w(ws: List<&2, Nat>) -> Nat:
       Nat.add(Nat.add(w, 4n), Picker.line_w(t))
 
 # reasoning effort chips, where the flow put them
-def Picker.chips(+ty: Ty, bs: List<&2, MN.Box>, es: List<&2, String>, +cur: String) -> Out:
+def Picker.chips(+ty: Ty, bs: List<&2, MN.Box>, es: List<&2, String>, +cur: String, +prov: String) -> Out:
   match bs:
     case Nil{}:
       Out.none()
@@ -1232,7 +1232,7 @@ def Picker.chips(+ty: Ty, bs: List<&2, MN.Box>, es: List<&2, String>, +cur: Stri
         case Nil{}:
           Out.none()
         case +e <> et:
-          Out.cat(Lay.chip(ty, Picker.px(x), Picker.px(y), U.Effort.name(e), String.eq(e, cur), "effort", e), Picker.chips(ty, bt, et, cur))
+          Out.cat(Lay.chip(ty, Picker.px(x), Picker.px(y), U.Chip.name(e), U.Chip.on(e, cur, prov), "effort", e), Picker.chips(ty, bt, et, cur, prov))
 
 # one model row: its name clipped to the name column, its label past it
 def Picker.row(+ty: Ty, +m: String, +cur: String, +info: String, +prov: String, +x: Nat, +y: Nat, +w: Nat, +col: Nat) -> Out:
@@ -1302,7 +1302,7 @@ def Lay.picker.k(+ty: Ty, +ms: List<&2, String>, +cur: String, +info: String, +p
     Out{Lay.box(D.Clip.all(), x0, Picker.px(top), Picker.px(w), Picker.px(hb), 8, T.Th.panel(), T.Th.line()),
       [Lay.hit(x0, Picker.px(top), Picker.px(w), Picker.px(hb), "menu", Nat.show(off) ++ "|" ++ Nat.show(Nat.sub(n, shown)))]},
     Out.ops(Bool.pick(List<&2, R.Op>, List.is_empty(&2, String, es), Nil{}, [D.Draw.rect(D.Clip.all(), (x0 + 1 : U32), Picker.px(Nat.sub(Nat.add(top, rel), 5n)), Picker.px(Nat.sub(w, 2n)), 1, T.Th.line(), 255)])),
-    Picker.chips(ty, MN.Flow.place(cws, Nat.add(x, 6n), Nat.sub(Nat.add(x, w), 6n), Nat.add(x, 6n), Nat.add(top, 6n), 28n, 8n), es, effort),
+    Picker.chips(ty, MN.Flow.place(cws, Nat.add(x, 6n), Nat.sub(Nat.add(x, w), 6n), Nat.add(x, 6n), Nat.add(top, 6n), 28n, 8n), es, effort, prov),
     Picker.rows(ty, MN.Menu.rows(shown, Nat.add(x, 6n), Nat.add(top, rel), Nat.sub(w, 12n)), List.drop(&2, String, ms, off), cur, info, prov, col),
     Out.ops(Picker.bar(Nat.is_lt(shown, n), Nat.sub(Nat.add(x, w), 4n), Nat.add(top, rel), span, off, shown, n))])
 
@@ -2609,7 +2609,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
           Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.label(st, sel, Lay.running(turn)), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), rs, atts, up, path),
           Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
-          Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), 60, U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), moff)])
+          Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), 60, U.Chip.all(info, pr, mo), U.Effort.of(st, sel), moff)])
       Out.cat(tl, ch)
 
 # while files dragged in hover over the window, an accent ring around the

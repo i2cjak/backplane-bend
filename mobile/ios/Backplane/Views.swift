@@ -411,6 +411,15 @@ struct ThreadScreen: View {
                             }
                         }
                     }
+                    if let ps = thread.picker.providers, !ps.isEmpty {
+                        Section("Provider") {
+                            ForEach(ps, id: \.value) { c in
+                                Button { model.act("effort", c.value) } label: {
+                                    if c.on { Label(c.label, systemImage: "checkmark") } else { Text(c.label) }
+                                }
+                            }
+                        }
+                    }
                 } label: {
                     HStack(spacing: 4) {
                         Text(thread.picker.label).lineLimit(1)

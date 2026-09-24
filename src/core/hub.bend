@@ -601,7 +601,7 @@ def Hub.methods() -> List<&2, String>:
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
    "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
    "ask.answer", "device.register", "device.drop", "kicad.info", "queue.resume",
-   "queue.edit", "queue.remove", "queue.move", "queue.steer", "thread.fork", "thread.back"]
+   "queue.edit", "queue.remove", "queue.move", "queue.steer", "thread.fork", "thread.back", "thread.provider"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -1032,6 +1032,51 @@ def Hub.back.k(none: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +f
 def Hub.back(+s: M.State, +now: Nat, +client: U32, +id: String, +fork: String) -> Step:
   Hub.back.k(String.is_empty(M.Fork.source(s, fork)), s, now, client, id, fork, M.Fork.source(s, fork))
 
+# Switching providers
+# -------------------
+# Between turns a thread may go on with another provider (and its default
+# model). The provider left keeps its session and how much it saw; the one
+# taken up resumes its own session if it had one, and gets what it missed
+# as handed-over context with the next message (a full handoff when it
+# never took part). A context from an earlier switch not sent yet is
+# dropped for the new one. A running turn is never switched (law
+# switch_between_turns).
+
+def Switch.old(qs: List<&2, M.QItem>, +th: String, +now: Nat) -> List<&2, M.Change>:
+  match qs:
+    case Nil{}:
+      Nil{}
+    case M.QItem{+m, _} <> t:
+      List.append(&2, M.Change, Bool.pick(List<&2, M.Change>, String.starts_with(m, "handoff:switch:"), [M.QueueRemoved{th, m, now}], Nil{}), Switch.old(t, th, now))
+
+def Switch.ctx(none: Bool, +th: String, +msg: String, +text: String, +now: Nat) -> List<&2, M.Change>:
+  match none:
+    case True{}:
+      Nil{}
+    case False{}:
+      [M.TurnQueued{th, msg, text, now}]
+
+def Switch.go(+s: M.State, +now: Nat, +client: U32, +id: String, +th: String, +from: String, +to: String) -> Step:
+  +seen = M.Switch.seen(s, th, to)
+  +missed = Nat.sub(M.Switch.count(Hub.entries(s), th), seen)
+  Step{List.concat(&2, M.Change, [Switch.old(M.Queue.items(s, th), th, now), [M.ProviderSet{th, to, "", now}],
+      Switch.ctx(Nat.is_eq(missed, 0n), th, HD.Hand.prefix() ++ "switch:" ++ Nat.show(Hub.seq(s)), HD.Hand.switch(Hub.entries(s), th, from, to, seen), now),
+      [M.ActivityLogged{th, Hub.id("p", now, Hub.seq(s)), "info", "provider", "Now on " ++ to ++ Bool.pick(String, Nat.is_eq(missed, 0n), "", "; it gets what it missed with the next message"), now}]]),
+    [Reply.ok(client, id), AgentStop{th}]}
+
+def Switch.k(run: Bool, same: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +th: String, +from: String, +to: String) -> Step:
+  match run same:
+    case True{} _:
+      Step.outs([Reply.err(client, id, "a provider changes between turns: stop this one first")])
+    case False{} True{}:
+      Step.outs([Reply.ok(client, id)])
+    case False{} False{}:
+      Switch.go(s, now, client, id, th, from, to)
+
+# the thread goes on with provider `to` from its next turn
+def Hub.switch(+s: M.State, +now: Nat, +client: U32, +id: String, +th: String, +to: String) -> Step:
+  Switch.k(Hub.running(Hub.thread(s, th)), String.eq(Hub.provider(Hub.thread(s, th)), to), s, now, client, id, th, Hub.provider(Hub.thread(s, th)), to)
+
 # Stopping a turn
 # ---------------
 # Claude takes an interrupt on its input and stays up; a Codex or Grok turn
@@ -1118,6 +1163,8 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
       Hub.fork(s, now, client, id, J.Json.get_str(p, "thread", ""))
     case 28n:
       Hub.back(s, now, client, id, J.Json.get_str(p, "thread", ""))
+    case 29n:
+      Hub.switch(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "provider", ""))
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 
@@ -1802,3 +1849,9 @@ def Rec.after(+s: M.State, +now: Nat) -> M.State:
 # a thread "t1" on `provider` whose turn is in state st (for laws)
 def Demo.state(+provider: String, +st: M.TurnState) -> M.State:
   M.State.replay([M.ProjectCreated{"p1", "p", "/p", 1n}, M.ThreadCreated{"t1", "p1", "x", M.Local{}, "", "", provider, "", 1n}, M.TurnChanged{"t1", st, 2n}], M.State.empty())
+
+# a Claude thread "t1" with session S1 and two messages, then switched
+# to Codex, whose session became S2 (for laws)
+def Demo.switched() -> M.State:
+  M.State.replay([M.SessionSet{"t1", "S1", 3n}, M.MessagePosted{"t1", "m1", M.User{}, "hi", 3n}, M.MessagePosted{"t1", "m2", M.Assistant{}, "hello", 3n},
+    M.ProviderSet{"t1", "codex", "", 4n}, M.SessionSet{"t1", "S2", 5n}], Demo.state("claude", M.Completed{}))

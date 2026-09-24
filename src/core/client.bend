@@ -624,6 +624,14 @@ def Ui.close(u: Ui, +key: String) -> Ui:
     case Ui{st, sel, dr, live, +op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, dr, live, Map.set(&2, Bool, op, key, False{}), on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
+# a chip in the picker: a provider ("@codex") or an effort
+def Ui.effort.set(prov: Bool, u: Ui, +value: String) -> Act:
+  match prov:
+    case True{}:
+      Ui.on_thread.p(Ui.close(u, "models"), "thread.provider", [J.KV{"provider", J.Str{String.drop(value, 1n)}}])
+    case False{}:
+      Ui.on_thread.p(u, "thread.effort", [J.KV{"effort", J.Str{value}}])
+
 # the selected thread's model (the picker closes)
 def Ui.model(u: Ui, +model: String) -> Act:
   match u:
@@ -1772,6 +1780,24 @@ def Models.about(+info: String, +provider: String) -> J.Json:
 def Effort.chips(+info: String, +provider: String, +model: String) -> List<&2, String>:
   Effort.chips.of(Effort.known(J.Json.get(J.Json.get_obj(Models.about(info, provider), "efforts"), Bool.pick(String, String.is_empty(model), "default", model)), provider))
 
+# The picker's chips: the providers first ("@claude", "@codex", "@grok";
+# a thread goes on with another between turns, V2's provider switch),
+# then the efforts its model takes. One chip row and one action for all
+# clients: a chip's value starting with "@" is a provider.
+
+def Chip.providers() -> List<&2, String>:
+  ["@claude", "@codex", "@grok"]
+
+def Chip.all(+info: String, +provider: String, +model: String) -> List<&2, String>:
+  List.append(&2, String, Chip.providers(), Effort.chips(info, provider, model))
+
+def Chip.name(+c: String) -> String:
+  Bool.pick(String, String.starts_with(c, "@"), String.drop(c, 1n), Effort.name(c))
+
+# whether a chip is the thread's provider or effort now
+def Chip.on(+c: String, +effort: String, +provider: String) -> Bool:
+  Bool.or(String.eq(c, effort), String.eq(c, "@" ++ provider))
+
 def Models.cli(+info: String, +provider: String) -> String:
   J.Json.get_str(Models.about(info, provider), "cli", "")
 
@@ -2516,7 +2542,7 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 32n:
       Proj.enter(u)
     case 33n:
-      Ui.on_thread.p(u, "thread.effort", [J.KV{"effort", J.Str{value}}])
+      Ui.effort.set(String.starts_with(value, "@"), u, value)
     case 34n:
       Ui.skill(u, value)
     case 35n:

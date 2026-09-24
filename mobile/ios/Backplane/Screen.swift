@@ -90,6 +90,8 @@ struct Viewer: Decodable {
 struct ModelPicker: Decodable {
     let label: String
     let models, efforts: [Choice]
+    // another provider takes the thread up from its next turn
+    let providers: [Choice]?
 }
 
 // a message waiting in the thread's queue and its buttons (each sends
