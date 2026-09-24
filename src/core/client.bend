@@ -267,6 +267,13 @@ def Ui.reset(u: Ui, +o: J.Json) -> Ui:
           Machines.home(Local.keep(nf, Map.set(&2, String, Map.set(&2, String, Info.of(J.Json.get_obj(o, "info")), "cid", Str.get(nf, "cid")), "origin", J.Json.get_str(o, "origin", "")))), ob, tr})
 
 # how many changes this client holds (a reconnect asks for the rest)
+# the log's read model handed over whole (the hub's own window: nothing
+# to parse or replay)
+def Ui.adopt(u: Ui, st: M.State) -> Ui:
+  match u:
+    case Ui{_, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+
 def Ui.seq(u: Ui) -> Nat:
   match u:
     case Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, tr}:

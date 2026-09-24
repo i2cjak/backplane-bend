@@ -29,6 +29,7 @@ import ../core/images.bend as IM
 import ../gfx/bitmap.bend as BM
 import ../gfx/tiles.bend as TI
 import ../core/lightbox.bend as LBX
+import ../core/model.bend as M
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -37,6 +38,8 @@ import ../core/lightbox.bend as LBX
 type ShellMsg is Data:
   FromWin{words: List<&2, U32>}
   FromHub{tag: String, text: String}
+  # this process's hub handing over its read model (S.WState)
+  FromHubSt{tag: String, st: M.State, head: String}
   Frame{}
   Gone{tag: String}
   Retry{tag: String}
@@ -56,9 +59,10 @@ type ShellMsg is Data:
 type Tie is Data:
   Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat, pics: Map<&2, BM.Bitmap>, asked: Map<&2, Bool>}
 
-# what one frame keeps for the next: its tiles and the timeline's memo
+# what one frame keeps for the next: its tiles and the timeline's memos
+# (the open thread's first, then the threads shown before it)
 type Kept is Data:
-  Kept{frames: TI.Frames, memo: L.TLMemo}
+  Kept{frames: TI.Frames, memos: List<&2, L.TLMemo>}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -88,6 +92,10 @@ def Fwd.got(m: Maybe<&1, S.Wire>, +q: Chan(ShellMsg), +tag: String, k: Unit -> I
     case Some{S.WText{t}}:
       do IO<Unit>:
         ok : Bool <- Chan.send(ShellMsg, q, FromHub{tag, t})
+        k(Unit{})
+    case Some{S.WState{st, h}}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(ShellMsg, q, FromHubSt{tag, st, h})
         k(Unit{})
     case Some{_}:
       k(Unit{})
@@ -438,6 +446,15 @@ def Shell.recv(a: Shell, +text: String) -> IO(Shell):
     case Shell{n, w, _, qd, q, i, wa}:
       Shell.later(Shell{N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})), w, True{}, qd, q, i, wa})
 
+# the log's head read as usual, then the hub's read model in place of
+# the (empty) replay
+def Shell.adopt(current: Bool, a: Shell, st: M.State, +head: String) -> IO(Shell):
+  match current a:
+    case True{} Shell{n, w, _, qd, q, i, wa}:
+      Shell.later(Shell{N.Nui.adopt(N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(head), J.Null{})), st), w, True{}, qd, q, i, wa})
+    case False{} _:
+      IO.pure(Shell, a)
+
 def Shell.from(current: Bool, a: Shell, +t: String) -> IO(Shell):
   match current:
     case True{}:
@@ -619,6 +636,8 @@ def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
   match m:
     case FromHub{tag, t}:
       Shell.from(String.eq(tag, Tie.tag(ti)), a, t)
+    case FromHubSt{tag, st, h}:
+      Shell.adopt(String.eq(tag, Tie.tag(ti)), a, st, h)
     case Gone{tag}:
       Shell.gone(String.eq(tag, Tie.tag(ti)), String.is_empty(Tie.url(ti)), a, Tie.tag(ti))
     case Retry{tag}:
@@ -1286,7 +1305,7 @@ def Aux.frames(a: Aux) -> TI.Frames:
     case Aux{_, _, _, Kept{f, _}}:
       f
 
-def Aux.memo(a: Aux) -> L.TLMemo:
+def Aux.memos(a: Aux) -> List<&2, L.TLMemo>:
   match a:
     case Aux{_, _, _, Kept{_, m}}:
       m
@@ -1296,7 +1315,7 @@ def Aux.with_frames(a: Aux, f: TI.Frames) -> Aux:
     case Aux{ws, ty, ti, Kept{_, m}}:
       Aux{ws, ty, ti, Kept{f, m}}
 
-def Aux.with_memo(a: Aux, m: L.TLMemo) -> Aux:
+def Aux.with_memos(a: Aux, m: List<&2, L.TLMemo>) -> Aux:
   match a:
     case Aux{ws, ty, ti, Kept{f, _}}:
       Aux{ws, ty, ti, Kept{f, m}}
@@ -1365,11 +1384,11 @@ def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan
       Lbv.paint(N.Lbx.on(n), ops, hs, n, w, q, i, wa, epoch, ms)
 
 # the timeline's memo is brought up to this frame first; layout draws from it
-def Shell.paint.m(+memo: L.TLMemo, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(L.Lay.frame(Aux.ty(wa), memo, n), n, w, q, i, Aux.with_memo(wa, memo), epoch, ms)
+def Shell.paint.m(+memos: List<&2, L.TLMemo>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(L.Lay.frame(Aux.ty(wa), L.TL.memos.now(memos), n), n, w, q, i, Aux.with_memos(wa, memos), epoch, ms)
 
 def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.m(L.Lay.memo(Aux.ty(wa), n, Aux.memo(wa)), n, w, q, i, wa, epoch, ms)
+  Shell.paint.m(L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa)), n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match n0:
@@ -1397,6 +1416,8 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
       Shell.events(W.Win.decode(ws), a)
     case FromHub{tag, t}:
       Shell.tagged(a, FromHub{tag, t})
+    case FromHubSt{tag, st, h}:
+      Shell.tagged(a, FromHubSt{tag, st, h})
     case Frame{}:
       Shell.frame(a)
     case Blink{}:
@@ -1455,13 +1476,13 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Ch
     +q : Chan(ShellMsg) <- Chan.new(ShellMsg, 8192)
     +out : Chan(S.Wire) <- Chan.new(S.Wire, 8192)
     t : U32 <- H.Clock.epoch()
-    ok : Bool <- Chan.send(S.Msg, inbox, S.Join{0, out, 0n, ""})
+    ok : Bool <- Chan.send(S.Msg, inbox, S.JoinHere{0, out})
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     got : Maybe<&1, L.Ty> <- Chan.recv(L.Ty, fq)
     ty : L.Ty <- Shell.fonts(got)
     ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
-    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, L.TL.memo.none()}}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):

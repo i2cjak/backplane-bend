@@ -42,11 +42,16 @@ type Wire is Data:
   # a message already encoded (a board's plot: never parsed again)
   WBin{cbor: List<&2, U32>}
   WClose{}
+  # the hub's own window: the read model itself, with the log message's
+  # head (no items), in place of the log as text
+  WState{st: M.State, head: String}
 
 type Msg is Data:
   Announce{text: String}
   Mcp{thread: String, body: String, reply: Chan(String)}
   Join{client: U32, out: Chan(Wire), since: Nat, origin: String}
+  # the window in this process: it takes the read model, not the log
+  JoinHere{client: U32, out: Chan(Wire)}
   Leave{client: U32}
   Rpc{client: U32, text: String}
   AgentLine{thread: String, line: String}
@@ -322,6 +327,8 @@ def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit)
       IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(2, bs)), k)
     case Some{WClose{}}:
       Conn.finish(s, W.Ws.encode(8, Nil{}))
+    case Some{WState{_, _}}:
+      k(s)
     case None{}:
       Socket.close(s)
 
@@ -683,6 +690,16 @@ def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
 
 def Hub.join.note(+out: Chan(Wire), +note: String) -> IO(Unit):
   Hub.join.note.k(String.is_empty(note), out, note)
+
+# the window in this process: the read model (devices left out, as the
+# wire leaves them) and the log message with no items
+def Hub.join.here(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, +ls, cl, as, inbox, +cfg, +note}:
+      do IO<Hub>:
+        ok : Bool <- Chan.send(Wire, out, WState{M.State.private(st), Hub.log_msg.k(0n, ls, cfg, 0n)})
+        Hub.join.note(out, note)
+        return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg, note}
 
 def Hub.join(h: Hub, +client: U32, +out: Chan(Wire), +since: Nat, +origin: String) -> IO(Hub):
   match h:
@@ -3302,6 +3319,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.note(h, text)
     case Join{client, out, since, origin}:
       Hub.join(h, client, out, since, origin)
+    case JoinHere{client, out}:
+      Hub.join.here(h, client, out)
     case Leave{client}:
       Hub.leave(h, client)
     case Rpc{client, text}:

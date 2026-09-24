@@ -89,7 +89,7 @@ def step_nui(s: N.Step) -> N.Nui:
 
 # what one frame leaves for the next
 type Kept is Data:
-  Kept{n: N.Nui, memo: L.TLMemo, frames: TI.Frames}
+  Kept{n: N.Nui, memos: List<&2, L.TLMemo>, frames: TI.Frames}
 
 def kept_n(k: Kept) -> N.Nui:
   match k:
@@ -98,9 +98,9 @@ def kept_n(k: Kept) -> N.Nui:
 
 def warm(+ty: L.Ty, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
-  +memo = L.Lay.memo(ty, n, L.TL.memo.none())
-  +o = L.Lay.frame(ty, memo, n)
-  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{})}}
+  +mm = L.Lay.memos(ty, n, Nil{})
+  +o = L.Lay.frame(ty, L.TL.memos.now(mm), n)
+  Kept{with_hits(n, hits(o), 0n), mm, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{})}}
 
 # one event and the frame after it, timed: event, memo, layout, tiles (ms)
 def step(+what: String, e: W.WinEv, +ty: L.Ty, k: Kept) -> IO(Kept):
@@ -110,9 +110,9 @@ def step(+what: String, e: W.WinEv, +ty: L.Ty, k: Kept) -> IO(Kept):
         +t0 : Nat <- IO.now()
         +n1 : N.Nui = prepared(step_nui(N.Nui.event(n0, e)), 7n)
         +t1 : Nat <- IO.now()
-        +memo : L.TLMemo = L.Lay.memo(ty, n1, memo0)
+        +mm : List<&2, L.TLMemo> = L.Lay.memos(ty, n1, memo0)
         +t2 : Nat <- IO.now()
-        +o : L.Out = L.Lay.frame(ty, memo, n1)
+        +o : L.Out = L.Lay.frame(ty, L.TL.memos.now(mm), n1)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
         +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0)
@@ -120,7 +120,7 @@ def step(+what: String, e: W.WinEv, +ty: L.Ty, k: Kept) -> IO(Kept):
         +t4 : Nat <- IO.now()
         IO.print(what ++ ": event " ++ Nat.show(Nat.sub(t1, t0)) ++ "  memo " ++ Nat.show(Nat.sub(t2, t1)) ++ "  layout " ++ Nat.show(Nat.sub(t3, t2))
           ++ "  tiles " ++ Nat.show(Nat.sub(t4, t3)) ++ "  = " ++ Nat.show(Nat.sub(t4, t0)) ++ " ms (" ++ Nat.show(k2) ++ " ops)")
-        return Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}}
+        return Kept{with_hits(n1, hits(o), t4), mm, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}}
 
 def keys(cs: String, +ty: L.Ty, k: Kept) -> IO(Kept):
   match cs:
@@ -148,6 +148,65 @@ def switch(+id: String, +ty: L.Ty, k: Kept) -> IO(Kept):
     case Kept{+n0, memo0, fr0}:
       step("switch", W.WExpose{}, ty, Kept{N.Nui.with_ui(n0, act_ui(U.Ui.act(N.Nui.ui(n0), "select", id))), memo0, fr0})
 
+def rep.mine(+r: Nat, +es: List<&2, M.Entry>, +th: String) -> Nat:
+  match r:
+    case 0n:
+      0n
+    case 1n+q:
+      Nat.add(List.length(&2, M.Entry, L.TL.mine(es, th, Nil{})), rep.mine(q, es, th))
+
+def rep.memo(+r: Nat, +ty: L.Ty, +n: N.Nui, +m: L.TLMemo) -> Nat:
+  match r:
+    case 0n:
+      0n
+    case 1n+q:
+      Nat.add(L.TL.memo.size(L.Lay.memo(ty, n, m)), rep.memo(q, ty, n, m))
+
+def rep.lay(+r: Nat, +ty: L.Ty, +n: N.Nui, +m: L.TLMemo) -> Nat:
+  match r:
+    case 0n:
+      0n
+    case 1n+q:
+      Nat.add(List.length(&2, R.Op, ops(L.Lay.frame(ty, m, n))), rep.lay(q, ty, n, m))
+
+def rep.side(+r: Nat, +ty: L.Ty, +n: N.Nui) -> Nat:
+  match r:
+    case 0n:
+      0n
+    case 1n+q:
+      Nat.add(List.length(&2, R.Op, ops(L.Lay.sidebar(ty, n, 900))), rep.side(q, ty, n))
+
+def rep.tiles(+r: Nat, +os: List<&2, R.Op>, +prev: TI.Frames) -> Nat:
+  match r:
+    case 0n:
+      0n
+    case 1n+q:
+      Nat.add(some(TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev)), rep.tiles(q, os, prev))
+
+# each part of an unchanged frame, 20 times over
+def parts(+ty: L.Ty, k: Kept) -> IO(Unit):
+  match k:
+    case Kept{+n0, +mm, +fr}:
+      +n = prepared(n0, 9n)
+      +m = L.TL.memos.now(mm)
+      +es = U.Ui.entries(U.Ui.state(N.Nui.ui(n)))
+      +th = U.Ui.sel(N.Nui.ui(n))
+      +os = ops(L.Lay.frame(ty, m, n))
+      do IO<Unit>:
+        +a : Nat <- IO.now()
+        +x1 : Nat = rep.mine(20n, es, th)
+        +b : Nat <- IO.now()
+        +x2 : Nat = rep.memo(20n, ty, n, m)
+        +c : Nat <- IO.now()
+        +x3 : Nat = rep.lay(20n, ty, n, m)
+        +d : Nat <- IO.now()
+        +x4 : Nat = rep.side(20n, ty, n)
+        +e : Nat <- IO.now()
+        +x5 : Nat = rep.tiles(20n, os, fr)
+        +f : Nat <- IO.now()
+        IO.print("x20 ms: TL.mine " ++ Nat.show(Nat.sub(b, a)) ++ "  memo (unchanged) " ++ Nat.show(Nat.sub(c, b)) ++ "  layout " ++ Nat.show(Nat.sub(d, c))
+          ++ " (sidebar " ++ Nat.show(Nat.sub(e, d)) ++ ")  tiles (unchanged) " ++ Nat.show(Nat.sub(f, e)) ++ "   [" ++ Nat.show(Nat.add(Nat.add(x1, x2), Nat.add(x3, Nat.add(x4, x5)))) ++ "]")
+
 def steady(+ty: L.Ty, +u: U.Ui) -> IO(Unit):
   +es = entries(U.Ui.state(u))
   +a = other(es, "")
@@ -160,8 +219,18 @@ def steady(+ty: L.Ty, +u: U.Ui) -> IO(Unit):
     k4 : Kept <- moves(4n, ty, k3)
     k5 : Kept <- switch(b, ty, k4)
     k6 : Kept <- switch(a, ty, k5)
-    k7 : Kept <- step("resize", W.WSize{1300, 850}, ty, k6)
-    return Unit{}
+    k6b : Kept <- switch(b, ty, k6)
+    k6c : Kept <- switch(a, ty, k6b)
+    k7 : Kept <- step("resize", W.WSize{1300, 850}, ty, k6c)
+    parts(ty, k7)
+
+# the same frame from two window states, with a thread open: equal ops?
+def same_frame(+ty: L.Ty, +u1: U.Ui, +u2: U.Ui, +th: String) -> Bool:
+  +n1 = prepared(N.Nui.init(act_ui(U.Ui.act(u1, "select", th)), 1400, 900), 5n)
+  +n2 = prepared(N.Nui.init(act_ui(U.Ui.act(u2, "select", th)), 1400, 900), 5n)
+  +m1 = L.TL.memos.now(L.Lay.memos(ty, n1, Nil{}))
+  +m2 = L.TL.memos.now(L.Lay.memos(ty, n2, Nil{}))
+  TI.Eq.ops(ops(L.Lay.frame(ty, m1, n1)), ops(L.Lay.frame(ty, m2, n2)))
 
 def main() -> IO(Unit):
   do IO<Unit>:
@@ -202,4 +271,13 @@ def main() -> IO(Unit):
     +t12 : Nat <- IO.now()
     seen(some(tl), "first tiles", t11, t12)
     seen(0n, "total", t0, t12)
+    # the hub's own window takes the read model (S.JoinHere): the same
+    # frames as from the log, nothing parsed
+    +head : String = "{\"t\":\"log\",\"since\":0,\"origin\":\"x\",\"version\":\"0\",\"info\":{},\"items\":[]}"
+    +ta : Nat <- IO.now()
+    +u2 : U.Ui = U.Ui.adopt(U.Ui.recv(U.Ui.init(1790000000n), Maybe.default(&2, J.Json, J.Json.parse(head), J.Null{})), M.State.private(st))
+    +tb : Nat <- IO.now()
+    seen(M.State.seq(U.Ui.state(u2)), "window: adopt (instead of message, parse, replay)", ta, tb)
+    IO.print("handoff seq " ++ Nat.show(M.State.seq(U.Ui.state(u))) ++ " = " ++ Nat.show(M.State.seq(U.Ui.state(u2)))
+      ++ ", same frames: " ++ Bool.show(same_frame(ty, u, u2, other(entries(st), ""))) ++ " " ++ Bool.show(same_frame(ty, u, u2, other(entries(st), other(entries(st), "")))))
     steady(ty, u)

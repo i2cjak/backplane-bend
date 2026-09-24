@@ -14,6 +14,7 @@ import ../core/attach.bend as AT
 import ../core/links.bend as LK
 import ../core/lightbox.bend as LB
 import ../core/edit.bend as ED
+import ../core/model.bend as M
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -456,6 +457,12 @@ def Nui.ui(n: Nui) -> U.Ui:
 # to the composer
 def Nui.unpick(+n: Nui) -> Nui:
   Bool.pick(Nui, Bool.and(String.eq(Nui.focus_of(n), "proj"), Bool.not(U.Ui.flag(Nui.ui(n), "proj"))), Nui.with_focus(n, "composer"), n)
+
+# the hub's read model, handed over (main.bend's Shell.adopt)
+def Nui.adopt(n: Nui, st: M.State) -> Nui:
+  match n:
+    case Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      Nui{U.Ui.adopt(u, st), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
 def Nui.recv(n: Nui, +o: J.Json) -> Nui:
   Nui.unpick(Nui.recv.k(n, o))
