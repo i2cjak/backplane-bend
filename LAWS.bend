@@ -48,6 +48,7 @@ import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
+import ./src/core/space.bend as SPC
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2130,3 +2131,22 @@ law cron_due_fires_once:
   for +off: Nat
   for +east: Bool
   {CR.Cron.due(c, now, now, off, east) == False{} : Bool}
+# Bot spaces
+# ----------
+
+# a parsed space never holds more than 200 blocks, whatever a bot writes
+law space_caps:
+  for +j: J.Json
+  {Nat.is_le(SPC.Space.count(SPC.Space.parse(j)), 200n) == True{} : Bool}
+
+# a progress bar never runs past full
+law space_progress_max:
+  for +p: Nat
+  {Nat.is_le(SPC.Space.clamp(p), 1000n) == True{} : Bool}
+
+# what a space's button or input sends the bot is always marked as coming
+# from the space
+law space_message_prefix:
+  for +action: String
+  for +value: String
+  {String.starts_with(SPC.Space.message(action, value), "[space] ") == True{} : Bool}

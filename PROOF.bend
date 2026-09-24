@@ -35,6 +35,7 @@ import ./src/gfx/face.bend as FA
 import ./src/core/glb.bend as G
 import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
+import ./src/core/space.bend as SPC
 import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
 import ./src/core/hier.bend as HI
@@ -3995,3 +3996,42 @@ def Laws.cron_next_after(c, after, off, east):
 def Laws.cron_due_fires_once(c, now, off, east):
   %Equal.sym(Cmp, Nat.cmp(now, now), EQ{}, nat_cmp_refl(now)) : {CR.Cron.due.k(_, CR.Cron.next(c, now, off, east), now) == False{} : Bool}
   {==}
+# Bot spaces
+# ----------
+
+# taking n blocks leaves at most n
+law take_le:
+  for xs: List<&2, SPC.Block>
+  for n: Nat
+  {Nat.is_le(List.length(&2, SPC.Block, List.take(&2, SPC.Block, xs, n)), n) == True{} : Bool}
+
+def take_le(xs, n):
+  match xs n:
+    case Nil{} 0n:
+      {==}
+    case Nil{} 1n+p:
+      {==}
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+p:
+      take_le(t, p)
+
+law starts_with_empty:
+  for s: String
+  {String.starts_with(s, "") == True{} : Bool}
+
+def starts_with_empty(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{h, t}:
+      {==}
+
+def Laws.space_caps(j):
+  take_le(SPC.Sp.all(j), 200n)
+
+def Laws.space_progress_max(p):
+  min_le_k(Nat.is_le(p, 1000n), p, 1000n, {==})
+
+def Laws.space_message_prefix(action, value):
+  starts_with_empty(SPC.Sp.msg.k(String.is_empty(value), action, value))
