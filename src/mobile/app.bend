@@ -1,44 +1,44 @@
 import Base
 import ../core/json.bend as J
-import ../core/model.bend as M
 import ../core/client.bend as U
-import ./screen.bend as S
-import ./notify.bend as N
 import ../core/cbor.bend as CB
 import ../core/sha1.bend as SH
-import ./view.bend as VW
-import ../core/codec.bend as C
-import ./picker.bend as PK
+import ./hubs.bend as H
 
 # What bridge.js calls. The phone apps see only strings: server messages
-# in (binary CBOR frames, carried as base64, decoded by bridge.js); the
-# screen, commands and alerts out, and what to send (CBOR, as base64).
+# in (binary CBOR frames, carried as base64, decoded by bridge.js) from
+# each hub the phone is paired with, named by its key; the screen,
+# commands (each for one hub) and alerts out, and what to send (CBOR, as
+# base64). hubs.bend keeps a client per hub and makes one screen of them.
 
-def init(now: Nat, cid: String) -> U.Ui:
-  U.Ui.set_cid(U.Ui.init(now), cid)
+def init(now: Nat, +cid: String) -> H.Hubs:
+  H.Hubs.init(now, cid)
 
-# a server message, with what to send and the alerts it raised
-type Recv is Data:
-  Recv{act: U.Act, alerts: String}
+def hubs.keys(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      J.Json.as_str(Some{x}, "") <> hubs.keys(t)
 
-def recv.k(+seen: List<&2, N.Seen>, a: U.Act) -> Recv:
+# the hubs the phone is paired with, by key, as a JSON array of strings
+def hubs.k(+hs: H.Hubs, j: J.Json) -> H.Hubs:
+  H.Hubs.set(hs, hubs.keys(J.Json.elems(j)))
+
+def hubs(+hs: H.Hubs, text: String) -> H.Hubs:
+  hubs.k(hs, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{}))
+
+# the alerts a step raised, as JSON text
+def alerts(a: H.HAct) -> String:
   match a:
-    case U.Act{+u, cmds}:
-      Recv{U.Act{u, cmds}, J.Json.show(J.Json.arr(N.Note.alerts(U.Ui.threads(S.Mob.st(u)), seen, U.Ui.entries(S.Mob.st(u)))))}
+    case H.HAct{_, _, als}:
+      J.Json.show(J.Json.arr(als))
 
-def recv.seen(a: U.Act) -> U.Act:
-  match a:
-    case U.Act{u, cmds}:
-      U.Act{PK.MPick.seen(u), cmds}
-
-def recv.j(+u: U.Ui, +o: J.Json) -> Recv:
-  recv.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), recv.seen(U.Ui.recv_act(VW.View.picked(u, o), o)))
-
-# a frame from the hub, already decoded: bridge.js reads the base64 and
+# a frame from hub `key`, already decoded: bridge.js reads the base64 and
 # CBOR natively (Cbor.decode here took 17x as long on a phone's
 # JavaScriptCore, which has no JIT), with these dictionaries
-def recv(+u: U.Ui, +o: J.Json) -> Recv:
-  recv.j(u, o)
+def recv(+hs: H.Hubs, +key: String, +o: J.Json) -> H.HAct:
+  H.Hubs.recv(hs, key, o)
 
 def cbor_keys() -> List<&2, String>:
   CB.Cbor.keys()
@@ -51,55 +51,29 @@ def cbor_words() -> List<&2, String>:
 def wire(text: String) -> String:
   SH.B64.encode(CB.Cbor.encode(Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
 
-def act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
-  match i:
-    case 0n:
-      VW.View.open(u, value)
-    case 1n:
-      VW.View.mention(u, value)
-    case 2n:
-      VW.View.pick(u, value)
-    case 3n:
-      U.Act{VW.Pick.clear(u), Nil{}}
-    case 4n:
-      PK.MPick.open(u)
-    case 5n:
-      PK.MPick.type(u, value)
-    case 6n:
-      PK.MPick.mkdir(u, value)
-    case _:
-      VW.View.sync(U.Ui.act(u, action, value))
+# an action, routed to the hub it names (hubs.bend)
+def act(+hs: H.Hubs, +action: String, +value: String) -> H.HAct:
+  H.Hubs.act(hs, action, value)
 
-# an action; "view" opens or closes the board viewer ("board",
-# "schematic", "3d", ""), "view-pick" inspects a tap (what lies under
-# the finger), "view-unpick" closes the card, "view-mention" puts the
-# inspected item into the draft; "picker-open" opens the project picker
-# at ~/, "picker-type" is its field's new text (typed, or a folder
-# tapped), "picker-mkdir" makes a folder and goes into it; any action that
-# moves to another project re-aims the viewer
-def act(+u: U.Ui, +action: String, +value: String) -> U.Act:
-  act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir"], action), u, action, value)
+def screen(+hs: H.Hubs) -> String:
+  J.Json.show(H.Hubs.screen(hs))
 
-def screen(+u: U.Ui) -> String:
-  J.Json.show(S.Mob.screen(u))
+def online(+hs: H.Hubs, +key: String, b: Bool) -> H.HAct:
+  H.Hubs.online(hs, key, b)
 
-def online(u: U.Ui, b: Bool) -> U.Act:
-  VW.View.online(u, b)
+def tick(+hs: H.Hubs, now: Nat) -> H.HAct:
+  H.Hubs.tick(hs, now)
 
-def tick(u: U.Ui, now: Nat) -> U.Ui:
-  U.Ui.tick(u, now)
+# how many changes this app holds from hub `key` and which log they came
+# from (a reconnect asks that hub for the rest)
+def seq(+hs: H.Hubs, +key: String) -> String:
+  Nat.show(U.Ui.seq(H.Hubs.ui(hs, key)))
 
-# how many changes this app holds and which log they came from (a
-# reconnect asks the server for the rest)
-def seq(u: U.Ui) -> String:
-  Nat.show(U.Ui.seq(u))
-
-def origin(u: U.Ui) -> String:
-  U.Ui.info(u, "origin")
+def origin(+hs: H.Hubs, +key: String) -> String:
+  U.Ui.info(H.Hubs.ui(hs, key), "origin")
 
 # this phone, for pushes while the app sleeps: an APNs token for alerts,
 # for one Live Activity ("activity", with its thread) or for starting one
-# ("start"). Kept in the outbox until the hub answers.
-def register(u: U.Ui, platform: String, token: String, kind: String, thread: String, env: String, bundle: String) -> U.Act:
-  U.Ui.rpc.keep(u, "device.register", [J.KV{"platform", J.Json.str(platform)}, J.KV{"token", J.Json.str(token)},
-    J.KV{"kind", J.Json.str(kind)}, J.KV{"thread", J.Json.str(thread)}, J.KV{"env", J.Json.str(env)}, J.KV{"bundle", J.Json.str(bundle)}])
+# ("start"). Every paired hub gets it, kept in each outbox until answered.
+def register(+hs: H.Hubs, platform: String, token: String, kind: String, thread: String, env: String, bundle: String) -> H.HAct:
+  H.Hubs.register(hs, platform, token, kind, thread, env, bundle)

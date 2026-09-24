@@ -27,6 +27,7 @@ import ./src/core/http.bend as WS
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
 import ./src/mobile/picker.bend as MP
+import ./src/mobile/hubs.bend as Hb
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -567,6 +568,20 @@ law alert_none_on_connect:
   for ts: List<&2, M.Thread>
   for +es: List<&2, M.Entry>
   {Nt.Note.alerts(ts, [], es) == [] : List<&2, J.Json>}
+
+# a phone paired with several hubs names every thread and project by its
+# hub ("key|id"), but "nothing selected" stays nothing, on any hub
+law hubs_no_id:
+  for +k: String
+  {Hb.Hubs.id(k, "") == "" : String}
+
+# a phone paired with no hub sends nothing, however time passes
+law hubs_unpaired_quiet:
+  for +cid: String
+  for now: Nat
+  for cur: String
+  for +t: Nat
+  {Hb.Hubs.cmds(Hb.Hubs.tick(Hb.Hubs{cid, now, cur, []}, t)) == [] : List<&2, Hb.HCmd>}
 
 # with no thread running the island is empty, so the Live Activity (iOS)
 # ends and the live service (Android) stops

@@ -94,11 +94,12 @@ fun App(m: AppModel) {
     var pairing by rememberSaveable { mutableStateOf(false) }
     val s = m.screen
     when {
-        m.link.isEmpty() || pairing -> Pair(m.link, cancel = if (m.link.isEmpty()) null else ({ pairing = false })) {
-            m.pair(it)
-            pairing = false
-        }
+        m.links.isEmpty() -> Pair("", cancel = null) { m.pair(it) }
         s == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+        pairing -> {
+            BackHandler { pairing = false }
+            Hubs(m, s) { pairing = false }
+        }
         s.thread != null && s.thread.viewer.open.isNotEmpty() -> {
             BackHandler { m.act("view", "") }
             PlotScreen(m, s.thread.viewer)
@@ -126,6 +127,52 @@ private fun Pair(link: String, cancel: (() -> Unit)?, done: (String) -> Unit) {
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
             Button(onClick = { done(text) }, enabled = text.isNotBlank()) { Text("Connect") }
+        }
+    }
+}
+
+// the hubs this phone is paired with (the cross unpairs), the owner's
+// other machines they know of (one tap pairs), and a field for a new link
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun Hubs(m: AppModel, s: Screen, back: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("Hubs") }, navigationIcon = {
+            IconButton(onClick = back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        })
+    }) { pad ->
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+            items(s.hubs, key = { "h:" + it.key }) { h ->
+                ListItem(
+                    headlineContent = { Text(h.name) },
+                    supportingContent = { Text(h.key) },
+                    leadingContent = { Status(if (h.online) "idle" else "stop") },
+                    trailingContent = { IconButton(onClick = { m.unpair(h.key) }) { Icon(Icons.Filled.Close, "Unpair") } },
+                )
+            }
+            if (s.found.isNotEmpty()) {
+                item(key = "found") {
+                    Text("On your tailnet", Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.outline)
+                }
+                items(s.found, key = { "f:" + it.url }) { f ->
+                    ListItem(
+                        headlineContent = { Text(f.name) },
+                        supportingContent = { Text(f.url) },
+                        trailingContent = { IconButton(onClick = { m.pair(f.url) }) { Icon(Icons.Filled.Add, "Pair") } },
+                    )
+                }
+            }
+            item(key = "add") {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+                        style = MaterialTheme.typography.bodyMedium)
+                    OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
+                        label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
+                    Button(onClick = { m.pair(text); text = "" }, enabled = text.isNotBlank()) { Text("Add hub") }
+                }
+            }
         }
     }
 }
@@ -230,6 +277,7 @@ private fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onCli
 @Composable
 private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
     val snacks = remember { SnackbarHostState() }
+    var choosing by remember { mutableStateOf(false) }
     Errors(m, s, snacks)
     Scaffold(
         topBar = {
@@ -243,8 +291,19 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { m.act("picker-open") }) { Icon(Icons.Filled.CreateNewFolder, "Add project") }
-                    IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Pairing") }
+                    // with several hubs, the picker opens on the one chosen
+                    Box {
+                        IconButton(onClick = { if (s.hubs.size > 1) choosing = true else m.act("picker-open") }) {
+                            Icon(Icons.Filled.CreateNewFolder, "Add project")
+                        }
+                        DropdownMenu(choosing, { choosing = false }) {
+                            for (h in s.hubs) DropdownMenuItem(text = { Text(h.name) }, onClick = {
+                                choosing = false
+                                m.act("picker-open", h.key + "|")
+                            })
+                        }
+                    }
+                    IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Hubs") }
                 },
             )
         },
@@ -260,7 +319,10 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                 item(key = "p:" + p.id) {
                     ListItem(
                         headlineContent = { Text(p.title, style = MaterialTheme.typography.titleMedium) },
-                        supportingContent = { Text(p.root, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        supportingContent = {
+                            Text(if (p.machine.isEmpty()) p.root else p.machine + ": " + p.root,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        },
                         trailingContent = {
                             IconButton(onClick = { m.act("new-thread", p.id) }) { Icon(Icons.Filled.Add, "New thread") }
                         },
