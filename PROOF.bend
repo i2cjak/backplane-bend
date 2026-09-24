@@ -6,6 +6,8 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/todo.bend as TD
+import ./src/core/acp.bend as AC
 import ./src/core/mcp.bend as MC
 import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
@@ -3738,4 +3740,44 @@ def Laws.window_state_seq(s):
 def Laws.window_adopt(u, st):
   match u:
     case U.Ui{s0, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      {==}
+
+def Laws.todo_write_whole_list():
+  {==}
+
+def Laws.todo_line_active_form():
+  {==}
+
+def Laws.todo_task_created():
+  {==}
+
+def Laws.todo_task_result_number():
+  {==}
+
+def Laws.todo_task_update():
+  {==}
+
+def Laws.todo_task_delete():
+  {==}
+
+def Laws.todo_codex_completed():
+  {==}
+
+def Laws.todo_acp_plan():
+  {==}
+
+def Laws.todo_shown_while_running():
+  {==}
+
+def Laws.todo_hidden_when_done():
+  {==}
+
+def Laws.todo_write_sets_list():
+  {==}
+
+def Laws.todo_shown_while_left(run):
+  match run:
+    case True{}:
+      {==}
+    case False{}:
       {==}

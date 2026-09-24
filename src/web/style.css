@@ -229,6 +229,9 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 .ask-detail { font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 30vh; overflow: auto; }
 .ask .body { max-height: 40vh; overflow: auto; }
 .ask-btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.todos { display: flex; flex-direction: column; gap: 2px; margin: 0 16px 4px; padding: 6px 10px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; }
+.todos:empty { display: none; }
+.todos .head { color: var(--soft, inherit); margin-bottom: 2px; } .todos .todo.completed { color: var(--faint); } .todos .todo.pending { color: var(--dim, inherit); }
 .queue { display: flex; flex-direction: column; gap: 4px; margin: 0 16px; }
 .queue:empty { display: none; }
 .queued { display: flex; gap: 8px; align-items: center; padding: 4px 6px 4px 10px; border: 1px solid var(--line); background: var(--raise); font-size: 12px; }

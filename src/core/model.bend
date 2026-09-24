@@ -205,10 +205,16 @@ type Change is Data:
   QueueMoved{thread: String, msg: String, to: Nat, at: Nat}
   # one queued message taken out to be sent now (a steer)
   QueueTakenOne{thread: String, msg: String, at: Nat}
-  # a thread made as a fork of `source`: it starts with the source's\nconversation as handed-over context, and in a worktree from the\nsource's last checkpoint
+  # a thread made as a fork of `source`: it starts with the source's
+  # conversation as handed-over context, and in a worktree from the
+  # source's last checkpoint
   ThreadForked{id: String, source: String, at: Nat}
-  # the thread goes on with another provider (and model) from its next turn:\nthe provider left keeps its session and how much of the thread it saw;\nthe one taken up gets back its own session, if it had one
+  # the thread goes on with another provider (and model) from its next turn:
+  # the provider left keeps its session and how much of the thread it saw;
+  # the one taken up gets back its own session, if it had one
   ProviderSet{id: String, provider: String, model: String, at: Nat}
+  # an agent's todo list for its thread, as JSON [{text, status}] (todo.bend)
+  TodosSet{thread: String, todos: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -1162,6 +1168,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case TodosSet{+th, todos, _}:
+      State.setting(s, "todos." ++ th, todos)
     case ProviderSet{+id, +p, m, _}:
       State.switch(s, id, p, m)
     case ThreadForked{+id, +src, _}:

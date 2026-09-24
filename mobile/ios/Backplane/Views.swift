@@ -380,6 +380,17 @@ struct ThreadScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
           VStack(spacing: 0) {
+            if let td = thread.todos {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(td.head).bold()
+                    ForEach(Array(td.lines.enumerated()), id: \.offset) { _, l in
+                        Text(l.text).lineLimit(1).foregroundStyle(l.status == "completed" ? .secondary : .primary)
+                    }
+                }
+                .font(.caption)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal).padding(.top, 8)
+            }
             ForEach(thread.queue ?? [], id: \.msg) { q in
                 HStack(spacing: 6) {
                     Text(q.tag).bold()

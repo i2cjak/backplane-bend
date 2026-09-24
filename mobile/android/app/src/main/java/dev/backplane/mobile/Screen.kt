@@ -70,6 +70,9 @@ data class ModelPicker(val label: String, val models: List<Choice>, val efforts:
 // action with value)
 data class QButton(val label: String, val action: String, val value: String)
 data class QueueRow(val msg: String, val text: String, val tag: String, val buttons: List<QButton>)
+// the agent's todo list: "Todo 2/5" and a line per step
+data class TodoLine(val text: String, val status: String)
+data class Todos(val head: String, val lines: List<TodoLine>)
 
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
@@ -77,6 +80,7 @@ data class ThreadView(
     val working: String, val draft: String, val send: String,
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
     val queue: List<QueueRow> = emptyList(),
+    val todos: Todos? = null,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -140,6 +144,7 @@ private fun thread(o: JSONObject) = ThreadView(
         QueueRow(it.optString("msg"), it.optString("text"), it.optString("tag"),
             it.optJSONArray("buttons").map { b -> QButton(b.optString("label"), b.optString("action"), b.optString("value")) })
     },
+    o.optJSONObject("todos")?.let { td -> Todos(td.optString("head"), td.optJSONArray("lines").map { TodoLine(it.optString("text"), it.optString("status")) }) },
 )
 
 private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }

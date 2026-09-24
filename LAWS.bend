@@ -5,6 +5,8 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/todo.bend as TD
+import ./src/core/acp.bend as AC
 import ./src/core/mcp.bend as MC
 import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
@@ -1917,3 +1919,53 @@ law window_adopt:
   for u: U.Ui
   for st: M.State
   {U.Ui.state(U.Ui.adopt(u, st)) == st : M.State}
+
+# Todo lists
+# ----------
+
+# TodoWrite sets the whole list; a step being done reads as its active form
+law todo_write_whole_list:
+  {TD.Todo.write(J.Json.obj([J.KV{"todos", J.Json.arr([J.Json.obj([J.KV{"content", J.Str{"Run tests"}}, J.KV{"status", J.Str{"in_progress"}}, J.KV{"activeForm", J.Str{"Running tests"}}])])}]))
+    == [TD.Todo{"1", "Run tests", "Running tests", "in_progress"}] : List<&2, TD.Todo>}
+
+law todo_line_active_form:
+  {TD.Todo.line(TD.Todo{"1", "Run tests", "Running tests", "in_progress"}) == "[>] Running tests" : String}
+
+# TaskCreate adds a step under its call's id until the result names it;
+# TaskUpdate changes it, or drops it when deleted
+law todo_task_created:
+  {TD.Todo.named(TD.Todo.create([], "u1", J.Json.obj([J.KV{"subject", J.Str{"a"}}])), "u1", "3") == [TD.Todo{"3", "a", "", "pending"}] : List<&2, TD.Todo>}
+
+law todo_task_result_number:
+  {TD.Todo.result("Task #12 created successfully: a") == "12" : String}
+
+law todo_task_update:
+  {TD.Todo.update([TD.Todo{"3", "a", "", "pending"}], J.Json.obj([J.KV{"taskId", J.Str{"3"}}, J.KV{"status", J.Str{"completed"}}])) == [TD.Todo{"3", "a", "", "completed"}] : List<&2, TD.Todo>}
+
+law todo_task_delete:
+  {TD.Todo.update([TD.Todo{"3", "a", "", "pending"}], J.Json.obj([J.KV{"taskId", J.Str{"3"}}, J.KV{"status", J.Str{"deleted"}}])) == [] : List<&2, TD.Todo>}
+
+# a Codex item's completed flag, and an ACP plan's status, become the step's status
+law todo_codex_completed:
+  {TD.Todo.codex(J.Json.obj([J.KV{"items", J.Json.arr([J.Json.obj([J.KV{"text", J.Str{"a"}}, J.KV{"completed", J.Flag{True{}}}]), J.Json.obj([J.KV{"text", J.Str{"b"}}, J.KV{"completed", J.Flag{False{}}}])])}]))
+    == [TD.Todo{"1", "a", "", "completed"}, TD.Todo{"2", "b", "", "pending"}] : List<&2, TD.Todo>}
+
+law todo_acp_plan:
+  {TD.Todo.codex(J.Json.obj([J.KV{"items", J.Json.arr(AC.Acp.plan([J.Json.obj([J.KV{"content", J.Str{"x"}}, J.KV{"priority", J.Str{"high"}}, J.KV{"status", J.Str{"in_progress"}}])]))}]))
+    == [TD.Todo{"1", "x", "", "in_progress"}] : List<&2, TD.Todo>}
+
+# the list shows while the turn runs or a step is left, and is gone once
+# all is done and the turn has ended
+law todo_shown_while_running:
+  {TD.Todo.shown([TD.Todo{"1", "a", "", "completed"}], True{}) == True{} : Bool}
+
+law todo_shown_while_left:
+  for run: Bool
+  {TD.Todo.shown([TD.Todo{"1", "a", "", "pending"}], run) == True{} : Bool}
+
+law todo_hidden_when_done:
+  {TD.Todo.shown([TD.Todo{"1", "a", "", "completed"}], False{}) == False{} : Bool}
+
+# an assistant message with a todo tool sets the thread's list, once
+law todo_write_sets_list:
+  {List.length(&2, M.Change, H.Claude.todos(M.State.empty(), "t1", 5n, [J.Json.obj([J.KV{"type", J.Str{"tool_use"}}, J.KV{"name", J.Str{"TodoWrite"}}, J.KV{"input", J.Json.obj([J.KV{"todos", J.Json.arr([])}])}])])) == 1n : Nat}

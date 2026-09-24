@@ -7,6 +7,7 @@ import ./fuzzy.bend as FZ
 import ./agent.bend as AG
 import ./attach.bend as AT
 import ./fold.bend as FO
+import ./todo.bend as TD
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -2450,6 +2451,20 @@ def Qu.tag(+run: Bool, +msg: String) -> String:
 # a queued row's text: context says what it is, a message itself
 def Qu.label(+msg: String, +text: String) -> String:
   Bool.pick(String, String.starts_with(msg, "handoff:"), Maybe.default(&2, String, List.head(&2, String, String.lines(String.drop(text, 12n))), "") ++ " (goes with the next message)", text)
+
+# a thread's todo list as it shows (TD.Todo.shown): empty when hidden
+def Todos.of(+st: M.State, +th: String) -> List<&2, TD.Todo>:
+  TD.Todo.read(M.Setting.get(st, "todos." ++ th, ""))
+
+def Todos.pick(show: Bool, ts: List<&2, TD.Todo>) -> List<&2, TD.Todo>:
+  match show:
+    case True{}:
+      ts
+    case False{}:
+      Nil{}
+
+def Todos.shown(+st: M.State, +th: String, +run: Bool) -> List<&2, TD.Todo>:
+  Todos.pick(TD.Todo.shown(Todos.of(st, th), run), Todos.of(st, th))
 
 # how many queued rows show (the rest are counted on the last)
 def Qu.shown() -> Nat:
