@@ -685,18 +685,96 @@ def Asks.all(s: State) -> List<&2, Ask>:
 # "t:<from>:<n>". Thread ids hold no ':'.
 
 def Link.id(+from: String, +n: String) -> String:
-  "t:" ++ from ++ ":" ++ n
+  SCon{Chr{116}, SCon{Chr{58}, String.append(from, SCon{Chr{58}, n})}}
 
-def Link.from.k(ps: List<&2, String>) -> String:
-  match ps:
-    case "t" <> f <> _ <> _:
-      f
-    case _:
+# Link.from is read for every entry of every frame, so it looks at an id
+# once, from the front, and gives up at the first character of any id
+# that is not a link (laws link_from_id, link_from_plain). It answers what
+# the ':'-fields do: the second when the first is "t" and a third follows.
+
+def Link.colon() -> Char:
+  Chr{58}
+
+def Link.field.k(colon: Bool, +c: Char, rest: String) -> String:
+  match colon:
+    case True{}:
+      SNil{}
+    case False{}:
+      SCon{c, rest}
+
+# the text before the first ':'
+def Link.field(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+c, t}:
+      Link.field.k(Char.is_eq(c, Link.colon()), c, Link.field(t))
+
+def Link.more.k(colon: Bool, rest: Bool) -> Bool:
+  match colon:
+    case True{}:
+      True{}
+    case False{}:
+      rest
+
+# whether a ':' is in s
+def Link.more(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      False{}
+    case SCon{+c, t}:
+      Link.more.k(Char.is_eq(c, Link.colon()), Link.more(t))
+
+def Link.from.e(third: Bool, +r: String) -> String:
+  match third:
+    case True{}:
+      Link.field(r)
+    case False{}:
+      ""
+
+def Link.from.d(colon: Bool, +r: String) -> String:
+  match colon:
+    case True{}:
+      Link.from.e(Link.more(r), r)
+    case False{}:
+      ""
+
+def Link.from.c(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{+c, +r}:
+      Link.from.d(Char.is_eq(c, Link.colon()), r)
+
+def Link.from.b(tee: Bool, s: String) -> String:
+  match tee:
+    case True{}:
+      Link.from.c(s)
+    case False{}:
       ""
 
 # the thread a message came from ("" for the user's own)
-def Link.from(+id: String) -> String:
-  Link.from.k(String.split(id, ':'))
+def Link.from(id: String) -> String:
+  match id:
+    case SNil{}:
+      ""
+    case SCon{+c, t}:
+      Link.from.b(Char.is_eq(c, Chr{116}), t)
+
+# a thread id as a link carries it (with no ':')
+def Link.bare.k(colon: Bool, +c: Char, rest: String) -> String:
+  match colon:
+    case True{}:
+      rest
+    case False{}:
+      SCon{c, rest}
+
+def Link.bare(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+c, t}:
+      Link.bare.k(Char.is_eq(c, Link.colon()), c, Link.bare(t))
 
 # Queued turns
 # ------------
@@ -994,6 +1072,12 @@ def State.unregister(s: State, tok: String) -> State:
   State{ps, ts, es, n, tk, sg, qu, ak, Map.del(&2, Device, dv, tok), nv}
 
 # every registered device
+# the read model as the window may hold it: no devices (their tokens stay
+# in the hub, as the wire leaves them out; law window_state_private)
+def State.private(s: State) -> State:
+  State{ps, ts, es, n, tk, sg, qu, ak, _, nv} = s
+  State{ps, ts, es, n, tk, sg, qu, ak, Map.new(&2, Device), nv}
+
 def State.devices(s: State) -> Map<&2, Device>:
   match s:
     case State{_, _, _, _, _, _, _, _, dv, _}:

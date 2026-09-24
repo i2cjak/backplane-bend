@@ -783,6 +783,14 @@ def TL.mine.k(same: Bool, e: M.Entry, rest: List<&2, M.Entry>) -> List<&2, M.Ent
     case False{}:
       rest
 
+# an entry of the thread, or one it sent (asked only when not its own)
+def TL.mine.or(own: Bool, +e: M.Entry, +th: String) -> Bool:
+  match own:
+    case True{}:
+      True{}
+    case False{}:
+      String.eq(M.Link.from(TL.id_of(e)), th)
+
 def TL.thread_of(e: M.Entry) -> String:
   match e:
     case M.Msg{_, t, _, _, _}:
@@ -796,7 +804,7 @@ def TL.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<
     case Nil{}:
       acc
     case +e <> t:
-      TL.mine(t, th, TL.mine.k(Bool.or(String.eq(TL.thread_of(e), th), String.eq(M.Link.from(TL.id_of(e)), th)), e, acc))
+      TL.mine(t, th, TL.mine.k(TL.mine.or(String.eq(TL.thread_of(e), th), e, th), e, acc))
 
 def TL.height(ls: List<&2, TLine>, +acc: U32) -> U32:
   match ls:
@@ -2496,6 +2504,70 @@ def TL.memo.of(+ty: Ty, es: List<&2, M.Entry>, +px: U32, +sel: String, prev: TLM
     case TLMemo{ppx, psel, items}:
       TL.memo.of.k(Bool.and(U32.is_eq(ppx, px), Q.Eq.str(psel, sel)), ty, es, px, sel, items)
 
+# Recently shown threads keep their memos, the latest first, so going
+# back to one lays out only what changed in it. Any memo is a sound start
+# (tl_memo_exact holds for every earlier memo); laws tl_memos_hit (the
+# thread just left is found again) and tl_memos_bounded (at most
+# TL.memos.max() are kept).
+
+def TL.memos.max() -> Nat:
+  8n
+
+def TL.memo.sel(m: TLMemo) -> String:
+  match m:
+    case TLMemo{_, sel, _}:
+      sel
+
+def TL.memos.pick.k(hit: Bool, m: TLMemo, rest: TLMemo) -> TLMemo:
+  match hit:
+    case True{}:
+      m
+    case False{}:
+      rest
+
+# the memo kept for a thread (none: start from scratch)
+def TL.memos.pick(ms: List<&2, TLMemo>, +sel: String) -> TLMemo:
+  match ms:
+    case Nil{}:
+      TL.memo.none()
+    case +m <> t:
+      TL.memos.pick.k(Q.Eq.str(TL.memo.sel(m), sel), m, TL.memos.pick(t, sel))
+
+def TL.memos.drop.k(same: Bool, m: TLMemo, rest: List<&2, TLMemo>) -> List<&2, TLMemo>:
+  match same:
+    case True{}:
+      rest
+    case False{}:
+      m <> rest
+
+def TL.memos.drop(ms: List<&2, TLMemo>, +sel: String) -> List<&2, TLMemo>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      TL.memos.drop.k(Q.Eq.str(TL.memo.sel(m), sel), m, TL.memos.drop(t, sel))
+
+def TL.memos.cut(n: Nat, ms: List<&2, TLMemo>) -> List<&2, TLMemo>:
+  match n ms:
+    case 0n _:
+      Nil{}
+    case 1n+k Nil{}:
+      Nil{}
+    case 1n+k m <> t:
+      m <> TL.memos.cut(k, t)
+
+# m first, then the others that fit
+def TL.memos.keep(+m: TLMemo, ms: List<&2, TLMemo>) -> List<&2, TLMemo>:
+  m <> TL.memos.cut(Nat.sub(TL.memos.max(), 1n), TL.memos.drop(ms, TL.memo.sel(m)))
+
+# the memo in front (the one this frame drew from)
+def TL.memos.now(ms: List<&2, TLMemo>) -> TLMemo:
+  match ms:
+    case Nil{}:
+      TL.memo.none()
+    case m <> _:
+      m
+
 # the entries the memo's items were made for
 def TL.memo.es(its: List<&2, TLE>) -> List<&2, M.Entry>:
   match its:
@@ -2704,6 +2776,11 @@ def Lay.memo.es(none: Bool, +n: S.Nui) -> List<&2, M.Entry>:
 # the memo brought up to this frame: the open thread's entries at its width
 def Lay.memo(+ty: Ty, +n: S.Nui, prev: TLMemo) -> TLMemo:
   TL.memo.of(ty, Lay.memo.es(String.is_empty(U.Ui.sel(S.Nui.ui(n))), n), Lay.tl.px(n), U.Ui.sel(S.Nui.ui(n)), prev)
+
+# the memos brought up to this frame: the open thread's in front, from the
+# one kept for it
+def Lay.memos(+ty: Ty, +n: S.Nui, +ms: List<&2, TLMemo>) -> List<&2, TLMemo>:
+  TL.memos.keep(Lay.memo(ty, n, TL.memos.pick(ms, U.Ui.sel(S.Nui.ui(n)))), ms)
 
 def TL.memo.size(m: TLMemo) -> Nat:
   match m:

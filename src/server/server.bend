@@ -27,6 +27,8 @@ import ../core/images.bend as IM
 import ../core/attach.bend as ATT
 import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
+import ../core/boot.bend as BT
+import ../core/store.bend as ST
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -40,11 +42,16 @@ type Wire is Data:
   # a message already encoded (a board's plot: never parsed again)
   WBin{cbor: List<&2, U32>}
   WClose{}
+  # the hub's own window: the read model itself, with the log message's
+  # head (no items), in place of the log as text
+  WState{st: M.State, head: String}
 
 type Msg is Data:
   Announce{text: String}
   Mcp{thread: String, body: String, reply: Chan(String)}
   Join{client: U32, out: Chan(Wire), since: Nat, origin: String}
+  # the window in this process: it takes the read model, not the log
+  JoinHere{client: U32, out: Chan(Wire)}
   Leave{client: U32}
   Rpc{client: U32, text: String}
   AgentLine{thread: String, line: String}
@@ -126,63 +133,13 @@ def Files.text(path: String) -> IO(String):
 # Event log
 # ---------
 
-def Store.put(m: Maybe<&2, M.Change>, rest: List<&2, M.Change>) -> List<&2, M.Change>:
-  match m:
-    case Some{c}:
-      c <> rest
-    case None{}:
-      rest
-
-def Store.one(m: Maybe<&2, J.Json>, rest: List<&2, M.Change>) -> List<&2, M.Change>:
-  match m:
-    case Some{+o}:
-      Store.put(C.Change.decode(o), rest)
-    case None{}:
-      rest
-
-def Store.decode(ls: List<&2, String>) -> List<&2, M.Change>:
-  match ls:
-    case Nil{}:
-      Nil{}
-    case l <> t:
-      Store.one(J.Json.parse(l), Store.decode(t))
-
+# read in one pass by src/core/store.bend (ST.Store.load)
 def Store.lines.k(r: U.Lines & List<&2, String>) -> List<&2, String>:
   (_, ls) = r
   ls
 
 def Store.lines(bs: List<&2, U32>) -> List<&2, String>:
   Store.lines.k(U.Lines.feed(U.Lines.new(), bs))
-
-# only lines that decode are kept (and re-sent to clients)
-def Store.keep.k(m: Maybe<&2, J.Json>, +l: String, rest: List<&2, String>) -> List<&2, String>:
-  match m:
-    case Some{_}:
-      l <> rest
-    case None{}:
-      rest
-
-def Store.wire.k(m: Maybe<&2, J.Json>, +l: String) -> String:
-  match m:
-    case Some{+o}:
-      C.Change.wire_line(o, l)
-    case None{}:
-      l
-
-# the log as clients may see it: device tokens left out
-def Store.wire(ls: List<&2, String>) -> List<&2, String>:
-  match ls:
-    case Nil{}:
-      Nil{}
-    case +l <> t:
-      Store.wire.k(J.Json.parse(l), l) <> Store.wire(t)
-
-def Store.keep(ls: List<&2, String>, acc: List<&2, String>) -> List<&2, String>:
-  match ls:
-    case Nil{}:
-      acc
-    case +l <> t:
-      Store.keep(t, Store.keep.k(J.Json.parse(l), l, acc))
 
 def Store.path(+home: String) -> String:
   home ++ "/events.jsonl"
@@ -370,6 +327,8 @@ def Conn.write(m: Maybe<&1, Wire>, s: Socket, k: Socket -> IO(Unit)) -> IO(Unit)
       IO.bind(Socket, Unit, Conn.send(s, W.Ws.encode(2, bs)), k)
     case Some{WClose{}}:
       Conn.finish(s, W.Ws.encode(8, Nil{}))
+    case Some{WState{_, _}}:
+      k(s)
     case None{}:
       Socket.close(s)
 
@@ -731,6 +690,16 @@ def Hub.join.note.k(empty: Bool, +out: Chan(Wire), +note: String) -> IO(Unit):
 
 def Hub.join.note(+out: Chan(Wire), +note: String) -> IO(Unit):
   Hub.join.note.k(String.is_empty(note), out, note)
+
+# the window in this process: the read model (devices left out, as the
+# wire leaves them) and the log message with no items
+def Hub.join.here(h: Hub, +client: U32, +out: Chan(Wire)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, +ls, cl, as, inbox, +cfg, +note}:
+      do IO<Hub>:
+        ok : Bool <- Chan.send(Wire, out, WState{M.State.private(st), Hub.log_msg.k(0n, ls, cfg, 0n)})
+        Hub.join.note(out, note)
+        return Hub{st, f, ls, Client{client, out} <> cl, as, inbox, cfg, note}
 
 def Hub.join(h: Hub, +client: U32, +out: Chan(Wire), +since: Nat, +origin: String) -> IO(Hub):
   match h:
@@ -2290,6 +2259,10 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
 def Models.every() -> U32:
   900000
 
+# the last model list found (src/core/boot.bend)
+def Models.cache(+home: String) -> String:
+  home ++ "/models.cache"
+
 def Net.models(n: Net) -> String:
   match n:
     case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx}:
@@ -2744,11 +2717,21 @@ def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Uni
     case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc, pvx}:
       IO.pure(Unit, Unit{})
 
-def Refresh.found(fd: Found, +inbox: Chan(Msg), +last: String) -> IO(String):
+def Refresh.news(news: Bool, +ms: String, +mt: String, +inbox: Chan(Msg), +cache: String, +last: String) -> IO(String):
+  match news:
+    case True{}:
+      do IO<String>:
+        ok : Bool <- Chan.send(Msg, inbox, ModelsFound{ms, mt})
+        w : String <- Token.save(cache, BT.Cache.of(ms, mt))
+        return ms
+    case False{}:
+      IO.pure(String, last)
+
+# a probe's list goes to clients and the cache when it is news
+def Refresh.found(fd: Found, +inbox: Chan(Msg), +cache: String, +last: String) -> IO(String):
   match fd:
-    case Found{+ms, mt}:
-      Bool.pick(IO(String), String.eq(ms, last), IO.pure(String, last),
-        IO.bind(Bool, String, Chan.send(Msg, inbox, ModelsFound{ms, mt}), ok => IO.pure(String, ms)))
+    case Found{+ms, +mt}:
+      Refresh.news(BT.Models.news(ms, last), ms, mt, inbox, cache, last)
 
 def Models.found(+cl: List<&2, String>, +cx: List<&2, String>, +gk: List<&2, String>, about: J.Json) -> Found:
   Found{J.Json.show(J.Json.obj([J.KV{"claude", Models.strs(cl)}, J.KV{"codex", Models.strs(cx)}, J.KV{"grok", Models.strs(gk)}, J.KV{"about", about}])), Models.text3(cl, cx, gk)}
@@ -2861,21 +2844,23 @@ def Models.detect(+user: String) -> IO(Found):
     return Models.found(Claude.models(Main.has(cl), xs), Models.on(Main.has(cx), Models.codex(cache)), Models.grok(gk),
       J.Json.obj([J.KV{"claude", Claude.about(About.cli(vc), xs)}, J.KV{"codex", About.one(About.cli(vx), About.codex(cache))}, J.KV{"grok", About.one(About.cli(vg), About.grok(gk))}]))
 
-def Refresh.loop(fuel: Nat, +inbox: Chan(Msg), +user: String, +last: String) -> IO(Unit):
+# the first probe runs at once (the window is up by then), the next ones
+# every Models.every() ms
+def Refresh.loop(fuel: Nat, +inbox: Chan(Msg), +user: String, +cache: String, +last: String) -> IO(Unit):
   match fuel:
     case 0n:
       IO.pure(Unit, Unit{})
     case 1n+f:
       do IO<Unit>:
-        IO.sleep(Models.every())
         fd : Found <- Models.detect(user)
-        now : String <- Refresh.found(fd, inbox, last)
-        Refresh.loop(f, inbox, user, now)
+        now : String <- Refresh.found(fd, inbox, cache, last)
+        IO.sleep(Models.every())
+        Refresh.loop(f, inbox, user, cache, now)
 
 def Refresh.start(+inbox: Chan(Msg), +cfg: Cfg) -> IO(Unit):
   do IO<Unit>:
     user : String <- Env.get("HOME", "")
-    IO.spawn(Unit, Refresh.loop(Fuel.forever(), inbox, user, Net.models(Cfg.net(cfg))))
+    IO.spawn(Unit, Refresh.loop(Fuel.forever(), inbox, user, Models.cache(Cfg.home(cfg)), Net.models(Cfg.net(cfg))))
 
 def Main.prepare(+user: String, +exe: String) -> IO(Boot):
   do IO<Boot>:
@@ -2883,8 +2868,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
     ks : String & List<&2, Q.Skill> <- Skills.kistack.dir(user ++ "/.cache/backplane/kistack/" ++ K.KiStack.revision())
     explicit : String <- Env.get("BACKPLANE_KICAD_CLI", "")
     rt : K.Rt <- K.Rt.resolve(explicit, exe, user ++ "/.backplane-bend")
-    fd : Found <- Models.detect(user)
-    return Models.boot(ks, rt, fd)
+    return Models.boot(ks, rt, Found{"", ""})
 
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
@@ -3335,6 +3319,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.note(h, text)
     case Join{client, out, since, origin}:
       Hub.join(h, client, out, since, origin)
+    case JoinHere{client, out}:
+      Hub.join.here(h, client, out)
     case Leave{client}:
       Hub.leave(h, client)
     case Rpc{client, text}:
@@ -3381,9 +3367,10 @@ def Hub.loop(fuel: Nat, h: Hub) -> IO(Unit):
         IO.bind(Maybe<&1, Msg>, Unit, Chan.recv(Msg, inbox), m => Hub.got(m, h2, h3 => Hub.loop(f, h3))))
 
 # without the web server (its port was taken): hub and ticker only
-def Main.headless(h: Hub, +inbox: Chan(Msg), front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
+def Main.headless(h: Hub, +inbox: Chan(Msg), +cfg: Cfg, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   do IO<Unit>:
     IO.spawn(Unit, Ticker.loop(Fuel.forever(), inbox))
+    Refresh.start(inbox, cfg)
     IO.spawn(Unit, Hub.loop(Fuel.forever(), h))
     Upgrade.start(inbox)
     front(inbox)
@@ -3410,7 +3397,7 @@ def Main.listened(r: Result<&1, &1, U32 & String, Listener>, h: Hub, +web: Strin
     case Fail{_} False{}:
       do IO<Unit>:
         Log.info("web server off: " ++ addr ++ " is taken")
-        Main.headless(h, inbox, front)
+        Main.headless(h, inbox, cfg, front)
 
 def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2, String>, cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   match r cfg:
@@ -3446,10 +3433,11 @@ def Main.boot(cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
       do IO<Unit>:
         mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(home)
         bs : List<&2, U32> <- Files.read(Store.path(home))
-        +full : List<&2, String> = Store.keep(Store.lines(bs), Nil{})
-        +st : M.State = M.State.replay(Store.decode(List.reverse(&2, String, full)), M.State.empty())
-        +ls : List<&2, String> = Store.wire(full)
+        +ld : ST.Loaded = ST.Store.load(Store.lines(bs), ST.Loaded{M.State.empty(), Nil{}})
+        +st : M.State = ST.Loaded.st(ld)
+        +ls : List<&2, String> = ST.Loaded.wire(ld)
         Log.info("replayed " ++ Nat.show(List.length(&2, String, ls)) ++ " changes from " ++ Store.path(home))
         f : Result<&1, &1, U32 & String, File> <- File.open(Store.path(home), "a")
         tok : String <- Token.load(home)
-        Main.opened(f, st, ls, Cfg.with_token(Cfg{home, w, h, p, pr, ds, v, nt}, tok), need, front)
+        +mc : String <- Files.text(Models.cache(home))
+        Main.opened(f, st, ls, Cfg.with_models(Cfg.with_token(Cfg{home, w, h, p, pr, ds, v, nt}, tok), BT.Cache.json(mc), BT.Cache.text(mc)), need, front)

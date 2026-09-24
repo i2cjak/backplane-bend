@@ -42,6 +42,9 @@ import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
 import ./src/core/hier.bend as HI
 
+import ./src/core/boot.bend as BT
+import ./src/core/store.bend as ST
+
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
 # one without the user's explicit consent.
@@ -1828,3 +1831,89 @@ law wait_at_least_a_second:
 
 law wait_at_most_ten_minutes:
   {MC.Wait.clamp(9000000n) == 600n : Nat}
+# Start-up
+# --------
+# The window opens before the providers are probed; until they answer,
+# the hub serves the model list it found last time.
+
+# the cached list reads back as it was written
+law models_cache_json:
+  for +ms: String
+  for +mt: String
+  {BT.Cache.json(BT.Cache.of(ms, mt)) == BT.Cache.one(ms) : String}
+
+# and so does the prompt's text after it
+law models_cache_text:
+  for +ms: String
+  for +mt: String
+  {BT.Cache.text(BT.Cache.of(ms, mt)) == mt : String}
+
+# a probe that finds the list clients already have tells no one
+law models_quiet:
+  for +ms: String
+  {BT.Models.news(ms, ms) == False{} : Bool}
+
+# the log is read in one pass, each line parsed once: the state it gives
+# is exactly the replay of the log's changes
+law store_state_is_replay:
+  for ls: List<&2, String>
+  for +a: ST.Loaded
+  {ST.Loaded.st(ST.Store.load(ls, a)) == M.State.replay(ST.Store.changes(ls), ST.Loaded.st(a)) : M.State}
+
+# and a log read in two parts is the log read whole
+law store_load_append:
+  for xs: List<&2, String>
+  for +ys: List<&2, String>
+  for +a: ST.Loaded
+  {ST.Store.load(List.append(&2, String, xs, ys), a) == ST.Store.load(ys, ST.Store.load(xs, a)) : ST.Loaded}
+
+# Frames
+# ------
+
+# a link's id names the thread it came from
+law link_from_id:
+  for +from: String
+  for +n: String
+  {M.Link.from(M.Link.id(M.Link.bare(from), n)) == M.Link.bare(from) : String}
+
+# and any id not starting with 't' is the user's own, told at its first
+# character (the timeline asks this of every entry, every frame)
+law link_from_plain:
+  for +c: Char
+  for t: String
+  for e: {Char.is_eq(c, Chr{116}) == False{} : Bool}
+  {M.Link.from(SCon{c, t}) == "" : String}
+
+# going back to a thread finds the memo it left: only what changed in it
+# is laid out again (any memo is a sound start, tl_memo_exact)
+law tl_memos_hit:
+  for +px: U32
+  for +sel: String
+  for +its: List<&2, L.TLE>
+  for ms: List<&2, L.TLMemo>
+  {L.TL.memos.pick(L.TL.memos.keep(L.TLMemo{px, sel, its}, ms), sel) == L.TLMemo{px, sel, its} : L.TLMemo}
+
+# and the memos kept stay few
+law tl_memos_bounded:
+  for +m: L.TLMemo
+  for ms: List<&2, L.TLMemo>
+  {Nat.is_le(List.length(&2, L.TLMemo, L.TL.memos.keep(m, ms)), L.TL.memos.max()) == True{} : Bool}
+
+# The hub's own window takes the read model itself, not the log as text
+# (nothing to build, parse or replay at start-up). It never holds a
+# device or its token, as the wire never carries them
+law window_state_private:
+  for s: M.State
+  {M.State.devices(M.State.private(s)) == Map.new(&2, M.Device) : Map<&2, M.Device>}
+
+# and it counts the same changes the hub does, so a reconnect asks for
+# exactly what it missed
+law window_state_seq:
+  for s: M.State
+  {M.State.seq(M.State.private(s)) == M.State.seq(s) : Nat}
+
+# the model handed over is the one the window holds
+law window_adopt:
+  for u: U.Ui
+  for st: M.State
+  {U.Ui.state(U.Ui.adopt(u, st)) == st : M.State}

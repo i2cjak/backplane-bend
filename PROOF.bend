@@ -37,6 +37,9 @@ import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
 import ./src/core/hier.bend as HI
 
+import ./src/core/boot.bend as BT
+import ./src/core/store.bend as ST
+
 # Lemmas
 # ------
 
@@ -562,7 +565,6 @@ def Laws.stale_board_ignored(n, key, items, now, h):
   %Equal.sym(Bool, N.Vw.fresh_for(N.Nui.vw(n), key), False{}, h) : {N.Nui.with_vw(n, N.Vw.if(_, N.Nui.vw(n), v => N.Vw.board.same(v, key, items, now))) == n : N.Nui}
   Laws.nui_with_own_vw(n)
 
-
 def Laws.resume_is_replay(a, b, s):
   match a:
     case Nil{}:
@@ -1080,7 +1082,6 @@ def Laws.caret_shows_when_moved():
 
 def Laws.tailnet_no_owner_no_trust(login):
   {==}
-
 
 # Drawing lemmas
 # --------------
@@ -3526,3 +3527,215 @@ def Laws.wait_at_least_a_second():
 
 def Laws.wait_at_most_ten_minutes():
   {==}
+# Start-up
+# --------
+
+law cache_json_step:
+  for b: Bool
+  for +c: Char
+  for +t: String
+  for +mt: String
+  for +e: {Char.is_eq(c, BT.Cache.nl()) == b : Bool}
+  for ih: {BT.Cache.json(BT.Cache.show(BT.Cache.one(t), mt)) == BT.Cache.one(t) : String}
+  {BT.Cache.json(BT.Cache.show(BT.Cache.one.k(Char.is_eq(c, BT.Cache.nl()), c, BT.Cache.one(t)), mt)) == BT.Cache.one.k(Char.is_eq(c, BT.Cache.nl()), c, BT.Cache.one(t)) : String}
+
+def cache_json_step(b, c, t, mt, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), True{}, e) : {BT.Cache.json(BT.Cache.show(BT.Cache.one.k(_, c, BT.Cache.one(t)), mt)) == BT.Cache.one.k(_, c, BT.Cache.one(t)) : String}
+      ih
+    case False{}:
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), False{}, e) : {BT.Cache.json(BT.Cache.show(BT.Cache.one.k(_, c, BT.Cache.one(t)), mt)) == BT.Cache.one.k(_, c, BT.Cache.one(t)) : String}
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), False{}, e) : {BT.Cache.json.k(_, c, BT.Cache.json(BT.Cache.show(BT.Cache.one(t), mt))) == SCon{c, BT.Cache.one(t)} : String}
+      Equal.cong(String, String, r => SCon{c, r}, BT.Cache.json(BT.Cache.show(BT.Cache.one(t), mt)), BT.Cache.one(t), ih)
+
+def Laws.models_cache_json(ms, mt):
+  match ms:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      cache_json_step(Char.is_eq(c, BT.Cache.nl()), c, t, mt, {==}, Laws.models_cache_json(t, mt))
+
+law cache_text_step:
+  for b: Bool
+  for +c: Char
+  for +t: String
+  for +mt: String
+  for +e: {Char.is_eq(c, BT.Cache.nl()) == b : Bool}
+  for ih: {BT.Cache.text(BT.Cache.show(BT.Cache.one(t), mt)) == mt : String}
+  {BT.Cache.text(BT.Cache.show(BT.Cache.one.k(Char.is_eq(c, BT.Cache.nl()), c, BT.Cache.one(t)), mt)) == mt : String}
+
+def cache_text_step(b, c, t, mt, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), True{}, e) : {BT.Cache.text(BT.Cache.show(BT.Cache.one.k(_, c, BT.Cache.one(t)), mt)) == mt : String}
+      ih
+    case False{}:
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), False{}, e) : {BT.Cache.text(BT.Cache.show(BT.Cache.one.k(_, c, BT.Cache.one(t)), mt)) == mt : String}
+      %Equal.sym(Bool, Char.is_eq(c, BT.Cache.nl()), False{}, e) : {BT.Cache.text.k(_, BT.Cache.show(BT.Cache.one(t), mt), BT.Cache.text(BT.Cache.show(BT.Cache.one(t), mt))) == mt : String}
+      ih
+
+def Laws.models_cache_text(ms, mt):
+  match ms:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      cache_text_step(Char.is_eq(c, BT.Cache.nl()), c, t, mt, {==}, Laws.models_cache_text(t, mt))
+
+def Laws.models_quiet(ms):
+  %Equal.sym(Bool, String.eq(ms, ms), True{}, Laws.string_eq_refl(ms)) : {Bool.not(_) == False{} : Bool}
+  {==}
+
+law store_put_st:
+  for d: Maybe<&2, M.Change>
+  for +rest: List<&2, M.Change>
+  for +st: M.State
+  {M.State.replay(rest, ST.Store.apply(d, st)) == M.State.replay(ST.Store.put(d, rest), st) : M.State}
+
+def store_put_st(d, rest, st):
+  match d:
+    case Some{c}:
+      {==}
+    case None{}:
+      {==}
+
+law store_step_st:
+  for m: Maybe<&2, J.Json>
+  for +l: String
+  for a: ST.Loaded
+  for +rest: List<&2, M.Change>
+  {M.State.replay(rest, ST.Loaded.st(ST.Store.step(m, l, a))) == M.State.replay(ST.Store.change(m, rest), ST.Loaded.st(a)) : M.State}
+
+def store_step_st(m, l, a, rest):
+  match m a:
+    case Some{+o} ST.Loaded{+st, ws}:
+      store_put_st(C.Change.decode(o), rest, st)
+    case None{} _:
+      {==}
+
+def Laws.store_state_is_replay(ls, a):
+  match ls:
+    case Nil{}:
+      {==}
+    case +l <> +t:
+      Equal.trans(M.State, ST.Loaded.st(ST.Store.load(t, ST.Store.step(J.Json.parse(l), l, a))),
+        M.State.replay(ST.Store.changes(t), ST.Loaded.st(ST.Store.step(J.Json.parse(l), l, a))),
+        M.State.replay(ST.Store.change(J.Json.parse(l), ST.Store.changes(t)), ST.Loaded.st(a)),
+        Laws.store_state_is_replay(t, ST.Store.step(J.Json.parse(l), l, a)),
+        store_step_st(J.Json.parse(l), l, a, ST.Store.changes(t)))
+
+def Laws.store_load_append(xs, ys, a):
+  match xs:
+    case Nil{}:
+      {==}
+    case +l <> t:
+      Laws.store_load_append(t, ys, ST.Store.step(J.Json.parse(l), l, a))
+
+# Frames
+# ------
+
+law link_more_step:
+  for b: Bool
+  for +c: Char
+  for +t: String
+  for +n: String
+  for +e: {Char.is_eq(c, M.Link.colon()) == b : Bool}
+  for ih: {M.Link.more(String.append(M.Link.bare(t), SCon{M.Link.colon(), n})) == True{} : Bool}
+  {M.Link.more(String.append(M.Link.bare.k(Char.is_eq(c, M.Link.colon()), c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == True{} : Bool}
+
+def link_more_step(b, c, t, n, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), True{}, e) : {M.Link.more(String.append(M.Link.bare.k(_, c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == True{} : Bool}
+      ih
+    case False{}:
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), False{}, e) : {M.Link.more(String.append(M.Link.bare.k(_, c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == True{} : Bool}
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), False{}, e) : {M.Link.more.k(_, M.Link.more(String.append(M.Link.bare(t), SCon{M.Link.colon(), n}))) == True{} : Bool}
+      ih
+
+law link_more:
+  for +s: String
+  for +n: String
+  {M.Link.more(String.append(M.Link.bare(s), SCon{M.Link.colon(), n})) == True{} : Bool}
+
+def link_more(s, n):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      link_more_step(Char.is_eq(c, M.Link.colon()), c, t, n, {==}, link_more(t, n))
+
+law link_field_step:
+  for b: Bool
+  for +c: Char
+  for +t: String
+  for +n: String
+  for +e: {Char.is_eq(c, M.Link.colon()) == b : Bool}
+  for ih: {M.Link.field(String.append(M.Link.bare(t), SCon{M.Link.colon(), n})) == M.Link.bare(t) : String}
+  {M.Link.field(String.append(M.Link.bare.k(Char.is_eq(c, M.Link.colon()), c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == M.Link.bare.k(Char.is_eq(c, M.Link.colon()), c, M.Link.bare(t)) : String}
+
+def link_field_step(b, c, t, n, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), True{}, e) : {M.Link.field(String.append(M.Link.bare.k(_, c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == M.Link.bare.k(_, c, M.Link.bare(t)) : String}
+      ih
+    case False{}:
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), False{}, e) : {M.Link.field(String.append(M.Link.bare.k(_, c, M.Link.bare(t)), SCon{M.Link.colon(), n})) == M.Link.bare.k(_, c, M.Link.bare(t)) : String}
+      %Equal.sym(Bool, Char.is_eq(c, M.Link.colon()), False{}, e) : {M.Link.field.k(_, c, M.Link.field(String.append(M.Link.bare(t), SCon{M.Link.colon(), n}))) == SCon{c, M.Link.bare(t)} : String}
+      Equal.cong(String, String, r => SCon{c, r}, M.Link.field(String.append(M.Link.bare(t), SCon{M.Link.colon(), n})), M.Link.bare(t), ih)
+
+law link_field:
+  for +s: String
+  for +n: String
+  {M.Link.field(String.append(M.Link.bare(s), SCon{M.Link.colon(), n})) == M.Link.bare(s) : String}
+
+def link_field(s, n):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{+c, +t}:
+      link_field_step(Char.is_eq(c, M.Link.colon()), c, t, n, {==}, link_field(t, n))
+
+def Laws.link_from_id(from, n):
+  %Equal.sym(Bool, M.Link.more(String.append(M.Link.bare(from), SCon{M.Link.colon(), n})), True{}, link_more(from, n)) : {M.Link.from.e(_, String.append(M.Link.bare(from), SCon{M.Link.colon(), n})) == M.Link.bare(from) : String}
+  link_field(from, n)
+
+def Laws.link_from_plain(c, t, e):
+  %Equal.sym(Bool, Char.is_eq(c, Chr{116}), False{}, e) : {M.Link.from.b(_, t) == "" : String}
+  {==}
+
+def Laws.tl_memos_hit(px, sel, its, ms):
+  %Equal.sym(Bool, Q.Eq.str(sel, sel), True{}, eq_str_refl(sel)) : {L.TL.memos.pick.k(_, L.TLMemo{px, sel, its}, L.TL.memos.pick(L.TL.memos.cut(Nat.sub(L.TL.memos.max(), 1n), L.TL.memos.drop(ms, sel)), sel)) == L.TLMemo{px, sel, its} : L.TLMemo}
+  {==}
+
+law memos_cut_le:
+  for +n: Nat
+  for ms: List<&2, L.TLMemo>
+  {Nat.is_le(List.length(&2, L.TLMemo, L.TL.memos.cut(n, ms)), n) == True{} : Bool}
+
+def memos_cut_le(n, ms):
+  match n ms:
+    case 0n _:
+      {==}
+    case 1n+k Nil{}:
+      {==}
+    case 1n+k m <> t:
+      memos_cut_le(k, t)
+
+def Laws.tl_memos_bounded(m, ms):
+  memos_cut_le(Nat.sub(L.TL.memos.max(), 1n), L.TL.memos.drop(ms, L.TL.memo.sel(m)))
+
+def Laws.window_state_private(s):
+  match s:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+      {==}
+
+def Laws.window_state_seq(s):
+  match s:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+      {==}
+
+def Laws.window_adopt(u, st):
+  match u:
+    case U.Ui{s0, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      {==}
