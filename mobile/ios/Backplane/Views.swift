@@ -282,6 +282,36 @@ struct ThreadScreen: View {
                 .padding(.horizontal).padding(.top, 8)
                 .accessibilityHint("Sends when this turn ends")
             }
+            HStack {
+                Menu {
+                    Section("Model") {
+                        ForEach(thread.picker.models, id: \.value) { c in
+                            Button { model.act("model", c.value) } label: {
+                                if c.on { Label(c.label, systemImage: "checkmark") } else { Text(c.label) }
+                            }
+                        }
+                    }
+                    if !thread.picker.efforts.isEmpty {
+                        Section("Effort") {
+                            ForEach(thread.picker.efforts, id: \.value) { c in
+                                Button { model.act("effort", c.value) } label: {
+                                    if c.on { Label(c.label, systemImage: "checkmark") } else { Text(c.label) }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(thread.picker.label).lineLimit(1)
+                        Image(systemName: "chevron.down")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .accessibilityLabel("Model and effort: " + thread.picker.label)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal).padding(.top, 8)
             HStack(alignment: .bottom, spacing: 8) {
                 TextField("Ask the agent", text: Binding(get: { model.composer }, set: { model.draft($0) }), axis: .vertical)
                     .lineLimit(1...6)
