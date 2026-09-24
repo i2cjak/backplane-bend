@@ -41,6 +41,7 @@ import ./src/core/hier.bend as HI
 
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
+import ./src/core/sign.bend as SG
 
 # Lemmas
 # ------
@@ -3950,4 +3951,18 @@ def Laws.view_key_shift_z_in():
   {==}
 
 def Laws.view_key_other_none():
+def Laws.sign_stale_rejected(secret, now, ts, body, sig, h):
+  %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.check.k(_, secret, ts, body, sig) == False{} : Bool}
+  {==}
+
+def Laws.sign_window_300():
+  {==}
+
+def Laws.seen_add_has(s, k, now):
+  match s:
+    case SG.Seen{items}:
+      %Equal.sym(Bool, String.eq(k, k), True{}, Laws.string_eq_refl(k)) : {Bool.or(_, SG.Seen.any(SG.Seen.prune(items, now), k)) == True{} : Bool}
+      {==}
+
+def Laws.invite_roundtrip():
   {==}

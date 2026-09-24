@@ -46,6 +46,7 @@ import ./src/core/hier.bend as HI
 
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
+import ./src/core/sign.bend as SG
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2081,3 +2082,32 @@ law view_key_shift_z_in:
 
 law view_key_other_none:
   {N.Key3.act(97, 0) == 0 : U32}
+# Signed requests
+# ---------------
+
+# a webhook or peer request outside the clock window is refused, whatever
+# its signature
+law sign_stale_rejected:
+  for secret: String
+  for +now: Nat
+  for +ts: Nat
+  for body: String
+  for sig: String
+  for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
+  {SG.Sign.check(secret, now, ts, body, sig) == False{} : Bool}
+
+# the window is five minutes
+law sign_window_300:
+  {SG.Sign.window() == 300n : Nat}
+
+# a key just accepted is in the replay cache, so it is refused next time
+law seen_add_has:
+  for s: SG.Seen
+  for +k: String
+  for +now: Nat
+  {SG.Seen.has(SG.Seen.add(s, k, now), k) == True{} : Bool}
+
+# an invite reads back as what made it, colons in its url and all
+law invite_roundtrip:
+  {SG.Invite.parse(SG.Invite.make("http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))
+    == Some{SG.Inv{"http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}} : Maybe<&2, SG.Inv>}
