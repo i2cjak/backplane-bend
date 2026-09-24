@@ -3204,12 +3204,49 @@ def Hub.mcp.hub(h: Hub, +thread: String, +body: String, +reply: Chan(String), +n
       Hub.mcp.k(MC.Mcp.text(st, now, thread, Maybe.default(&2, J.Json, J.Json.parse(Cfg.models(cfg)), J.Null{}), Cfg.version(cfg), body),
         Hub{st, f, ls, cl, as, inbox, cfg, note}, reply, body)
 
+# thread_wait: the check (MC.Wait.now) goes through the hub each second,
+# off the hub, until the thread is done or the time is up; its last answer
+# is the reply
+def Wait.next(stop: Bool, text: String, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
+  match stop:
+    case True{}:
+      IO.bind(Bool, Unit, Chan.send(String, reply, text), ok => IO.pure(Unit, Unit{}))
+    case False{}:
+      IO.bind(Unit, Unit, IO.sleep(1000), k)
+
+def Wait.got(m: Maybe<&1, String>, +left: Nat, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{+text}:
+      Wait.next(Bool.or(MC.Wait.done(text), Nat.is_eq(left, 0n)), text, reply, k)
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Wait.loop(+fuel: Nat, +thread: String, +check: String, +reply: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        +r2 : Chan(String) <- Chan.new(String, 1)
+        ok : Bool <- Chan.send(Msg, inbox, Mcp{thread, check, r2})
+        m : Maybe<&1, String> <- Chan.recv(String, r2)
+        Wait.got(m, f, reply, _ => Wait.loop(f, thread, check, reply, inbox))
+
+def Hub.mcp.w(secs: Nat, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match secs h:
+    case 0n _:
+      Hub.mcp.hub(h, thread, body, reply, now)
+    case 1n+k Hub{st, f, ls, cl, as, +inbox, cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Wait.loop(1n+k, thread, MC.Wait.now(o), reply, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
 def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   match pv:
     case True{}:
       Hub.preview(h, o, reply)
     case False{}:
-      Hub.mcp.hub(h, thread, body, reply, now)
+      Hub.mcp.w(MC.Wait.secs(o), h, thread, o, body, reply, now)
 
 def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)

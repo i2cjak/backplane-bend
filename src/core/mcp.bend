@@ -4,6 +4,7 @@ import ./model.bend as M
 import ./codec.bend as C
 import ./hub.bend as B
 import ./acp.bend as AC
+import ./handoff.bend as HD
 
 # The Backplane MCP server, as a decider. Each agent session gets its own
 # endpoint (/mcp/<thread>), so every call knows which thread is asking. A
@@ -92,8 +93,17 @@ def Mcp.tools() -> J.Json:
     Tool.def("thread_list", "List the threads of this thread's project (id, title, provider, model, turn state), newest activity first.", Nil{}, Nil{}),
     Tool.def("thread_read", "Read a thread's timeline in this project: messages and tool activity, oldest first (the last `limit` entries).",
       [Tool.prop("threadId", "string", "The thread to read."), Tool.prop("limit", "number", "How many entries (default 40).")], ["threadId"]),
-    Tool.def("thread_send", "Send a message to another thread in this project; it starts a turn there (or queues behind the running one).",
-      [Tool.prop("threadId", "string", "The thread."), Tool.prop("text", "string", "The message.")], ["threadId", "text"]),
+    Tool.def("thread_send", "Send a message to another thread in this project. mode auto (default) starts a turn there, or waits in its queue while one runs; queue always waits for the running turn; steer sends it into the running turn (Codex and Grok restart the turn with it).",
+      [Tool.prop("threadId", "string", "The thread."), Tool.prop("text", "string", "The message."), Tool.prop("mode", "string", "auto, queue or steer.")], ["threadId", "text"]),
+    Tool.def("thread_launch", "Start a new top-level thread in this project (not a child of this one: the user sees it in the sidebar like their own) with a first message, on any provider/model. Answers its threadId; follow it with thread_wait or thread_read.",
+      [Tool.prop("prompt", "string", "The first message, complete."), Tool.prop("title", "string", "A short title (default: from the prompt)."),
+       Tool.prop("provider", "string", "claude, codex or grok (default: the user's default)."), Tool.prop("model", "string", "Model (default: the provider's default).")], ["prompt"]),
+    Tool.def("thread_update", "Rename a thread in this project (this one by default), or with no title have its title written again from its first message.",
+      [Tool.prop("threadId", "string", "The thread (default: this one)."), Tool.prop("title", "string", "The new title; empty to regenerate it.")], Nil{}),
+    Tool.def("thread_wait", "Wait until a thread in this project has finished its turn and has nothing queued, or until timeoutMs passes. Answers its state, whether it is done, and its last reply.",
+      [Tool.prop("threadId", "string", "The thread."), Tool.prop("timeoutMs", "number", "How long to wait at most (default 30000, at most 600000).")], ["threadId"]),
+    Tool.def("thread_interrupt", "Stop the running turn of a thread in this project.",
+      [Tool.prop("threadId", "string", "The thread.")], ["threadId"]),
     Tool.def("viewer_show",
       "Show a file in the user's Backplane viewer panel: a .kicad_pcb (board), .kicad_sch (schematic), .step/.stp or .glb (3D). Use it after changing a design so the user sees the result; the viewer also follows the file live.",
       [Tool.prop("path", "string", "Absolute path of the file."), Tool.prop("kind", "string", "board, schematic, 3d or step (default: from the extension).")], ["path"])]
@@ -282,21 +292,126 @@ def Mcp.read.k(ok: Bool, +s: M.State, +target: String, +limit: Nat) -> Res:
     case False{} _:
       Res.fail("that thread is not in this project")
 
-def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +thread: String, +target: String, +text: String) -> Res:
-  match ok:
-    case True{}:
-      Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"sent"}}]),
-        B.Hub.inbox(s, now, thread, target, M.User{}, text)}
-    case False{}:
-      Res.fail("that thread is not in this project")
-
 # the file goes to the viewer of the thread that asked
 def Mcp.view(+thread: String, +path: String, +kind: String) -> Res:
   Res{True{}, J.Json.obj([J.KV{"shown", J.Str{path}}]),
     B.Step{Nil{}, [B.Broadcast{J.Json.show(J.Json.obj([J.KV{"t", J.Str{"view"}}, J.KV{"thread", J.Str{thread}}, J.KV{"path", J.Str{path}}, J.KV{"kind", J.Str{kind}}]))}]}}
 
+# More thread tools (V2's orchestrator toolkit)
+# ---------------------------------------------
+
+def Mcp.proj(+s: M.State, +thread: String) -> String:
+  Mcp.project_of(B.Hub.thread(s, thread))
+
+# a new top-level thread with its first message (it waits for its
+# worktree like any new thread)
+def Mcp.launch.go(+s: M.State, +now: Nat, +th: String, +project: String, +env: String, +provider: String, +model: String, +title: String, +prompt: String) -> Res:
+  +c = {M.ThreadCreated{th, project, title, B.Hub.env.of(env), "", "", provider, model, now} : M.Change}
+  +s1 = {M.State.replay([c], s) : M.State}
+  Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{th}}, J.KV{"title", J.Str{title}}, J.KV{"provider", J.Str{provider}}, J.KV{"state", J.Str{"started"}}]),
+    B.Step.before([c], B.Hub.env.outs(B.Hub.env.of(env), th, B.Hub.project.root(B.Hub.project(s, project)), env),
+      B.Hub.post(s1, now, th, B.Hub.id("m", now, B.Hub.seq(s1)), M.User{}, prompt))}
+
+def Mcp.launch.k(empty: Bool, +s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
+  match empty:
+    case True{}:
+      Res.fail("a prompt is needed")
+    case False{}:
+      Mcp.launch.go(s, now, B.Hub.id("t", now, B.Hub.seq(s)), Mcp.proj(s, thread), M.Setting.get(s, "thread.env", "auto"),
+        Mcp.or(J.Json.get_str(p, "provider", ""), M.Setting.get(s, "agent.provider", "claude")),
+        Mcp.or(J.Json.get_str(p, "model", ""), Bool.pick(String, String.is_empty(J.Json.get_str(p, "provider", "")), M.Setting.get(s, "agent.model", ""), "")),
+        Mcp.or(J.Json.get_str(p, "title", ""), B.Hub.title.of(J.Json.get_str(p, "prompt", ""))), J.Json.get_str(p, "prompt", ""))
+
+def Mcp.launch(+s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
+  Mcp.launch.k(String.is_empty(String.trim(J.Json.get_str(p, "prompt", ""))), s, now, thread, p)
+
+def Mcp.first.k(e: M.Entry, +th: String, rest: String) -> String:
+  match e:
+    case M.Msg{_, +t, M.User{}, +text, _}:
+      Bool.pick(String, String.eq(t, th), text, rest)
+    case _:
+      rest
+
+# a thread's first user message (entries newest first: the last one seen)
+def Mcp.first(es: List<&2, M.Entry>, +th: String, +acc: String) -> String:
+  match es:
+    case Nil{}:
+      acc
+    case e <> t:
+      Mcp.first(t, th, Mcp.first.k(e, th, acc))
+
+def Mcp.update.k(ok: Bool, regen: Bool, +s: M.State, +now: Nat, +target: String, +title: String) -> Res:
+  match ok regen:
+    case False{} _:
+      Res.fail("that thread is not in this project")
+    case True{} False{}:
+      Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"title", J.Str{title}}]), B.Step{[M.ThreadRenamed{target, title, now}], Nil{}}}
+    case True{} True{}:
+      Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"title", J.Str{"being written"}}]),
+        B.Step{Nil{}, [B.Git{0, "", "title", target, "", HD.Hand.title(B.Hub.thread(s, target)), String.take(Mcp.first(B.Hub.entries(s), target, ""), 4000n)}]}}
+
+def Mcp.update(+s: M.State, +now: Nat, +thread: String, +target: String, +title: String) -> Res:
+  Mcp.update.k(Mcp.same_project(s, thread, target), String.is_empty(String.trim(title)), s, now, target, String.trim(title))
+
+def Mcp.last.k(e: M.Entry, +th: String, rest: String) -> String:
+  match e:
+    case M.Msg{_, +t, M.Assistant{}, +text, _}:
+      Bool.pick(String, String.eq(t, th), text, rest)
+    case _:
+      rest
+
+# a thread's last assistant message (entries newest first: the first seen)
+def Mcp.last(es: List<&2, M.Entry>, +th: String) -> String:
+  match es:
+    case Nil{}:
+      ""
+    case e <> t:
+      Mcp.last.k(e, th, Mcp.last(t, th))
+
+# whether a thread is done: no turn running and nothing queued to run
+def Mcp.done(+s: M.State, +th: String) -> Bool:
+  Bool.and(Bool.not(B.Hub.running(B.Hub.thread(s, th))), Bool.not(M.Queue.waiting(s, th)))
+
+# where a thread stands, answered at once (the server asks again each
+# second while it waits, up to the timeout)
+def Mcp.wait.k(ok: Bool, +s: M.State, +target: String) -> Res:
+  match ok:
+    case True{}:
+      Res.ok(J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"turn", J.Str{C.Turn.name(M.Thread.turn(B.Hub.thread(s, target)))}},
+        J.KV{"done", J.Flag{Mcp.done(s, target)}}, J.KV{"lastReply", J.Str{String.take(Mcp.last(B.Hub.entries(s), target), 8000n)}}]))
+    case False{}:
+      Res.fail("that thread is not in this project")
+
+def Mcp.interrupt.k(ok: Bool, run: Bool, +s: M.State, +now: Nat, +target: String) -> Res:
+  match ok run:
+    case False{} _:
+      Res.fail("that thread is not in this project")
+    case True{} False{}:
+      Res.ok(J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"not running"}}]))
+    case True{} True{}:
+      Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"interrupted"}}]),
+        B.Step{[M.TurnChanged{target, M.Interrupted{}, now}], B.Stop.outs(B.Hub.provider(B.Hub.thread(s, target)), target, B.Hub.id("i", now, B.Hub.seq(s)))}}
+
+# a message to another thread with a follow-up mode; auto is the inbox
+# (it never interrupts, law inbox_never_interrupts)
+def Mcp.send.m(auto: Bool, +s: M.State, +now: Nat, +thread: String, +target: String, +text: String, +mode: String) -> B.Step:
+  match auto:
+    case True{}:
+      B.Hub.inbox(s, now, thread, target, M.User{}, text)
+    case False{}:
+      B.Hub.post.mode(mode, s, now, target, M.Link.id(thread, B.Hub.id("m", now, B.Hub.seq(s))), M.User{}, text)
+
+def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +thread: String, +target: String, +text: String, +mode: String) -> Res:
+  match ok:
+    case True{}:
+      Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{target}}, J.KV{"state", J.Str{"sent"}}]),
+        Mcp.send.m(Bool.or(String.is_empty(mode), String.eq(mode, "auto")), s, now, thread, target, text, mode)}
+    case False{}:
+      Res.fail("that thread is not in this project")
+
 def Mcp.names() -> List<&2, String>:
-  ["orchestrator_capabilities", "delegate_task", "task_status", "task_cancel", "thread_list", "thread_read", "thread_send", "viewer_show"]
+  ["orchestrator_capabilities", "delegate_task", "task_status", "task_cancel", "thread_list", "thread_read", "thread_send", "viewer_show",
+   "thread_launch", "thread_update", "thread_wait", "thread_interrupt", "thread_wait_now"]
 
 def Mcp.call.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json, +a: J.Json) -> Res:
   match i:
@@ -314,9 +429,19 @@ def Mcp.call.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json,
       Mcp.read.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, J.Json.get_str(a, "threadId", ""),
         Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(a, "limit"), "40")), 40n))
     case 6n:
-      Mcp.send.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, now, thread, J.Json.get_str(a, "threadId", ""), J.Json.get_str(a, "text", ""))
+      Mcp.send.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, now, thread, J.Json.get_str(a, "threadId", ""), J.Json.get_str(a, "text", ""), J.Json.get_str(a, "mode", ""))
     case 7n:
       Mcp.view(thread, J.Json.get_str(a, "path", ""), J.Json.get_str(a, "kind", ""))
+    case 8n:
+      Mcp.launch(s, now, thread, a)
+    case 9n:
+      Mcp.update(s, now, thread, Mcp.or(J.Json.get_str(a, "threadId", ""), thread), J.Json.get_str(a, "title", ""))
+    case 10n:
+      Mcp.wait.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, J.Json.get_str(a, "threadId", ""))
+    case 11n:
+      Mcp.interrupt.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), B.Hub.running(B.Hub.thread(s, J.Json.get_str(a, "threadId", ""))), s, now, J.Json.get_str(a, "threadId", ""))
+    case 12n:
+      Mcp.wait.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, J.Json.get_str(a, "threadId", ""))
     case _:
       Res.fail("unknown tool")
 
@@ -500,3 +625,48 @@ def Mcp.text.k(m: Maybe<&2, J.Json>, +s: M.State, +now: Nat, +thread: String, +m
 
 def Mcp.text(+s: M.State, +now: Nat, +thread: String, +models: J.Json, +version: String, body: String) -> McpOut:
   Mcp.text.k(J.Json.parse(body), s, now, thread, models, version)
+
+# Waiting (thread_wait)
+# --------------------
+# The hub never blocks: thread_wait answers where the thread stands at
+# once (as thread_wait_now), and the server asks again each second until
+# the thread is done or the wait's time is up.
+
+def Wait.is(+o: J.Json) -> Bool:
+  Bool.and(String.eq(J.Json.get_str(o, "method", ""), "tools/call"), String.eq(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "thread_wait"))
+
+def Wait.clamp(+ms: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_lt(ms, 1000n), 1n, Bool.pick(Nat, Nat.is_gt(ms, 600000n), 600n, Nat.div(ms, 1000n)))
+
+# how many seconds a call waits (0: it is no thread_wait)
+def Wait.secs(+o: J.Json) -> Nat:
+  Bool.pick(Nat, Wait.is(o), Wait.clamp(Maybe.default(&2, Nat, Nat.read(J.Json.as_raw(J.Json.get(J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), "timeoutMs"), "30000")), 30000n)), 0n)
+
+# the same call as the check that answers at once
+def Wait.now(+o: J.Json) -> String:
+  J.Json.show(J.Json.obj([J.KV{"jsonrpc", J.Str{"2.0"}}, J.KV{"id", Maybe.default(&2, J.Json, J.Json.get(o, "id"), J.Null{})}, J.KV{"method", J.Str{"tools/call"}},
+    J.KV{"params", J.Json.obj([J.KV{"name", J.Str{"thread_wait_now"}}, J.KV{"arguments", J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments")}])}]))
+
+def Wait.first(xs: List<&2, J.Json>) -> J.Json:
+  match xs:
+    case x <> _:
+      x
+    case Nil{}:
+      J.Null{}
+
+# whether a check's reply says the thread is done (a failed check ends
+# the wait too)
+def Wait.done(+reply: String) -> Bool:
+  +r = Maybe.default(&2, J.Json, J.Json.parse(reply), J.Null{})
+  +inner = Maybe.default(&2, J.Json, J.Json.parse(J.Json.get_str(Wait.first(J.Json.elems(J.Json.get_obj(J.Json.get_obj(r, "result"), "content"))), "text", "")), J.Null{})
+  Bool.or(J.Json.get_bool(J.Json.get_obj(r, "result"), "isError", True{}), J.Json.get_bool(inner, "done", True{}))
+
+def Res.changes(r: Res) -> List<&2, M.Change>:
+  match r:
+    case Res{_, _, B.Step{cs, _}}:
+      cs
+
+def Res.good(r: Res) -> Bool:
+  match r:
+    case Res{ok, _, _}:
+      ok

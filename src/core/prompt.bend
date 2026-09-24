@@ -151,7 +151,7 @@ def Prompt.orchestration.k(may: Bool, +models: String) -> String:
   match may:
     case True{}:
       "You may delegate well-scoped, independent pieces of work (footprint or symbol generation, part lookup, ERC/DRC review, mechanical checks) to other models with the backplane MCP tool `delegate_task`; `orchestrator_capabilities` lists them. Models available: " ++ models
-      ++ ". A child sees only the prompt you give it, so include paths and acceptance criteria, and say whether it may write the canonical board or schematic: only one agent writes a file at a time. Each result reaches you exactly once as a message when the child finishes; end your turn rather than polling. Finished tasks never restart, and delegation depth is limited."
+      ++ ". A child sees only the prompt you give it, so include paths and acceptance criteria, and say whether it may write the canonical board or schematic: only one agent writes a file at a time. Each result reaches you exactly once as a message when the child finishes; end your turn rather than polling. Finished tasks never restart, and delegation depth is limited. For work the user should see as a thread of its own, `thread_launch` starts one in this project; `thread_send` (mode auto, queue or steer), `thread_wait`, `thread_read`, `thread_interrupt` and `thread_update` (rename, or regenerate a title) work on any thread of this project."
     case False{}:
       "You are a delegated task at the depth limit: do not delegate further. Finish the task and put the result in your final message."
 

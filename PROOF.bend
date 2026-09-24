@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/mcp.bend as MC
 import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
 import ./src/core/fuzzy.bend as FZ
@@ -3503,4 +3504,25 @@ def Laws.switch_hands_new_provider():
   {==}
 
 def Laws.switch_back_missed_nothing():
+  {==}
+
+def Laws.mcp_launch_in_project():
+  {==}
+
+def Laws.mcp_other_project_refused(run, s, now, t):
+  {==}
+
+def Laws.mcp_interrupt_idle_nothing(s, now, t):
+  {==}
+
+def Laws.mcp_done_idle():
+  {==}
+
+def Laws.mcp_not_done_running():
+  {==}
+
+def Laws.wait_at_least_a_second():
+  {==}
+
+def Laws.wait_at_most_ten_minutes():
   {==}
