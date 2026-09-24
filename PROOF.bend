@@ -910,6 +910,12 @@ def Laws.key_mid_below(a, b, h):
 # Sidebar status
 # --------------
 
+def Laws.project_keyed_first(x, xs, a, b):
+  {==}
+
+def Laws.project_unkeyed_below(a, y, ys, b):
+  {==}
+
 def Laws.status_approval_first(i, t, q):
   {==}
 

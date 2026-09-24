@@ -159,6 +159,22 @@ law key_mid_below:
   for h: {M.Key.lt(a, b) == True{} : Bool}
   {M.Key.lt(M.Key.mid(a, b), b) == True{} : Bool}
 
+# a project dragged into place sits above every project never dragged
+law project_keyed_first:
+  for x: Bool
+  for xs: List<&2, Bool>
+  for a: U.SRow
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{x <> xs, a}, U.PSlot{Nil{}, b}) == True{} : Bool}
+
+# and one never dragged sits below every one that was
+law project_unkeyed_below:
+  for a: U.SRow
+  for y: Bool
+  for ys: List<&2, Bool>
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{Nil{}, a}, U.PSlot{y <> ys, b}) == False{} : Bool}
+
 # Sidebar status
 # --------------
 

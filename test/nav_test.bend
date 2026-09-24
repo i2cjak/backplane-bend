@@ -52,6 +52,13 @@ def base() -> List<&2, M.Change>:
    M.ThreadCreated{"b", "p1", "B", M.Local{}, "", "", "claude", "", 200n},
    M.ThreadCreated{"c", "p1", "C", M.Local{}, "", "", "claude", "", 300n}]
 
+# base() and two empty projects made at 400 and 500
+def three() -> List<&2, M.Change>:
+  List.append(&2, M.Change, base(), [M.ProjectCreated{"p2", "Q", "/tmp/q", 400n}, M.ProjectCreated{"p3", "R", "/tmp/r", 500n}])
+
+def pside(es: List<&2, M.Change>) -> String:
+  String.join(U.Side.projects(U.Ui.fold(es, U.Ui.init(1000n))), ",")
+
 def side(es: List<&2, M.Change>, +now: Nat) -> String:
   +st = M.State.replay(es, M.State.empty())
   shelves(M.Sidebar.at(U.Ui.threads(st), M.State.navs(st), now))
@@ -137,4 +144,13 @@ def main() -> IO(Unit):
     C.Check.str("client move up", sent(U.Ui.act(ui(), "move", "b|up")), "{\"id\":0,\"m\":\"thread.reorder\",\"p\":{\"section\":\"active\",\"thread\":\"b\",\"ids\":[\"b\",\"c\",\"a\"]}}")
     C.Check.str("client move top stays", sent(U.Ui.act(ui(), "move", "c|up")), "")
     C.Check.str("client drop", sent(U.Ui.act(ui(), "reorder", "a|c")), "{\"id\":0,\"m\":\"thread.reorder\",\"p\":{\"section\":\"active\",\"thread\":\"a\",\"ids\":[\"a\",\"c\",\"b\"]}}")
+    C.Check.str("projects by activity", pside(three()), "p3,p2,p1")
+    C.Check.str("projects keyed first", pside(List.append(&2, M.Change, three(), [M.ProjectOrdered{"p1", "8", 600n}])), "p1,p3,p2")
+    C.Check.str("projects by key", pside(List.append(&2, M.Change, three(), [M.ProjectOrdered{"p1", "8", 600n}, M.ProjectOrdered{"p2", "4", 600n}])), "p2,p1,p3")
+    C.Check.str("projects key dropped", pside(List.append(&2, M.Change, three(), [M.ProjectOrdered{"p1", "8", 600n}, M.ProjectOrdered{"p1", "", 700n}])), "p3,p2,p1")
+    C.Check.str("codec project ordered", J.Json.show(K.Change.encode(Maybe.default(&2, M.Change, K.Change.decode(K.Change.encode(M.ProjectOrdered{"p1", "8", 3n})), M.ThreadDeleted{"", 0n}))), "{\"$\":\"ProjectOrdered\",\"id\":\"p1\",\"key\":\"8\",\"at\":3}")
+    C.Check.str("hub project reorder", changes(H.Hub.request_text(M.State.replay(three(), M.State.empty()), 1000n, 1, "{\"id\":1,\"m\":\"project.reorder\",\"p\":{\"project\":\"p1\",\"ids\":[\"p1\",\"p3\",\"p2\"]}}")), "{\"$\":\"ProjectOrdered\",\"id\":\"p1\",\"key\":\"8\",\"at\":1000}")
+    C.Check.str("client project drop", sent(U.Ui.act(U.Ui.fold(three(), U.Ui.init(1000n)), "reorder-project", "p1|p3")), "{\"id\":0,\"m\":\"project.reorder\",\"p\":{\"project\":\"p1\",\"ids\":[\"p1\",\"p3\",\"p2\"]}}")
+    C.Check.str("client project drop on thread", sent(U.Ui.act(U.Ui.fold(three(), U.Ui.init(1000n)), "reorder-project", "p3|b")), "{\"id\":0,\"m\":\"project.reorder\",\"p\":{\"project\":\"p3\",\"ids\":[\"p2\",\"p1\",\"p3\"]}}")
+    C.Check.str("client project drop on itself", sent(U.Ui.act(U.Ui.fold(three(), U.Ui.init(1000n)), "reorder-project", "p1|a")), "")
     C.Check.str("client mention", draft(U.Ui.act(act_ui(U.Ui.act(ui(), "select", "a")), "mention", "src/x.bend")), "@src/x.bend ")

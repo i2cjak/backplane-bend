@@ -247,7 +247,7 @@ def Lay.snoozed(+ty: Ty, ts: List<&2, M.Thread>, +st: M.State, +sel: String, +no
 def Lay.project(+ty: Ty, r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +c: D.Clip, +y: U32) -> Col:
   match r:
     case U.SRow{_, M.Project{+id, title, _, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
-      Lay.col.cat(Out.cat(Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 200), c, 16, (y + 4 : U32), 28, T.Th.dim())),
+      Lay.col.cat(Out.cat(Out{Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 200), c, 16, (y + 4 : U32), 28, T.Th.dim()), [Lay.hit(0, y, 228, 32, "project", id)]},
           Out{Lay.icon(ty, "plus", c, 236, (y + 10 : U32), T.Th.faint()), [Lay.hit(230, (y + 4 : U32), 28, 28, "new-thread", id)]}),
         Lay.col.then(Lay.rows(ty, pinned, st, sel, now, False{}, c, (y + 32 : U32)), y1 =>
           Lay.col.then(Lay.rows(ty, active, st, sel, now, False{}, c, y1), y2 =>
@@ -1773,7 +1773,7 @@ def Lay.ghost(+ty: Ty, +n: S.Nui) -> Out:
   match n:
     case S.Nui{+u, _, _, _, +my, _, _, _, _, _, _, _, vw}:
       Lay.ghost.k(Bool.and(Bool.not(String.is_empty(U.Ui.scratch(u, "@drag"))), S.Row.far(S.Row.y(n), my)), ty,
-        U.Tasks.title(U.Ui.state(u), U.Ui.scratch(u, "@drag")), U32.max(my, 67))
+        U.Drag.title(U.Ui.state(u), U.Ui.scratch(u, "@drag")), U32.max(my, 67))
 
 def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
   match n:
