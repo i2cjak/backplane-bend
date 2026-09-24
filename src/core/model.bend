@@ -1137,6 +1137,11 @@ def Shelves.count(s: Shelves) -> Nat:
   Shelves{p, a, st, h, sn} = s
   Nat.add(List.length(&2, Thread, p), Nat.add(List.length(&2, Thread, a), Nat.add(List.length(&2, Thread, st), Nat.add(List.length(&2, Thread, h), List.length(&2, Thread, sn)))))
 
+def Thread.turn(t: Thread) -> TurnState:
+  match t:
+    case Thread{_, _, _, _, _, tu, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      tu
+
 def Thread.provider(t: Thread) -> String:
   match t:
     case Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, pr, _, _, _, _, _}:

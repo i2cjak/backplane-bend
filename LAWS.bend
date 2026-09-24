@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/mcp.bend as MC
 import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
 import ./src/core/tailnet.bend as TN
@@ -1790,3 +1791,40 @@ law switch_hands_new_provider:
 
 law switch_back_missed_nothing:
   {List.length(&2, M.QItem, M.Queue.items(M.State.replay(H.Queue.changes(H.Hub.switch(H.Demo.switched(), 6n, 0, "1", "t1", "claude")), H.Demo.switched()), "t1")) == 0n : Nat}
+
+# The orchestrator's thread tools
+# -------------------------------
+
+# thread_launch makes an ordinary thread in the caller's project
+law mcp_launch_in_project:
+  {List.head(&2, M.Change, MC.Res.changes(MC.Mcp.launch(H.Demo.state("claude", M.Completed{}), 5n, "t1", J.Json.obj([J.KV{"prompt", J.Str{"hi"}}]))))
+    == Some{M.ThreadCreated{"t5-3", "p1", "hi", M.Worktree{}, "", "", "claude", "", 5n}} : Maybe<&2, M.Change>}
+
+# a thread of another project is out of reach
+law mcp_other_project_refused:
+  for run: Bool
+  for s: M.State
+  for now: Nat
+  for +t: String
+  {MC.Res.good(MC.Mcp.interrupt.k(False{}, run, s, now, t)) == False{} : Bool}
+
+# thread_interrupt stops only a running turn
+law mcp_interrupt_idle_nothing:
+  for s: M.State
+  for now: Nat
+  for +t: String
+  {MC.Res.changes(MC.Mcp.interrupt.k(True{}, False{}, s, now, t)) == [] : List<&2, M.Change>}
+
+# a thread is done once no turn runs and nothing waits to run
+law mcp_done_idle:
+  {MC.Mcp.done(H.Demo.state("claude", M.Completed{}), "t1") == True{} : Bool}
+
+law mcp_not_done_running:
+  {MC.Mcp.done(H.Demo.state("codex", M.Running{}), "t1") == False{} : Bool}
+
+# a wait lasts between one second and ten minutes
+law wait_at_least_a_second:
+  {MC.Wait.clamp(0n) == 1n : Nat}
+
+law wait_at_most_ten_minutes:
+  {MC.Wait.clamp(9000000n) == 600n : Nat}
