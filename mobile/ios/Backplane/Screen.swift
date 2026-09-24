@@ -109,11 +109,23 @@ struct Deleting: Decodable, Equatable {
     let id, title, body, yes, no: String
 }
 
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+struct FolderRow: Decodable, Hashable {
+    let label, action, value, kind: String
+}
+
+struct Folders: Decodable {
+    let text, hint, error: String
+    let items: [FolderRow]
+}
+
 struct Screen: Decodable {
     let online: Bool
     let version, error, note, sel, empty: String
     let projects: [Project]
     let deleting: Deleting?
+    let folders: Folders?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
 }

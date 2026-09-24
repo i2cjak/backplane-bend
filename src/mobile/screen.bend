@@ -6,6 +6,7 @@ import ../web/dom.bend as D
 import ../web/view.bend as V
 import ./notify.bend as N
 import ./view.bend as VW
+import ./picker.bend as PK
 
 # Ui -> the screen the phone apps draw, as JSON. SwiftUI and Compose map
 # it onto native lists, toolbars and text fields; every decision (order,
@@ -258,5 +259,6 @@ def Mob.screen(+u: U.Ui) -> J.Json:
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
         J.KV{"projects", J.Json.arr(Mob.projects(U.Side.rows(st, now), o, st, now))},
         J.KV{"deleting", Mob.deleting(u)},
+        J.KV{"folders", PK.MPick.json(u)},
         J.KV{"island", N.Note.island(U.Ui.threads(st), U.Ui.entries(st))},
         J.KV{"thread", Mob.main(String.is_empty(sel), u, sel)}])

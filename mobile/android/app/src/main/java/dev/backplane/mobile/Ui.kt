@@ -81,6 +81,13 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.AddCircleOutline
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Folder
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 @Composable
 fun App(m: AppModel) {
@@ -223,7 +230,6 @@ private fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onCli
 @Composable
 private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
     val snacks = remember { SnackbarHostState() }
-    var adding by rememberSaveable { mutableStateOf(false) }
     Errors(m, s, snacks)
     Scaffold(
         topBar = {
@@ -237,7 +243,7 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { adding = true }) { Icon(Icons.Filled.CreateNewFolder, "Add project") }
+                    IconButton(onClick = { m.act("picker-open") }) { Icon(Icons.Filled.CreateNewFolder, "Add project") }
                     IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Pairing") }
                 },
             )
@@ -297,20 +303,57 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
         },
         dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
     )
-    if (adding) {
-        var path by rememberSaveable { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { adding = false },
-            title = { Text("Add project") },
-            text = {
-                OutlinedTextField(path, { path = it }, singleLine = true,
-                    label = { Text("Path on the hub") }, placeholder = { Text("/path/to/project") })
+    s.folders?.let { FolderPicker(m, it) }
+}
+
+// the project picker: a path field over the listed folder's rows
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolderPicker(m: AppModel, p: Folders) {
+    var text by remember { mutableStateOf(p.text) }
+    // what was typed here: a screen still echoing it never overwrites the field
+    val typed = remember { mutableSetOf<String>() }
+    LaunchedEffect(p.text) {
+        if (p.text !in typed) { typed.clear(); text = p.text }
+    }
+    Dialog(onDismissRequest = { m.act("proj-close") }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Add project") },
+                    navigationIcon = { IconButton(onClick = { m.act("proj-close") }) { Icon(Icons.Filled.Close, "Cancel") } },
+                )
             },
-            confirmButton = {
-                TextButton(onClick = { m.act("add-project", path); adding = false }, enabled = path.isNotBlank()) { Text("Add") }
-            },
-            dismissButton = { TextButton(onClick = { adding = false }) { Text("Cancel") } },
-        )
+        ) { pad ->
+            Column(Modifier.fillMaxSize().padding(pad).imePadding()) {
+                OutlinedTextField(text, { t ->
+                    text = t
+                    typed.add(t)
+                    m.act("picker-type", t)
+                }, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), singleLine = true,
+                    placeholder = { Text(p.hint) }, textStyle = MaterialTheme.typography.bodyLarge.copy(fontFamily = FontFamily.Monospace),
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false))
+                if (p.error.isNotEmpty()) Text(p.error, Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                LazyColumn(Modifier.fillMaxSize()) {
+                    items(p.items) { r ->
+                        val icon = when (r.kind) {
+                            "up" -> Icons.Filled.ArrowUpward
+                            "add" -> Icons.Filled.AddCircleOutline
+                            "new", "mkdir" -> Icons.Filled.CreateNewFolder
+                            "off" -> Icons.Filled.Check
+                            else -> Icons.Filled.Folder
+                        }
+                        val tone = if (r.kind == "dir" || r.kind == "up") MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.primary
+                        ListItem(
+                            headlineContent = { Text(r.label, maxLines = 1, overflow = TextOverflow.Ellipsis, color = tone) },
+                            leadingContent = { Icon(icon, null, tint = tone) },
+                            modifier = (if (r.action.isEmpty()) Modifier.alpha(0.5f) else Modifier.combinedClickableCompat { m.act(r.action, r.value) }),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
