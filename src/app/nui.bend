@@ -1089,13 +1089,19 @@ def Pick.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
 def Pick.click(+n: Nui, +v: String) -> Step:
   Pick.run(U.Palette.at(U.Proj.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
 
-# a click outside the model picker or the machine list closes it (their own
-# rows and chips, and their toggles, keep their meaning)
+# A press outside the model picker, the machine list or a project's badge
+# editor closes it (laws menu_press_*). What is theirs: their rows, chips,
+# swatches and boxes (the picker's hit "menu", its value "first
+# shown|last first"), and the toggles that open them.
+def Menu.own(+a: String, +v: String) -> Bool:
+  Bool.or(Bool.or(Bool.or(Bool.or(String.eq(a, "model"), String.eq(a, "effort")), Bool.or(String.eq(a, "machine"), String.eq(a, "menu"))),
+    Bool.and(String.eq(a, "flag"), Bool.or(String.eq(v, "models"), String.eq(v, "machines")))),
+    Bool.or(Bool.or(String.eq(a, "look"), String.eq(a, "look-set")), String.eq(a, "look-bg")))
+
 def Menu.inside(m: Maybe<&2, Hit>) -> Bool:
   match m:
     case Some{Hit{_, _, _, _, +a, +v}}:
-      Bool.or(Bool.or(Bool.or(String.eq(a, "model"), String.eq(a, "effort")), String.eq(a, "machine")),
-        Bool.and(String.eq(a, "flag"), Bool.or(String.eq(v, "models"), String.eq(v, "machines"))))
+      Menu.own(a, v)
     case None{}:
       False{}
 
@@ -1104,7 +1110,46 @@ def Menu.shut(inside: Bool, +n: Nui) -> Nui:
     case True{}:
       n
     case False{}:
-      Nui.with_ui(n, U.Ui.flag_off(U.Ui.flag_off(Nui.ui(n), "models"), "machines"))
+      Nui.with_ui(n, U.Ui.scratch_set(U.Ui.flag_off(U.Ui.flag_off(Nui.ui(n), "models"), "machines"), "@look", ""))
+
+# the picker keeps where it was scrolled only while presses stay in it
+def Menu.keeps_off(m: Maybe<&2, Hit>) -> Bool:
+  match m:
+    case Some{Hit{_, _, _, _, +a, _}}:
+      Bool.or(String.eq(a, "menu"), String.eq(a, "effort"))
+    case None{}:
+      False{}
+
+def Menu.off_reset(keep: Bool, +n: Nui) -> Nui:
+  match keep:
+    case True{}:
+      n
+    case False{}:
+      Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@menu.off", ""))
+
+# what a press on m does to the menus before anything else
+def Menu.press(+m: Maybe<&2, Hit>, +n: Nui) -> Nui:
+  Menu.off_reset(Menu.keeps_off(m), Menu.shut(Menu.inside(m), n))
+
+# the value of the hit named `action` under (x, y), whatever lies on top
+# of it ("" for none)
+def Hit.value_at(hs: List<&2, Hit>, +action: String, +x: U32, +y: U32) -> String:
+  match hs:
+    case Nil{}:
+      ""
+    case Hit{+x0, +y0, +x1, +y1, +a, +v} <> t:
+      Bool.pick(String, Bool.and(String.eq(a, action), Bool.and(Bool.and(U32.is_ge(x, x0), U32.is_lt(x, x1)), Bool.and(U32.is_ge(y, y0), U32.is_lt(y, y1)))), v, Hit.value_at(t, action, x, y))
+
+# the picker's box under (x, y), as its hit's value ("" for none)
+def Menu.box(+hs: List<&2, Hit>, +x: U32, +y: U32) -> String:
+  Hit.value_at(hs, "menu", x, y)
+
+# a wheel notch over the picker: one model up (dir 0) or down, within
+# 0..last first (the layout clamps it again: law menu_scroll_in_list)
+def Menu.scroll(+v: String, +dir: U32) -> String:
+  +off = Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.head(&2, String, String.split(v, '|')), "")), 0n)
+  +last = Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.last(&2, String, String.split(v, '|')), "")), 0n)
+  Nat.show(Bool.pick(Nat, U32.is_eq(dir, 0), Nat.sub(off, 1n), Bool.pick(Nat, Nat.is_lt(off, last), 1n+off, last)))
 
 def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
   match open:
@@ -1369,6 +1414,28 @@ def Nui.spin(viewer: Bool, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
     case False{}:
       Cs.spin(n, x, y, dir)
 
+# the wheel over the settings screen scrolls it by 48 px a notch, within
+# 0..the most its hit "set-bg" says
+def Set.scroll(+now: String, +last: String, +dir: U32) -> String:
+  +off = Maybe.default(&2, U32, U32.read(now), 0)
+  +most = Maybe.default(&2, U32, U32.read(last), 0)
+  U32.show(U32.min(Bool.pick(U32, U32.is_eq(dir, 0), Bool.pick(U32, U32.is_ge(off, 48), (off - 48 : U32), 0), (off + 48 : U32)), most))
+
+def Set.spin(none: Bool, +v: String, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
+  match none:
+    case True{}:
+      Nui.spin(Nui.in_viewer(n, x), n, x, y, dir)
+    case False{}:
+      Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@set.sc", Set.scroll(U.Ui.scratch(Nui.ui(n), "@set.sc"), v, dir))), Nil{}, True{}}
+
+# the wheel over the open picker scrolls its models, elsewhere as before
+def Menu.spin(none: Bool, +v: String, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
+  match none:
+    case True{}:
+      Set.spin(String.is_empty(Hit.value_at(Nui.hits(n), "set-bg", x, y)), Hit.value_at(Nui.hits(n), "set-bg", x, y), n, x, y, dir)
+    case False{}:
+      Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@menu.off", Menu.scroll(v, dir))), Nil{}, True{}}
+
 def Nui.ms_of(n: Nui) -> Nat:
   match n:
     case Nui{_, _, _, _, _, _, _, _, _, _, _, ms, _}:
@@ -1574,16 +1641,6 @@ def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step
     case False{}:
       Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.click.url(String.eq(action, "open-url"), n, action, value))
 
-def Nui.click.k(m: Maybe<&2, Hit>, +n: Nui) -> Step:
-  match m:
-    case Some{Hit{_, _, _, _, +action, +value}}:
-      Nui.click.act(String.eq(action, "focus"), n, action, value)
-    case None{}:
-      Step{n, Nil{}, True{}}
-
-def Nui.click(+n: Nui, +x: U32, +y: U32) -> Step:
-  Nui.click.k(Hit.find(Nui.hits(n), x, y), Menu.shut(Menu.inside(Hit.find(Nui.hits(n), x, y)), n))
-
 def Nui.key.term.k(term: Bool, pal: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match term pal:
     case False{} True{}:
@@ -1607,16 +1664,17 @@ def Nui.key.go.k(none: Bool, +name: String, +n: Nui, +code: U32, +text: U32, +mo
 def Nui.key.go(+name: String, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Nui.key.go.k(String.is_empty(name), name, n, code, text, mods)
 
-# Esc first closes an open menu (the model picker, the machine list)
+# Esc first closes an open menu (the model picker, the machine list, a
+# badge editor)
 def Nui.key.menu(menu: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match menu:
     case True{}:
-      Step{Nui.with_ui(n, U.Ui.flag_off(U.Ui.flag_off(Nui.ui(n), "models"), "machines")), Nil{}, True{}}
+      Step{Menu.shut(False{}, n), Nil{}, True{}}
     case False{}:
       Nui.key.go(Keys.name(code, mods, String.eq(Nui.focus_of(n), "terminal")), n, code, text, mods)
 
 def Nui.key.m(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
-  Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), Bool.or(U.Ui.flag(Nui.ui(n), "models"), U.Ui.flag(Nui.ui(n), "machines"))), n, code, text, mods)
+  Nui.key.menu(Bool.and(U32.is_eq(code, Key.escape()), Bool.or(Bool.or(U.Ui.flag(Nui.ui(n), "models"), U.Ui.flag(Nui.ui(n), "machines")), Bool.not(String.is_empty(U.Ui.scratch(Nui.ui(n), "@look"))))), n, code, text, mods)
 
 # Selecting thread text
 # ---------------------
@@ -1798,17 +1856,17 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
     case W.WBlur{}:
       Hint.blur(n)
     case W.WButton{+x, +y, 1, True{}}:
-      Nui.press(Nui.in_viewer(n, x), n, x, y)
+      Nui.press(Nui.in_viewer(n, x), Menu.press(Hit.find(Nui.hits(n), x, y), n), x, y)
     case W.WButton{+x, +y, 1, False{}}:
       Sel.end(Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y))
     case W.WButton{+x, +y, 3, True{}}:
-      Row.menu(Hit.find(Nui.hits(n), x, y), n, x)
+      Row.menu(Hit.find(Nui.hits(n), x, y), Menu.press(Hit.find(Nui.hits(n), x, y), n), x)
     case W.WButton{_, _, _, _}:
       Step{n, Nil{}, False{}}
     case W.WMove{+x, +y}:
       Nui.move(Nui.dragging(n), n, x, y)
     case W.WWheel{+x, +y, +dir}:
-      Nui.spin(Nui.in_viewer(n, x), n, x, y, dir)
+      Menu.spin(String.is_empty(Menu.box(Nui.hits(n), x, y)), Menu.box(Nui.hits(n), x, y), n, x, y, dir)
     case W.WSize{w, h}:
       Nui.resize(n, w, h)
     case W.WExpose{}:

@@ -1071,40 +1071,49 @@ def GitJob.diff(+cwd: String, +thread: String, +a: String, +b: String) -> IO(Str
   Bool.pick(IO(String), String.eq(b, "-1"), GT.Git.checkpoint.diff_worktree(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n)),
     GT.Git.checkpoint.diff(cwd, thread, Maybe.default(&2, Nat, Nat.read(a), 0n), Maybe.default(&2, Nat, Nat.read(b), 0n)))
 
-# One-shot writing (branch names, commit messages)
-# -------------------------------------------------
-# `claude -p` with a small model (AG.OneShot.args), under timeout(1): the
-# system prompt is an argument, the text goes on stdin. "" when claude is
-# missing, fails, or takes longer than a minute; callers fall back.
+# One-shot writing (thread titles, branch names, commit messages)
+# ----------------------------------------------------------------
+# The text generation model (AG.Text.of: text.provider, text.model) run by
+# AG.OneShot.args under timeout(1); the text goes on stdin
+# (AG.OneShot.input). "" when the CLI is missing, fails, or takes longer
+# than a minute; callers fall back.
 
-def OneShot.out(r: P.Ran) -> String:
+def OneShot.out(r: P.Ran, +provider: String) -> String:
   match r:
     case P.Ran{0, out}:
-      AG.OneShot.result(out)
+      AG.OneShot.answer(provider, out)
     case _:
       ""
 
-def OneShot.done(r: Socket & Result<&1, &1, U32 & String, Unit>, +pid: U32) -> IO(String):
+def OneShot.done(r: Socket & Result<&1, &1, U32 & String, Unit>, +pid: U32, +provider: String) -> IO(String):
   (s, _) = r
   do IO<String>:
     s2 : Socket <- H.Sock.shutdown(s)
     d : Socket & List<&2, U32> <- P.Proc.drain(1000000n, s2, P.Chunks{Nil{}})
     ran : P.Ran <- P.Proc.finish(pid, d)
-    return OneShot.out(ran)
+    return OneShot.out(ran, provider)
 
-def OneShot.started(started: U32 & Socket, +input: String) -> IO(String):
+def OneShot.started(started: U32 & Socket, +input: String, +provider: String) -> IO(String):
   (+pid, s) = started
-  IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, String, H.Sock.send_text(s, input), r => OneShot.done(r, pid))
+  IO.bind(Socket & Result<&1, &1, U32 & String, Unit>, String, H.Sock.send_text(s, input), r => OneShot.done(r, pid, provider))
 
-def OneShot.spawned(r: Result<&1, &1, U32 & String, U32 & Socket>, +input: String) -> IO(String):
+def OneShot.spawned(r: Result<&1, &1, U32 & String, U32 & Socket>, +input: String, +provider: String) -> IO(String):
   match r:
     case Done{started}:
-      OneShot.started(started, input)
+      OneShot.started(started, input, provider)
     case Fail{_}:
       IO.pure(String, "")
 
-def OneShot.run(+system: String, +input: String) -> IO(String):
-  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, String, H.Proc.spawn("timeout", AG.OneShot.args(system), "/tmp", 0), r => OneShot.spawned(r, input))
+# the writer's answer to one text under a system prompt, in /tmp
+def OneShot.run(+tx: AG.Tx, +system: String, +input: String) -> IO(String):
+  IO.bind(Result<&1, &1, U32 & String, U32 & Socket>, String, H.Proc.spawn("timeout", AG.OneShot.args(tx, system), "/tmp", 0),
+    r => OneShot.spawned(r, AG.OneShot.input(AG.Tx.provider(tx), system, input), AG.Tx.provider(tx)))
+
+# a thread's first message: the writer titles it, and the hub keeps the
+# title only while the thread still has the placeholder (thread.titled)
+def TitleJob.run(+tx: AG.Tx, +inbox: Chan(Msg), +thread: String, +placeholder: String, +text: String) -> IO(Unit):
+  IO.bind(String, Unit, OneShot.run(tx, AG.Title.system(), text), a =>
+    GitJob.say(inbox, "thread.titled", [J.KV{"thread", J.Str{thread}}, J.KV{"placeholder", J.Str{placeholder}}, J.KV{"title", J.Str{a}}]))
 
 def AgentJob.named(+r: String, +inbox: Chan(Msg), +thread: String) -> IO(Unit):
   Bool.pick(IO(Unit), GT.Git.failed(r), GitJob.note(inbox, thread, "error", "branch name: " ++ r),
@@ -1122,12 +1131,12 @@ def AgentJob.rename(+frag: String, +cwd: String, +old: String, +inbox: Chan(Msg)
 
 # a worktree thread's first message names its branch; without an answer
 # the temporary name stays
-def AgentJob.name(+inbox: Chan(Msg), +thread: String, +cwd: String, +old: String, +text: String) -> IO(Unit):
-  IO.bind(String, Unit, OneShot.run(AG.Name.system(), String.take(text, 4000n)), a => AgentJob.rename(AG.Name.fragment(a), cwd, old, inbox, thread))
+def AgentJob.name(+tx: AG.Tx, +inbox: Chan(Msg), +thread: String, +cwd: String, +old: String, +text: String) -> IO(Unit):
+  IO.bind(String, Unit, OneShot.run(tx, AG.Name.system(), String.take(text, 4000n)), a => AgentJob.rename(AG.Name.fragment(a), cwd, old, inbox, thread))
 
-def AgentJob.write(+d: String, +title: String) -> IO(String):
+def AgentJob.write(+tx: AG.Tx, +d: String, +title: String) -> IO(String):
   Bool.pick(IO(String), Bool.or(String.is_empty(String.trim(d)), GT.Git.failed(d)), IO.pure(String, title),
-    IO.bind(String, String, OneShot.run(AG.Commit.system(), AG.Commit.input(title, d)), a => IO.pure(String, AG.Commit.message(a, title))))
+    IO.bind(String, String, OneShot.run(tx, AG.Commit.system(), AG.Commit.input(title, d)), a => IO.pure(String, AG.Commit.message(a, title))))
 
 def AgentJob.commit(+msg: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +action: String) -> IO(Unit):
   IO.bind(String, Unit, GT.Git.act(cwd, action, msg, "", ""), r => GitJob.text.k(inbox, client, id, thread, action, r))
@@ -1135,13 +1144,13 @@ def AgentJob.commit(+msg: String, +inbox: Chan(Msg), +client: U32, +id: String, 
 # Commit & push / Open PR with a message written from the thread's diff
 # (checkpoint 0 against the work tree); the thread's title when there is
 # no diff or no answer
-def AgentJob.act(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +action: String, +title: String) -> IO(Unit):
+def AgentJob.act(+tx: AG.Tx, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +action: String, +title: String) -> IO(Unit):
   do IO<Unit>:
     d : String <- GT.Git.checkpoint.diff_worktree(cwd, thread, 0n)
-    msg : String <- AgentJob.write(d, Bool.pick(String, String.is_empty(title), "Backplane: changes from this thread", title))
+    msg : String <- AgentJob.write(tx, d, Bool.pick(String, String.is_empty(title), "Backplane: changes from this thread", title))
     AgentJob.commit(msg, inbox, client, id, thread, cwd, action)
 
-def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
+def GitJob.go(i: Nat, +tx: AG.Tx, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
   match i:
     case 0n:
       WtJob.run(inbox, thread, cwd, a, b)
@@ -1158,26 +1167,26 @@ def GitJob.go(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +thread: Str
     case 6n:
       IO.bind(String, Unit, GT.Git.status(cwd), r => GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"status", J.Str{r}}, J.KV{"thread", J.Str{thread}}])))
     case 7n:
-      AgentJob.name(inbox, thread, cwd, a, b)
+      AgentJob.name(tx, inbox, thread, cwd, a, b)
     case 8n:
-      AgentJob.act(inbox, client, id, thread, cwd, a, b)
+      AgentJob.act(tx, inbox, client, id, thread, cwd, a, b)
     case _:
       IO.pure(Unit, Unit{})
 
-def GitJob.repo(ok: Bool, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
+def GitJob.repo(ok: Bool, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String, +seed: Nat) -> IO(Unit):
   match ok:
     case True{}:
-      GitJob.go(C.Codec.pos(["worktree", "checkpoint0", "checkpoint", "diff", "revert", "act", "status", "name", "act_gen"], job), inbox, client, id, thread, cwd, a, b, home, seed)
+      GitJob.go(C.Codec.pos(["worktree", "checkpoint0", "checkpoint", "diff", "revert", "act", "status", "name", "act_gen"], job), tx, inbox, client, id, thread, cwd, a, b, home, seed)
     case False{}:
       Bool.pick(IO(Unit), String.is_empty(id), IO.pure(Unit, Unit{}), GitJob.reply(inbox, client, id, False{}, J.Json.obj([J.KV{"text", J.Str{"not a git repository: " ++ cwd}}])))
 
 # one git job; nothing happens outside a git repository (checkpoints are
 # skipped, requests answer why)
-def GitJob.run.git(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+def GitJob.run.git(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   do IO<Unit>:
     ok : Bool <- GT.Git.is_repo(cwd)
     t : U32 <- H.Clock.epoch()
-    GitJob.repo(ok, job, inbox, client, id, thread, cwd, a, b, home, U32.to_nat(t))
+    GitJob.repo(ok, tx, job, inbox, client, id, thread, cwd, a, b, home, U32.to_nat(t))
 
 # Sidebar jobs
 # ------------
@@ -1258,7 +1267,7 @@ def KiCadJob.run(+inbox: Chan(Msg), +client: U32, +id: String, +cwd: String, +ho
     +err : String <- K.KiCad.open(rt, fs)
     GitJob.reply(inbox, client, id, String.is_empty(err), J.Json.obj([J.KV{"text", J.Str{err}}]))
 
-def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+def GitJob.run.k(i: Nat, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   match i:
     case 0n:
       Files.list(inbox, client, id, thread, cwd)
@@ -1272,12 +1281,14 @@ def GitJob.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: Str
       RmJob.run(inbox, thread, cwd, a, b)
     case 5n:
       KiCadJob.run(inbox, client, id, cwd, home)
+    case 6n:
+      TitleJob.run(tx, inbox, thread, a, b)
     case _:
-      GitJob.run.git(job, inbox, client, id, thread, cwd, a, b, home)
+      GitJob.run.git(tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # a job the hub asked for: a git job, or one of the sidebar's
-def GitJob.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad"], job), job, inbox, client, id, thread, cwd, a, b, home)
+def GitJob.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad", "title"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------
@@ -1999,8 +2010,8 @@ def AgentJob.skills(+inbox: Chan(Msg), +client: U32, +id: String, +thread: Strin
 
 # a job for the hub's Git effect: the skills a composer offers (anywhere),
 # or a git job (in a repository)
-def Jobs.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  Bool.pick(IO(Unit), String.eq(job, "skills"), AgentJob.skills(inbox, client, id, thread, cwd), GitJob.run(job, inbox, client, id, thread, cwd, a, b, home))
+def Jobs.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.eq(job, "skills"), AgentJob.skills(inbox, client, id, thread, cwd), GitJob.run(tx, job, inbox, client, id, thread, cwd, a, b, home))
 
 # a thread's reasoning effort setting ("" for the provider's default)
 def Hub.effort_of(+st: M.State, +thread: String) -> String:
@@ -3020,7 +3031,7 @@ def Media.claude(+inbox: Chan(Msg), +thread: String, +cwd: String, +text: String
 
 # a Git out: the media jobs here (an upload piece runs on the hub, so the
 # pieces of a file land in order), git jobs off the hub
-def Media.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+def Media.run.k(i: Nat, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   match i:
     case 0n:
       Media.put(inbox, client, id, thread, a, b, home)
@@ -3031,10 +3042,10 @@ def Media.run.k(i: Nat, +job: String, +inbox: Chan(Msg), +client: U32, +id: Stri
     case 3n:
       IO.spawn(Unit, Media.check(a, inbox, client, id))
     case _:
-      IO.spawn(Unit, Jobs.run(job, inbox, client, id, thread, cwd, a, b, home))
+      IO.spawn(Unit, Jobs.run(tx, job, inbox, client, id, thread, cwd, a, b, home))
 
-def Media.run(+job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  Media.run.k(C.Codec.pos(["attach.put", "attach.file", "attach.claude", "update.check"], job), job, inbox, client, id, thread, cwd, a, b, home)
+def Media.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
+  Media.run.k(C.Codec.pos(["attach.put", "attach.file", "attach.claude", "update.check"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
   match h o:
@@ -3090,9 +3101,9 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       do IO<Hub>:
         Term.put(Cfg.tm(cfg), Term.msg(op, thread, cwd, data, cols, rows))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
-    case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
       do IO<Hub>:
-        Media.run(job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg))
+        Media.run(AG.Text.of(st), job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.AskAnswered{+ask, +answer}:
       do IO<Hub>:
