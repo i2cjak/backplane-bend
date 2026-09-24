@@ -14,6 +14,7 @@ import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
 import ./src/gfx/tiles.bend as T
 import ./src/gfx/raster.bend as R
+import ./src/gfx/draw.bend as D
 import ./src/app/layout.bend as L
 import ./src/core/eq.bend as Q
 import ./src/core/svg.bend as SVG
@@ -33,6 +34,7 @@ import ./src/core/badge.bend as BG
 
 import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
+import ./src/core/hier.bend as HI
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -235,6 +237,50 @@ law fade_done:
   for +born: Nat
   for +k: Nat
   {V.Fade.alpha(Nat.add(Nat.add(born, V.Fade.ms()), k), born) == 255 : U32}
+
+# Layers the user turns on and off
+# --------------------------------
+
+# with nothing flipped every layer looks exactly as by default
+law look_flip_none:
+  for +kind: U32
+  for +layer: U32
+  {V.Look.on(kind, layer, 0) == V.Look.of(kind, layer) : U32 & U32}
+
+# flipping a shown layer hides it (F.Cu)...
+law look_flip_hides:
+  {V.Look.shows(0, 12, V.Look.toggle(0, 12)) == False{} : Bool}
+
+# ...and flipping a hidden one shows it (F.CrtYd)
+law look_flip_shows:
+  {V.Look.shows(0, 17, V.Look.toggle(0, 17)) == True{} : Bool}
+
+# flipping a layer twice gives it back
+law look_flip_twice:
+  {V.Look.toggle(V.Look.toggle(4096, 12), 12) == 4096 : U32}
+
+# an item on a hidden layer draws nothing, wherever it is and however new
+law ops_hidden_draws_nothing:
+  for +p: B.Prim
+  for +l: U32
+  for +v: V.View
+  for +c: D.Clip
+  for +now: Nat
+  for +born: Nat
+  for +kind: U32
+  for +flip: U32
+  for +rest: List<&2, R.Op>
+  for h: {V.Look.shows(kind, l, flip) == False{} : Bool}
+  {V.Ops.gate(True{}, p, l, v, c, now, born, kind, flip, rest) == rest : List<&2, R.Op>}
+
+# and a click never picks it: the best pick so far stays
+law pick_hidden_skipped:
+  for hit: Bool
+  for +area: F32
+  for +key: String
+  for bk: String
+  for +ba: F32
+  {V.Pick.better((hit, area), False{}, key, (bk, ba)) == (bk, ba) : String & F32}
 
 # Updates
 # -------
@@ -1351,3 +1397,36 @@ law view_other_stays_shut:
   for p: {U.Ui.panel(u) == False{} : Bool}
   for h: {String.eq(th, U.Ui.sel(u)) == False{} : Bool}
   {U.Ui.panel(U.Ui.view.k(u, th, o)) == False{} : Bool}
+
+# Hierarchical schematics
+# -----------------------
+# The window reads the sheet tree from the root schematic; these hold for
+# every tree it builds.
+
+# a sheet file written as an absolute path is used as written
+law hier_resolve_absolute:
+  for +parent: String
+  for +file: String
+  for h: {String.starts_with(file, "/") == True{} : Bool}
+  {HI.Hier.resolve(parent, file) == file : String}
+
+# any other is beside its parent
+law hier_resolve_beside:
+  {HI.Hier.resolve("/p/io/io.kicad_sch", "adc.kicad_sch") == "/p/io/adc.kicad_sch" : String}
+
+# a sheet that includes an ancestor is listed once, marked, and never
+# expanded, so a recursive design still gives a finite tree
+law hier_loop_listed_once:
+  {HI.Hier.rows([HI.Kids{"/p/a", [HI.Sheet{"b", "/p/b"}]}, HI.Kids{"/p/b", [HI.Sheet{"a", "/p/a"}]}], "/p/a")
+    == [HI.Row{0n, "a", "/p/a", False{}}, HI.Row{1n, "b", "/p/b", False{}}, HI.Row{2n, "a", "/p/a", True{}}] : List<&2, HI.Row>}
+
+# going up from the root stays at the root, in any tree
+law hier_root_is_top:
+  for +rs: List<&2, HI.Row>
+  {HI.Hier.parent(rs, 0n) == 0n : Nat}
+
+# opening a sheet and going up returns to where it was opened
+law hier_up_after_open:
+  {HI.Hier.parent([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}],
+      Maybe.default(&2, Nat, HI.Hier.child([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}], 2n, "adc"), 0n))
+    == 2n : Nat}
