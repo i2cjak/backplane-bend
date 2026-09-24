@@ -224,14 +224,20 @@ def View.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> Lis
     case +e <> t:
       View.mine(t, th, View.mine.k(Bool.or(String.eq(View.entry_thread(e), th), String.eq(M.Link.from(View.entry_id(e)), th)), e, acc))
 
-def View.live.k(empty: Bool, running: Bool, text: String) -> List<&2, D.Node>:
-  match empty running:
-    case False{} _:
-      [D.El{"div", "live", [D.At{"class", "msg assistant live"}], [D.El{"div", "", [D.At{"class", "body"}], D.Md.render(text)}]}]
-    case True{} True{}:
-      [D.El{"div", "live", [D.At{"class", "working"}], [D.Txt{"Working"}]}]
-    case True{} False{}:
+def View.phase.k(idle: Bool, +label: String, +name: String) -> List<&2, D.Node>:
+  match idle:
+    case True{}:
       Nil{}
+    case False{}:
+      [D.El{"div", "live", [D.At{"class", "phase " ++ name}], [D.El{"span", "", [D.At{"class", "dot " ++ name}], Nil{}}, D.Txt{label}]}]
+
+# the reply streaming in, else the thread's phase
+def View.live.k(empty: Bool, +ph: M.Phase, text: String) -> List<&2, D.Node>:
+  match empty:
+    case False{}:
+      [D.El{"div", "live", [D.At{"class", "msg assistant live"}], [D.El{"div", "", [D.At{"class", "body"}], D.Md.render(text)}]}]
+    case True{}:
+      View.phase.k(String.is_empty(M.Phase.label(ph)), M.Phase.label(ph), M.Phase.name(ph))
 
 def View.running(t: M.TurnState) -> Bool:
   match t:
@@ -722,7 +728,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
-            View.live.k(String.is_empty(U.Str.get(live, id)), View.running(turn), U.Str.get(live, id))))))},
+            View.live.k(String.is_empty(U.Str.get(live, id)), U.Side.phase(st, U.Ui.thread(st, id)), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.of(st, id)),
         View.composer(U.Str.get(drafts, sel), View.running(turn), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,

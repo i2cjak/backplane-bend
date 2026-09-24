@@ -999,6 +999,69 @@ def Laws.status_approval_top(a, i, t, q):
             case M.Interrupted{} False{}:
               {==}
 
+def Laws.phase_approval_first(i, n, t, q):
+  {==}
+
+def Laws.phase_input_before_work(n, t, q):
+  {==}
+
+def Laws.phase_working_before_tasks(n, q):
+  {==}
+
+def Laws.phase_monitoring_before_complete(n, q):
+  {==}
+
+def Laws.phase_complete():
+  {==}
+
+def Laws.phase_failed_before_queued():
+  {==}
+
+def Laws.phase_silent_only_idle(a, i, n, t, q):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      match i:
+        case True{}:
+          {==}
+        case False{}:
+          match n:
+            case 0n:
+              match t q:
+                case M.Idle{} True{}:
+                  {==}
+                case M.Idle{} False{}:
+                  {==}
+                case M.Running{} True{}:
+                  {==}
+                case M.Running{} False{}:
+                  {==}
+                case M.Completed{} True{}:
+                  {==}
+                case M.Completed{} False{}:
+                  {==}
+                case M.Interrupted{} True{}:
+                  {==}
+                case M.Interrupted{} False{}:
+                  {==}
+                case M.Failed{} True{}:
+                  {==}
+                case M.Failed{} False{}:
+                  {==}
+            case 1n+k:
+              match t:
+                case M.Idle{}:
+                  {==}
+                case M.Running{}:
+                  {==}
+                case M.Completed{}:
+                  {==}
+                case M.Interrupted{}:
+                  {==}
+                case M.Failed{}:
+                  {==}
+
 def Laws.fuzzy_empty_matches(s):
   match s:
     case SNil{}:

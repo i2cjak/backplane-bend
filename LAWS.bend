@@ -217,6 +217,53 @@ law status_approval_top:
   for q: Bool
   {Nat.is_ge(M.Status.rank(M.StApproval{}), M.Status.rank(M.Status.of(a, i, t, q))) == True{} : Bool}
 
+# Thread phase
+# ------------
+
+# an approval waiting outranks everything on a thread's phase line
+law phase_approval_first:
+  for i: Bool
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {M.Phase.of(True{}, i, n, t, q) == M.PhApproval{} : M.Phase}
+
+# then a question or plan waiting, even while a turn or tasks run
+law phase_input_before_work:
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {M.Phase.of(False{}, True{}, n, t, q) == M.PhInput{} : M.Phase}
+
+# a running turn is working, whatever its child tasks do
+law phase_working_before_tasks:
+  for n: Nat
+  for q: Bool
+  {M.Phase.of(False{}, False{}, n, M.Running{}, q) == M.PhWorking{} : M.Phase}
+
+# a finished turn with child tasks still running is monitoring them, not complete
+law phase_monitoring_before_complete:
+  for n: Nat
+  for q: Bool
+  {M.Phase.of(False{}, False{}, 1n+n, M.Completed{}, q) == M.PhMonitoring{1n+n} : M.Phase}
+
+# a finished turn with nothing left running or queued is complete
+law phase_complete:
+  {M.Phase.of(False{}, False{}, 0n, M.Completed{}, False{}) == M.PhComplete{} : M.Phase}
+
+# a failed turn shows as failed even with messages queued
+law phase_failed_before_queued:
+  {M.Phase.of(False{}, False{}, 0n, M.Failed{}, True{}) == M.PhFailed{} : M.Phase}
+
+# only a thread with nothing yet has no phase line
+law phase_silent_only_idle:
+  for a: Bool
+  for i: Bool
+  for n: Nat
+  for t: M.TurnState
+  for q: Bool
+  {String.is_empty(M.Phase.label(M.Phase.of(a, i, n, t, q))) == String.eq(M.Phase.name(M.Phase.of(a, i, n, t, q)), "idle") : Bool}
+
 # Board viewer
 # ------------
 

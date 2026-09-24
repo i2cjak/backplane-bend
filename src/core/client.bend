@@ -1591,6 +1591,22 @@ def Side.status(+st: M.State, t: M.Thread) -> M.Status:
         Bool.or(Asks.kind(Asks.open(st, id), "input"), Asks.kind(Asks.open(st, id), "plan")), turn,
         Bool.not(String.is_empty(M.Queue.of(st, id))))
 
+# how many of a thread's child tasks are not finished
+def Side.live(ts: List<&2, M.Task>) -> Nat:
+  match ts:
+    case Nil{}:
+      0n
+    case M.Task{_, _, _, _, st, _, _, _, _} <> t:
+      Nat.add(Bool.pick(Nat, M.TaskState.terminal(st), 0n, 1n), Side.live(t))
+
+# what the line at the end of a thread's timeline says (M.Phase.of has the order)
+def Side.phase(+st: M.State, t: M.Thread) -> M.Phase:
+  match t:
+    case M.Thread{+id, _, _, _, _, turn, +pending, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      M.Phase.of(Bool.or(Nat.is_gt(pending, 0n), Asks.kind(Asks.open(st, id), "approval")),
+        Bool.or(Asks.kind(Asks.open(st, id), "input"), Asks.kind(Asks.open(st, id), "plan")), Side.live(Tasks.of(st, id)), turn,
+        Bool.not(String.is_empty(M.Queue.of(st, id))))
+
 # when a thread's snooze ends (0: not snoozed)
 def Side.until(+st: M.State, +id: String) -> Nat:
   M.Nav.until(M.Nav.get(M.State.navs(st), id))
