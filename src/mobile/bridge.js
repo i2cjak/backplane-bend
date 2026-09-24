@@ -132,6 +132,16 @@ function cbor(b) {
   }
 }
 let hubs = null;
+// the drafts kept on this phone, {"<hub>|<thread>": text}
+let kept = {};
+
+// kept drafts into the clients of the hubs they belong to
+function restore() {
+  for (const [k, text] of Object.entries(kept)) {
+    const i = k.indexOf("|");
+    if (i > 0 && typeof text === "string") hubs = App.restore(hubs, k.slice(0, i), k.slice(i + 1), text);
+  }
+}
 
 // every call answers {"screen": <screen>, "cmds": [...]} as one string;
 // a send names the hub it goes to; alerts ride along as
@@ -144,6 +154,13 @@ function out(cmds, quiet, alerts) {
     else if (c.$ === "Copy") cs.push({ type: "copy", text: c.text });
     else if (c.$ === "Focus") cs.push({ type: "focus", id: c.id });
     else if (c.$ === "Scroll") cs.push({ type: "scroll" });
+    // the native side writes it down at once; "" forgets it
+    else if (c.$ === "Keep") {
+      const key = h.hub + "|" + c.thread;
+      if (c.text) kept[key] = c.text;
+      else delete kept[key];
+      cs.push({ type: "keep", thread: key, text: c.text });
+    }
   }
   for (const a of alerts ?? []) cs.push({ type: "notify", ...a });
   return '{"screen":' + (quiet ? "null" : App.screen(hubs)) + ',"cmds":' + JSON.stringify(cs) + "}";
@@ -156,14 +173,21 @@ function step(r, quiet) {
 }
 
 globalThis.Backplane = {
-  // cid: this phone's id, part of every message id (a resend is stored once)
-  start(cid) {
+  // cid: this phone's id, part of every message id (a resend is stored once);
+  // drafts: the drafts it kept, as JSON {"<hub>|<thread>": text}
+  start(cid, drafts) {
     hubs = App.init(secs(Date.now() / 1000), cid);
+    try {
+      kept = JSON.parse(drafts ?? "{}") ?? {};
+    } catch {
+      kept = {};
+    }
     return out(null);
   },
   // the hubs paired, as their keys (host:port) in order
   hubs(keys) {
     hubs = App.hubs(hubs, JSON.stringify(keys));
+    restore();
     return out(null);
   },
   // hub k's socket query: resume from what this app already holds

@@ -1430,3 +1430,42 @@ law hier_up_after_open:
   {HI.Hier.parent([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}],
       Maybe.default(&2, Nat, HI.Hier.child([HI.Row{0n, "top", "/p/top", False{}}, HI.Row{1n, "power", "/p/power", False{}}, HI.Row{1n, "io", "/p/io", False{}}, HI.Row{2n, "adc", "/p/adc", False{}}], 2n, "adc"), 0n))
     == 2n : Nat}
+
+# Drafts kept
+# -----------
+
+# every change to a thread's draft asks the host to write it down at once
+law draft_kept:
+  for u: U.Ui
+  for +text: String
+  {U.Act.cmds(U.Ui.draft.set(u, text)) == U.Draft.keep(U.Ui.sel(u), text) : List<&2, U.Cmd>}
+
+# a thread's id is kept, word for word
+law draft_keep_thread:
+  for +text: String
+  {U.Draft.keep("t1790175755-9", text) == [U.Keep{"t1790175755-9", text}] : List<&2, U.Cmd>}
+
+# no thread, a scratch key or anything path-like is never written
+law draft_keep_no_thread:
+  for +text: String
+  {U.Draft.keep("", text) == Nil{} : List<&2, U.Cmd>}
+
+law draft_keep_no_scratch:
+  for +text: String
+  {U.Draft.keep("@del", text) == Nil{} : List<&2, U.Cmd>}
+
+law draft_keep_no_path:
+  for +text: String
+  {U.Draft.keep("../x", text) == Nil{} : List<&2, U.Cmd>}
+
+# a draft read back after a restart fills an empty composer and never
+# replaces what is typed there
+law draft_restore_fills:
+  for +saved: String
+  {U.Draft.pick("", saved) == saved : String}
+
+law draft_restore_keeps_typing:
+  for +c: Char
+  for +t: String
+  for +saved: String
+  {U.Draft.pick(SCon{c, t}, saved) == SCon{c, t} : String}

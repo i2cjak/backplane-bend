@@ -158,6 +158,12 @@ const cid = (() => {
 })();
 
 let ui = App.init(now(), cid);
+// drafts this browser kept (Keep commands), one key per thread
+const DRAFT = "backplane-draft:";
+for (let i = 0; i < localStorage.length; i += 1) {
+  const k = localStorage.key(i);
+  if (k && k.startsWith(DRAFT)) ui = App.restore(ui, k.slice(DRAFT.length), localStorage.getItem(k) ?? "");
+}
 let socket = null;
 let queued = false;
 let scroll = false;
@@ -211,6 +217,12 @@ function run(cmds) {
       if (c.url) location.href = c.url + "/";
     } else if (c.$ === "Scroll") {
       scroll = true;
+    } else if (c.$ === "Keep") {
+      // written at once: a crash or a closed tab loses nothing typed
+      try {
+        if (c.text) localStorage.setItem(DRAFT + c.thread, c.text);
+        else localStorage.removeItem(DRAFT + c.thread);
+      } catch {}
     }
   }
 }

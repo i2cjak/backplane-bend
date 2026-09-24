@@ -73,7 +73,7 @@ final class Engine: @unchecked Sendable {
         }
     }
 
-    func start(_ cid: String) async -> Out? { await out("start", [cid]) }
+    func start(_ cid: String, _ drafts: String) async -> Out? { await out("start", [cid, drafts]) }
     func hubs(_ keys: [String]) async -> Out? { await out("hubs", [keys]) }
     func resume(_ key: String) async -> String { await call("resume", [key]) { $0 } }
     func register(_ kind: String, _ token: String, env: String, bundle: String) async -> Out? {
