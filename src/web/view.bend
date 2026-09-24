@@ -10,6 +10,9 @@ import ../core/images.bend as IM
 import ../core/fold.bend as FO
 import ../core/badge.bend as BG
 import ../core/todo.bend as TD
+import ../core/bot.bend as BT
+import ../core/botui.bend as BI
+import ./bots.bend as WB
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -168,20 +171,24 @@ def View.machines(many: Bool, rs: List<&2, U.MRow>) -> List<&2, D.Node>:
     case False{}:
       Nil{}
 
-def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String, +look: String) -> D.Node:
+def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String, +look: String, bots: List<&2, D.Node>) -> D.Node:
   D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
             WI.WIcon.button("icon", "proj-open", "", "Add project", "plus", 16, "")]}],
           D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding),
-            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now, look),
-            [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")]))))}
+            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now, look), D.Dom.cat(bots,
+            [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")])))))}
 
-def View.sidebar(u: U.Ui) -> D.Node:
+def View.sidebar.u(bots: List<&2, D.Node>, u: U.Ui) -> D.Node:
   match u:
     case U.Ui{+st, +sel, +d, l, +open, +on, +now, +adding, pa, +v, r, w, e, note, nf, ob, tr}:
-      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v, U.Str.get(d, "@look"))
+      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v, U.Str.get(d, "@look"), bots)
+
+# the sidebar: the projects, then the bots and rooms (bots.bend)
+def View.sidebar(+u: U.Ui) -> D.Node:
+  View.sidebar.u(WB.WB.side(u), u)
 
 # Thread
 # ------
@@ -756,12 +763,20 @@ def View.composer(+draft: String, +send: String, +label: String, +ctx: String, +
         D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
       D.Dom.button("primary", "send", "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send)]}])))}
 
-def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool) -> D.Node:
+# the thread's header, or the one given (a bot's)
+def View.top(hd: List<&2, D.Node>, t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> List<&2, D.Node>:
+  match hd:
+    case Nil{}:
+      [View.header(t, st, panel, snoozed, picking, term, diff, del)]
+    case h <> r:
+      h <> r
+
+def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool, hd: List<&2, D.Node>) -> D.Node:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
-        D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat([
-        View.header(M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind:" ++ id), "diff"), String.eq(U.Str.get(drafts, "@del"), id)),
+        D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat(D.Dom.cat(
+        View.top(hd, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind:" ++ id), "diff"), String.eq(U.Str.get(drafts, "@del"), id)), [
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
@@ -770,11 +785,25 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         View.todos(U.Todos.shown(st, id, View.running(turn))),
         View.queued(M.Queue.items(st, id), View.running(turn)),
         View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
-          U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
+          U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)]),
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
+def View.thread.h(+u: U.Ui, t: M.Thread, hd: List<&2, D.Node>) -> D.Node:
+  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"), hd)
+
 def View.thread(+u: U.Ui, t: M.Thread) -> D.Node:
-  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"))
+  View.thread.h(u, t, Nil{})
+
+# a bot: its header and tabs, then its thread (Chat) or another tab
+def View.bot.k(chat: Bool, +u: U.Ui, +b: BT.Bot, +tab: String) -> D.Node:
+  match chat:
+    case True{}:
+      View.thread.h(u, U.Ui.thread(U.Ui.state(u), BT.Bot.thread(b)), [WB.WB.head(u, b), WB.WB.tabs(tab)])
+    case False{}:
+      D.El{"main", "bot", [D.At{"class", "thread-view bot-view"}], [WB.WB.head(u, b), WB.WB.tabs(tab), WB.WB.body(u, b, tab)]}
+
+def View.bot(+u: U.Ui, +b: BT.Bot) -> D.Node:
+  View.bot.k(String.eq(BI.BU.tab(u), "chat"), u, b, BI.BU.tab(u))
 
 def View.main.s(settings: Bool, none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
   match settings none u:
@@ -790,6 +819,18 @@ def View.main.k(none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
     case _ U.Ui{+st, _, _, _, +o, _, _, _, _, +v, _, _, _, +note, +nf, +ob, +tr}:
       View.main.s(U.Flag.get(o, "settings"), none, u, sel, n)
 
+# settings, else a bot, a room or a bot elsewhere, else the thread
+def View.main.b(settings: Bool, bv: BI.View, +u: U.Ui, +sel: String, +n: Nat) -> D.Node:
+  match settings bv:
+    case False{} BI.VBot{b}:
+      View.bot(u, b)
+    case False{} BI.VRoom{r}:
+      WB.WB.room(u, r)
+    case False{} BI.VRemote{id}:
+      WB.WB.remote(u, id)
+    case _ _:
+      View.main.k(String.is_empty(sel), u, sel, n)
+
 # the side pane: the diff view, or the board canvas
 def View.aside(diff: Bool, +text: String) -> D.Node:
   match diff:
@@ -799,11 +840,14 @@ def View.aside(diff: Bool, +text: String) -> D.Node:
       D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}
 
 # the whole page
-def View.page(u: U.Ui) -> D.Node:
+def View.page.b(+bv: BI.View, u: U.Ui) -> D.Node:
   match u:
     case U.Ui{+st, +sel, +d, +l, +o, +on, +now, +ad, +pa, +v, +r, +w, +e, +note, +nf, +ob, +tr}:
-      D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app") ++ Bool.pick(String, Bool.or(Bool.not(String.is_empty(sel)), U.Flag.get(o, "settings")), " picked", "")}],
+      D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app") ++ Bool.pick(String, Bool.or(Bool.or(Bool.not(String.is_empty(sel)), U.Flag.get(o, "settings")), WB.WB.shown(bv)), " picked", "")}],
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
-          View.main.k(String.is_empty(sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
+          View.main.b(U.Flag.get(o, "settings"), bv, U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
           D.Dom.cat(D.Dom.when(pa, View.aside(String.eq(U.Str.get(nf, "view.kind:" ++ sel), "diff"), U.Str.get(nf, "diff:" ++ sel))),
             D.Dom.cat(View.picker(U.Flag.get(o, "proj"), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}), View.error(e))))}
+
+def View.page(+u: U.Ui) -> D.Node:
+  View.page.b(BI.BU.view(u), u)

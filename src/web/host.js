@@ -63,6 +63,18 @@ function create(v) {
   return el;
 }
 
+// bots' cats: an <img data-cat="<look>:<mood>:<px>"> shows app.bend's
+// SVG for that name, made once per name and kept
+const CATS = new Map();
+function catUri(name) {
+  let u = CATS.get(name);
+  if (u === undefined) {
+    u = App.cat(name);
+    CATS.set(name, u);
+  }
+  return u;
+}
+
 function setAttrs(el, oldAttrs, attrs) {
   const seen = new Set();
   for (const a of each(attrs)) {
@@ -72,6 +84,7 @@ function setAttrs(el, oldAttrs, attrs) {
         if (el.value !== a.value) el.value = a.value;
       } else if (el.getAttribute(a.name) !== a.value) {
         el.setAttribute(a.name, a.value);
+        if (a.name === "data-cat") el.src = catUri(a.value);
       }
     } else {
       const name = "data-on-" + a.event;
@@ -157,7 +170,7 @@ const cid = (() => {
   return c;
 })();
 
-let ui = App.init(now(), cid);
+let ui = App.page(App.init(now(), cid), location.origin);
 // drafts this browser kept (Keep commands), one key per thread
 const DRAFT = "backplane-draft:";
 for (let i = 0; i < localStorage.length; i += 1) {
@@ -256,11 +269,25 @@ function termSize() {
 }
 
 function valueOf(el) {
+  const sp = el.getAttribute("data-space");
+  if (sp !== null) {
+    const f = document.getElementById(el.getAttribute("data-field") || "") || el;
+    const t = f.value ?? "";
+    f.value = "";
+    return sp + "\u001f" + t;
+  }
   const v = el.getAttribute("data-value");
   if (v === null) return el.value ?? "";
   if (v === "@term-size") return termSize();
   if (v.startsWith("#")) return document.getElementById(v.slice(1))?.value ?? "";
   return v;
+}
+
+// what a field sends as it is typed in; a form field (data-bfield) sends
+// "<field>\u001f<text>"
+function inputValue(el) {
+  const f = el.getAttribute("data-bfield");
+  return f === null ? el.value : f + "\u001f" + el.value;
 }
 
 // Files: read, cut into the pieces app.bend asks for, base64, and hand
@@ -396,7 +423,7 @@ for (const ev of EVENTS) {
     if (!el) return;
     const action = el.getAttribute(`data-on-${ev}`);
     if (ev === "contextmenu") e.preventDefault();
-    dispatch(action, ev === "input" ? el.value : valueOf(el));
+    dispatch(action, ev === "input" ? inputValue(el) : valueOf(el));
   });
 }
 
