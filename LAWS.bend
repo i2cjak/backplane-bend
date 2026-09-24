@@ -883,6 +883,19 @@ law row_delete_asks_first:
   for +id: String
   {U.Act.cmds(U.Ui.row_delete.k(False{}, u, id)) == Nil{} : List<&2, U.Cmd>}
 
+# a right-click on a row the user settled brings it back
+law row_toggle_unsettles:
+  for t: M.Thread
+  for +at: Nat
+  for h: {M.Thread.hidden(t) == False{} : Bool}
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.settled(True{}, at, t))) == "thread.unsettle" : String}
+
+# and on a row the user brought back it settles it again
+law row_toggle_settles:
+  for +at: Nat
+  for t: M.Thread
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.unsettled(at, t))) == "thread.settle" : String}
+
 # an answer to anything but the project picker's newest request leaves the
 # client as it was (a late listing never replaces a newer one)
 law picker_drops_stale:

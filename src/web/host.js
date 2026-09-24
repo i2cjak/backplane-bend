@@ -48,7 +48,7 @@ function* each(list) {
 // DOM patch
 // ---------
 
-const EVENTS = ["click", "input"];
+const EVENTS = ["click", "input", "contextmenu"];
 
 // icons (src/web/icon.bend) are inline SVG, which needs its namespace
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -353,6 +353,7 @@ for (const ev of EVENTS) {
     const el = e.target.closest?.(`[data-on-${ev}]`);
     if (!el) return;
     const action = el.getAttribute(`data-on-${ev}`);
+    if (ev === "contextmenu") e.preventDefault();
     dispatch(action, ev === "input" ? el.value : valueOf(el));
   });
 }

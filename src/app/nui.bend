@@ -1638,6 +1638,21 @@ def Nui.press.k(drag: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
     case False{}:
       Row.press(Hit.find(Nui.hits(n), x, y), n, x, y)
 
+# a right-click on a sidebar row settles it, or brings a settled one back
+def Row.menu.k(row: Bool, +n: Nui, +value: String) -> Step:
+  match row:
+    case True{}:
+      Nui.act(n, "row-toggle", value)
+    case False{}:
+      Step{n, Nil{}, False{}}
+
+def Row.menu(m: Maybe<&2, Hit>, +n: Nui, +x: U32) -> Step:
+  match m:
+    case Some{Hit{_, _, _, _, +action, +value}}:
+      Row.menu.k(Bool.and(String.eq(action, "select"), U32.is_lt(x, 264)), n, value)
+    case None{}:
+      Step{n, Nil{}, False{}}
+
 # a press on the viewer's own buttons is a click, elsewhere in it a drag
 def Nui.press(viewer: Bool, +n: Nui, +x: U32, +y: U32) -> Step:
   Nui.press.k(Bool.and(viewer, Nui.nohit(Hit.find(Nui.hits(n), x, y))), n, x, y)
@@ -1697,6 +1712,8 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
       Nui.press(Nui.in_viewer(n, x), n, x, y)
     case W.WButton{+x, +y, 1, False{}}:
       Sel.end(Row.release(Bool.not(String.is_empty(Row.id(n))), n, x, y))
+    case W.WButton{+x, +y, 3, True{}}:
+      Row.menu(Hit.find(Nui.hits(n), x, y), n, x)
     case W.WButton{_, _, _, _}:
       Step{n, Nil{}, False{}}
     case W.WMove{+x, +y}:
