@@ -679,7 +679,7 @@ def Ui.actions() -> List<&2, String>:
    "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back",
    "bot", "bot-tab", "bot-new", "bot-create", "bot-delete", "bot-edit", "bfield", "room", "room-new", "room-save", "room-pick", "room-post",
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
-   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit"]
+   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close"]
 
 # Reading the client state
 # ------------------------
@@ -2583,7 +2583,7 @@ def Bots.cur(+u: Ui) -> String:
   Ui.scratch(u, "@bot")
 
 def Bots.edit(+u: Ui) -> Act:
-  Ui.rpc(u, "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"persona", J.Str{Bots.field(u, "persona")}}])
+  Ui.rpc(Bots.fields.clear(u, ["persona"]), "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"persona", J.Str{Bots.field(u, "persona")}}])
 
 def Bots.look(+u: Ui, +v: String) -> Act:
   Ui.rpc(u, "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"look", J.Num{v}}])
@@ -2731,6 +2731,10 @@ def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
       Ui.rpc(Bots.views(u, "", "", ""), "bots.room_delete", [J.KV{"room", J.Str{value}}])
     case 29n:
       Act{Bots.routine.edit(u, Bots.routine.of(u, value)), [Focus{"routine-name"}]}
+    case 30n:
+      Act{Ui.scratch_set(Ui.scratch_set(u, "@hook.secret", ""), "@hook.id", ""), Nil{}}
+    case 31n:
+      Act{Ui.scratch_set(u, value, ""), Nil{}}
     case _:
       Act{u, Nil{}}
 

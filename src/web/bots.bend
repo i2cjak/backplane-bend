@@ -296,7 +296,8 @@ def WB.rform(+u: U.Ui) -> D.Node:
     WB.input("routine-cron", "ocron", BI.BU.field(u, "ocron"), "every 15m · daily 09:30 · weekdays 08:00 · cron", "")],
     D.Dom.cat(WB.cron.hint(BI.BU.field(u, "ocron")), [
     WB.area("routine-prompt", "oprompt", BI.BU.field(u, "oprompt"), "What to do each time"),
-    WB.btns([D.Dom.button("primary", "routine-save", "", "Save the routine", Bool.pick(String, String.is_empty(BI.BU.field(u, "oid")), "Add routine", "Save routine"))])])))
+    WB.btns([D.Dom.button("primary", "routine-save", "", "Save the routine", Bool.pick(String, String.is_empty(BI.BU.field(u, "oid")), "Add routine", "Save routine")),
+      D.Dom.button("", "routine-edit", "", "Clear the form", "Clear")])])))
 
 def WB.routines(+u: U.Ui, +b: BT.Bot) -> D.Node:
   WB.div("bot-list", List.append(&2, D.Node, WB.routines.go(BI.BU.routines(u, BT.Bot.id(b)), U.Side.now(u)), [WB.rform(u)]))
@@ -338,7 +339,8 @@ def WB.secret.k(show: Bool, +url: String, +secret: String) -> List<&2, D.Node>:
         D.Dom.span("secret-label", "Secret, shown once"),
         WB.div("secret-line", [D.El{"code", "", Nil{}, [D.Txt{secret}]}, D.Dom.copy(secret)]),
         WB.div("codeblock", [D.Dom.copy(WB.curl(url, secret)), D.El{"pre", "", Nil{}, [D.El{"code", "", Nil{}, [D.Txt{WB.curl(url, secret)}]}]}]),
-        D.Dom.span("secret-label", "GitHub: payload URL " ++ url ++ ", content type application/json, this secret.")])]
+        D.Dom.span("secret-label", "GitHub: payload URL " ++ url ++ ", content type application/json, this secret."),
+        WB.btns([D.Dom.button("", "hook-done", "", "Hide the secret: it is not shown again", "Done")])])]
     case False{}:
       Nil{}
 
