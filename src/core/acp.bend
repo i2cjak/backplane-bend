@@ -116,6 +116,14 @@ def Acp.reply.k(id: Nat, ok: Bool, a: Acp, +t: AcpTurn, +o: J.Json) -> AcpOut:
 # Agent → client: updates and permission requests
 # -----------------------------------------------
 
+# an ACP plan's entries ({content, priority, status}) as todo items
+def Acp.plan(es: List<&2, J.Json>) -> List<&2, J.Json>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      J.Json.obj([J.KV{"text", J.Str{J.Json.get_str(e, "content", "")}}, J.KV{"status", J.Str{J.Json.get_str(e, "status", "pending")}}]) <> Acp.plan(t)
+
 def Acp.update.k(i: Nat, a: Acp, +u: J.Json) -> AcpOut:
   match i a:
     case 0n Acp{s, b, d}:
@@ -124,6 +132,8 @@ def Acp.update.k(i: Nat, a: Acp, +u: J.Json) -> AcpOut:
     case 1n _:
       AcpOut{a, Nil{}, [Acp.event("item.completed", [J.KV{"item", J.Json.obj([J.KV{"type", J.Str{"command_execution"}}, J.KV{"id", J.Str{J.Json.get_str(u, "toolCallId", "")}},
         J.KV{"command", J.Str{J.Json.get_str(u, "title", J.Json.get_str(u, "kind", "tool"))}}])}])], Nil{}}
+    case 2n _:
+      AcpOut{a, Nil{}, [Acp.event("item.updated", [J.KV{"item", J.Json.obj([J.KV{"type", J.Str{"todo_list"}}, J.KV{"items", J.Json.arr(Acp.plan(J.Json.elems(J.Json.get_obj(u, "entries"))))}])}])], Nil{}}
     case _ _:
       AcpOut{a, Nil{}, Nil{}, Nil{}}
 
@@ -164,7 +174,7 @@ def Acp.open_now(a: Acp) -> Bool:
 def Acp.update.live(open: Bool, a: Acp, +o: J.Json) -> AcpOut:
   match open:
     case True{}:
-      Acp.update.k(Acp.pos(["agent_message_chunk", "tool_call"], J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "update"), "sessionUpdate", ""), 0n), a,
+      Acp.update.k(Acp.pos(["agent_message_chunk", "tool_call", "plan"], J.Json.get_str(J.Json.get_obj(J.Json.get_obj(o, "params"), "update"), "sessionUpdate", ""), 0n), a,
         J.Json.get_obj(J.Json.get_obj(o, "params"), "update"))
     case False{}:
       AcpOut{a, Nil{}, Nil{}, Nil{}}

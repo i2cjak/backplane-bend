@@ -2,6 +2,7 @@ import Base
 import ../core/model.bend as M
 import ../core/json.bend as J
 import ../core/client.bend as U
+import ../core/todo.bend as TD
 import ../core/edit.bend as ED
 import ../core/images.bend as IM
 import ../core/links.bend as LK
@@ -1646,6 +1647,29 @@ def Lay.qrows(qs: List<&2, M.QItem>, +ty: Ty, +i: Nat, +n: Nat, +run: Bool, +mor
 def Lay.qn(+qs: List<&2, M.QItem>) -> Nat:
   Bool.pick(Nat, Nat.is_gt(List.length(&2, M.QItem, qs), U.Qu.shown()), U.Qu.shown(), List.length(&2, M.QItem, qs))
 
+# The todo list above the queue: its head, then one line per step (six at
+# most; the steps being done or left first come from the agent's order)
+def Lay.tdn(+ts: List<&2, TD.Todo>) -> Nat:
+  Bool.pick(Nat, Nat.is_gt(List.length(&2, TD.Todo, ts), 6n), 6n, List.length(&2, TD.Todo, ts))
+
+def Lay.tdh(+ts: List<&2, TD.Todo>) -> U32:
+  Bool.pick(U32, List.is_empty(&2, TD.Todo, ts), 0, ((U32.from_nat(Lay.tdn(ts)) * 22 : U32) + 34 : U32))
+
+def Lay.tdlines(ts: List<&2, TD.Todo>, +ty: Ty, +x0: U32, +x1: U32, +y: U32) -> List<&2, R.Op>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      List.append(&2, R.Op, Ty.text(ty, 2n, Ty.fit(ty, 2n, TD.Todo.line(t), (x1 - x0 - 24 : U32)), D.Clip.all(), (x0 + 12 : U32), y, 22,
+          Bool.pick(U32, String.eq(TD.Todo.status(t), "completed"), T.Th.faint(), Bool.pick(U32, String.eq(TD.Todo.status(t), "in_progress"), T.Th.text(), T.Th.dim()))),
+        Lay.tdlines(rest, ty, x0, x1, (y + 22 : U32)))
+
+def Lay.todos(+ty: Ty, +ts: List<&2, TD.Todo>, +x0: U32, +x1: U32, +bottom: U32) -> Out:
+  Out.when(Bool.not(List.is_empty(&2, TD.Todo, ts)),
+    Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, (bottom - Lay.tdh(ts) : U32), (x1 - x0 : U32), (Lay.tdh(ts) - 4 : U32), 0, T.Th.raise(), T.Th.line()),
+      Ty.text(ty, 2n, TD.Todo.head(ts), D.Clip.all(), (x0 + 12 : U32), (bottom - Lay.tdh(ts) + 2 : U32), 26, T.Th.soft()),
+      Lay.tdlines(List.take(&2, TD.Todo, ts, Lay.tdn(ts)), ty, x0, x1, (bottom - Lay.tdh(ts) + 28 : U32))])))
+
 # the queue's height above the composer
 def Lay.qh(+qs: List<&2, M.QItem>) -> U32:
   (U32.from_nat(Lay.qn(qs)) * 32 : U32)
@@ -2667,7 +2691,8 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       +asks = U.Asks.open(st, sel)
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qs = M.Queue.items(st, sel)
-      +qh = Lay.qh(qs)
+      +tds = U.Todos.shown(st, sel, Lay.running(turn))
+      +qh = {(Lay.qh(qs) + Lay.tdh(tds) : U32) : U32}
       # the composer grows by eh, and all above it moves up
       +ls = Comp.wrap(ty, draft, cw)
       +eh = Comp.eh(List.length(&2, String, ls))
@@ -2680,6 +2705,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
           Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.label(st, sel, Lay.running(turn)), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), rs, atts, up, path),
           Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
+          Lay.todos(ty, tds, cx0, cx1, (h - eh - 124 - Lay.qh(qs) : U32)),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
           Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), 60, U.Chip.all(info, pr, mo), U.Effort.of(st, sel), moff)])
       Out.cat(tl, ch)

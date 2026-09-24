@@ -7,6 +7,7 @@ import ../web/view.bend as V
 import ./notify.bend as N
 import ./view.bend as VW
 import ./picker.bend as PK
+import ../core/todo.bend as TD
 
 # Ui -> the screen the phone apps draw, as JSON. SwiftUI and Compose map
 # it onto native lists, toolbars and text fields; every decision (order,
@@ -224,6 +225,17 @@ def Mob.queue(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, J.Jso
       J.Json.obj([J.KV{"msg", J.Json.str(msg)}, J.KV{"text", J.Json.str(U.Qu.label(msg, text))}, J.KV{"tag", J.Json.str(U.Qu.tag(run, msg))},
         J.KV{"buttons", J.Json.arr(Mob.qbtns(U.Qu.row_buttons(run, first, msg)))}]) <> Mob.queue(t, False{}, run)
 
+def Mob.tdlines(ts: List<&2, TD.Todo>) -> List<&2, J.Json>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      J.Json.obj([J.KV{"text", J.Json.str(TD.Todo.line(t))}, J.KV{"status", J.Json.str(TD.Todo.status(t))}]) <> Mob.tdlines(rest)
+
+# the agent's todo list (U.Todos.shown), or null while hidden
+def Mob.todos(+ts: List<&2, TD.Todo>) -> J.Json:
+  Bool.pick(J.Json, List.is_empty(&2, TD.Todo, ts), J.Null{}, J.Json.obj([J.KV{"head", J.Json.str(TD.Todo.head(ts))}, J.KV{"lines", J.Json.arr(Mob.tdlines(ts))}]))
+
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
@@ -234,6 +246,7 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Js
         J.KV{"sending", J.Json.arr(Mob.strs(pend))},
         J.KV{"queued", J.Json.str(M.Queue.of(st, id))},
         J.KV{"queue", J.Json.arr(Mob.queue(M.Queue.items(st, id), True{}, V.View.running(turn)))},
+        J.KV{"todos", Mob.todos(U.Todos.shown(st, id, V.View.running(turn)))},
         J.KV{"live", J.Json.arr(Mob.nodes(D.Md.render(U.Str.get(live, id))))},
         J.KV{"working", J.Json.str(Mob.live(String.is_empty(U.Str.get(live, id)), V.View.running(turn)))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},

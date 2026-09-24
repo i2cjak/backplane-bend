@@ -508,6 +508,13 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
+                    t.todos?.let { td ->
+                        Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
+                            Text(td.head, style = MaterialTheme.typography.labelMedium)
+                            for (l in td.lines) Text(l.text, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                color = if (l.status == "completed") MaterialTheme.colorScheme.outline else MaterialTheme.colorScheme.onSurface)
+                        }
+                    }
                     for (q in t.queue) Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(q.tag, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
                         Text(q.text, Modifier.weight(1f).padding(horizontal = 8.dp),

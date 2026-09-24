@@ -100,6 +100,16 @@ struct QButton: Decodable {
     let label, action, value: String
 }
 
+// the agent's todo list: "Todo 2/5" and a line per step
+struct TodoLine: Decodable {
+    let text, status: String
+}
+
+struct Todos: Decodable {
+    let head: String
+    let lines: [TodoLine]
+}
+
 struct QueueRow: Decodable {
     let msg, text, tag: String
     let buttons: [QButton]
@@ -113,6 +123,7 @@ struct ThreadView: Decodable {
     let sending: [String]
     let queued: String
     let queue: [QueueRow]?
+    let todos: Todos?
     let live: [Block]
     let working, draft, send: String
     let picker: ModelPicker

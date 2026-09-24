@@ -5,6 +5,7 @@ import ./codec.bend as C
 import ./attach.bend as AT
 import ./agent.bend as AG
 import ./handoff.bend as HD
+import ./todo.bend as TD
 
 # The decider. Requests from clients and lines from agents come in; changes
 # (persisted, folded into the read model) and effects (run by the server)
@@ -179,6 +180,11 @@ def Hub.post.go(wait: Bool, +t: M.Thread, +cwd: String, +queued: String, +now: N
           Bool.pick(List<&2, M.Change>, String.is_empty(queued), Nil{}, [M.QueueTaken{thread, now}]),
           [M.TurnChanged{thread, M.Running{}, now}]]),
         Git{0, "", "checkpoint0", thread, cwd, "", ""} <> Hub.run(t, cwd, M.Queue.join(queued, text))}
+
+def Step.after(st: Step, more: List<&2, M.Change>) -> Step:
+  match st:
+    case Step{cs, os}:
+      Step{List.append(&2, M.Change, cs, more), os}
 
 def Step.before(cs: List<&2, M.Change>, os: List<&2, Out>, st: Step) -> Step:
   match st:
@@ -663,6 +669,74 @@ def Claude.result.k(err: Bool, +thread: String, +now: Nat, text: String) -> Step
 def Claude.result(+thread: String, +now: Nat, +o: J.Json) -> Step:
   Claude.result.k(J.Json.get_bool(o, "is_error", False{}), thread, now, J.Json.get_str(o, "result", ""))
 
+# Claude's todo tools
+# -------------------
+# TodoWrite sets the whole list; TaskCreate adds a step and TaskUpdate
+# changes one, so the hub folds them over the thread's list, and a
+# TaskCreate's result (a "user" line) names the step it made.
+
+def Claude.todo.k(i: Nat, +b: J.Json, ts: List<&2, TD.Todo>) -> List<&2, TD.Todo>:
+  match i:
+    case 0n:
+      TD.Todo.write(J.Json.get_obj(b, "input"))
+    case 1n:
+      TD.Todo.create(ts, J.Json.get_str(b, "id", ""), J.Json.get_obj(b, "input"))
+    case 2n:
+      TD.Todo.update(ts, J.Json.get_obj(b, "input"))
+    case _:
+      ts
+
+def Claude.todo.kind(+b: J.Json) -> Nat:
+  Bool.pick(Nat, String.eq(J.Json.get_str(b, "type", ""), "tool_use"), C.Codec.pos(["TodoWrite", "TaskCreate", "TaskUpdate"], J.Json.get_str(b, "name", "")), 3n)
+
+def Claude.todo.go(bs: List<&2, J.Json>, ts: List<&2, TD.Todo>) -> List<&2, TD.Todo>:
+  match bs:
+    case Nil{}:
+      ts
+    case +b <> t:
+      Claude.todo.go(t, Claude.todo.k(Claude.todo.kind(b), b, ts))
+
+def Claude.todo.any(bs: List<&2, J.Json>) -> Bool:
+  match bs:
+    case Nil{}:
+      False{}
+    case +b <> t:
+      Bool.or(Nat.is_lt(Claude.todo.kind(b), 3n), Claude.todo.any(t))
+
+def Claude.todos.of(+s: M.State, +th: String) -> List<&2, TD.Todo>:
+  TD.Todo.read(M.Setting.get(s, "todos." ++ th, ""))
+
+def Claude.todos.set(changed: Bool, +th: String, +now: Nat, +ts: String) -> List<&2, M.Change>:
+  match changed:
+    case True{}:
+      [M.TodosSet{th, ts, now}]
+    case False{}:
+      Nil{}
+
+# an assistant message's todo tools, folded over the thread's list
+def Claude.todos(+s: M.State, +th: String, +now: Nat, +bs: List<&2, J.Json>) -> List<&2, M.Change>:
+  Claude.todos.set(Claude.todo.any(bs), th, now, TD.Todo.show(Claude.todo.go(bs, Claude.todos.of(s, th))))
+
+# an assistant message and what its todo tools do to the thread's list
+def Claude.assistant.t(+s: M.State, +thread: String, +now: Nat, +m: J.Json) -> Step:
+  Step.before(Nil{}, Nil{}, Step.after(Claude.assistant(thread, now, Hub.seq(s), m), Claude.todos(s, thread, now, J.Json.elems(J.Json.get_obj(m, "content")))))
+
+def Claude.result.text(+c: J.Json) -> String:
+  J.Json.get_str(Maybe.default(&2, J.Json, List.head(&2, J.Json, J.Json.elems(c)), J.Null{}), "text", J.Json.as_str(Some{c}, ""))
+
+def Claude.named.go(bs: List<&2, J.Json>, ts: List<&2, TD.Todo>) -> List<&2, TD.Todo>:
+  match bs:
+    case Nil{}:
+      ts
+    case +b <> t:
+      Claude.named.go(t, TD.Todo.named(ts, J.Json.get_str(b, "tool_use_id", ""), TD.Todo.result(Claude.result.text(J.Json.get_obj(b, "content")))))
+
+# a "user" line carries tool results: a TaskCreate's names its step
+def Claude.named(+s: M.State, +th: String, +now: Nat, +o: J.Json) -> Step:
+  +before = TD.Todo.show(Claude.todos.of(s, th))
+  +after = TD.Todo.show(Claude.named.go(J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "message"), "content")), Claude.todos.of(s, th)))
+  Step{Claude.todos.set(Bool.not(String.eq(before, after)), th, now, after), Nil{}}
+
 def Claude.init.same(t: M.Thread, +sid: String) -> Bool:
   match t:
     case M.Thread{_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, session, _}:
@@ -687,16 +761,18 @@ def Claude.line.k(i: Nat, +s: M.State, +thread: String, +now: Nat, +o: J.Json) -
     case 1n:
       Claude.stream(thread, J.Json.get_obj(o, "event"))
     case 2n:
-      Claude.assistant(thread, now, Hub.seq(s), J.Json.get_obj(o, "message"))
+      Claude.assistant.t(s, thread, now, J.Json.get_obj(o, "message"))
     case 3n:
       Claude.result(thread, now, o)
+    case 4n:
+      Claude.named(s, thread, now, o)
     case _:
       Step.none()
 
 def Claude.line.parsed(m: Maybe<&2, J.Json>, +s: M.State, +thread: String, +now: Nat) -> Step:
   match m:
     case Some{+o}:
-      Claude.line.k(C.Codec.pos(["system", "stream_event", "assistant", "result"], J.Json.get_str(o, "type", "")), s, thread, now, o)
+      Claude.line.k(C.Codec.pos(["system", "stream_event", "assistant", "result", "user"], J.Json.get_str(o, "type", "")), s, thread, now, o)
     case None{}:
       Step.none()
 
@@ -1347,19 +1423,37 @@ def Codex.item.k(i: Nat, +thread: String, +now: Nat, +seq: Nat, +it: J.Json) -> 
       Step{[M.ActivityLogged{thread, J.Json.get_str(it, "id", Hub.id("x", now, seq)) ++ "-" ++ Nat.show(seq), "tool", "shell", J.Json.get_str(it, "command", ""), now}], Nil{}}
     case 2n:
       Step{[M.ActivityLogged{thread, Hub.id("f", now, seq), "tool", "edit", J.Json.show(J.Json.get_obj(it, "changes")), now}], Nil{}}
+    case 3n:
+      Step{[M.TodosSet{thread, TD.Todo.show(TD.Todo.codex(it)), now}], Nil{}}
     case _:
       Step.none()
+
+# a todo list as it starts or changes (only its completion goes through
+# item.completed)
+def Codex.todo(todo: Bool, +thread: String, +now: Nat, +it: J.Json) -> Step:
+  match todo:
+    case True{}:
+      Step{[M.TodosSet{thread, TD.Todo.show(TD.Todo.codex(it)), now}], Nil{}}
+    case False{}:
+      Step.none()
+
+# item.started and item.updated share a case: only todo lists are read there
+def Codex.kind(+t: String) -> Nat:
+  Bool.pick(Nat, Bool.or(String.eq(t, "item.started"), String.eq(t, "item.updated")), 5n,
+    C.Codec.pos(["thread.started", "item.completed", "turn.completed", "turn.failed", "item.delta"], t))
 
 def Codex.line.k(i: Nat, +s: M.State, +thread: String, +now: Nat, +o: J.Json) -> Step:
   match i:
     case 0n:
       Claude.init.k(Claude.init.same(Hub.thread(s, thread), J.Json.get_str(o, "thread_id", "")), thread, J.Json.get_str(o, "thread_id", ""), now)
     case 1n:
-      Codex.item.k(C.Codec.pos(["agent_message", "command_execution", "file_change"], J.Json.get_str(J.Json.get_obj(o, "item"), "type", "")), thread, now, Hub.seq(s), J.Json.get_obj(o, "item"))
+      Codex.item.k(C.Codec.pos(["agent_message", "command_execution", "file_change", "todo_list"], J.Json.get_str(J.Json.get_obj(o, "item"), "type", "")), thread, now, Hub.seq(s), J.Json.get_obj(o, "item"))
     case 2n:
       Step{[M.TurnChanged{thread, M.Completed{}, now}], Nil{}}
     case 4n:
       Step.outs([Delta.push(thread, J.Json.get_str(o, "text", ""))])
+    case 5n:
+      Codex.todo(String.eq(J.Json.get_str(J.Json.get_obj(o, "item"), "type", ""), "todo_list"), thread, now, J.Json.get_obj(o, "item"))
     case 3n:
       Step{[M.ActivityLogged{thread, Hub.id("e", now, Hub.seq(s)), "error", Hub.provider(Hub.thread(s, thread)), J.Json.get_str(J.Json.get_obj(o, "error"), "message", J.Json.get_str(o, "message", "turn failed")), now}, M.TurnChanged{thread, M.Failed{}, now}], Nil{}}
     case _:
@@ -1368,7 +1462,7 @@ def Codex.line.k(i: Nat, +s: M.State, +thread: String, +now: Nat, +o: J.Json) ->
 def Codex.line.parsed(m: Maybe<&2, J.Json>, +s: M.State, +thread: String, +now: Nat) -> Step:
   match m:
     case Some{+o}:
-      Codex.line.k(C.Codec.pos(["thread.started", "item.completed", "turn.completed", "turn.failed", "item.delta"], J.Json.get_str(o, "type", "")), s, thread, now, o)
+      Codex.line.k(Codex.kind(J.Json.get_str(o, "type", "")), s, thread, now, o)
     case None{}:
       Step.none()
 

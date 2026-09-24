@@ -9,6 +9,7 @@ import ../core/diff.bend as DF
 import ../core/images.bend as IM
 import ../core/fold.bend as FO
 import ../core/badge.bend as BG
+import ../core/todo.bend as TD
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -432,6 +433,17 @@ def View.qrows(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, D.No
     case q <> t:
       View.qrow(q, first, run) <> View.qrows(t, False{}, run)
 
+def View.tdlines(ts: List<&2, TD.Todo>) -> List<&2, D.Node>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      D.Dom.span("todo " ++ TD.Todo.status(t), TD.Todo.line(t)) <> View.tdlines(rest)
+
+# the agent's todo list above the queue (U.Todos.shown)
+def View.todos(+ts: List<&2, TD.Todo>) -> D.Node:
+  D.El{"div", "", [D.At{"class", "todos"}], Bool.pick(List<&2, D.Node>, List.is_empty(&2, TD.Todo, ts), Nil{}, D.Dom.span("head", TD.Todo.head(ts)) <> View.tdlines(ts))}
+
 # what waits for a later turn (stored on the server), next first, each
 # with its buttons (U.Qu.buttons)
 def View.queued(qs: List<&2, M.QItem>, +run: Bool) -> D.Node:
@@ -755,6 +767,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
           D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), U.Side.phase(st, U.Ui.thread(st, id)), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
+        View.todos(U.Todos.shown(st, id, View.running(turn))),
         View.queued(M.Queue.items(st, id), View.running(turn)),
         View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
           U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
