@@ -52,6 +52,7 @@ import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
 import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
+import ./src/core/cat.bend as CAT
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2224,3 +2225,30 @@ law bot_mood_sleep_still:
 law bot_mood_rest:
   for talked: Bool
   {BU.Mood.of(M.StReady{}, talked, True{}) == "sleep" : String}
+# Cats
+# ----
+
+# a sleeping, failed or unreachable cat holds still in the window: it never
+# asks for frames
+law cat_sleep_still:
+  {CAT.Cat.moving("sleep") == False{} : Bool}
+
+law cat_error_still:
+  {CAT.Cat.moving("error") == False{} : Bool}
+
+law cat_away_still:
+  {CAT.Cat.moving("away") == False{} : Bool}
+
+# an unreachable cat carries no animation at all, on any client
+law cat_away_holds_still:
+  for +look: Nat
+  {CAT.Cat.anims.count(CAT.Cat.rig(look, "away")) == 0n : Nat}
+
+# each mood has its own pose (none falls back to idle but idle)
+law cat_moods_known:
+  {CAT.Cat.mood.all(CAT.Cat.moods()) == [0, 1, 2, 3, 4, 5, 6, 7] : List<&2, U32>}
+
+# every seed has a look: its index is one of the looks
+law cat_look_total:
+  for +s: Nat
+  {Nat.is_lt(CAT.Cat.look.index(s), CAT.Cat.looks()) == True{} : Bool}

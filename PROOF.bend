@@ -47,6 +47,7 @@ import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
 import ./src/core/google.bend as GO
+import ./src/core/cat.bend as CAT
 
 # Lemmas
 # ------
@@ -4097,3 +4098,80 @@ def Laws.bot_mood_sleep_still():
 
 def Laws.bot_mood_rest(talked):
   {==}
+# Cats
+# ----
+
+def Laws.cat_sleep_still():
+  {==}
+
+def Laws.cat_error_still():
+  {==}
+
+def Laws.cat_away_still():
+  {==}
+
+# a greyed rig carries no animation
+law cat_grey_still:
+  for ps: List<&2, CAT.Part>
+  {CAT.Cat.anims.count(CAT.Cat.grey.all(ps)) == 0n : Nat}
+
+def cat_grey_still(ps):
+  match ps:
+    case Nil{}:
+      {==}
+    case CAT.Part{n, d, f, l, w, a, as} <> t:
+      cat_grey_still(t)
+
+def Laws.cat_away_holds_still(look):
+  cat_grey_still(CAT.Cat.rig.k(CAT.Cat.look(look), 7))
+
+def Laws.cat_moods_known():
+  {==}
+
+law cat_add_zero:
+  for r: Nat
+  {Nat.add(r, 0n) == r : Nat}
+
+def cat_add_zero(r):
+  match r:
+    case 0n:
+      {==}
+    case 1n+p:
+      %cat_add_zero(p) : {1n+Nat.add(p, 0n) == 1n+_ : Nat}
+      {==}
+
+law cat_lt_succ_add:
+  for r: Nat
+  for -m: Nat
+  {Nat.is_lt(r, 1n+Nat.add(r, m)) == True{} : Bool}
+
+def cat_lt_succ_add(r, m):
+  match r:
+    case 0n:
+      {==}
+    case 1n+p:
+      cat_lt_succ_add(p, m)
+
+# Nat.divmod's loop keeps r + m = b - 1, so the remainder stays below b
+law cat_mod_lt:
+  for n: Nat
+  for +m: Nat
+  for -d: Nat
+  for +r: Nat
+  for -bp: Nat
+  for e: {Nat.add(r, m) == bp : Nat}
+  {Nat.is_lt(Nat.mod.fin(Nat.divmod.go(n, m, d, r)), 1n+bp) == True{} : Bool}
+
+def cat_mod_lt(n, m, d, r, bp, e):
+  match n m:
+    case 0n _:
+      %e : {Nat.is_lt(r, 1n+_) == True{} : Bool}
+      cat_lt_succ_add(r, m)
+    case 1n+np 0n:
+      cat_mod_lt(np, r, 1n+d, 0n, bp, Equal.trans(Nat, r, Nat.add(r, 0n), bp, Equal.sym(Nat, Nat.add(r, 0n), r, cat_add_zero(r)), e))
+    case 1n+np 1n+mp:
+      cat_mod_lt(np, mp, d, 1n+r, bp, Equal.trans(Nat, 1n+Nat.add(r, mp), Nat.add(r, 1n+mp), bp, Equal.sym(Nat, Nat.add(r, 1n+mp), 1n+Nat.add(r, mp), add_succ_r(r, mp)), e))
+
+def Laws.cat_look_total(s):
+  cat_mod_lt(s, 71n, 0n, 0n, 71n, {==})
+
