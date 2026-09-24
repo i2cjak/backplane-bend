@@ -30,7 +30,7 @@ def seen(+n: Nat, +what: String, +a: Nat, +b: Nat) -> IO(Unit):
 
 def count(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _, _}:
       List.length(&2, M.Entry, es)
 
 def some(f: TI.Tiles) -> Nat:
@@ -56,7 +56,7 @@ def ent_thread(e: M.Entry) -> String:
 
 def entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _, _}:
       es
 
 # the thread of the first entry not in `not`

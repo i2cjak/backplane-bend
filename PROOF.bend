@@ -840,7 +840,7 @@ def Laws.device_drop_never_sent(tok, at):
 
 def Laws.device_blank_ignored(s, p, k, th, e, b, at):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, at2):
@@ -3836,12 +3836,12 @@ def Laws.tl_memos_bounded(m, ms):
 
 def Laws.window_state_private(s):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.window_state_seq(s):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.window_adopt(u, st):

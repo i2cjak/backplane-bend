@@ -215,7 +215,7 @@ def Island.running(ts: List<&2, M.Thread>, +thread: String) -> List<&2, M.Thread
 
 def Island.others(s: M.State, +thread: String) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
       Island.running(Map.values(&2, M.Thread, ts), thread)
 
 def Island.line(t: M.Thread) -> J.Json:

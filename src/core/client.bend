@@ -77,12 +77,12 @@ def Flag.get(m: Map<&2, Bool>, +k: String) -> Bool:
 
 def Ui.threads(s: M.State) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Thread, ts)
 
 def Ui.projects(s: M.State) -> List<&2, M.Project>:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Project, ps)
 
 def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -91,12 +91,12 @@ def Ui.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Ui.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
       Ui.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Ui.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _, _}:
       es
 
 # Time
@@ -718,7 +718,7 @@ def Ui.project_root.k(r: Map<&2, M.Project> & M.Project) -> String:
 
 def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.project_title.k(r: Map<&2, M.Project> & M.Project) -> String:
@@ -729,7 +729,7 @@ def Ui.project_title.k(r: Map<&2, M.Project> & M.Project) -> String:
 
 def Ui.project_title(s: M.State, +id: String) -> String:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Ui.project_title.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:
@@ -767,7 +767,7 @@ def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
 
 def Kids.set(s: M.State) -> Map<&2, Bool>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _, _}:
       Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
 
 def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
@@ -844,7 +844,7 @@ def Tasks.mine(ts: List<&2, M.Task>, +parent: String) -> List<&2, M.Task>:
 
 def Tasks.of(s: M.State, +parent: String) -> List<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _, _}:
       Tasks.mine(Map.values(&2, M.Task, tk), parent)
 
 def Tasks.title.k(t: M.Thread) -> String:
@@ -879,7 +879,7 @@ def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
 
 def Tasks.parent(+st: M.State, +thread: String) -> String:
   match st:
-    case M.State{_, _, _, _, tk, _, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _, _}:
       Tasks.parent.find(Map.values(&2, M.Task, tk), thread)
 
 def Task.word(s: M.TaskState) -> String:
