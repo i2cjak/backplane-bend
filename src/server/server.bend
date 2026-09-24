@@ -3407,7 +3407,10 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
         rc : Bool <- Chan.send(Msg, inbox, Recover{})
         +bq : Chan(BR.BMsg) <- Chan.new(BR.BMsg, 256)
         bexe : String <- Browser.exe()
-        IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, BR.Br.new(bexe, home ++ "/browser.rgb")))
+        # page-frame events from the browser; drained until the hub broadcasts them as {"t":"shot",...}
+        +bev : Chan(String) <- Chan.new(String, 256)
+        IO.spawn(Unit, BR.Browser.drain(Fuel.forever(), bev))
+        IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, bev, BR.Br.at(bexe, home)))
         +pq : Chan(PK.PMsg) <- Chan.new(PK.PMsg, 256)
         IO.spawn(Unit, PK.Park.loop(Fuel.forever(), pq, Nil{}))
         +tq : Chan(TM.TMsg) <- Chan.new(TM.TMsg, 1024)

@@ -1,25 +1,29 @@
 // backplane-browser: a headless Chromium the Bend side drives over
-// newline-delimited JSON on stdin/stdout. Raw RGB frames go to a file
-// (see README.md). Only protocol lines are written to stdout; logs go to
-// stderr.
+// newline-delimited JSON on stdin/stdout. Pages are keyed by an owner
+// string (a bot id; "" is the shared page every agent drives). Raw RGB
+// frames of the shared page go to a file, JPEG frames of every page to a
+// directory (see README.md). Only protocol lines are written to stdout;
+// logs go to stderr.
 
-import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { chromium, type Browser, type BrowserContext, type CDPSession, type Locator, type Page } from "playwright-core";
+import { chromium, type BrowserContext, type CDPSession, type Locator, type Page } from "playwright-core";
 
 import { findChromium, installChrome, INSTALL_HINT } from "./chromium.ts";
 import { decodePng } from "./png.ts";
 
 type Json = Record<string, any>;
 
-const VERSION = "1";
+const VERSION = "2";
 const MAX_VISIBLE_TEXT = 20_000;
+const MAX_TEXT = 200_000;
 const MAX_ELEMENTS = 200;
 const MAX_EVAL_BYTES = 64_000;
 const MAX_LOG = 100;
 const DEFAULT_TIMEOUT = 15_000;
+const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
 
 // Arguments
 // ---------
@@ -31,18 +35,26 @@ function argValue(name: string): string | null {
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   process.stderr.write(
-    "usage: backplane-browser [--frames FILE] [--chromium PATH] [--headed]\n" +
+    "usage: backplane-browser [--frames FILE] [--profile DIR] [--jpeg-dir DIR] [--jpeg-fps N] [--chromium PATH] [--headed]\n" +
       "  newline-delimited JSON requests on stdin, replies and events on stdout.\n" +
-      "  raw RGB frames are written to FILE (atomically, via rename).\n",
+      "  raw RGB frames of the shared page are written to FILE (atomically, via rename).\n" +
+      "  --profile DIR keeps one Chrome profile (logins, cookies) across pages and runs.\n" +
+      "  --jpeg-dir DIR writes every page's frames to DIR/<owner>.jpg.\n",
   );
   process.exit(0);
 }
 
 const FRAMES_ARG = argValue("--frames");
 const FRAMES_PATH = FRAMES_ARG ?? join(tmpdir(), `backplane-browser-${process.pid}.rgb`);
+const PROFILE = argValue("--profile");
+const JPEG_DIR = argValue("--jpeg-dir");
+const JPEG_FPS = Math.max(1, Math.min(30, Number(argValue("--jpeg-fps") ?? 4) || 4));
 const CHROMIUM_ARG = argValue("--chromium");
 const HEADED = process.argv.includes("--headed");
 const DEBUG = Boolean(process.env.BACKPLANE_BROWSER_DEBUG);
+
+if (PROFILE) mkdirSync(PROFILE, { recursive: true });
+if (JPEG_DIR) mkdirSync(JPEG_DIR, { recursive: true });
 
 // Output
 // ------
@@ -55,17 +67,74 @@ function log(msg: string): void {
   process.stderr.write(`backplane-browser: ${msg}\n`);
 }
 
+// Owners
+// ------
+
+// an owner's JPEG frame file name: [A-Za-z0-9_-] only, "" -> "shared"
+export function safeOwner(name: string): string {
+  return name === "" ? "shared" : name.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+function shotPath(name: string): string | null {
+  return JPEG_DIR ? join(JPEG_DIR, safeOwner(name) + ".jpg") : null;
+}
+
+type Shot = {
+  cdp: CDPSession | null;
+  seq: number;
+  last: number;
+  lastHash: bigint;
+  pending: Buffer | null;
+  timer: ReturnType<typeof setTimeout> | null;
+};
+
+// an owner's tabs (its page and the popups it opened), the one it drives,
+// its viewport, console log and JPEG frames
+type Owner = {
+  name: string;
+  tabs: Page[];
+  active: Page | null;
+  viewport: { width: number; height: number };
+  console: Json[];
+  shot: Shot;
+  opening: Promise<Page> | null;
+};
+
+const owners = new Map<string, Owner>();
+const ownerOf = new WeakMap<Page, Owner>();
+
+function ownerFor(name: string): Owner {
+  let o = owners.get(name);
+  if (!o) {
+    o = {
+      name,
+      tabs: [],
+      active: null,
+      viewport: { ...DEFAULT_VIEWPORT },
+      console: [],
+      shot: { cdp: null, seq: 0, last: 0, lastHash: 0n, pending: null, timer: null },
+      opening: null,
+    };
+    owners.set(name, o);
+  }
+  return o;
+}
+
+function pushLog(o: Owner, entry: Json): void {
+  o.console.push({ ...entry, timestamp: new Date().toISOString() });
+  if (o.console.length > MAX_LOG) o.console.shift();
+}
+
 // State
 // -----
 
-let browser: Browser | null = null;
 let context: BrowserContext | null = null;
-let page: Page | null = null;
-let cdp: CDPSession | null = null;
+let launching: Promise<BrowserContext> | null = null;
 let executable: string | null = null;
-let viewport = { width: 1280, height: 800 };
-const consoleLog: Json[] = [];
+// blank pages Chrome opened at launch, handed to the first owners
+let spare: Page[] = [];
 
+// raw RGB frames of the shared page
 const frames = {
   on: false,
   maxFps: 15,
@@ -73,14 +142,10 @@ const frames = {
   lastHash: 0n as bigint,
   pending: null as Buffer | null,
   timer: null as ReturnType<typeof setInterval> | null,
-  screencasting: false,
+  cdp: null as CDPSession | null,
+  page: null as Page | null,
   busy: false,
 };
-
-function pushLog(entry: Json): void {
-  consoleLog.push({ ...entry, timestamp: new Date().toISOString() });
-  if (consoleLog.length > MAX_LOG) consoleLog.shift();
-}
 
 // URLs: absolute http(s) passes; a schemeless host gets https, a loopback
 // host http; about:, data:, file: pass as they are.
@@ -95,87 +160,163 @@ function normalizeUrl(raw: string): string {
 // Browser lifecycle
 // -----------------
 
-// one launch at a time: concurrent requests share it
-let opening: Promise<Page> | null = null;
-
-async function ensurePage(): Promise<Page> {
-  if (page && !page.isClosed()) return page;
-  if (!opening) opening = openPage().finally(() => { opening = null; });
-  return opening;
+// one persistent context (one profile directory) for every page, so a
+// login made on one page holds on all of them and across restarts
+async function ensureContext(): Promise<BrowserContext> {
+  if (context) return context;
+  if (!launching) launching = launch().finally(() => { launching = null; });
+  return launching;
 }
 
-async function openPage(): Promise<Page> {
-  if (!browser) {
-    executable = CHROMIUM_ARG ?? findChromium();
-    if (!executable) {
-      try {
-        executable = await installChrome((m) => process.stderr.write(`backplane-browser: ${m}\n`));
-      } catch (e) {
-        throw new Error(`${INSTALL_HINT} (${e instanceof Error ? e.message : String(e)})`);
-      }
+async function launch(): Promise<BrowserContext> {
+  executable = CHROMIUM_ARG ?? findChromium();
+  if (!executable) {
+    try {
+      executable = await installChrome((m) => log(m));
+    } catch (e) {
+      throw new Error(`${INSTALL_HINT} (${e instanceof Error ? e.message : String(e)})`);
     }
-    browser = await chromium.launch({
-      executablePath: executable,
-      headless: !HEADED,
-      args: ["--hide-scrollbars", "--mute-audio", "--no-first-run", "--no-default-browser-check"],
-    });
-    browser.on("disconnected", () => {
-      browser = null; context = null; page = null; cdp = null;
-      frames.screencasting = false;
-      send({ event: "closed" });
-    });
   }
-  if (!context) context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
-  page = await context.newPage();
-  page.setDefaultTimeout(DEFAULT_TIMEOUT);
-  page.on("console", (m) => pushLog({ level: m.type(), text: m.text() }));
-  page.on("pageerror", (e) => pushLog({ level: "error", text: String(e) }));
-  page.on("framenavigated", (f) => {
-    if (f === page?.mainFrame()) send({ event: "navigated", url: f.url() });
+  const ctx = await chromium.launchPersistentContext(PROFILE ?? "", {
+    executablePath: executable,
+    headless: !HEADED,
+    viewport: DEFAULT_VIEWPORT,
+    deviceScaleFactor: 1,
+    acceptDownloads: true,
+    args: ["--hide-scrollbars", "--mute-audio", "--no-first-run", "--no-default-browser-check"],
   });
-  page.on("load", () => page && send({ event: "load", url: page.url() }));
-  cdp = await context.newCDPSession(page);
-  cdp.on("Page.screencastFrame", (e: any) => {
-    cdp?.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
-    frames.pending = Buffer.from(e.data, "base64");
+  ctx.on("close", () => {
+    if (context !== ctx) return;
+    context = null;
+    spare = [];
+    frames.cdp = null;
+    frames.page = null;
+    for (const o of owners.values()) {
+      o.tabs = [];
+      o.active = null;
+      clearShot(o);
+    }
+    send({ event: "closed" });
   });
-  if (frames.on) await startScreencast();
-  return page;
+  spare = ctx.pages().filter((p) => !p.isClosed());
+  context = ctx;
+  return ctx;
 }
 
-async function status(): Promise<Json> {
-  const p = page && !page.isClosed() ? page : null;
+// the page an owner drives, made on first use
+async function ensurePage(name: string): Promise<Page> {
+  const o = ownerFor(name);
+  if (o.active && !o.active.isClosed()) return o.active;
+  if (!o.opening) o.opening = newTab(o).finally(() => { o.opening = null; });
+  return o.opening;
+}
+
+async function newTab(o: Owner): Promise<Page> {
+  const ctx = await ensureContext();
+  let p = spare.pop();
+  while (p && p.isClosed()) p = spare.pop();
+  if (!p) p = await ctx.newPage();
+  await adopt(o, p);
+  await activate(o, p);
+  return p;
+}
+
+async function adopt(o: Owner, p: Page): Promise<void> {
+  ownerOf.set(p, o);
+  o.tabs.push(p);
+  p.setDefaultTimeout(DEFAULT_TIMEOUT);
+  p.on("console", (m) => pushLog(o, { level: m.type(), text: m.text() }));
+  p.on("pageerror", (e) => pushLog(o, { level: "error", text: String(e) }));
+  p.on("framenavigated", (f) => {
+    if (p === o.active && f === p.mainFrame()) send({ event: "navigated", page: o.name, url: f.url() });
+  });
+  p.on("load", () => {
+    if (p === o.active) send({ event: "load", page: o.name, url: p.url() });
+  });
+  // a popup (window.open, target=_blank) joins its opener's tabs and is
+  // what the owner drives next
+  p.on("popup", (q) => {
+    void adopt(o, q).then(() => activate(o, q)).catch((e) => log(`popup: ${e}`));
+  });
+  p.on("close", () => {
+    o.tabs = o.tabs.filter((t) => t !== p);
+    if (o.active !== p) return;
+    o.active = null;
+    const next = o.tabs[o.tabs.length - 1];
+    if (next) void activate(o, next).catch((e) => log(`tab: ${e}`));
+    else clearShot(o);
+  });
+  await p.setViewportSize(o.viewport).catch(() => {});
+}
+
+// make p the tab the owner drives, and the one its frames show
+async function activate(o: Owner, p: Page): Promise<void> {
+  o.active = p;
+  await startShots(o);
+  if (o.name === "" && frames.on) await startScreencast();
+}
+
+function tabOf(name: string): Page | null {
+  const p = owners.get(name)?.active;
+  return p && !p.isClosed() ? p : null;
+}
+
+async function status(name: string): Promise<Json> {
+  const o = ownerFor(name);
+  const p = tabOf(name);
   return {
     version: VERSION,
+    page: name,
     open: p !== null,
     chromium: executable ?? CHROMIUM_ARG ?? findChromium(),
+    profile: PROFILE,
     url: p ? p.url() : null,
     title: p ? await p.title().catch(() => "") : null,
     loading: p ? await p.evaluate(() => document.readyState !== "complete").catch(() => false) : false,
-    width: viewport.width,
-    height: viewport.height,
+    width: o.viewport.width,
+    height: o.viewport.height,
+    tabs: o.tabs.length,
     frames: { on: frames.on, maxFps: frames.maxFps, seq: frames.seq, path: FRAMES_PATH },
+    shot: JPEG_DIR ? { path: shotPath(name), n: o.shot.seq, maxFps: JPEG_FPS } : null,
   };
 }
 
-// Frames
-// ------
+// Raw RGB frames (the shared page)
+// ------------------------------
 
 async function startScreencast(): Promise<void> {
-  if (!cdp) return;
-  if (frames.screencasting) await cdp.send("Page.stopScreencast").catch(() => {});
-  await cdp.send("Page.startScreencast", {
+  const p = tabOf("");
+  const ctx = context;
+  if (!p || !ctx) return;
+  if (frames.cdp && frames.page === p) {
+    await frames.cdp.send("Page.stopScreencast").catch(() => {});
+  } else {
+    await stopScreencast();
+    const s = await ctx.newCDPSession(p);
+    s.on("Page.screencastFrame", (e: any) => {
+      s.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
+      if (frames.cdp === s) frames.pending = Buffer.from(e.data, "base64");
+    });
+    frames.cdp = s;
+    frames.page = p;
+  }
+  const vp = ownerFor("").viewport;
+  await frames.cdp!.send("Page.startScreencast", {
     format: "png",
-    maxWidth: viewport.width,
-    maxHeight: viewport.height,
+    maxWidth: vp.width,
+    maxHeight: vp.height,
     everyNthFrame: 1,
   });
-  frames.screencasting = true;
 }
 
 async function stopScreencast(): Promise<void> {
-  if (cdp && frames.screencasting) await cdp.send("Page.stopScreencast").catch(() => {});
-  frames.screencasting = false;
+  const s = frames.cdp;
+  frames.cdp = null;
+  frames.page = null;
+  if (s) {
+    await s.send("Page.stopScreencast").catch(() => {});
+    await s.detach().catch(() => {});
+  }
 }
 
 // write the frame file atomically and announce it; `force` skips the
@@ -218,9 +359,9 @@ function restartTimer(): void {
   if (frames.on) frames.timer = setInterval(tick, Math.max(1, Math.round(1000 / frames.maxFps)));
 }
 
-// one screenshot now, published even when unchanged
+// one screenshot of the shared page now, published even when unchanged
 async function captureNow(force: boolean): Promise<Json | null> {
-  const p = await ensurePage();
+  const p = await ensurePage("");
   frames.busy = true;
   try {
     const png = await p.screenshot({ type: "png", animations: "allow", caret: "initial", timeout: DEFAULT_TIMEOUT });
@@ -228,6 +369,74 @@ async function captureNow(force: boolean): Promise<Json | null> {
   } finally {
     frames.busy = false;
   }
+}
+
+// JPEG frames (every page, with --jpeg-dir)
+// ---------------------------------------
+
+async function startShots(o: Owner): Promise<void> {
+  if (!JPEG_DIR || !context) return;
+  await stopShots(o);
+  const p = o.active;
+  if (!p || p.isClosed()) return;
+  const s = await context.newCDPSession(p);
+  o.shot.cdp = s;
+  s.on("Page.screencastFrame", (e: any) => {
+    s.send("Page.screencastFrameAck", { sessionId: e.sessionId }).catch(() => {});
+    if (o.shot.cdp !== s) return;
+    o.shot.pending = Buffer.from(e.data, "base64");
+    scheduleShot(o);
+  });
+  await s.send("Page.startScreencast", { format: "jpeg", quality: 70, maxWidth: 1280, maxHeight: 2048, everyNthFrame: 1 });
+}
+
+async function stopShots(o: Owner): Promise<void> {
+  const s = o.shot.cdp;
+  o.shot.cdp = null;
+  o.shot.pending = null;
+  if (s) {
+    await s.send("Page.stopScreencast").catch(() => {});
+    await s.detach().catch(() => {});
+  }
+}
+
+function clearShot(o: Owner): void {
+  o.shot.cdp = null;
+  o.shot.pending = null;
+  if (o.shot.timer) clearTimeout(o.shot.timer);
+  o.shot.timer = null;
+}
+
+// at most JPEG_FPS writes a second: the newest frame waits for its slot,
+// older ones are dropped
+function scheduleShot(o: Owner): void {
+  if (o.shot.timer) return;
+  const wait = Math.max(0, o.shot.last + 1000 / JPEG_FPS - performance.now());
+  o.shot.timer = setTimeout(() => {
+    o.shot.timer = null;
+    writeShot(o);
+  }, wait);
+}
+
+function writeShot(o: Owner): void {
+  const jpg = o.shot.pending;
+  const path = shotPath(o.name);
+  o.shot.pending = null;
+  if (!jpg || !path) return;
+  const hash = Bun.hash(jpg) as bigint;
+  if (hash === o.shot.lastHash) return;
+  try {
+    const tmp = path + ".tmp";
+    writeFileSync(tmp, jpg);
+    renameSync(tmp, path);
+  } catch (e) {
+    log(`shot: ${e}`);
+    return;
+  }
+  o.shot.lastHash = hash;
+  o.shot.last = performance.now();
+  o.shot.seq += 1;
+  send({ event: "frame", page: o.name, n: o.shot.seq, path });
 }
 
 // Targets
@@ -240,9 +449,46 @@ function targetOf(p: Page, a: Json): Locator | null {
   return null;
 }
 
-function timeoutOf(a: Json): number {
-  const t = Number(a.timeoutMs ?? DEFAULT_TIMEOUT);
-  return Math.max(1, Math.min(60_000, Number.isFinite(t) ? t : DEFAULT_TIMEOUT));
+function timeoutOf(a: Json, fallback = DEFAULT_TIMEOUT): number {
+  const t = Number(a.timeoutMs ?? fallback);
+  return Math.max(1, Math.min(60_000, Number.isFinite(t) ? t : fallback));
+}
+
+function needPath(a: Json, op: string): string {
+  if (!a.path || typeof a.path !== "string") throw new Error(`${op} needs path`);
+  return resolve(a.path);
+}
+
+// a file name in dir that is not taken yet: name, name (1), name (2)...
+function freeName(dir: string, name: string): string {
+  const safe = basename(name).replace(/[\/\\\0]/g, "_") || "download";
+  const ext = extname(safe);
+  const stem = safe.slice(0, safe.length - ext.length);
+  let p = join(dir, safe);
+  for (let i = 1; existsSync(p); i++) p = join(dir, `${stem} (${i})${ext}`);
+  return p;
+}
+
+async function tabList(o: Owner): Promise<Json> {
+  const tabs = await Promise.all(o.tabs.map(async (t, index) => ({
+    index,
+    url: t.url(),
+    title: await t.title().catch(() => ""),
+    active: t === o.active,
+  })));
+  return { page: o.name, active: o.active ? o.tabs.indexOf(o.active) : -1, tabs };
+}
+
+async function closeOwner(name: string): Promise<void> {
+  const o = owners.get(name);
+  if (!o) return;
+  owners.delete(name);
+  await stopShots(o);
+  clearShot(o);
+  if (name === "") await stopScreencast();
+  for (const t of o.tabs) await t.close().catch(() => {});
+  const path = shotPath(name);
+  if (path) rmSync(path, { force: true });
 }
 
 const SNAPSHOT_SCRIPT = `(() => {
@@ -284,50 +530,63 @@ const SNAPSHOT_SCRIPT = `(() => {
   };
 })()`;
 
+// the page's readable text: its main or article when that holds most of
+// the words, else the body; blank runs squeezed
+const TEXT_SCRIPT = `(() => {
+  const body = document.body ? document.body.innerText : "";
+  const main = document.querySelector("main, [role=main], article");
+  const m = main ? main.innerText : "";
+  const t = m.length > 200 && m.length > body.length / 3 ? m : body;
+  return t.split("\\n").map((l) => l.replace(/[ \\t\\u00a0]+/g, " ").trim()).join("\\n").replace(/\\n{3,}/g, "\\n\\n").trim();
+})()`;
+
 // Requests
 // --------
 
-const handlers: Record<string, (a: Json) => Promise<any>> = {
-  async open(a) {
-    if (a.width && a.height) viewport = { width: Math.round(a.width), height: Math.round(a.height) };
-    const p = await ensurePage();
-    await p.setViewportSize(viewport);
+// every handler gets the request's arguments and the owner it acts for
+const handlers: Record<string, (a: Json, name: string) => Promise<any>> = {
+  async open(a, name) {
+    const o = ownerFor(name);
+    if (a.width && a.height) o.viewport = { width: Math.round(a.width), height: Math.round(a.height) };
+    const p = await ensurePage(name);
+    await p.setViewportSize(o.viewport);
     if (a.url) await p.goto(normalizeUrl(a.url), { waitUntil: "load", timeout: timeoutOf(a) });
-    return status();
+    return status(name);
   },
-  async navigate(a) {
+  async navigate(a, name) {
     if (!a.url) throw new Error("navigate needs url");
-    const p = await ensurePage();
+    const p = await ensurePage(name);
     const waitUntil = a.readiness === "none" ? "commit" : a.readiness === "domContentLoaded" ? "domcontentloaded" : "load";
     await p.goto(normalizeUrl(a.url), { waitUntil, timeout: timeoutOf(a) });
-    return status();
+    return status(name);
   },
-  async back(a) {
-    await (await ensurePage()).goBack({ timeout: timeoutOf(a) });
-    return status();
+  async back(a, name) {
+    await (await ensurePage(name)).goBack({ timeout: timeoutOf(a) });
+    return status(name);
   },
-  async forward(a) {
-    await (await ensurePage()).goForward({ timeout: timeoutOf(a) });
-    return status();
+  async forward(a, name) {
+    await (await ensurePage(name)).goForward({ timeout: timeoutOf(a) });
+    return status(name);
   },
-  async reload(a) {
-    await (await ensurePage()).reload({ timeout: timeoutOf(a) });
-    return status();
+  async reload(a, name) {
+    await (await ensurePage(name)).reload({ timeout: timeoutOf(a) });
+    return status(name);
   },
-  async resize(a) {
+  async resize(a, name) {
     const width = Math.round(Number(a.width)), height = Math.round(Number(a.height));
     if (!(width > 0 && height > 0 && width <= 4096 && height <= 4096)) throw new Error("resize needs width and height in 1..4096");
-    viewport = { width, height };
-    const p = await ensurePage();
-    await p.setViewportSize(viewport);
-    if (frames.on) {
+    const o = ownerFor(name);
+    o.viewport = { width, height };
+    const p = await ensurePage(name);
+    await p.setViewportSize(o.viewport);
+    if (name === "" && frames.on) {
       await startScreencast();
       await captureNow(true);
     }
-    return status();
+    return status(name);
   },
-  async click(a) {
-    const p = await ensurePage();
+  async click(a, name) {
+    const p = await ensurePage(name);
     const button = a.button ?? "left";
     const clickCount = a.clickCount ?? 1;
     const t = targetOf(p, a);
@@ -336,8 +595,8 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     else throw new Error("click needs x and y, selector, locator, or ref");
     return {};
   },
-  async mouse(a) {
-    const p = await ensurePage();
+  async mouse(a, name) {
+    const p = await ensurePage(name);
     const button = a.button ?? "left";
     if (typeof a.x === "number" && typeof a.y === "number") await p.mouse.move(a.x, a.y);
     if (a.type === "down") await p.mouse.down({ button });
@@ -345,8 +604,8 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     else if (a.type !== "move") throw new Error("mouse type must be move, down or up");
     return {};
   },
-  async type(a) {
-    const p = await ensurePage();
+  async type(a, name) {
+    const p = await ensurePage(name);
     const text = String(a.text ?? "");
     const t = targetOf(p, a);
     if (t) {
@@ -359,29 +618,31 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     await p.keyboard.insertText(text);
     return {};
   },
-  async press(a) {
-    const p = await ensurePage();
+  async press(a, name) {
+    const p = await ensurePage(name);
     if (!a.key) throw new Error("press needs key");
     const mods: string[] = Array.isArray(a.modifiers) ? a.modifiers : [];
     await p.keyboard.press([...mods, String(a.key)].join("+"));
     return {};
   },
-  async scroll(a) {
-    const p = await ensurePage();
+  async scroll(a, name) {
+    const p = await ensurePage(name);
+    const vp = ownerFor(name).viewport;
     const dx = Number(a.dx ?? a.deltaX ?? 0), dy = Number(a.dy ?? a.deltaY ?? 0);
     const t = targetOf(p, a);
     if (t) {
       await t.evaluate((el, d) => el.scrollBy(d[0], d[1]), [dx, dy], { timeout: timeoutOf(a) });
     } else {
-      const x = typeof a.x === "number" ? a.x : viewport.width / 2;
-      const y = typeof a.y === "number" ? a.y : viewport.height / 2;
+      const x = typeof a.x === "number" ? a.x : vp.width / 2;
+      const y = typeof a.y === "number" ? a.y : vp.height / 2;
       await p.mouse.move(x, y);
       await p.mouse.wheel(dx, dy);
     }
     return {};
   },
-  async snapshot(a) {
-    const p = await ensurePage();
+  async snapshot(a, name) {
+    const p = await ensurePage(name);
+    const o = ownerFor(name);
     const page = await p.evaluate(SNAPSHOT_SCRIPT) as Json;
     const outline = await p.ariaSnapshot({ mode: "ai", timeout: timeoutOf(a) }).catch((e) => `(no outline: ${e.message})`);
     const out: Json = {
@@ -389,16 +650,16 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
       title: await p.title(),
       ...page,
       outline,
-      console: consoleLog.slice(-50),
+      console: o.console.slice(-50),
     };
     if (a.screenshot) {
       const png = await p.screenshot({ type: "png" });
-      out.screenshot = { mimeType: "image/png", data: png.toString("base64"), width: viewport.width, height: viewport.height };
+      out.screenshot = { mimeType: "image/png", data: png.toString("base64"), width: o.viewport.width, height: o.viewport.height };
     }
     return out;
   },
-  async evaluate(a) {
-    const p = await ensurePage();
+  async evaluate(a, name) {
+    const p = await ensurePage(name);
     if (!a.expression) throw new Error("evaluate needs expression");
     const expr = String(a.expression);
     const value = a.awaitPromise === false
@@ -408,8 +669,8 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     if (json.length > MAX_EVAL_BYTES) return { truncated: true, json: json.slice(0, MAX_EVAL_BYTES) };
     return value ?? null;
   },
-  async wait_for(a) {
-    const p = await ensurePage();
+  async wait_for(a, name) {
+    const p = await ensurePage(name);
     const timeout = timeoutOf(a);
     const url = a.url ?? a.urlIncludes;
     if (!a.selector && !a.locator && !a.ref && !a.text && !url) throw new Error("wait_for needs selector, locator, text or url");
@@ -421,12 +682,126 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     await Promise.all(waits);
     return {};
   },
-  async frames(a) {
+  async text(a, name) {
+    const p = await ensurePage(name);
+    const max = Math.max(1, Math.min(MAX_TEXT, Number(a.max ?? MAX_VISIBLE_TEXT) || MAX_VISIBLE_TEXT));
+    const t = targetOf(p, a);
+    const full = t
+      ? String(await t.innerText({ timeout: timeoutOf(a) }))
+      : String(await p.evaluate(TEXT_SCRIPT));
+    return { url: p.url(), title: await p.title(), length: full.length, truncated: full.length > max, text: full.slice(0, max) };
+  },
+  async select(a, name) {
+    const p = await ensurePage(name);
+    const t = targetOf(p, a);
+    if (!t) throw new Error("select needs a selector, locator, or ref");
+    let values: any;
+    if (Array.isArray(a.values)) values = a.values.map(String);
+    else if (a.value !== undefined) values = String(a.value);
+    else if (a.label !== undefined) values = { label: String(a.label) };
+    else if (a.index !== undefined) values = { index: Number(a.index) };
+    else throw new Error("select needs value, values, label or index");
+    const selected = await t.selectOption(values, { timeout: timeoutOf(a) });
+    return { selected };
+  },
+  async upload(a, name) {
+    const p = await ensurePage(name);
+    const paths: string[] = (Array.isArray(a.paths) ? a.paths : [a.path]).filter((x: any) => typeof x === "string" && x).map((x: string) => resolve(x));
+    if (!paths.length) throw new Error("upload needs path or paths");
+    for (const f of paths) if (!existsSync(f) || !statSync(f).isFile()) throw new Error(`no such file: ${f}`);
+    const t = targetOf(p, a) ?? p.locator("css=input[type=file]").first();
+    const isInput = await t.evaluate((el) => el instanceof HTMLInputElement && el.type === "file", undefined, { timeout: timeoutOf(a) });
+    if (isInput) {
+      await t.setInputFiles(paths, { timeout: timeoutOf(a) });
+    } else {
+      // a button that opens the file chooser
+      const [chooser] = await Promise.all([p.waitForEvent("filechooser", { timeout: timeoutOf(a) }), t.click({ timeout: timeoutOf(a) })]);
+      await chooser.setFiles(paths);
+    }
+    return { files: paths };
+  },
+  async download(a, name) {
+    if (!a.dir || typeof a.dir !== "string") throw new Error("download needs dir");
+    const dir = resolve(a.dir);
+    mkdirSync(dir, { recursive: true });
+    const p = await ensurePage(name);
+    const timeout = timeoutOf(a, 30_000);
+    const t = targetOf(p, a);
+    if (!t && !a.url) throw new Error("download needs a target to click or a url");
+    const waiting = p.waitForEvent("download", { timeout });
+    if (t) await t.click({ timeout });
+    // navigating to a file fails with "Download is starting"; the event is what counts
+    else p.goto(normalizeUrl(a.url), { timeout }).catch(() => {});
+    const d = await waiting;
+    const path = freeName(dir, d.suggestedFilename());
+    await d.saveAs(path);
+    const failure = await d.failure();
+    if (failure) throw new Error(`download failed: ${failure}`);
+    return { path, url: d.url(), suggestedFilename: d.suggestedFilename(), bytes: statSync(path).size };
+  },
+  async screenshot(a, name) {
+    const p = await ensurePage(name);
+    const path = needPath(a, "screenshot");
+    mkdirSync(join(path, ".."), { recursive: true });
+    const type = /\.jpe?g$/i.test(path) ? "jpeg" : "png";
+    const t = targetOf(p, a);
+    if (t) await t.screenshot({ path, type, timeout: timeoutOf(a) });
+    else await p.screenshot({ path, type, fullPage: a.fullPage !== false, timeout: timeoutOf(a) });
+    return { path, bytes: statSync(path).size };
+  },
+  async pdf(a, name) {
+    const p = await ensurePage(name);
+    const path = needPath(a, "pdf");
+    mkdirSync(join(path, ".."), { recursive: true });
+    await p.pdf({ path, printBackground: true });
+    return { path, bytes: statSync(path).size };
+  },
+  async cookies_clear(a, _name) {
+    const ctx = await ensureContext();
+    if (a.domain) await ctx.clearCookies({ domain: String(a.domain) });
+    else await ctx.clearCookies();
+    return {};
+  },
+  async tabs(a, name) {
+    const o = ownerFor(name);
+    await ensurePage(name);
+    if (a.new !== undefined && a.new !== false) {
+      const ctx = await ensureContext();
+      const p = await ctx.newPage();
+      await adopt(o, p);
+      await activate(o, p);
+      const url = typeof a.new === "string" ? a.new : a.url;
+      if (url) await p.goto(normalizeUrl(url), { waitUntil: "load", timeout: timeoutOf(a) });
+    } else if (a.select !== undefined) {
+      const p = o.tabs[Number(a.select)];
+      if (!p) throw new Error(`no tab ${a.select}`);
+      await activate(o, p);
+    } else if (a.close !== undefined) {
+      const p = o.tabs[Number(a.close)];
+      if (!p) throw new Error(`no tab ${a.close}`);
+      await p.close();
+      if (!o.tabs.length) await ensurePage(name);
+    }
+    return tabList(o);
+  },
+  async pages(_a, _name) {
+    const list = await Promise.all([...owners.values()].filter((o) => o.tabs.length > 0).map(async (o) => ({
+      page: o.name,
+      url: o.active?.url() ?? null,
+      title: o.active ? await o.active.title().catch(() => "") : null,
+      tabs: o.tabs.length,
+      shot: shotPath(o.name),
+      n: o.shot.seq,
+    })));
+    return { pages: list };
+  },
+  async frames(a, name) {
+    if (name !== "") throw new Error("raw frames are for the shared page only");
     frames.on = Boolean(a.on);
     if (a.maxFps !== undefined) frames.maxFps = Math.max(1, Math.min(60, Number(a.maxFps) || 15));
     restartTimer();
     if (frames.on) {
-      await ensurePage();
+      await ensurePage("");
       await startScreencast();
       await captureNow(true);
     } else {
@@ -434,14 +809,20 @@ const handlers: Record<string, (a: Json) => Promise<any>> = {
     }
     return { on: frames.on, maxFps: frames.maxFps, seq: frames.seq, path: FRAMES_PATH };
   },
-  async frame(_a) {
+  async frame(_a, name) {
+    if (name !== "") throw new Error("raw frames are for the shared page only");
     const ev = await captureNow(true);
     return ev ?? { seq: frames.seq, path: FRAMES_PATH };
   },
-  async status(_a) {
-    return status();
+  async status(_a, name) {
+    return status(name);
   },
-  async close(_a) {
+  async close_page(_a, name) {
+    await closeOwner(name);
+    return {};
+  },
+  // with "page": close that owner's page; without: shut the helper down
+  async close(_a, _name) {
     await shutdown(false);
     return {};
   },
@@ -460,15 +841,20 @@ async function handle(line: string): Promise<void> {
     return;
   }
   const id = req.id ?? null;
-  const op = String(req.op ?? req.type ?? req.method ?? "");
-  const h = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
-  if (!h) {
+  let op = String(req.op ?? req.type ?? req.method ?? "");
+  const h0 = Object.hasOwn(handlers, op) ? handlers[op] : undefined;
+  if (!h0) {
     send({ id, ok: false, error: `unknown op: ${op}` });
     return;
   }
+  // the owner is the top-level "page" only, never one inside "args"
+  const pageGiven = typeof req.page === "string";
+  const name: string = pageGiven ? req.page : "";
+  if (op === "close" && pageGiven) op = "close_page";
+  const h = handlers[op];
   const args = req.args && typeof req.args === "object" ? { ...req, ...req.args } : req;
   try {
-    const result = await h(args);
+    const result = await h(args, name);
     send({ id, ok: true, result });
   } catch (e: any) {
     send({ id, ok: false, error: String(e?.message ?? e).split("\n")[0] });
@@ -482,10 +868,12 @@ async function shutdown(exit: boolean): Promise<void> {
   closing = true;
   if (frames.timer) clearInterval(frames.timer);
   frames.on = false;
+  for (const o of owners.values()) clearShot(o);
+  const ctx = context;
+  context = null;
   try {
-    await browser?.close();
+    await ctx?.close();
   } catch {}
-  browser = null;
   if (!FRAMES_ARG) rmSync(FRAMES_PATH, { force: true });
   rmSync(FRAMES_PATH + ".tmp", { force: true });
   if (exit) process.exit(0);
@@ -497,4 +885,4 @@ process.on("SIGINT", () => void shutdown(true));
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
 rl.on("line", (line) => void handle(line));
 rl.on("close", () => void shutdown(true));
-send({ event: "ready", version: VERSION, frames: FRAMES_PATH });
+send({ event: "ready", version: VERSION, frames: FRAMES_PATH, profile: PROFILE, jpegDir: JPEG_DIR });
