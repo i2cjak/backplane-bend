@@ -26,6 +26,7 @@ import ./src/core/fold.bend as FO
 import ./src/core/http.bend as WS
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
+import ./src/mobile/picker.bend as MP
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -1058,3 +1059,27 @@ law view_3d_draws_board:
 
 law view_3d_key:
   {MV.View.key("3d", "/p") == "2|/p|" : String}
+
+# The project picker on a phone
+# ------------------------------
+
+# a closed picker draws nothing
+law mpick_closed_draws_nothing:
+  for +u: U.Ui
+  for h: {U.Ui.flag(u, "proj") == False{} : Bool}
+  {MP.MPick.json(u) == J.Null{} : J.Json}
+
+# typing within the folder already asked for only filters: the hub is
+# asked nothing
+law mpick_filter_asks_nothing:
+  for +u: U.Ui
+  for +text: String
+  for h: {String.eq(MP.MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")) == True{} : Bool}
+  {MP.MPick.type(u, text) == U.Act{U.Ui.scratch_set(u, "@mpick", text), Nil{}} : U.Act}
+
+# it opens at home, and a folder under home shows as ~
+law mpick_opens_home:
+  {MP.MPick.dir("~/") == "~/" : String}
+
+law mpick_tilde:
+  {MP.MPick.field("/home/h", "/home/h/docs") == "~/docs/" : String}

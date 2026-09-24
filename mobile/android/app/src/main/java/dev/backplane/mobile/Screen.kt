@@ -25,6 +25,12 @@ data class Project(
 // a delete a row asked for, waiting for yes ("row-delete" id) or no
 data class Deleting(val id: String, val title: String, val body: String, val yes: String, val no: String)
 
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+data class FolderRow(val label: String, val action: String, val value: String, val kind: String)
+
+data class Folders(val text: String, val hint: String, val error: String, val items: List<FolderRow>)
+
 data class Tool(val label: String, val action: String, val on: Boolean)
 
 sealed interface Block {
@@ -73,7 +79,7 @@ data class Island(val running: Int, val headline: String, val lines: List<Island
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
-    val island: Island, val deleting: Deleting?,
+    val island: Island, val deleting: Deleting?, val folders: Folders?,
 )
 
 data class Cmd(
@@ -156,6 +162,10 @@ fun parseScreen(o: JSONObject) = Screen(
     island(o.optJSONObject("island")),
     o.optJSONObject("deleting")?.let {
         Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
+    },
+    o.optJSONObject("folders")?.let { p ->
+        Folders(p.optString("text"), p.optString("hint"), p.optString("error"),
+            p.optJSONArray("items").map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) })
     },
 )
 
