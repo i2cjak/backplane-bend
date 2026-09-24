@@ -1284,21 +1284,23 @@ def Vx.pick(x: V.Vx) -> String:
 
 # UI ops over the fading items and the picked item, over the base; tiles
 # the last frame drew the same way are kept (TI.Frame.again)
-def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Tiles:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
       TI.Frame.again(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
-        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev)
+        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev, dy)
 
-# the frame: UI ops over the fading items over the base
-def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames) -> TI.Tiles:
+# the frame: UI ops over the fading items over the base. dy is how far
+# the thread scrolled since the last frame: tiles it moved are taken from
+# there, not drawn again
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Tiles:
   match pa:
     case True{}:
-      Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev)
+      Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev, dy)
     case False{}:
-      TI.Frame.again(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev)
+      TI.Frame.again(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev, dy)
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
@@ -1369,31 +1371,31 @@ def Lbv.draw(+n: N.Nui, +pics: Map<&2, BM.Bitmap>, +ms: Nat) -> Image:
 # the frame: the lightbox while it is up, else the window's tiles. The
 # lightbox is drawn whole and leaves the kept tiles alone: they still hold
 # the window's last frame, which is what shows again when it closes
-def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match on:
     case True{}:
       IO.bind(Window & Image, Shell, W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms)),
         r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms))
     case False{}:
-      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa)),
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
         L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
 
-def Shell.paint.out(o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match o:
     case L.Out{+ops, +hs}:
-      Lbv.paint(N.Lbx.on(n), ops, hs, n, w, q, i, wa, epoch, ms)
+      Lbv.paint(N.Lbx.on(n), ops, hs, oh, n, w, q, i, wa, epoch, ms)
 
 # the timeline's memo is brought up to this frame first; layout draws from it
-def Shell.paint.m(+memos: List<&2, L.TLMemo>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(L.Lay.frame(Aux.ty(wa), L.TL.memos.now(memos), n), n, w, q, i, Aux.with_memos(wa, memos), epoch, ms)
+def Shell.paint.m(+memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(L.Lay.frame(Aux.ty(wa), L.TL.memos.now(memos), n), oh, n, w, q, i, Aux.with_memos(wa, memos), epoch, ms)
 
-def Shell.paint.go(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.m(L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa)), n, w, q, i, wa, epoch, ms)
+def Shell.paint.go(+oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.m(L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa)), oh, n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match n0:
-    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, _, _, vw0}:
-      Shell.paint.go(N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
+    case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, oh, _, vw0}:
+      Shell.paint.go(oh, N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
         Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.flip(n0))}, w, q, i, wa, epoch, ms)
 
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):

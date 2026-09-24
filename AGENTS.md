@@ -20,7 +20,7 @@ When using Bend:
 - `src/server/`: the Bend program that owns IO: HTTP/WebSocket, the event store, agent processes, git, file watching, and updates. Custom effects (`*.c` + `*.js` twins) are in `src/server/effects/`.
 - `src/app/`: the native app (the default `backplane`). A Bend window client in the same process as the hub: `nui.bend` (input → state, pure), `layout.bend` (state → draw ops + hit regions), `main.bend` (event loop), `effects/win.c` (X11 window, dlopen'd libX11).
 - `src/gfx/`: the rasterizer. Draw ops become Base's `Image` quadtree in parallel (`raster.bend`); `draw.bend` builds ops; `font.bend` is generated from Spleen 8x16. `text.bend` is system-font text (fontconfig + FreeType via `effects/font.c`, dlopen'd): faces, a glyph cache in Bend state, measure/wrap/draw; `patches/raster-bitmap-shape.patch` adds the `SMask` coverage shape it draws with.
-- `src/gfx/tiles.bend`: frames kept as 64 px tiles; the next frame redraws only tiles whose ops or base changed (laws `tiles_again_exact`, `frame_again_exact`, `tile_keep`). The timeline keeps each entry's laid-out lines the same way (`TL.memo` in `layout.bend`, laws `tl_*`). Both compare with `src/core/eq.bend`/`Eq.*`, exact equalities whose soundness is proven, so nothing stale is reused.
+- `src/gfx/tiles.bend`: frames kept as 64 px tiles, each drawn in its own coordinates; the next frame redraws only tiles whose ops or base changed, and a tile the thread scrolled takes the image the last frame drew where it came from (`Past`, `Tiles.seek`; the shift hint is nui.bend's `Hits.slide`, and a wheel notch is one tile, `Nui.notch`) (laws `tiles_again_exact`, `frame_again_exact`, `tile_keep`, `seek_made`). The timeline keeps each entry's laid-out lines the same way (`TL.memo` in `layout.bend`, laws `tl_*`). Both compare with `src/core/eq.bend`/`Eq.*`, exact equalities whose soundness is proven, so nothing stale is reused.
 - `src/gfx/bitmap.bend`: raw RGB frames (the browser helper's frame file) as an `Image` quadtree, composited into a frame at a place and size.
 - `src/core/svg.bend` (pure: SVG path data parsed, written, flattened; laws `svg_*`) and `src/core/icons.bend` (the icon set, Lucide paths, ISC; laws `icons_*`). The window rasterizes them once into `SMask` bitmaps in the glyph cache (`src/gfx/icon.bend`, `Lay.icon`/`Lay.ibutton`); the web writes them as inline `<svg>` (`src/web/icon.bend`). Test: `test/svg_test.bend`.
 - `tools/browser/`: `backplane-browser`, a Bun + playwright-core headless Chromium driven by NDJSON on stdin/stdout; raw frames go to a file. Protocol in its README. Built by `scripts/build-browser.sh`.
@@ -57,7 +57,7 @@ Native builds go through `scripts/build-app.sh`: bend emits the C, `scripts/cc-s
 
 Native builds need clang 19+ and X11 headers (`libx11-dev`). Without root, `~/.local/bin/clang` may be a `zig cc` shim, and `BACKPLANE_X11=~/.local/x11` points the build at headers extracted from the .deb.
 
-Typing speed: `scripts/build-app.sh test/native/type_bench.bend build/type_bench && build/type_bench` replays keys through the event, memo, layout and tiles with no window and prints ms per key.
+Typing speed: `scripts/build-app.sh test/native/type_bench.bend build/type_bench && build/type_bench` replays keys through the event, memo, layout and tiles with no window and prints ms per key. Scrolling: `test/native/scroll_bench.bend` the same for wheel notches up and down, and checks each frame against one drawn from scratch.
 
 Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/snap.ppm build/backplane --home /tmp/bp-x`, drive it with `build/xpoke` (`test/tools/xpoke.c`: click/type/key/wheel), and view frames with `scripts/ppm-to-png.py`.
 
@@ -93,6 +93,7 @@ Headless UI checks: start Xvfb on `:77`, run `DISPLAY=:77 BACKPLANE_SNAP=/tmp/sn
 - Bits to float: `match u: case U32{w}: F32{w}` reinterprets a U32 as F32 at no cost (`Glb.f32`); `F32.bits` goes the other way.
 - `IO.args()` answers `List<&1, String>`; copy it into a `List<&2, String>` by recursion before reading it twice.
 - Random access into big byte lists: turn them into a balanced `Data` tree once and walk ranges (`Words.range`), never `drop` per lookup.
+- A multi-match that discards a cons tail with `_` next to another scrutinee fails ("_ consumed more than once"): bind it (`case +h <> +r True{}:`).
 - Only tail calls are free: a walk that builds its result outside the recursive call (`String.repeat`, `Utf8.encode_onto`, `Json.items`) overflows the stack around a few hundred thousand steps. For big inputs, push onto a reversed accumulator and reverse once (`Enc.go` in cbor.bend).
 - In `win.c`, an Xlib call outside the pump (XPutImage, XFlush...) can pull input into Xlib's queue while the pump sleeps on the socket; call `win_nudge(a)` after it or keys show one keystroke late.
 - Effect C must not contain the word `undefined`, even in a comment: bend reads it as a missing name and stops with "an unbound name in the emitted C" (vendored code included, e.g. stb_image in `src/app/effects/img.c`).
