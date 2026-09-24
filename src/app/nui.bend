@@ -362,7 +362,7 @@ def Hit.first(hs: List<&2, Hit>, +x: U32, +y: U32) -> Bool:
 
 def Hit.go(hs: List<&2, Hit>, hit: Bool, +x: U32, +y: U32) -> Maybe<&2, Hit>:
   match hs hit:
-    case h <> _ True{}:
+    case +h <> +r True{}:
       Some{h}
     case _ <> +t False{}:
       Hit.go(t, Hit.first(t, x, y), x, y)
@@ -396,6 +396,80 @@ def Nui.hits(n: Nui) -> List<&2, Hit>:
     case Nui{_, _, _, _, _, _, _, _, _, _, hi, _, vw}:
       hi
 
+def Hits.is_line(hs: List<&2, Hit>) -> Bool:
+  match hs:
+    case Hit{_, _, _, _, +a, _} <> _:
+      String.eq(a, "tl-line")
+    case Nil{}:
+      False{}
+
+def Hits.same_line(hs: List<&2, Hit>, +v: String) -> Bool:
+  match hs:
+    case Hit{_, _, _, _, +a, +hv} <> _:
+      Bool.and(String.eq(a, "tl-line"), String.eq(hv, v))
+    case Nil{}:
+      False{}
+
+def Hits.y(hs: List<&2, Hit>) -> U32:
+  match hs:
+    case Hit{_, y0, _, _, _, _} <> _:
+      y0
+    case Nil{}:
+      0
+
+def Hits.v(hs: List<&2, Hit>) -> String:
+  match hs:
+    case Hit{_, _, _, _, _, v} <> _:
+      v
+    case Nil{}:
+      ""
+
+# where line v is in hits (found or not)
+type Seen is Data:
+  Seen{found: Bool, y: U32}
+
+def Hits.find(hs: List<&2, Hit>, hit: Bool, +v: String) -> Seen:
+  match hs hit:
+    case Nil{} _:
+      Seen{False{}, 0}
+    case +h <> +r True{}:
+      Seen{True{}, Hits.y([h])}
+    case _ <> t False{}:
+      Hits.find(t, Hits.same_line(t, v), v)
+
+# hits from the first thread line on
+def Hits.first(hs: List<&2, Hit>, hit: Bool) -> List<&2, Hit>:
+  match hs hit:
+    case Nil{} _:
+      Nil{}
+    case +h <> +r True{}:
+      h <> r
+    case _ <> t False{}:
+      Hits.first(t, Hits.is_line(t))
+
+def Hits.slide.k(a: Seen, b: Seen, +ya: U32, +yb: U32) -> U32:
+  match a b:
+    case Seen{True{}, +y} _:
+      (ya - y : U32)
+    case Seen{False{}, +y1} Seen{True{}, +y}:
+      (y - yb : U32)
+    case _ _:
+      0
+
+# how far the thread's lines moved down since the last frame, modulo 2^32:
+# a line on screen in both frames (the new frame's first, else the old
+# one's), where it was and is. A hint for the tiles (TI.Frame.again),
+# which check what they reuse
+def Hits.slide(+new: List<&2, Hit>, +old: List<&2, Hit>) -> U32:
+  +fn = Hits.first(new, Hits.is_line(new))
+  +fo = Hits.first(old, Hits.is_line(old))
+  Hits.slide.k(Hits.find(old, Hits.same_line(old, Hits.v(fn)), Hits.v(fn)), Hits.find(new, Hits.same_line(new, Hits.v(fo)), Hits.v(fo)), Hits.y(fn), Hits.y(fo))
+
+# a wheel notch moves the thread one tile (TI.Frame.tile): the frame
+# after it slides the tiles it has instead of drawing them again
+def Nui.notch() -> U32:
+  64
+
 def Nui.wheel.k(side: Bool, up: Bool, down: Bool, n: Nui, +sd: U32, +sc: U32) -> Step:
   match side up down n:
     case True{} True{} _ Nui{u, w, h, mx, my, _, sc2, ca, fo, pa, hi, ms, vw}:
@@ -403,13 +477,13 @@ def Nui.wheel.k(side: Bool, up: Bool, down: Bool, n: Nui, +sd: U32, +sc: U32) ->
     case True{} False{} True{} Nui{u, w, h, mx, my, _, sc2, ca, fo, pa, hi, ms, vw}:
       Step{Nui{u, w, h, mx, my, (sd + 48 : U32), sc2, ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
     case False{} True{} _ Nui{u, w, h, mx, my, sd2, _, ca, fo, pa, hi, ms, vw}:
-      Step{Nui{u, w, h, mx, my, sd2, (sc + 48 : U32), ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
+      Step{Nui{u, w, h, mx, my, sd2, (sc + Nui.notch() : U32), ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
     case False{} False{} True{} Nui{u, w, h, mx, my, sd2, _, ca, fo, pa, hi, ms, vw}:
-      Step{Nui{u, w, h, mx, my, sd2, Bool.pick(U32, U32.is_ge(sc, 48), (sc - 48 : U32), 0), ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
+      Step{Nui{u, w, h, mx, my, sd2, Bool.pick(U32, U32.is_ge(sc, Nui.notch()), (sc - Nui.notch() : U32), 0), ca, fo, pa, hi, ms, vw}, Nil{}, True{}}
     case _ _ _ _:
       Step{n, Nil{}, False{}}
 
-# the wheel moves the sidebar or the timeline, 3 lines a notch
+# the wheel moves the sidebar 48 px a notch, the timeline Nui.notch()
 def Nui.wheel(n: Nui, +x: U32, +dir: U32) -> Step:
   match n:
     case Nui{u, w, h, mx, my, +sd, +sc, ca, fo, pa, hi, ms, vw}:

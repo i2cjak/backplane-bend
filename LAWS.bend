@@ -791,8 +791,30 @@ law tailnet_no_owner_no_trust:
 # A frame is kept as tiles and the timeline as per-entry parts; the next
 # frame reuses exactly what is equal and draws the rest.
 
+# a tile looked up in any drawn tiles, wherever the lookup lands, is
+# exactly the tile drawn from scratch: an old image is taken only when it
+# drew the same local ops over the same base
+law seek_made:
+  for k: Nat
+  for +e: Nat
+  for +old: List<&2, R.Op>
+  for +b0: Image
+  for +mx: U32
+  for +my: U32
+  for +mn: U32
+  for +x: U32
+  for +y: U32
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +l: List<&2, R.Op>
+  for +base: Image
+  {T.Tiles.seek(k, T.Tiles.make(k, e, old, b0, mx, my, mn), x, y, rx, ry, n, e, l, base) == T.Tile.draw(e, l, base) : Image}
+
 # drawing a frame over the last one's tiles gives exactly the tiles drawn
-# from scratch: a kept tile is never stale, whatever changed (ops, base)
+# from scratch: a kept tile is never stale, whatever changed (ops, base),
+# and neither is one taken from where a scroll moved it (any past tiles,
+# any shift)
 law tiles_again_exact:
   for k: Nat
   for +e: Nat
@@ -803,22 +825,32 @@ law tiles_again_exact:
   for +rx: U32
   for +ry: U32
   for +n: U32
-  {T.Tiles.again(k, e, ops, base1, T.Tiles.make(k, e, old, base0, rx, ry, n), rx, ry, n) == T.Tiles.make(k, e, ops, base1, rx, ry, n) : T.Tiles}
+  for +pk: Nat
+  for +old2: List<&2, R.Op>
+  for +base2: Image
+  for +prx: U32
+  for +pry: U32
+  for +pn: U32
+  for +qn: U32
+  for +dy: U32
+  {T.Tiles.again(k, e, ops, base1, T.Tiles.make(k, e, old, base0, rx, ry, n), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, ry, n) == T.Tiles.make(k, e, ops, base1, rx, ry, n) : T.Tiles}
 
 # a tile whose ops and base are unchanged is kept as it is, whatever image
 # it holds: it is not drawn again
 law tile_keep:
   for +e: Nat
   for +ops: List<&2, R.Op>
+  for +l: List<&2, R.Op>
   for +base: Image
   for +img: Image
+  for +p: T.Past
   for +rx: U32
   for +ry: U32
   for +n: U32
-  {T.Tile.again(e, ops, base, T.Tile{ops, base, img}, rx, ry, n) == T.Tile{ops, base, img} : T.Tile}
+  {T.Tile.again(e, ops, base, T.Tile{ops, l, base, img}, p, rx, ry, n) == T.Tile{ops, l, base, img} : T.Tile}
 
 # the same for a whole frame as the window draws it, even when the window
-# was resized in between
+# was resized in between, for any scroll hint
 law frame_again_exact:
   for +w0: U32
   for +h0: U32
@@ -828,7 +860,8 @@ law frame_again_exact:
   for +old: List<&2, R.Op>
   for +base0: Image
   for +base: Image
-  {T.Frame.again(w, h, ops, base, T.FSome{w0, h0, T.Frame.make(w0, h0, old, base0)}) == T.Frame.make(w, h, ops, base) : T.Tiles}
+  for +dy: U32
+  {T.Frame.again(w, h, ops, base, T.FSome{w0, h0, T.Frame.make(w0, h0, old, base0)}, dy) == T.Frame.make(w, h, ops, base) : T.Tiles}
 
 # the timeline's memo brought up to date is exactly the memo made from
 # scratch, for any earlier entries

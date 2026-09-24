@@ -100,7 +100,7 @@ def warm(+ty: L.Ty, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
   +mm = L.Lay.memos(ty, n, Nil{})
   +o = L.Lay.frame(ty, L.TL.memos.now(mm), n)
-  Kept{with_hits(n, hits(o), 0n), mm, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{})}}
+  Kept{with_hits(n, hits(o), 0n), mm, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
 
 # one event and the frame after it, timed: event, memo, layout, tiles (ms)
 def step(+what: String, e: W.WinEv, +ty: L.Ty, k: Kept) -> IO(Kept):
@@ -115,7 +115,7 @@ def step(+what: String, e: W.WinEv, +ty: L.Ty, k: Kept) -> IO(Kept):
         +o : L.Out = L.Lay.frame(ty, L.TL.memos.now(mm), n1)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
-        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0)
+        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, 0)
         +img : Image = TI.Tiles.image(tiles)
         +t4 : Nat <- IO.now()
         IO.print(what ++ ": event " ++ Nat.show(Nat.sub(t1, t0)) ++ "  memo " ++ Nat.show(Nat.sub(t2, t1)) ++ "  layout " ++ Nat.show(Nat.sub(t3, t2))
@@ -181,7 +181,7 @@ def rep.tiles(+r: Nat, +os: List<&2, R.Op>, +prev: TI.Frames) -> Nat:
     case 0n:
       0n
     case 1n+q:
-      Nat.add(some(TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev)), rep.tiles(q, os, prev))
+      Nat.add(some(TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev, 0)), rep.tiles(q, os, prev))
 
 # each part of an unchanged frame, 20 times over
 def parts(+ty: L.Ty, k: Kept) -> IO(Unit):
@@ -266,7 +266,7 @@ def main() -> IO(Unit):
     +k : Nat = List.length(&2, R.Op, ops(out))
     +t11 : Nat <- IO.now()
     seen(k, "first layout", t10, t11)
-    +tl : TI.Tiles = TI.Frame.again(1400, 900, ops(out), Pix{T.Th.bg()}, TI.FNone{})
+    +tl : TI.Tiles = TI.Frame.again(1400, 900, ops(out), Pix{T.Th.bg()}, TI.FNone{}, 0)
     +im : Image = TI.Tiles.image(tl)
     +t12 : Nat <- IO.now()
     seen(some(tl), "first tiles", t11, t12)

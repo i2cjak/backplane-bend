@@ -102,7 +102,7 @@ def key(cs: String, +ty: L.Ty, k: Kept, t: Times) -> IO(Times):
   match cs k:
     case SNil{} _:
       IO.pure(Times, t)
-    case SCon{Chr{+c}, rest} Kept{n0, memo0, fr0}:
+    case SCon{Chr{+c}, rest} Kept{+n0, memo0, fr0}:
       do IO<Times>:
         +t0 : Nat <- IO.now()
         +n1 : N.Nui = prepared(step_nui(N.Nui.event(n0, W.WKey{c, c, 0, True{}})), t0)
@@ -112,7 +112,7 @@ def key(cs: String, +ty: L.Ty, k: Kept, t: Times) -> IO(Times):
         +o : L.Out = L.Lay.frame(ty, memo, n1)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
-        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0)
+        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, N.Hits.slide(hits(o), N.Nui.hits(n0)))
         +img : Image = TI.Tiles.image(tiles)
         +t4 : Nat <- IO.now()
         key(rest, ty, Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}},
@@ -123,7 +123,7 @@ def warm(+ty: L.Ty, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
   +memo = L.Lay.memo(ty, n, L.TL.memo.none())
   +o = L.Lay.frame(ty, memo, n)
-  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{})}}
+  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
 
 def text() -> String:
   "hello world, this is a test of typing speed in the composer "
@@ -165,7 +165,7 @@ def rep.tiles(+r: Nat, +os: List<&2, R.Op>, +prev: TI.Frames) -> Nat:
     case 0n:
       0n
     case 1n+q:
-      Nat.add(Bool.pick(Nat, some(TI.FSome{1400, 900, TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev)}), 1n, 0n), rep.tiles(q, os, prev))
+      Nat.add(Bool.pick(Nat, some(TI.FSome{1400, 900, TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev, 0)}), 1n, 0n), rep.tiles(q, os, prev))
 
 def rep.make(+r: Nat, +os: List<&2, R.Op>) -> Nat:
   match r:
