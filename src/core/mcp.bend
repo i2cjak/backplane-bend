@@ -290,9 +290,10 @@ def Mcp.send.k(ok: Bool, +s: M.State, +now: Nat, +thread: String, +target: Strin
     case False{}:
       Res.fail("that thread is not in this project")
 
-def Mcp.view(+path: String, +kind: String) -> Res:
+# the file goes to the viewer of the thread that asked
+def Mcp.view(+thread: String, +path: String, +kind: String) -> Res:
   Res{True{}, J.Json.obj([J.KV{"shown", J.Str{path}}]),
-    B.Step{Nil{}, [B.Broadcast{J.Json.show(J.Json.obj([J.KV{"t", J.Str{"view"}}, J.KV{"path", J.Str{path}}, J.KV{"kind", J.Str{kind}}]))}]}}
+    B.Step{Nil{}, [B.Broadcast{J.Json.show(J.Json.obj([J.KV{"t", J.Str{"view"}}, J.KV{"thread", J.Str{thread}}, J.KV{"path", J.Str{path}}, J.KV{"kind", J.Str{kind}}]))}]}}
 
 def Mcp.names() -> List<&2, String>:
   ["orchestrator_capabilities", "delegate_task", "task_status", "task_cancel", "thread_list", "thread_read", "thread_send", "viewer_show"]
@@ -315,7 +316,7 @@ def Mcp.call.k(i: Nat, +s: M.State, +now: Nat, +thread: String, +models: J.Json,
     case 6n:
       Mcp.send.k(Mcp.same_project(s, thread, J.Json.get_str(a, "threadId", "")), s, now, thread, J.Json.get_str(a, "threadId", ""), J.Json.get_str(a, "text", ""))
     case 7n:
-      Mcp.view(J.Json.get_str(a, "path", ""), J.Json.get_str(a, "kind", ""))
+      Mcp.view(thread, J.Json.get_str(a, "path", ""), J.Json.get_str(a, "kind", ""))
     case _:
       Res.fail("unknown tool")
 

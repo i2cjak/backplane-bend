@@ -1118,6 +1118,10 @@ def Nui.prepare.fit(open: Bool, +n: Nui) -> Nui:
 def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
   Nui.prepare.fit(Bool.and(open, Bool.not(U32.is_eq(Vw.kind(Nui.vw(n)), 4))), n)
 
+# a kind of view by name (View.kind_of reads it back)
+def View.name(+k: U32) -> String:
+  Bool.pick(String, U32.is_eq(k, 1), "schematic", Bool.pick(String, U32.is_eq(k, 2), "3d", Bool.pick(String, U32.is_eq(k, 3), "browser", Bool.pick(String, U32.is_eq(k, 4), "diff", "board"))))
+
 # the kind of view for a requested file: named, else from its extension
 def View.kind_of(+kind: String, +path: String) -> U32:
   Bool.pick(U32, String.eq(kind, "diff"), 4,
@@ -1141,13 +1145,18 @@ def Vw.seen_set(v: V.Vw, +seen: String) -> V.Vw:
 def Nui.request.k(fresh: Bool, +n: Nui, +seen: String) -> Nui:
   match fresh:
     case True{}:
-      Nui.with_vw(n, Vw.seen_set(Vw.kind_set(Nui.vw(n), View.kind_of(U.Ui.info(Nui.ui(n), "view.kind"), U.Ui.info(Nui.ui(n), "view.path")), U.Ui.info(Nui.ui(n), "view.path")), seen))
+      Nui.with_vw(n, Vw.seen_set(Vw.kind_set(Nui.vw(n), View.kind_of(U.Ui.view_get(Nui.ui(n), "view.kind"), U.Ui.view_get(Nui.ui(n), "view.path")), U.Ui.view_get(Nui.ui(n), "view.path")), seen))
     case False{}:
       n
 
-# an agent's viewer_show request not yet applied: switch to that file
+# which thread's view, and which change of it, the viewer shows
+def Nui.view_at(+n: Nui) -> String:
+  U.Ui.sel(Nui.ui(n)) ++ "#" ++ U.Ui.view_get(Nui.ui(n), "view.n")
+
+# the viewer shows the selected thread's view: on a change of thread, or
+# a viewer_show or kind picked for it, switch to that
 def Nui.request(+n: Nui) -> Nui:
-  Nui.request.k(Bool.not(String.eq(U.Ui.info(Nui.ui(n), "view.n"), Vx.seen(Vw.x(Nui.vw(n))))), n, U.Ui.info(Nui.ui(n), "view.n"))
+  Nui.request.k(Bool.not(String.eq(Nui.view_at(n), Vx.seen(Vw.x(Nui.vw(n))))), n, Nui.view_at(n))
 
 def Nui.prepare(+n: Nui) -> Nui:
   Nui.prepare.k(Nui.panel(n), Nui.request(n))
@@ -1518,7 +1527,7 @@ def Pal.click(+n: Nui, +v: String) -> Step:
 def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
   match i:
     case 0n:
-      Step{Nui.with_vw(n, Vw.kind_set(Nui.vw(n), Maybe.default(&2, U32, U32.read(value), 0), "")), Nil{}, True{}}
+      Step{Nui.with_ui(n, U.Ui.view_pick(Nui.ui(n), View.name(Maybe.default(&2, U32, U32.read(value), 0)))), Nil{}, True{}}
     case 1n:
       Step{Nui.with_vw(n, Vw.pick_set(Nui.vw(n), "")), Nil{}, True{}}
     case 2n:

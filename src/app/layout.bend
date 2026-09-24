@@ -1725,7 +1725,7 @@ def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +x0: U32, +x1
 
 # the viewer's chrome; the scene under it is drawn by the viewer
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
-  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.info(S.Nui.ui(n), "diff"), x0, x1, h)
+  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h)
 
 def Lay.toast(+ty: Ty, +e: String, +w: U32, +h: U32) -> Out:
   +tw = {(Ty.width(ty, 2n, e) + 28 : U32) : U32}

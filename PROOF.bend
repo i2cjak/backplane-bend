@@ -2687,3 +2687,10 @@ def Laws.mpick_opens_home():
 
 def Laws.mpick_tilde():
   {==}
+
+def Laws.view_other_stays_shut(u, th, o, p, h):
+  match u:
+    case U.Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      %Equal.sym(Bool, pa, False{}, p) : {Bool.or(_, String.eq(th, sel)) == False{} : Bool}
+      %Equal.sym(Bool, String.eq(th, sel), False{}, h) : {Bool.or(False{}, _) == False{} : Bool}
+      {==}

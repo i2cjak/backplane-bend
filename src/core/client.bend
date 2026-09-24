@@ -284,19 +284,39 @@ def Ui.reply.k(u: Ui, +o: J.Json) -> Ui:
     case Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, _, note, nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, Ui.reply.err(o), note, nf, Map.set(&2, String, ob, J.Json.as_raw(J.Json.get(o, "id"), ""), ""), tr}
 
-def Ui.diff(u: Ui, +r: J.Json) -> Ui:
+# The viewer belongs to a thread: what it shows for thread t is kept as
+# "view.kind:t" and "view.path:t" (a file an agent asked for, else the
+# thread's own board), its diff as "diff:t", and "view.n:t" counts the
+# changes, so the same file asked for twice still comes to the front.
+
+def Viewer.n(+nf: Map<&2, String>, +th: String) -> String:
+  Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n:" ++ th)), 0n))
+
+def Viewer.put(+nf: Map<&2, String>, +th: String, +kind: String, +path: String) -> Map<&2, String>:
+  Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "view.kind:" ++ th, kind), "view.path:" ++ th, path), "view.n:" ++ th, Viewer.n(nf, th))
+
+# the thread a view message is for: named, else the selected one (a hub
+# from before views were per thread names none)
+def Viewer.of(+th: String, +sel: String) -> String:
+  Bool.pick(String, String.is_empty(th), sel, th)
+
+# whether the viewer panel is open
+def Ui.panel(u: Ui) -> Bool:
+  match u:
+    case Ui{_, _, _, _, _, _, _, _, pa, _, _, _, _, _, nf, ob, tr}:
+      pa
+
+# the viewer switched to another kind by hand, for the selected thread
+def Ui.view_pick(u: Ui, +kind: String) -> Ui:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Viewer.put(nf, sel, kind, ""), ob, tr}
+
+def Ui.diff.k(u: Ui, +th: String, +r: J.Json) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
-        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "diff", J.Json.get_str(r, "diff", "")), "view.kind", "diff"), "view.path", ""),
-          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n))), ob, tr}
-
-def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
-  match has:
-    case True{}:
-      Ui.diff(Ui.reply.k(u, o), J.Json.get_obj(o, "result"))
-    case False{}:
-      Ui.reply.k(u, o)
+        Viewer.put(Map.set(&2, String, nf, "diff:" ++ th, J.Json.get_str(r, "diff", "")), th, "diff", ""), ob, tr}
 
 def Files.strs(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
@@ -333,14 +353,14 @@ def Ui.update(u: Ui, +o: J.Json) -> Ui:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w,
         J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", "")), nf, ob, tr}
 
-# an agent asked to show a file: the viewer opens on it (view.n counts
-# requests, so the same file asked for twice still comes to the front)
-def Ui.view(u: Ui, +o: J.Json) -> Ui:
+# an agent asked to show a file: its thread's viewer shows it, and opens
+# when that thread is the one on screen (another thread's request waits
+# for the user to go there)
+def Ui.view.k(u: Ui, +th: String, +o: J.Json) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
-      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
-        Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, nf, "view.path", J.Json.get_str(o, "path", "")), "view.kind", J.Json.get_str(o, "kind", "")),
-          "view.n", Nat.show(1n+Maybe.default(&2, Nat, Nat.read(Str.get(nf, "view.n")), 0n))), ob, tr}
+    case Ui{st, +sel, dr, live, op, on, now, ad, +pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, Bool.or(pa, String.eq(th, sel)), v, rid, w, er, note,
+        Viewer.put(nf, th, J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "path", "")), ob, tr}
 
 def Out.resend.k(skip: Bool, x: String, rest: List<&2, Cmd>) -> List<&2, Cmd>:
   match skip:
@@ -554,6 +574,23 @@ def Ui.sel(u: Ui) -> String:
   match u:
     case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _, nf, ob, tr}:
       sel
+
+# the selected thread's view: its kind, path, change count and diff
+def Ui.view_get(+u: Ui, +k: String) -> String:
+  Ui.info(u, k ++ ":" ++ Ui.sel(u))
+
+def Ui.diff(+u: Ui, +r: J.Json) -> Ui:
+  Ui.diff.k(u, Viewer.of(J.Json.get_str(r, "thread", ""), Ui.sel(u)), r)
+
+def Ui.reply.diff(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.diff(Ui.reply.k(u, o), J.Json.get_obj(o, "result"))
+    case False{}:
+      Ui.reply.k(u, o)
+
+def Ui.view(+u: Ui, +o: J.Json) -> Ui:
+  Ui.view.k(u, Viewer.of(J.Json.get_str(o, "thread", ""), Ui.sel(u)), o)
 
 # the selected thread's draft
 def Ui.draft_text(u: Ui) -> String:
