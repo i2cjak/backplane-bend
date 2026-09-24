@@ -539,6 +539,15 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                                     onClick = { models = false; m.act("effort", c.value) },
                                 )
                             }
+                            // another provider takes the thread up from its next turn
+                            if (t.picker.providers.isNotEmpty()) {
+                                HorizontalDivider()
+                                for (c in t.picker.providers) DropdownMenuItem(
+                                    text = { Text("Provider: ${c.label}") },
+                                    leadingIcon = { if (c.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                                    onClick = { models = false; m.act("effort", c.value) },
+                                )
+                            }
                         }
                     }
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

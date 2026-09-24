@@ -1760,3 +1760,33 @@ law fork_waits_with_context:
 # only a fork can be brought back
 law back_needs_fork:
   {H.Queue.changes(H.Hub.back(H.Demo.state("claude", M.Completed{}), 5n, 0, "1", "t1")) == [] : List<&2, M.Change>}
+
+# Switching providers
+# -------------------
+
+# a running turn is never switched, and switching to the same provider
+# changes nothing
+law switch_between_turns:
+  {H.Queue.changes(H.Hub.switch(H.Demo.state("claude", M.Running{}), 5n, 0, "1", "t1", "codex")) == [] : List<&2, M.Change>}
+
+law switch_same_nothing:
+  {H.Queue.changes(H.Hub.switch(H.Demo.state("claude", M.Completed{}), 5n, 0, "1", "t1", "claude")) == [] : List<&2, M.Change>}
+
+# each provider keeps its own session: a new one starts fresh, and coming
+# back resumes the one it had
+law switch_new_session:
+  {M.Switch.sess(M.State.thread.get(M.State.replay([M.SessionSet{"t1", "S1", 3n}, M.ProviderSet{"t1", "codex", "", 4n}], H.Demo.state("claude", M.Completed{})), "t1")) == "" : String}
+
+law switch_keeps_sessions:
+  {M.Switch.sess(M.State.thread.get(M.State.replay([M.ProviderSet{"t1", "claude", "", 6n}], H.Demo.switched()), "t1")) == "S1" : String}
+
+law switch_keeps_sessions_both:
+  {M.Switch.sess(M.State.thread.get(M.State.replay([M.ProviderSet{"t1", "claude", "", 6n}, M.ProviderSet{"t1", "codex", "", 7n}], H.Demo.switched()), "t1")) == "S2" : String}
+
+# a provider new to a thread is handed it all; one coming back that
+# missed nothing is handed nothing
+law switch_hands_new_provider:
+  {List.length(&2, M.QItem, M.Queue.items(M.State.replay(H.Queue.changes(H.Hub.switch(H.Demo.switched(), 6n, 0, "1", "t1", "grok")), H.Demo.switched()), "t1")) == 1n : Nat}
+
+law switch_back_missed_nothing:
+  {List.length(&2, M.QItem, M.Queue.items(M.State.replay(H.Queue.changes(H.Hub.switch(H.Demo.switched(), 6n, 0, "1", "t1", "claude")), H.Demo.switched()), "t1")) == 0n : Nat}

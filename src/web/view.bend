@@ -322,15 +322,16 @@ def View.namew(ms: List<&2, String>) -> Nat:
       Nat.max(String.length(m), View.namew(t))
 
 # reasoning effort chips, the provider's default first
-def View.efforts(es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
+def View.efforts(es: List<&2, String>, +cur: String, +prov: String) -> List<&2, D.Node>:
   match es:
     case Nil{}:
       Nil{}
     case +e <> t:
-      D.Dom.button(Bool.pick(String, String.eq(e, cur), "on", ""), "effort", e, "Reasoning effort: " ++ U.Effort.name(e), U.Effort.name(e)) <> View.efforts(t, cur)
+      D.Dom.button(Bool.pick(String, U.Chip.on(e, cur, prov), "on", ""), "effort", e,
+        Bool.pick(String, String.starts_with(e, "@"), "Go on with " ++ U.Chip.name(e) ++ " from the next turn", "Reasoning effort: " ++ U.Chip.name(e)), U.Chip.name(e)) <> View.efforts(t, cur, prov)
 
-def View.effort_row(+es: List<&2, String>, +cur: String) -> List<&2, D.Node>:
-  Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, es), Nil{}, [D.El{"div", "", [D.At{"class", "efforts"}], View.efforts(es, cur)}])
+def View.effort_row(+es: List<&2, String>, +cur: String, +prov: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, es), Nil{}, [D.El{"div", "", [D.At{"class", "efforts"}], View.efforts(es, cur, prov)}])
 
 # the model menu over the composer, and a shade behind it: a click
 # anywhere off the menu lands on the shade and closes it
@@ -339,7 +340,7 @@ def View.menu(open: Bool, +ms: List<&2, String>, +cur: String, +info: String, +p
     case True{}:
       [D.El{"div", "", [D.At{"class", "shade"}, D.At{"data-value", "models"}, D.On{"click", "flag"}], Nil{}},
        D.El{"div", "", [D.At{"class", "model-menu"}, D.At{"style", "--namew:" ++ Nat.show(View.namew(ms)) ++ "ch"}],
-         D.Dom.cat(View.effort_row(es, effort), [D.El{"div", "", [D.At{"class", "rows"}], View.models(ms, cur, info, prov)}])}]
+         D.Dom.cat(View.effort_row(es, effort, prov), [D.El{"div", "", [D.At{"class", "rows"}], View.models(ms, cur, info, prov)}])}]
     case False{}:
       Nil{}
 
@@ -756,7 +757,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.queued(M.Queue.items(st, id), View.running(turn)),
         View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
-          U.Effort.chips(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
+          U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)],
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
 def View.thread(+u: U.Ui, t: M.Thread) -> D.Node:

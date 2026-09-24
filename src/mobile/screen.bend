@@ -191,12 +191,12 @@ def Mob.models(ms: List<&2, String>, +info: String, +provider: String, +cur: Str
     case +m <> t:
       Mob.choice(Mob.model_name(info, provider, m), m, String.eq(m, cur)) <> Mob.models(t, info, provider, cur)
 
-def Mob.efforts(es: List<&2, String>, +cur: String) -> List<&2, J.Json>:
+def Mob.efforts(es: List<&2, String>, +cur: String, +prov: String) -> List<&2, J.Json>:
   match es:
     case Nil{}:
       Nil{}
     case +e <> t:
-      Mob.choice(U.Effort.name(e), e, String.eq(e, cur)) <> Mob.efforts(t, cur)
+      Mob.choice(U.Chip.name(e), e, U.Chip.on(e, cur, prov)) <> Mob.efforts(t, cur, prov)
 
 # the composer's model chip and its menu: the thread's provider's models
 # (its default first; "model" sends one) and the efforts that model takes
@@ -204,7 +204,8 @@ def Mob.efforts(es: List<&2, String>, +cur: String) -> List<&2, J.Json>:
 def Mob.picker(+info: String, +provider: String, +model: String, +effort: String) -> J.Json:
   J.Json.obj([J.KV{"label", J.Json.str(U.Effort.label(U.Models.label(provider, model), effort))},
     J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.list(info, provider), info, provider, model))},
-    J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort))}])
+    J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort, provider))},
+    J.KV{"providers", J.Json.arr(Mob.efforts(U.Chip.providers(), effort, provider))}])
 
 def Mob.qbtns(bs: List<&2, U.QBtn>) -> List<&2, J.Json>:
   match bs:

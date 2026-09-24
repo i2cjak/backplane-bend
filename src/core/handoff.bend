@@ -148,3 +148,22 @@ def Hand.fork(+es: List<&2, M.Entry>, +src: String, +title: String) -> String:
 def Hand.back(+es: List<&2, M.Entry>, +fork: String, +title: String) -> String:
   Hand.text("Work done in a fork of this thread, \"" ++ title ++ "\" (" ++ fork ++ "), brought back here. Its files stay on its own branch; what was said and done there, oldest first:",
     Hand.mine(es, fork), fork)
+
+# the newest n of a list (newest first in)
+def Hand.newest(n: Nat, es: List<&2, M.Entry>) -> List<&2, M.Entry>:
+  match n es:
+    case 0n _:
+      Nil{}
+    case _ Nil{}:
+      Nil{}
+    case 1n+k e <> t:
+      e <> Hand.newest(k, t)
+
+# a provider taking a thread up: what happened since it last took part
+# (seen: how many of the thread's entries it had seen; 0 for a provider
+# new to the thread, which then gets it all)
+def Hand.switch(+es: List<&2, M.Entry>, +th: String, +from: String, +to: String, +seen: Nat) -> String:
+  Hand.text(Bool.pick(String, Nat.is_eq(seen, 0n),
+      "This thread was worked on with " ++ from ++ " until now; you (" ++ to ++ ") take it over. Its conversation so far, oldest first:",
+      "This thread went on with " ++ from ++ " since you (" ++ to ++ ") last took part. What happened meanwhile, oldest first:"),
+    Hand.newest(Nat.sub(List.length(&2, M.Entry, Hand.mine(es, th)), seen), Hand.mine(es, th)), th)

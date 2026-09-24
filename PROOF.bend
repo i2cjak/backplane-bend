@@ -3483,3 +3483,24 @@ def Laws.fork_waits_with_context():
 
 def Laws.back_needs_fork():
   {==}
+
+def Laws.switch_between_turns():
+  {==}
+
+def Laws.switch_same_nothing():
+  {==}
+
+def Laws.switch_new_session():
+  {==}
+
+def Laws.switch_keeps_sessions():
+  {==}
+
+def Laws.switch_keeps_sessions_both():
+  {==}
+
+def Laws.switch_hands_new_provider():
+  {==}
+
+def Laws.switch_back_missed_nothing():
+  {==}
