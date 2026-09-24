@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/agent.bend as AG
 import ./src/core/tailnet.bend as TN
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
@@ -1083,3 +1084,65 @@ law mpick_opens_home:
 
 law mpick_tilde:
   {MP.MPick.field("/home/h", "/home/h/docs") == "~/docs/" : String}
+
+# Thread titles
+# -------------
+
+# a written title never replaces a title the user gave the thread meanwhile
+law title_user_rename_wins:
+  for +current: String
+  for +placeholder: String
+  for +answer: String
+  for +thread: String
+  for +now: Nat
+  for h: {String.eq(current, placeholder) == False{} : Bool}
+  {H.Title.changes(current, placeholder, answer, thread, now) == [] : List<&2, M.Change>}
+
+# while the first message's placeholder stands, the cleaned answer is the title
+law title_applies_when_placeholder:
+  for +current: String
+  for +placeholder: String
+  for +answer: String
+  for +thread: String
+  for +now: Nat
+  for same: {String.eq(current, placeholder) == True{} : Bool}
+  for set: {String.is_empty(placeholder) == False{} : Bool}
+  for some: {String.is_empty(AG.Title.clean(answer)) == False{} : Bool}
+  {H.Title.changes(current, placeholder, answer, thread, now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+
+# an empty answer (the writer failed) changes nothing
+law title_empty_keeps:
+  for +current: String
+  for +placeholder: String
+  for +thread: String
+  for +now: Nat
+  {H.Title.changes(current, placeholder, "", thread, now) == [] : List<&2, M.Change>}
+
+# no text generation settings: Claude's haiku writes
+law text_model_default:
+  {AG.Text.of(M.State.empty()) == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+# an unknown provider is claude; an empty model is the provider's light one
+law text_model_unknown_provider:
+  {AG.Text.pick("gemini", "") == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+law text_model_light:
+  {AG.Text.pick("codex", " ") == AG.Tx{"codex", "gpt-6-luna"} : AG.Tx}
+
+# a text.model left over from another provider gives way to the chosen
+# provider's light model
+law text_model_mismatch:
+  for +provider: String
+  for +model: String
+  for h: {AG.Text.fits(AG.Text.norm(String.trim(provider)), String.trim(model)) == False{} : Bool}
+  {AG.Text.pick(provider, model) == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+
+law text_model_mismatch_codex:
+  {AG.Text.pick("codex", "haiku") == AG.Tx{"codex", "gpt-6-luna"} : AG.Tx}
+
+law text_model_mismatch_claude:
+  {AG.Text.pick("claude", "gpt-6-luna") == AG.Tx{"claude", "haiku"} : AG.Tx}
+
+# a model the provider owns, or one no provider is known to own, is kept
+law text_model_kept:
+  {AG.Text.pick("claude", "claude-sonnet-5") == AG.Tx{"claude", "claude-sonnet-5"} : AG.Tx}

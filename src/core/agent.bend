@@ -1,6 +1,7 @@
 import Base
 import ./json.bend as J
 import ./prompt.bend as Q
+import ./model.bend as M
 
 # Agent features, pure: user and project skills (SKILL.md frontmatter, the
 # skills block Codex and Grok are told, `$skill` mentions), reasoning
@@ -333,14 +334,158 @@ def Effort.args(+provider: String, +e: String) -> List<&2, String>:
   Bool.pick(List<&2, String>, String.is_empty(Effort.of(provider, e)), Nil{},
     Effort.args.k(Effort.pos(["claude", "codex", "grok"], provider, 0n), Effort.of(provider, e)))
 
-# One-shot writing: branch names and commit messages
-# --------------------------------------------------
-# `claude -p` with a small model, no tools, no MCP and no session; the
-# text goes on stdin. What comes back is one JSON object ({"result": ...}).
+# One-shot writing: thread titles, branch names and commit messages
+# -----------------------------------------------------------------
+# A light model with no tools, no MCP and no session, from the text
+# generation settings: text.provider (claude, codex or grok; claude for
+# anything else) and text.model ("" or unset: the provider's light model).
+# Claude and Codex read the text on stdin under a system prompt; Grok's
+# headless mode drops a system prompt, so it reads both on stdin.
 
-def OneShot.args(+system: String) -> List<&2, String>:
-  ["60", "claude", "-p", "--model", "haiku", "--output-format", "json", "--no-session-persistence",
-   "--tools", "", "--strict-mcp-config", "--effort", "low", "--system-prompt", system]
+type Tx is Data:
+  Tx{provider: String, model: String}
+
+def Text.providers() -> List<&2, String>:
+  ["claude", "codex", "grok"]
+
+def Text.norm.k(i: Nat) -> String:
+  match i:
+    case 1n:
+      "codex"
+    case 2n:
+      "grok"
+    case _:
+      "claude"
+
+# the provider named, or claude
+def Text.norm(+p: String) -> String:
+  Text.norm.k(Effort.pos(Text.providers(), p, 0n))
+
+def Text.light.k(i: Nat) -> String:
+  match i:
+    case 1n:
+      "gpt-6-luna"
+    case 2n:
+      "grok-4.7-build-fast"
+    case _:
+      "haiku"
+
+# a provider's light model, used when text.model is empty
+def Text.light(+provider: String) -> String:
+  Text.light.k(Effort.pos(Text.providers(), provider, 0n))
+
+def Text.digit(m: Maybe<&2, Char>) -> Bool:
+  match m:
+    case Some{Chr{+c}}:
+      Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57))
+    case None{}:
+      False{}
+
+def Text.is_claude(+m: String) -> Bool:
+  Bool.or(String.starts_with(m, "claude-"), Bool.or(Bool.or(String.eq(m, "haiku"), String.eq(m, "sonnet")), Bool.or(String.eq(m, "opus"), String.eq(m, "fable"))))
+
+def Text.is_codex(+m: String) -> Bool:
+  Bool.or(Bool.or(String.starts_with(m, "gpt-"), String.starts_with(m, "codex-")), Bool.and(String.starts_with(m, "o"), Text.digit(String.get(m, 1n))))
+
+def Text.family.k(claude: Bool, codex: Bool, grok: Bool) -> String:
+  match claude codex grok:
+    case True{} _ _:
+      "claude"
+    case False{} True{} _:
+      "codex"
+    case False{} False{} True{}:
+      "grok"
+    case False{} False{} False{}:
+      ""
+
+# whose model a name is: claude (haiku, sonnet, opus, fable, claude-*),
+# codex (gpt-*, codex-*, o3...), grok (grok-*), or "" when it is not known
+def Text.family(+m: String) -> String:
+  Text.family.k(Text.is_claude(m), Text.is_codex(m), String.starts_with(m, "grok-"))
+
+# a model the provider can run: its own, or one not known to be another's
+# (a text.model left over from another provider does not fit)
+def Text.fits(+provider: String, +model: String) -> Bool:
+  Bool.or(String.is_empty(Text.family(model)), String.eq(Text.family(model), provider))
+
+def Text.pick.m(keep: Bool, +provider: String, +model: String) -> String:
+  match keep:
+    case True{}:
+      model
+    case False{}:
+      Text.light(provider)
+
+def Text.pick.k(+provider: String, +model: String) -> Tx:
+  Tx{provider, Text.pick.m(Bool.and(Bool.not(String.is_empty(model)), Text.fits(provider, model)), provider, model)}
+
+# the effective provider and model for a provider and model setting: the
+# provider's light model when the model is empty or another provider's
+def Text.pick(+provider: String, +model: String) -> Tx:
+  Text.pick.k(Text.norm(String.trim(provider)), String.trim(model))
+
+# the text generation model the settings choose
+def Text.of(+st: M.State) -> Tx:
+  Text.pick(M.Setting.get(st, "text.provider", "claude"), M.Setting.get(st, "text.model", ""))
+
+def Tx.provider(t: Tx) -> String:
+  match t:
+    case Tx{p, _}:
+      p
+
+def Tx.model(t: Tx) -> String:
+  match t:
+    case Tx{_, m}:
+      m
+
+# the effective text.provider and text.model (what a settings UI shows)
+def Text.provider(+st: M.State) -> String:
+  Tx.provider(Text.of(st))
+
+def Text.model(+st: M.State) -> String:
+  Tx.model(Text.of(st))
+
+def OneShot.flag(+flag: String, +model: String) -> List<&2, String>:
+  Bool.pick(List<&2, String>, String.is_empty(model), Nil{}, [flag, model])
+
+def OneShot.claude(+model: String, +system: String) -> List<&2, String>:
+  List.append(&2, String, ["60", "claude", "-p"], List.append(&2, String, OneShot.flag("--model", model),
+    ["--output-format", "json", "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--effort", "low", "--system-prompt", system]))
+
+# the prompt is the system text; codex appends stdin as a <stdin> block
+def OneShot.codex(+model: String, +system: String) -> List<&2, String>:
+  List.append(&2, String, ["60", "codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "-c", "model_reasoning_effort=\"low\""],
+    List.append(&2, String, OneShot.flag("-m", model), [system]))
+
+# grok reads a prompt file; stdin is a socket, so cat makes it a pipe
+def OneShot.grok(+model: String) -> List<&2, String>:
+  List.append(&2, String, ["60", "sh", "-c", "cat | exec grok --prompt-file /dev/stdin \"$@\"", "sh", "--output-format", "json", "--no-subagents",
+    "--disable-web-search", "--permission-mode", "dontAsk", "--max-turns", "1", "--reasoning-effort", "low"], OneShot.flag("-m", model))
+
+def OneShot.args.k(i: Nat, +model: String, +system: String) -> List<&2, String>:
+  match i:
+    case 1n:
+      OneShot.codex(model, system)
+    case 2n:
+      OneShot.grok(model)
+    case _:
+      OneShot.claude(model, system)
+
+# the arguments for timeout(1) that run one piece of writing
+def OneShot.args(tx: Tx, +system: String) -> List<&2, String>:
+  match tx:
+    case Tx{+p, +m}:
+      OneShot.args.k(Effort.pos(Text.providers(), p, 0n), m, system)
+
+def OneShot.input.k(grok: Bool, +system: String, +text: String) -> String:
+  match grok:
+    case True{}:
+      system ++ "\n\n<input>\n" ++ text ++ "\n</input>"
+    case False{}:
+      text
+
+# what the writer reads on stdin
+def OneShot.input(+provider: String, +system: String, +text: String) -> String:
+  OneShot.input.k(String.eq(provider, "grok"), system, text)
 
 def OneShot.pick.k(m: Maybe<&2, J.Json>, rest: String) -> String:
   match m:
@@ -359,6 +504,105 @@ def OneShot.pick(ls: List<&2, String>) -> String:
 # the model's answer, or "" when it failed
 def OneShot.result(+out: String) -> String:
   String.trim(OneShot.pick(String.lines(out)))
+
+def OneShot.cx.k(m: Maybe<&2, J.Json>, +acc: String) -> String:
+  match m:
+    case Some{+o}:
+      Bool.pick(String, Bool.and(String.eq(J.Json.get_str(o, "type", ""), "item.completed"), String.eq(J.Json.get_str(J.Json.get_obj(o, "item"), "type", ""), "agent_message")),
+        J.Json.get_str(J.Json.get_obj(o, "item"), "text", ""), acc)
+    case None{}:
+      acc
+
+# codex exec --json: the last agent message among the JSONL events
+def OneShot.cx(ls: List<&2, String>, acc: String) -> String:
+  match ls:
+    case Nil{}:
+      acc
+    case +l <> t:
+      OneShot.cx(t, OneShot.cx.k(J.Json.parse(String.trim(l)), acc))
+
+def OneShot.gk.k(m: Maybe<&2, J.Json>) -> String:
+  match m:
+    case Some{+o}:
+      Bool.pick(String, String.eq(J.Json.get_str(o, "stopReason", ""), "end_turn"), J.Json.get_str(o, "text", ""), "")
+    case None{}:
+      ""
+
+def OneShot.answer.k(i: Nat, +out: String) -> String:
+  match i:
+    case 1n:
+      String.trim(OneShot.cx(String.lines(out), ""))
+    case 2n:
+      String.trim(OneShot.gk.k(J.Json.parse(String.trim(out))))
+    case _:
+      OneShot.result(out)
+
+# a provider's answer, or "" when it failed
+def OneShot.answer(+provider: String, +out: String) -> String:
+  OneShot.answer.k(Effort.pos(Text.providers(), provider, 0n), out)
+
+# Thread titles
+# -------------
+# A thread's first message titles it at once (its first line, hub.bend's
+# Hub.title.of); the writer's title replaces that while it still stands.
+
+def Title.system() -> String:
+  "You title threads in a coding agent's sidebar. The user's first message to the agent follows. Do not answer it, do not do the work and do not use tools. Reply with only a title of 3 to 7 words naming the change or question the user wants, in sentence case, without quotes, markdown or a trailing period."
+
+def Title.keep(empty: Bool, w: String, rest: List<&2, String>) -> List<&2, String>:
+  match empty:
+    case True{}:
+      rest
+    case False{}:
+      w <> rest
+
+def Title.words(ls: List<&2, String>) -> List<&2, String>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case +w <> t:
+      Title.keep(String.is_empty(w), w, Title.words(t))
+
+# leading # and spaces (a markdown heading)
+def Title.unhash(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(String, Bool.or(U32.is_eq(c, 35), U32.is_eq(c, 32)), Title.unhash(t), SCon{Chr{c}, t})
+
+def Title.prefix(+s: String) -> String:
+  Bool.pick(String, String.starts_with(String.to_lower(s), "title:"), String.trim(String.drop(s, 6n)), s)
+
+def Title.unquote(+s: String) -> String:
+  Bool.pick(String, Bool.and(Nat.is_ge(String.length(s), 2n), Bool.and(String.starts_with(s, "'"), String.ends_with(s, "'"))),
+    String.trim(String.take(String.drop(s, 1n), Nat.sub(String.length(s), 2n))), s)
+
+def Title.unperiod(+s: String) -> String:
+  Bool.pick(String, Bool.and(String.ends_with(s, "."), Bool.not(String.ends_with(s, ".."))), String.trim(String.take(s, Nat.sub(String.length(s), 1n))), s)
+
+def Title.squash(+s: String) -> String:
+  String.join(Title.words(String.split(String.join(String.split(s, '\t'), " "), ' ')), " ")
+
+def Title.bare(+s: String) -> String:
+  String.join(String.split(String.join(String.split(String.join(String.split(s, '`'), ""), '"'), ""), '*'), "")
+
+def Title.cut(long: Bool, +line: String) -> String:
+  match long:
+    case True{}:
+      String.take(line, 57n) ++ "..."
+    case False{}:
+      line
+
+def Title.first(+answer: String) -> String:
+  String.trim(Maybe.default(&2, String, List.head(&2, String, String.lines(String.trim(answer))), ""))
+
+# the writer's answer as a title: its first line without quotes, markdown,
+# a "Title:" label or a trailing period, spaces collapsed, at most 60
+# characters like Hub.title.of; "" for none
+def Title.clean(+answer: String) -> String:
+  +l = Title.unperiod(Title.squash(Title.unquote(Title.prefix(Title.unhash(Title.bare(Title.first(answer)))))))
+  Title.cut(Nat.is_gt(String.length(l), 60n), l)
 
 def Name.system() -> String:
   "You name git branches. The user's first message to a coding agent follows. Reply with only a short branch name for that work: 2 to 5 lowercase English words joined by hyphens, at most 40 characters, no prefix, no quotes, no punctuation, nothing else."

@@ -21,6 +21,11 @@ def show(s: A.USkill) -> String:
     case A.USkill{n, d, p, m, u}:
       n ++ "|" ++ d ++ "|" ++ p ++ "|" ++ Bool.pick(String, m, "model", "-") ++ "|" ++ Bool.pick(String, u, "user", "-")
 
+def tx(t: A.Tx) -> String:
+  match t:
+    case A.Tx{p, m}:
+      p ++ "|" ++ m
+
 def yes(b: Bool) -> String:
   Bool.pick(String, b, "yes", "no")
 
@@ -58,3 +63,36 @@ def main() -> IO(Unit):
     C.Check.str("name fragment", A.Name.fragment("\"Add Effort Chips\"\nmore"), "add-effort-chips")
     C.Check.str("commit fences", A.Commit.message("```\nAdd effort chips\n\nPass --effort.\n```", "title"), "Add effort chips\n\nPass --effort.")
     C.Check.str("commit fallback", A.Commit.message("  ", "title"), "title")
+    C.Check.str("text default", tx(A.Text.pick("", "")), "claude|haiku")
+    C.Check.str("text codex light", tx(A.Text.pick("codex", "")), "codex|gpt-6-luna")
+    C.Check.str("text grok model", tx(A.Text.pick(" grok ", "grok-4.6")), "grok|grok-4.6")
+    C.Check.str("text unknown", tx(A.Text.pick("gemini", "opus")), "claude|opus")
+    C.Check.str("text codex leftover haiku", tx(A.Text.pick("codex", "haiku")), "codex|gpt-6-luna")
+    C.Check.str("text codex leftover grok", tx(A.Text.pick("codex", "grok-4.6")), "codex|gpt-6-luna")
+    C.Check.str("text codex o3", tx(A.Text.pick("codex", "o3")), "codex|o3")
+    C.Check.str("text claude leftover gpt", tx(A.Text.pick("claude", "gpt-6-sol")), "claude|haiku")
+    C.Check.str("text claude id", tx(A.Text.pick("claude", "claude-opus-5-5")), "claude|claude-opus-5-5")
+    C.Check.str("text grok leftover sonnet", tx(A.Text.pick("grok", "sonnet")), "grok|grok-4.7-build-fast")
+    C.Check.str("text custom kept", tx(A.Text.pick("codex", "my-local-model")), "codex|my-local-model")
+    C.Check.str("args claude", String.join(A.OneShot.args(A.Tx{"claude", "haiku"}, "SYS"), " "),
+      "60 claude -p --model haiku --output-format json --no-session-persistence --tools  --strict-mcp-config --effort low --system-prompt SYS")
+    C.Check.str("args codex", String.join(A.OneShot.args(A.Tx{"codex", "gpt-6-luna"}, "SYS"), " "),
+      "60 codex exec --json --ephemeral --skip-git-repo-check --sandbox read-only -c model_reasoning_effort=\"low\" -m gpt-6-luna SYS")
+    C.Check.str("args codex default model", String.join(A.OneShot.args(A.Tx{"codex", ""}, "SYS"), " "),
+      "60 codex exec --json --ephemeral --skip-git-repo-check --sandbox read-only -c model_reasoning_effort=\"low\" SYS")
+    C.Check.str("args grok", String.join(A.OneShot.args(A.Tx{"grok", "grok-4.7-build-fast"}, "SYS"), " "),
+      "60 sh -c cat | exec grok --prompt-file /dev/stdin \"$@\" sh --output-format json --no-subagents --disable-web-search --permission-mode dontAsk --max-turns 1 --reasoning-effort low -m grok-4.7-build-fast")
+    C.Check.str("input grok", A.OneShot.input("grok", "SYS", "fix it"), "SYS\n\n<input>\nfix it\n</input>")
+    C.Check.str("input claude", A.OneShot.input("claude", "SYS", "fix it"), "fix it")
+    C.Check.str("answer codex", A.OneShot.answer("codex", "Reading additional input from stdin...\n{\"type\":\"thread.started\",\"thread_id\":\"x\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"reasoning\",\"text\":\"hmm\"}}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_1\",\"type\":\"agent_message\",\"text\":\" Keep pinned threads at top \"}}\n{\"type\":\"turn.completed\"}\n"), "Keep pinned threads at top")
+    C.Check.str("answer codex none", A.OneShot.answer("codex", "{\"type\":\"turn.failed\"}\n"), "")
+    C.Check.str("answer grok", A.OneShot.answer("grok", "{\n  \"text\": \"Keep pinned threads on top\",\n  \"stopReason\": \"end_turn\"\n}\n"), "Keep pinned threads on top")
+    C.Check.str("answer grok cancelled", A.OneShot.answer("grok", "{\n  \"text\": \"I'll look through the code\",\n  \"stopReason\": \"cancelled\"\n}\n"), "")
+    C.Check.str("answer claude", A.OneShot.answer("claude", "{\"type\":\"result\",\"is_error\":false,\"result\":\"Add effort chips\"}"), "Add effort chips")
+    C.Check.str("title plain", A.Title.clean("Keep pinned threads at top"), "Keep pinned threads at top")
+    C.Check.str("title quotes period", A.Title.clean("  \"Keep pinned   threads at top.\"\nextra line"), "Keep pinned threads at top")
+    C.Check.str("title markdown", A.Title.clean("## **Title:** `Fix` the  sidebar\t order"), "Fix the sidebar order")
+    C.Check.str("title single quotes", A.Title.clean("'Fix the sidebar's order'"), "Fix the sidebar's order")
+    C.Check.str("title ellipsis kept", A.Title.clean("Wait for it..."), "Wait for it...")
+    C.Check.str("title empty", A.Title.clean("  \n "), "")
+    C.Check.str("title cut", A.Title.clean("Make the very long title that the model wrote go on and on past sixty characters"), "Make the very long title that the model wrote go on and o...")
