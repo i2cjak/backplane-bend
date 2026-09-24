@@ -5,14 +5,13 @@ import ../core/client.bend as U
 import ./screen.bend as S
 import ./notify.bend as N
 import ../core/cbor.bend as CB
-import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
 import ./view.bend as VW
 import ../core/codec.bend as C
 
 # What bridge.js calls. The phone apps see only strings: server messages
-# in (binary CBOR frames, carried as base64); the screen, commands and
-# alerts out, and what to send (CBOR again, as base64).
+# in (binary CBOR frames, carried as base64, decoded by bridge.js); the
+# screen, commands and alerts out, and what to send (CBOR, as base64).
 
 def init(now: Nat, cid: String) -> U.Ui:
   U.Ui.set_cid(U.Ui.init(now), cid)
@@ -29,9 +28,17 @@ def recv.k(+seen: List<&2, N.Seen>, a: U.Act) -> Recv:
 def recv.j(+u: U.Ui, +o: J.Json) -> Recv:
   recv.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), U.Ui.recv_act(VW.View.picked(u, o), o))
 
-# a frame from the hub: its bytes as base64, then CBOR
-def recv(+u: U.Ui, b64: String) -> Recv:
-  recv.j(u, Maybe.default(&2, J.Json, CB.Cbor.decode(AT.Att.b64(b64)), J.Null{}))
+# a frame from the hub, already decoded: bridge.js reads the base64 and
+# CBOR natively (Cbor.decode here took 17x as long on a phone's
+# JavaScriptCore, which has no JIT), with these dictionaries
+def recv(+u: U.Ui, +o: J.Json) -> Recv:
+  recv.j(u, o)
+
+def cbor_keys() -> List<&2, String>:
+  CB.Cbor.keys()
+
+def cbor_words() -> List<&2, String>:
+  CB.Cbor.words()
 
 # a message for the hub (a Send command's JSON text) as the base64 of the
 # CBOR frame the app sends
