@@ -42,6 +42,9 @@ type Cmd is Data:
   Scroll{}
   # talk to another machine's hub ("" is this machine's own)
   Connect{url: String}
+  # a thread's draft as it now is: the host writes it down at once (a file,
+  # local storage) so a crash loses nothing typed; "" forgets it
+  Keep{thread: String, text: String}
 
 type Act is Data:
   Act{ui: Ui, cmds: List<&2, Cmd>}
@@ -194,7 +197,7 @@ def Local.keep.go(ks: List<&2, String>, +old: Map<&2, String>, m: Map<&2, String
       Local.keep.go(t, old, Map.set(&2, String, m, k, Str.get(old, k)))
 
 def Local.keep(+old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
-  Local.keep.go(["local.machine", "local.machines"], old, m)
+  Local.keep.go(["local.machine", "local.machines", "local.drafts"], old, m)
 
 def Machines.home.k(home: Bool, +nf: Map<&2, String>) -> Map<&2, String>:
   Bool.pick(Map<&2, String>, Bool.and(home, Bool.not(String.is_empty(Str.get(nf, "machines")))), Map.set(&2, String, nf, "local.machines", Str.get(nf, "machines")), nf)
@@ -465,10 +468,60 @@ def Ui.select(u: Ui, +id: String) -> Act:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Act{Ui{st, id, Map.set(&2, String, dr, "@del", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
 
-def Ui.draft.set(u: Ui, text: String) -> Act:
+# Drafts kept
+# -----------
+# Every change to a thread's draft goes out as a Keep at once, so the host
+# can write it down before anything else can go wrong. Only names a file
+# can take safely are kept: thread ids, never scratch ("@") keys.
+
+def Draft.safe.c(+c: U32) -> Bool:
+  Bool.or(Bool.or(Bool.and(U32.is_ge(c, 48), U32.is_le(c, 57)), Bool.and(U32.is_ge(c, 97), U32.is_le(c, 122))),
+    Bool.or(Bool.and(U32.is_ge(c, 65), U32.is_le(c, 90)), Bool.or(U32.is_eq(c, 45), U32.is_eq(c, 95))))
+
+def Draft.safe.go(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{Chr{c}, t}:
+      Bool.and(Draft.safe.c(c), Draft.safe.go(t))
+
+# a name made only of letters, digits, '-' and '_'
+def Draft.safe(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      False{}
+    case SCon{c, t}:
+      Draft.safe.go(SCon{c, t})
+
+def Draft.keep.k(ok: Bool, id: String, text: String) -> List<&2, Cmd>:
+  match ok:
+    case True{}:
+      [Keep{id, text}]
+    case False{}:
+      Nil{}
+
+# what a draft change asks the host to write
+def Draft.keep(+id: String, text: String) -> List<&2, Cmd>:
+  Draft.keep.k(Draft.safe(id), id, text)
+
+# a draft read back after a restart: what is typed now wins
+def Draft.pick(now: String, saved: String) -> String:
+  match now:
+    case SNil{}:
+      saved
+    case SCon{c, t}:
+      SCon{c, t}
+
+def Ui.draft.set(u: Ui, +text: String) -> Act:
   match u:
     case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Act{Ui{st, sel, Map.set(&2, String, dr, sel, text), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, Nil{}}
+      Act{Ui{st, sel, Map.set(&2, String, dr, sel, text), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, Draft.keep(sel, text)}
+
+# a kept draft, read back by the host when it starts
+def Ui.restore(u: Ui, +id: String, saved: String) -> Ui:
+  match u:
+    case Ui{st, sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, dr, id, Draft.pick(Str.get(dr, id), saved)), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
 def Ui.also(a: Act, more: List<&2, Cmd>) -> Act:
   match a:
@@ -486,7 +539,7 @@ def Ui.send.k(empty: Bool, u: Ui, text: String) -> Act:
       Act{u, Nil{}}
     case False{} Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
       Ui.also(Ui.rpc.keep(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@att:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
-        "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}]), [Scroll{}])
+        "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}]), List.append(&2, Cmd, Draft.keep(sel, ""), [Scroll{}]))
 
 def Ui.new_thread(u: Ui, +pid: String) -> Act:
   match u:
@@ -1108,7 +1161,7 @@ def Ui.mention.sep(+d: String) -> String:
 def Ui.mention(u: Ui, +path: String) -> Act:
   match u:
     case Ui{st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Act{Ui{st, sel, Map.set(&2, String, dr, sel, Str.get(dr, sel) ++ Ui.mention.sep(Str.get(dr, sel)) ++ "@" ++ path ++ " "), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}]}
+      Ui.also(Ui.draft.set(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, Str.get(dr, sel) ++ Ui.mention.sep(Str.get(dr, sel)) ++ "@" ++ path ++ " "), [Focus{"composer"}])
 
 # Skills in the composer
 # ----------------------

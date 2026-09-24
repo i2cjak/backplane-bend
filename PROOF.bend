@@ -3243,3 +3243,26 @@ def Laws.hier_root_is_top(rs):
 
 def Laws.hier_up_after_open():
   {==}
+
+def Laws.draft_kept(u, text):
+  match u:
+    case U.Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      {==}
+
+def Laws.draft_keep_thread(text):
+  {==}
+
+def Laws.draft_keep_no_thread(text):
+  {==}
+
+def Laws.draft_keep_no_scratch(text):
+  {==}
+
+def Laws.draft_keep_no_path(text):
+  {==}
+
+def Laws.draft_restore_fills(saved):
+  {==}
+
+def Laws.draft_restore_keeps_typing(c, t, saved):
+  {==}

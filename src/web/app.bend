@@ -12,6 +12,10 @@ import ../core/lightbox.bend as LB
 def init(now: Nat, cid: String) -> U.Ui:
   U.Ui.set_cid(U.Ui.init(now), cid)
 
+# a draft this browser kept (Keep commands), read back at start
+def restore(u: U.Ui, id: String, text: String) -> U.Ui:
+  U.Ui.restore(u, id, text)
+
 def recv(u: U.Ui, o: J.Json) -> U.Act:
   U.Ui.recv_act(u, o)
 
