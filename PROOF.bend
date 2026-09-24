@@ -3957,6 +3957,8 @@ def Laws.view_key_shift_z_in():
   {==}
 
 def Laws.view_key_other_none():
+  {==}
+
 def Laws.sign_stale_rejected(secret, now, ts, body, sig, h):
   %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.check.k(_, secret, ts, body, sig) == False{} : Bool}
   {==}
