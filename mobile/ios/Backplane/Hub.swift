@@ -104,6 +104,9 @@ final class Hub {
         Task {
             guard let u = await url(), gen == generation, !stopped else { return }
             let t = URLSession.shared.webSocketTask(with: u)
+            // the first frame is the whole log (megabytes on a busy hub);
+            // past the 1 MB default every receive fails and it reconnects forever
+            t.maximumMessageSize = 64 << 20
             task = t
             t.resume()
             // the first message proves the socket is up (the hub greets at once)
