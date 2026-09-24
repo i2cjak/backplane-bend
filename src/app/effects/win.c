@@ -295,6 +295,9 @@ static void win_pump(AppWin* a) {
       case FocusOut:
         win_push(a, 11, 0, 0, 0, 0);
         break;
+      case FocusIn:
+        win_push(a, 12, 0, 0, 0, 0);
+        break;
       case ConfigureNotify:
         if ((u32)ev.xconfigure.width != a->w || (u32)ev.xconfigure.height != a->h) {
           a->w = (u32)ev.xconfigure.width;

@@ -7,10 +7,13 @@ import ../../src/app/layout.bend as L
 import ../../src/app/theme.bend as T
 import ../../src/gfx/raster.bend as R
 import ../../src/gfx/tiles.bend as TI
+import ../../src/app/bots.bend as BV
+import ../../src/app/cats.bend as CA
 
 # Typing in the window, timed: each key goes through the same steps as in
 # the app (the event, the timeline memo, layout, the tiles redrawn) with
-# no window. A made-up log: one long thread and 30 short ones.
+# no window. A made-up log: one long thread and 30 short ones, and four
+# bots (their cats move) in two rooms.
 #   scripts/build-app.sh test/native/type_bench.bend build/type_bench
 #   build/type_bench
 
@@ -39,9 +42,16 @@ def threads(+n: Nat, +at: Nat) -> List<&2, M.Change>:
     case 1n+k:
       List.append(&2, M.Change, short(k, at), threads(k, at))
 
+def bot(+i: Nat, +name: String, +at: Nat) -> List<&2, M.Change>:
+  [M.ThreadCreated{"bt" ++ Nat.show(i), "", name, M.Local{}, "", "", "claude", "", at}, M.BotSet{"b" ++ Nat.show(i), name, "bt" ++ Nat.show(i), Nat.mul(i, 7n), "A cat", at}]
+
+def bots(+at: Nat) -> List<&2, M.Change>:
+  List.concat(&2, M.Change, [bot(0n, "Mochi", at), bot(1n, "Biscuit", at), bot(2n, "Tofu", at), bot(3n, "Pixel", at),
+    [M.RoomSet{"r0", "general", "b0\nb1\nb2", at}, M.RoomSet{"r1", "boards", "b1\nb3", at}]])
+
 def log(+at: Nat) -> List<&2, M.Change>:
   List.concat(&2, M.Change, [[M.ProjectCreated{"p1", "board", "/tmp/board", at}, M.ThreadCreated{"t0", "p1", "Power sequencing", M.Local{}, "", "", "claude", "", at}],
-    msgs(200n, "t0", at), threads(30n, at)])
+    msgs(200n, "t0", at), threads(30n, at), bots(at)])
 
 def ui_sel(a: U.Act) -> U.Ui:
   match a:
@@ -98,7 +108,7 @@ def kept_n(k: Kept) -> N.Nui:
       n
 
 # one key and the frame after it, timed
-def key(cs: String, +ty: L.Ty, k: Kept, t: Times) -> IO(Times):
+def key(cs: String, +ty: L.Ty, +cats: Map<&2, CA.CatF>, k: Kept, t: Times) -> IO(Times):
   match cs k:
     case SNil{} _:
       IO.pure(Times, t)
@@ -109,20 +119,37 @@ def key(cs: String, +ty: L.Ty, k: Kept, t: Times) -> IO(Times):
         +t1 : Nat <- IO.now()
         +memo : L.TLMemo = L.Lay.memo(ty, n1, memo0)
         +t2 : Nat <- IO.now()
-        +o : L.Out = L.Lay.frame(ty, memo, n1)
+        +o : L.Out = BV.Bv.frame(ty, memo, cats, n1)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
         +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, N.Hits.slide(hits(o), N.Nui.hits(n0)))
         +img : Image = TI.Tiles.image(tiles)
         +t4 : Nat <- IO.now()
-        key(rest, ty, Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}},
+        key(rest, ty, cats, Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}},
           Times.add(t, Nat.sub(t1, t0), Nat.sub(t2, t1), Nat.sub(t3, t2), Nat.sub(t4, t3)))
 
+# cat frames, timed: the cats' clock moves on, they are posed again, the
+# frame is laid out and its tiles drawn again (only the cats' changed)
+def tick(+n: Nat, +ty: L.Ty, cats: Map<&2, CA.CatF>, k: Kept, +acc: Nat) -> IO(Nat):
+  match n k:
+    case 0n _:
+      IO.pure(Nat, acc)
+    case 1n+j Kept{+n0, +memo, fr0}:
+      do IO<Nat>:
+        +t0 : Nat <- IO.now()
+        +c2 : Map<&2, CA.CatF> = BV.Bv.warm(N.Nui.ui(n0), cats, Nat.mul(1n+j, 33n))
+        +o : L.Out = BV.Bv.frame(ty, memo, c2, n0)
+        +k2 : Nat = List.length(&2, R.Op, ops(o))
+        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n0), N.Nui.height(n0), ops(o), Pix{T.Th.bg()}, fr0, 0)
+        +img : Image = TI.Tiles.image(tiles)
+        +t1 : Nat <- IO.now()
+        tick(j, ty, c2, Kept{n0, memo, TI.FSome{N.Nui.width(n0), N.Nui.height(n0), tiles}}, Nat.add(acc, Nat.sub(t1, t0)))
+
 # the first frame (everything drawn), then the keys
-def warm(+ty: L.Ty, +n0: N.Nui) -> Kept:
+def warm(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
   +memo = L.Lay.memo(ty, n, L.TL.memo.none())
-  +o = L.Lay.frame(ty, memo, n)
+  +o = BV.Bv.frame(ty, memo, cats, n)
   Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
 
 def text() -> String:
@@ -139,12 +166,12 @@ def nops(o: L.Out) -> Nat:
   List.length(&2, R.Op, ops(o))
 
 # a part laid out r times (its op count, so each is made)
-def rep.side(+r: Nat, +ty: L.Ty, +n: N.Nui) -> Nat:
+def rep.side(+r: Nat, +ty: L.Ty, +cats: Map<&2, CA.CatF>, +n: N.Nui) -> Nat:
   match r:
     case 0n:
       0n
     case 1n+q:
-      Nat.add(nops(L.Lay.sidebar(ty, n, 900)), rep.side(q, ty, n))
+      Nat.add(nops(L.Lay.sidebar.x(ty, n, 900, c => y => BV.Bv.side(ty, cats, n, c, y))), rep.side(q, ty, cats, n))
 
 def rep.thread(+r: Nat, +ty: L.Ty, +memo: L.TLMemo, +n: N.Nui) -> Nat:
   match r:
@@ -153,12 +180,12 @@ def rep.thread(+r: Nat, +ty: L.Ty, +memo: L.TLMemo, +n: N.Nui) -> Nat:
     case 1n+q:
       Nat.add(nops(L.Lay.thread(ty, memo, n, 264, 1400)), rep.thread(q, ty, memo, n))
 
-def rep.frame(+r: Nat, +ty: L.Ty, +memo: L.TLMemo, +n: N.Nui) -> Nat:
+def rep.frame(+r: Nat, +ty: L.Ty, +cats: Map<&2, CA.CatF>, +memo: L.TLMemo, +n: N.Nui) -> Nat:
   match r:
     case 0n:
       0n
     case 1n+q:
-      Nat.add(nops(L.Lay.frame(ty, memo, n)), rep.frame(q, ty, memo, n))
+      Nat.add(nops(BV.Bv.frame(ty, memo, cats, n)), rep.frame(q, ty, cats, memo, n))
 
 def rep.tiles(+r: Nat, +os: List<&2, R.Op>, +prev: TI.Frames) -> Nat:
   match r:
@@ -185,18 +212,18 @@ def kept_frames(k: Kept) -> TI.Frames:
       f
 
 # each part of one frame, 50 times over (ms for all 50)
-def parts(+ty: L.Ty, +k: Kept) -> IO(Unit):
+def parts(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +k: Kept) -> IO(Unit):
   +n = prepared(kept_n(k), 5n)
   +memo = kept_memo(k)
-  +os = ops(L.Lay.frame(ty, memo, n))
+  +os = ops(BV.Bv.frame(ty, memo, cats, n))
   do IO<Unit>:
-    IO.print("ops per frame: " ++ Nat.show(List.length(&2, R.Op, os)) ++ " (sidebar " ++ Nat.show(nops(L.Lay.sidebar(ty, n, 900))) ++ ", thread " ++ Nat.show(nops(L.Lay.thread(ty, memo, n, 264, 1400))) ++ ")")
+    IO.print("ops per frame: " ++ Nat.show(List.length(&2, R.Op, os)) ++ " (sidebar " ++ Nat.show(nops(L.Lay.sidebar.x(ty, n, 900, c => y => BV.Bv.side(ty, cats, n, c, y)))) ++ ", thread " ++ Nat.show(nops(L.Lay.thread(ty, memo, n, 264, 1400))) ++ ")")
     +a : Nat <- IO.now()
-    +x1 : Nat = rep.side(50n, ty, n)
+    +x1 : Nat = rep.side(50n, ty, cats, n)
     +b : Nat <- IO.now()
     +x2 : Nat = rep.thread(50n, ty, memo, n)
     +c : Nat <- IO.now()
-    +x3 : Nat = rep.frame(50n, ty, memo, n)
+    +x3 : Nat = rep.frame(50n, ty, cats, memo, n)
     +d : Nat <- IO.now()
     +x4 : Nat = rep.tiles(50n, os, kept_frames(k))
     +e : Nat <- IO.now()
@@ -214,20 +241,20 @@ def first_line(hs: List<&2, N.Hit>) -> U32:
       Bool.pick(U32, String.eq(a, "tl-line"), y0, first_line(t))
 
 # a frame for n, its hits kept
-def again(+ty: L.Ty, +n0: N.Nui, +memo: L.TLMemo) -> N.Nui:
+def again(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +n0: N.Nui, +memo: L.TLMemo) -> N.Nui:
   +n = prepared(n0, 0n)
-  with_hits(n, hits(L.Lay.frame(ty, memo, n)), 0n)
+  with_hits(n, hits(BV.Bv.frame(ty, memo, cats, n)), 0n)
 
 def ev(+n: N.Nui, e: W.WinEv) -> N.Nui:
   step_nui(N.Nui.event(n, e))
 
 # press on a line, drag three lines down, release: what ctrl+c copies
-def select(+ty: L.Ty, +k: Kept) -> String:
+def select(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +k: Kept) -> String:
   +n = kept_n(k)
   +y = first_line(N.Nui.hits(n))
-  +n1 = again(ty, ev(n, W.WButton{460, 300, 1, True{}}), kept_memo(k))
-  +n2 = again(ty, ev(n1, W.WMove{800, 380, 0}), kept_memo(k))
-  +n3 = again(ty, ev(n2, W.WButton{800, 380, 1, False{}}), kept_memo(k))
+  +n1 = again(ty, cats, ev(n, W.WButton{460, 300, 1, True{}}), kept_memo(k))
+  +n2 = again(ty, cats, ev(n1, W.WMove{800, 380, 0}), kept_memo(k))
+  +n3 = again(ty, cats, ev(n2, W.WButton{800, 380, 1, False{}}), kept_memo(k))
   N.Sel.text(n3)
 
 def main() -> IO(Unit):
@@ -235,10 +262,13 @@ def main() -> IO(Unit):
     +ty : L.Ty <- L.Ty.load()
     +a : Nat <- IO.now()
     +u : U.Ui = ui_sel(U.Ui.act(U.Ui.fold(log(1790000000n), U.Ui.init(1790000100n)), "select", "t0"))
-    +k : Kept = warm(ty, N.Nui.init(u, 1400, 900))
+    +cats : Map<&2, CA.CatF> = BV.Bv.warm(u, CA.Cats.none(), 0n)
+    +k : Kept = warm(ty, cats, N.Nui.init(u, 1400, 900))
     +b : Nat <- IO.now()
     IO.print("state and first frame: " ++ Nat.show(Nat.sub(b, a)) ++ " ms")
-    parts(ty, k)
-    IO.print("selected: [" ++ select(ty, k) ++ "]")
-    t : Times <- key(text(), ty, k, Times{0n, 0n, 0n, 0n, 0n, ""})
+    parts(ty, cats, k)
+    IO.print("selected: [" ++ select(ty, cats, k) ++ "]")
+    t : Times <- key(text(), ty, cats, k, Times{0n, 0n, 0n, 0n, 0n, ""})
     IO.print(Times.show(t, String.length(text())))
+    +ct : Nat <- tick(30n, ty, cats, k, 0n)
+    IO.print("cat frame (4 cats move; pose, layout, tiles): " ++ Nat.show(Nat.div(ct, 30n)) ++ "." ++ Nat.show(Nat.mod(Nat.div(Nat.mul(ct, 10n), 30n), 10n)) ++ " ms")

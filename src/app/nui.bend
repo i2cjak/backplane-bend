@@ -15,6 +15,7 @@ import ../core/links.bend as LK
 import ../core/lightbox.bend as LB
 import ../core/edit.bend as ED
 import ../core/model.bend as M
+import ../core/bot.bend as BT
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -121,13 +122,34 @@ def Nui.cmds(cs: List<&2, U.Cmd>) -> List<&2, NCmd>:
     case c <> t:
       Nui.cmd(c, Nui.cmds(t))
 
+# Form fields
+# -----------
+# The bots' forms keep their text in the client's scratch ("@f.<name>",
+# as the "bfield" action sets it). A focused field's id is "f:" then its
+# name, the action Enter runs, and a prefix of that action's value (the
+# field's text follows it), apart by \u{1e}. The client's own focus ids
+# for these fields are named here.
+
+def Fld.sep() -> String:
+  SCon{Chr{30}, SNil{}}
+
+def Fld.id(+name: String, +action: String, +pre: String) -> String:
+  "f:" ++ name ++ Fld.sep() ++ action ++ Fld.sep() ++ pre
+
+def Fld.alias(+id: String) -> String:
+  Bool.pick(String, String.eq(id, "bot-name"), Fld.id("name", "bot-create", ""),
+    Bool.pick(String, String.eq(id, "room-name"), Fld.id("rname", "room-save", ""),
+      Bool.pick(String, String.eq(id, "room-post"), Fld.id("rpost", "room-post", ""),
+        Bool.pick(String, String.eq(id, "remote-send"), Fld.id("rtext", "remote-send", ""),
+          Bool.pick(String, String.eq(id, "routine-name"), Fld.id("oname", "routine-save", ""), id)))))
+
 # Focus and scroll requests from the client state apply here
 def Nui.effects(cs: List<&2, U.Cmd>, n: Nui) -> Nui:
   match cs n:
     case Nil{} _:
       n
-    case U.Focus{id} <> t Nui{u, w, h, mx, my, sd, sc, ca, _, pa, hi, ms, vw}:
-      Nui.effects(t, Nui{u, w, h, mx, my, sd, sc, ca, id, pa, hi, ms, vw})
+    case U.Focus{+id} <> t Nui{u, w, h, mx, my, sd, sc, ca, _, pa, hi, ms, vw}:
+      Nui.effects(t, Nui{u, w, h, mx, my, sd, sc, ca, Fld.alias(id), pa, hi, ms, vw})
     case U.Scroll{} <> t Nui{u, w, h, mx, my, sd, _, ca, fo, pa, hi, ms, vw}:
       Nui.effects(t, Nui{u, w, h, mx, my, sd, 0, ca, fo, pa, hi, ms, vw})
     case _ <> t _:
@@ -147,10 +169,19 @@ def Nui.act(n: Nui, +action: String, +value: String) -> Step:
 # Server messages
 # ---------------
 
+# a bot's browser has a new frame ({"t":"shot","bot":...,"n":...}): the
+# window notes its number ("shot.<bot>") and loads it when shown
+def Shot.recv(shot: Bool, +u: U.Ui, +o: J.Json) -> U.Ui:
+  match shot:
+    case True{}:
+      U.Ui.info_set(u, "shot." ++ J.Json.get_str(o, "bot", ""), Nat.show(J.Json.get_nat(o, "n", 0n)))
+    case False{}:
+      u
+
 def Nui.recv.k(n: Nui, +o: J.Json) -> Nui:
   match n:
-    case Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
-      Nui{U.Ui.recv(u, o), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
+    case Nui{+u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      Nui{Shot.recv(String.eq(J.Json.get_str(o, "t", ""), "shot"), U.Ui.recv(u, o), o), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
 def Nui.with_focus(n: Nui, fo: String) -> Nui:
   match n:
@@ -1715,10 +1746,22 @@ def Set.scroll(+now: String, +last: String, +dir: U32) -> String:
   +most = Maybe.default(&2, U32, U32.read(last), 0)
   U32.show(U32.min(Bool.pick(U32, U32.is_eq(dir, 0), Bool.pick(U32, U32.is_ge(off, 48), (off - 48 : U32), 0), (off + 48 : U32)), most))
 
-def Set.spin(none: Bool, +v: String, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
+# the wheel over a room's posts: up goes back ("@chat.sc", from the
+# bottom, within 0..the most its hit "chat-bg" says)
+def Chat.scroll(+n: Nui, +v: String, +dir: U32) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@chat.sc", Set.scroll(U.Ui.scratch(Nui.ui(n), "@chat.sc"), v, Bool.pick(U32, U32.is_eq(dir, 0), 1, 0))))
+
+def Chat.spin(none: Bool, +v: String, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
   match none:
     case True{}:
       Nui.spin(Nui.in_viewer(n, x), n, x, y, dir)
+    case False{}:
+      Step{Chat.scroll(n, v, dir), Nil{}, True{}}
+
+def Set.spin(none: Bool, +v: String, +n: Nui, +x: U32, +y: U32, +dir: U32) -> Step:
+  match none:
+    case True{}:
+      Chat.spin(String.is_empty(Hit.value_at(Nui.hits(n), "chat-bg", x, y)), Hit.value_at(Nui.hits(n), "chat-bg", x, y), n, x, y, dir)
     case False{}:
       Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@set.sc", Set.scroll(U.Ui.scratch(Nui.ui(n), "@set.sc"), v, dir))), Nil{}, True{}}
 
@@ -1786,14 +1829,73 @@ def Nui.path.k(e: Ed, +n: Nui) -> Step:
     case Ed{t, +c, +m, False{}, _, +cl, _}:
       Mark.set(Clip.also(Step{Nui.with_path(n, t, c), Nil{}, True{}}, cl), m)
 
+def Fld.on(+fo: String) -> Bool:
+  String.starts_with(fo, "f:")
+
+def Fld.part(+fo: String, +i: Nat) -> String:
+  Maybe.default(&2, String, List.get(&2, String, String.split(String.drop(fo, 2n), '\u{1e}'), i), "")
+
+def Fld.key.of(+fo: String) -> String:
+  "@f." ++ Fld.part(fo, 0n)
+
+def Fld.text(+n: Nui) -> String:
+  U.Ui.scratch(Nui.ui(n), Fld.key.of(Nui.focus_of(n)))
+
+def Fld.set(+n: Nui, +t: String) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), Fld.key.of(Nui.focus_of(n)), t))
+
+# the caret at the end of the focused field's text
+def Fld.end(s: Step) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Nui.with_caret(n, String.length(Fld.text(n))), cs, d}
+
+# a field whose action takes the text (a space's input) is cleared once sent
+def Fld.clear(+pre: String, s: Step) -> Step:
+  match s:
+    case Step{+n, cs, d}:
+      Step{Bool.pick(Nui, Bool.and(Fld.on(Nui.focus_of(n)), Bool.not(String.is_empty(pre))), Fld.set(n, ""), n), cs, d}
+
+def Fld.submit.k(none: Bool, +n: Nui, +action: String, +pre: String) -> Step:
+  match none:
+    case True{}:
+      Step{n, Nil{}, False{}}
+    case False{}:
+      Fld.end(Fld.clear(pre, Nui.act(n, action, pre ++ Fld.text(n))))
+
+# Enter: the field's action
+def Fld.submit(+n: Nui) -> Step:
+  Fld.submit.k(String.is_empty(Fld.part(Nui.focus_of(n), 1n)), n, Fld.part(Nui.focus_of(n), 1n), Fld.part(Nui.focus_of(n), 2n))
+
+def Fld.k(e: Ed, +n: Nui) -> Step:
+  match e:
+    case Ed{_, _, _, True{}, _, _, _}:
+      Fld.submit(n)
+    case Ed{+t, +c, +m, False{}, _, +cl, _}:
+      Mark.set(Clip.also(Step{Nui.with_caret(Fld.set(n, t), c), Nil{}, True{}}, cl), m)
+
+def Fld.key(on: Bool, +n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
+  match on:
+    case True{}:
+      Fld.k(Ed.key(code, text, mods, Fld.text(n), Nui.caret_of(n), m), n)
+    case False{}:
+      Step{n, Nil{}, False{}}
+
+def Fld.paste(on: Bool, +n: Nui, +m: Nat, +text: String) -> Step:
+  match on:
+    case True{}:
+      Fld.k(Ed.insert(Fld.text(n), Nui.caret_of(n), m, text), n)
+    case False{}:
+      Step{n, Nil{}, False{}}
+
 def Nui.field.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
   match comp path n:
     case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
       Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, U32.is_ne(U32.and(mods, 2), 0))
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
       Nui.path.k(Ed.key(code, text, mods, pa, ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case _ _ _:
-      Step{n, Nil{}, False{}}
+    case _ _ +n2:
+      Fld.key(Fld.on(Nui.focus_of(n2)), n2, m, code, text, mods)
 
 def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +text: String) -> Step:
   match comp path n:
@@ -1801,8 +1903,8 @@ def Nui.paste.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +text: String) -> Step:
       Nui.paste.comp(AT.Att.pasted(text), n, m, text)
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
       Nui.path.k(Ed.insert(pa, ca, m, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
-    case _ _ _:
-      Step{n, Nil{}, False{}}
+    case _ _ +n2:
+      Fld.paste(Fld.on(Nui.focus_of(n2)), n2, m, text)
 
 # pasted text lands in the focused field at the caret
 def Nui.paste.t(term: Bool, +n: Nui, text: String) -> Step:
@@ -2002,12 +2104,31 @@ def Nui.click.url(url: Bool, +n: Nui, +action: String, +value: String) -> Step:
     case False{}:
       Nui.act(n, action, value)
 
+def Nui.focus.at(field: Bool, +n: Nui, +value: String) -> Step:
+  match field:
+    case True{}:
+      Fld.end(Nui.focus(n, value))
+    case False{}:
+      Nui.focus(n, value)
+
+# a bot's settings tab starts from its persona as it is
+def Bots.persona(+n: Nui) -> String:
+  BT.Bot.persona(BT.World.bot(M.State.bots(U.Ui.state(Nui.ui(n))), U.Ui.scratch(Nui.ui(n), "@bot")))
+
+# another bot, room or tab starts its pane at the top
+def Bots.reset(u: U.Ui, +persona: String) -> U.Ui:
+  U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(u, "@set.sc", ""), "@chat.sc", ""), "@f.persona", persona)
+
+def Bots.pre(+n: Nui, +action: String, +value: String) -> Nui:
+  Bool.pick(Nui, Bool.or(Bool.or(String.eq(action, "bot"), String.eq(action, "bot-tab")), Bool.or(String.eq(action, "room"), String.eq(action, "remote"))),
+    Nui.with_ui(n, Bots.reset(Nui.ui(n), Bool.pick(String, Bool.and(String.eq(action, "bot-tab"), String.eq(value, "settings")), Bots.persona(n), U.Ui.scratch(Nui.ui(n), "@f.persona")))), n)
+
 def Nui.click.act(focus: Bool, +n: Nui, +action: String, +value: String) -> Step:
   match focus:
     case True{}:
-      Nui.focus(n, value)
+      Nui.focus.at(Fld.on(value), n, value)
     case False{}:
-      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.click.url(String.eq(action, "open-url"), n, action, value))
+      Bool.pick(Step, String.starts_with(action, "vw-"), Nui.vw_act(n, action, value), Nui.click.url(String.eq(action, "open-url"), Bots.pre(n, action, value), action, value))
 
 def Nui.key.term.k(term: Bool, pal: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match term pal:
@@ -2218,9 +2339,21 @@ def Hint.up(+code: U32, +n: Nui) -> Step:
   Bool.pick(Step, Bool.and(String.eq(Hint.of(code), Hint.get(n)), Bool.not(String.is_empty(Hint.get(n)))),
     Step{Hint.set(n, ""), Nil{}, True{}}, Step{n, Nil{}, False{}})
 
-# the window lost focus: whatever was held is let go
+# the window lost focus: whatever was held is let go (and the cats stop
+# asking for frames: "@blur")
+def Blur.set(+n: Nui, +v: String) -> Nui:
+  Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@blur", v))
+
 def Hint.blur(+n: Nui) -> Step:
-  Step{Hint.set(n, ""), Nil{}, Bool.not(String.is_empty(Hint.get(n)))}
+  Step{Blur.set(Hint.set(n, ""), "1"), Nil{}, Bool.not(String.is_empty(Hint.get(n)))}
+
+# the window has the keyboard again: a frame, so moving cats go on
+def Nui.focused(+n: Nui) -> Step:
+  Step{Blur.set(n, ""), Nil{}, True{}}
+
+# whether the window has the keyboard
+def Nui.has_focus(+n: Nui) -> Bool:
+  String.is_empty(U.Ui.scratch(Nui.ui(n), "@blur"))
 
 # one window event
 def Nui.event(+n: Nui, e: W.WinEv) -> Step:
@@ -2231,6 +2364,8 @@ def Nui.event(+n: Nui, e: W.WinEv) -> Step:
       Hint.up(code, n)
     case W.WBlur{}:
       Hint.blur(n)
+    case W.WFocus{}:
+      Nui.focused(n)
     case W.WButton{+x, +y, 1, True{}}:
       Nui.press(Nui.in_viewer(n, x), Menu.press(Hit.find(Nui.hits(n), x, y), n), x, y)
     case W.WButton{+x, +y, 1, False{}}:
