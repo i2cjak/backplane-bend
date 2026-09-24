@@ -1,4 +1,6 @@
 import Base
+import ./src/core/bot.bend as BOT
+import ./src/core/botui.bend as BU
 import ./LAWS.bend as Laws
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
@@ -4069,4 +4071,29 @@ def google_add60_gt(n: Nat) -> {GT{} == Nat.cmp(Nat.add(n, 60n), n) : Cmp}:
 
 def Laws.google_expiring_not_fresh(now):
   %google_add60_gt(now) : {Cmp.is_lt(_) == False{} : Bool}
+  {==}
+
+# Bots
+# ----
+
+def Laws.bot_hop_step(ok, n, h):
+  match ok:
+    case True{}:
+      h
+    case False{}:
+      {==}
+
+def Laws.bot_hop_bounded(h):
+  Laws.bot_hop_step(Nat.is_le(1n+h, BOT.Hop.max()), 1n+h, {==})
+
+def Laws.bot_mood_wait(talked, idle):
+  {==}
+
+def Laws.bot_mood_input(talked, idle):
+  {==}
+
+def Laws.bot_mood_sleep_still():
+  {==}
+
+def Laws.bot_mood_rest(talked):
   {==}

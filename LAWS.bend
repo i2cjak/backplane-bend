@@ -1,4 +1,6 @@
 import Base
+import ./src/core/bot.bend as BOT
+import ./src/core/botui.bend as BU
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
 import ./src/core/semver.bend as SV
@@ -2185,3 +2187,40 @@ law google_create_asks:
 law google_expiring_not_fresh:
   for +now: Nat
   {GO.Google.fresh(now, now) == False{} : Bool}
+
+# Bots
+# ----
+
+# the step behind bot_hop_bounded: a message goes out only within the bound
+law bot_hop_step:
+  for ok: Bool
+  for +n: Nat
+  for h: {Nat.is_le(n, BOT.Hop.max()) == ok : Bool}
+  {BOT.Hop.bound(BOT.Hop.send.k(ok, n)) == True{} : Bool}
+
+# a message between bots never goes out deeper than the bound, so two bots
+# cannot keep each other talking forever
+law bot_hop_bounded:
+  for +h: Nat
+  {BOT.Hop.bound(BOT.Hop.next(h)) == True{} : Bool}
+
+# a cat waits for you (ears up) whenever its thread needs an approval
+law bot_mood_wait:
+  for talked: Bool
+  for idle: Bool
+  {BU.Mood.of(M.StApproval{}, talked, idle) == "wait" : String}
+
+# ... or an answer
+law bot_mood_input:
+  for talked: Bool
+  for idle: Bool
+  {BU.Mood.of(M.StInput{}, talked, idle) == "wait" : String}
+
+# a sleeping cat holds still: a window of resting bots never repaints
+law bot_mood_sleep_still:
+  {BU.Mood.moving("sleep") == False{} : Bool}
+
+# a bot at rest for a quarter hour is asleep
+law bot_mood_rest:
+  for talked: Bool
+  {BU.Mood.of(M.StReady{}, talked, True{}) == "sleep" : String}
