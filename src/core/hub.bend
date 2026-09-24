@@ -4,6 +4,7 @@ import ./model.bend as M
 import ./codec.bend as C
 import ./attach.bend as AT
 import ./agent.bend as AG
+import ./handoff.bend as HD
 
 # The decider. Requests from clients and lines from agents come in; changes
 # (persisted, folded into the read model) and effects (run by the server)
@@ -600,7 +601,7 @@ def Hub.methods() -> List<&2, String>:
    "thread.settle", "thread.unsettle", "thread.archive", "thread.unarchive",
    "thread.pin", "thread.unpin", "thread.rename", "thread.delete", "kicad.watch", "thread.modes", "app.update", "setting.set", "kicad.install",
    "ask.answer", "device.register", "device.drop", "kicad.info", "queue.resume",
-   "queue.edit", "queue.remove", "queue.move", "queue.steer"]
+   "queue.edit", "queue.remove", "queue.move", "queue.steer", "thread.fork", "thread.back"]
 
 # Agent output (Claude stream-json)
 # ---------------------------------
@@ -714,7 +715,7 @@ def Hub.running(t: M.Thread) -> Bool:
 # first: the thread's first worktree (not one made again), whose waiting
 # message names its branch
 def Wt.start(+s: M.State, +now: Nat, +thread: String, +first: Bool) -> Step:
-  Wt.start.k(Bool.and(Bool.not(Hub.running(Hub.thread(s, thread))), Bool.not(String.is_empty(M.Queue.of(s, thread)))), first,
+  Wt.start.k(Bool.and(Bool.not(Hub.running(Hub.thread(s, thread))), M.Queue.waiting(s, thread)), first,
     Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread)
 
 def Wt.ready(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +c: M.Change) -> Step:
@@ -989,6 +990,48 @@ def Queue.op(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Js
     case _:
       Queue.steer(s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "msg", ""))
 
+# Forks
+# -----
+# A fork is a new thread that continues another from where it stands (V2's
+# thread lineage). It records its source (ThreadForked), works in its own
+# worktree made from the source's last checkpoint when the source has one,
+# and carries the source's conversation as handed-over context, queued
+# ahead of its first message (HD.Hand). Bringing a fork back queues the
+# fork's conversation into its source the same way, for the source's next
+# message; the fork's files stay on its own branch.
+
+def Fork.env(+wt: String) -> M.EnvMode:
+  Bool.pick(M.EnvMode, String.is_empty(wt), M.Local{}, M.Worktree{})
+
+def Fork.outs(+wt: String, +th: String, +root: String, +src: String) -> List<&2, Out>:
+  Bool.pick(List<&2, Out>, String.is_empty(wt), Nil{}, [Git{0, "", "worktree", th, root, "fork", src}])
+
+def Hub.fork.k(t: M.Thread, +s: M.State, +now: Nat, +client: U32, +id: String, +src: String) -> Step:
+  match t:
+    case M.Thread{_, +p, +ti, _, _, _, _, _, _, _, _, _, _, _, +wt, +pr, +mo, rt, im, _, _}:
+      +th = Hub.id("t", now, Hub.seq(s))
+      Step{[M.ThreadCreated{th, p, "Fork: " ++ ti, Fork.env(wt), "", "", pr, mo, now}, M.ModesSet{th, rt, im, mo, now}, M.ThreadForked{th, src, now},
+          M.TurnQueued{th, HD.Hand.prefix() ++ src, HD.Hand.fork(Hub.entries(s), src, ti), now},
+          M.ActivityLogged{src, Hub.id("k", now, Hub.seq(s)), "info", "fork", "Forked into \"Fork: " ++ ti ++ "\"", now}],
+        Reply.ok(client, id) <> Fork.outs(wt, th, Hub.project.root(Hub.project(s, p)), src)}
+
+# a new thread that goes on from this one
+def Hub.fork(+s: M.State, +now: Nat, +client: U32, +id: String, +src: String) -> Step:
+  Hub.fork.k(Hub.thread(s, src), s, now, client, id, src)
+
+def Hub.back.k(none: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +fork: String, +src: String) -> Step:
+  match none:
+    case True{}:
+      Step.outs([Reply.err(client, id, "this thread is not a fork")])
+    case False{}:
+      Step.reply(client, id, [M.TurnQueued{src, HD.Hand.prefix() ++ "back:" ++ fork ++ ":" ++ Nat.show(Hub.seq(s)), HD.Hand.back(Hub.entries(s), fork, HD.Hand.title(Hub.thread(s, fork))), now},
+        M.ActivityLogged{src, Hub.id("k", now, Hub.seq(s)), "info", "fork", "The work of \"" ++ HD.Hand.title(Hub.thread(s, fork)) ++ "\" goes with the next message", now},
+        M.ActivityLogged{fork, Hub.id("k", now, 1n+Hub.seq(s)), "info", "fork", "Brought back to \"" ++ HD.Hand.title(Hub.thread(s, src)) ++ "\"", now}])
+
+# a fork's work, queued into its source for the source's next message
+def Hub.back(+s: M.State, +now: Nat, +client: U32, +id: String, +fork: String) -> Step:
+  Hub.back.k(String.is_empty(M.Fork.source(s, fork)), s, now, client, id, fork, M.Fork.source(s, fork))
+
 # Stopping a turn
 # ---------------
 # Claude takes an interrupt on its input and stays up; a Codex or Grok turn
@@ -1071,6 +1114,10 @@ def Hub.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p:
       Queue.op(2n, s, now, client, id, p)
     case 26n:
       Queue.op(3n, s, now, client, id, p)
+    case 27n:
+      Hub.fork(s, now, client, id, J.Json.get_str(p, "thread", ""))
+    case 28n:
+      Hub.back(s, now, client, id, J.Json.get_str(p, "thread", ""))
     case _:
       Hub.more(C.Codec.pos(Hub.methods.git(), m), s, now, client, id, p, m)
 
@@ -1354,7 +1401,7 @@ def Ended.out(+s: M.State, +thread: String, +st: Step) -> Step:
   Ended.out.s(Ended.state(Queue.changes(st), thread), thread, Hub.cwd(s, Hub.thread(s, thread)), st)
 
 def Queue.drain(+s: M.State, +now: Nat, +thread: String, +st: Step) -> Step:
-  Queue.drain.k(Bool.and(Queue.ended(Queue.changes(st), thread), Bool.not(String.is_empty(M.Queue.of(s, thread)))), st,
+  Queue.drain.k(Bool.and(Queue.ended(Queue.changes(st), thread), M.Queue.waiting(s, thread)), st,
     Hub.thread(s, thread), Hub.cwd(s, Hub.thread(s, thread)), M.Queue.of(s, thread), now, thread)
 
 # Delegated tasks finishing
@@ -1518,7 +1565,7 @@ def Wt.stale(ts: List<&2, M.Thread>, +s: M.State, +now: Nat) -> Step:
     case Nil{}:
       Step.none()
     case +t <> rest:
-      Wt.stale.k(Bool.and(Wt.stale.one(t, now), Bool.not(String.is_empty(M.Queue.of(s, M.Thread.id(t))))), s, now, M.Thread.id(t), Wt.stale(rest, s, now))
+      Wt.stale.k(Bool.and(Wt.stale.one(t, now), M.Queue.waiting(s, M.Thread.id(t))), s, now, M.Thread.id(t), Wt.stale(rest, s, now))
 
 # Removing worktrees
 # ------------------

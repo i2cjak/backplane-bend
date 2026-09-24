@@ -5,6 +5,7 @@ import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
 import ./src/core/hub.bend as H
+import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
 import ./src/core/tailnet.bend as TN
 import ./src/core/fuzzy.bend as FZ
@@ -1673,3 +1674,48 @@ law queue_row_running:
 law queue_row_held:
   for +m: String
   {List.head(&2, U.QBtn, U.Qu.buttons(False{}, True{}, m)) == Some{U.QBtn{"Resume", "q-resume", ""}} : Maybe<&2, U.QBtn>}
+
+# Handed-over context and forks
+# -----------------------------
+
+# the newest entries that fit the budget are kept, oldest first; what does
+# not fit is counted as left out
+law hand_newest_fit:
+  {HD.Hand.go([M.Msg{"3", "t1", M.User{}, "c", 3n}, M.Msg{"2", "t1", M.User{}, "b", 2n}, M.Msg{"1", "t1", M.User{}, "a", 1n}], HD.Sel{17n, [], False{}, 0n})
+    == HD.Sel{1n, ["User: b", "User: c"], True{}, 1n} : HD.Sel}
+
+# once one entry is left out, every older one is too: the kept history
+# has no holes
+law hand_no_holes:
+  for fits: Bool
+  for +line: String
+  for +left: Nat
+  for ls: List<&2, String>
+  for +om: Nat
+  {HD.Hand.put(True{}, fits, line, left, ls, om) == HD.Sel{left, ls, True{}, 1n+om} : HD.Sel}
+
+# a long item is cut and says by how much
+law hand_cut_says:
+  {HD.Hand.cut("abcdef", 2n) == "ab ...[4 more characters]" : String}
+
+# context waiting alone never starts a turn: it goes with a message
+law handoff_never_runs_alone:
+  {M.Queue.real([M.QItem{"handoff:t1", "ctx"}]) == False{} : Bool}
+
+law handoff_with_message_runs:
+  {M.Queue.real([M.QItem{"handoff:t1", "ctx"}, M.QItem{"m1", "hi"}]) == True{} : Bool}
+
+# and it goes first, ahead of the user's words, which are never cut
+law handoff_goes_first:
+  {M.Queue.texts([M.QItem{"handoff:t1", "ctx"}, M.QItem{"m1", "hi"}]) == "ctx\n\nhi" : String}
+
+# a fork remembers its source and waits with the source's context queued
+law fork_records_source:
+  {M.Fork.source(M.State.replay(H.Queue.changes(H.Hub.fork(H.Demo.state("claude", M.Completed{}), 5n, 0, "1", "t1")), H.Demo.state("claude", M.Completed{})), "t5-3") == "t1" : String}
+
+law fork_waits_with_context:
+  {M.Queue.waiting(M.State.replay(H.Queue.changes(H.Hub.fork(H.Demo.state("claude", M.Completed{}), 5n, 0, "1", "t1")), H.Demo.state("claude", M.Completed{})), "t5-3") == False{} : Bool}
+
+# only a fork can be brought back
+law back_needs_fork:
+  {H.Queue.changes(H.Hub.back(H.Demo.state("claude", M.Completed{}), 5n, 0, "1", "t1")) == [] : List<&2, M.Change>}

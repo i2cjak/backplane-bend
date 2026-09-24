@@ -290,7 +290,7 @@ def View.del(on: Bool) -> List<&2, D.Node>:
 
 def View.header(t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> D.Node:
   match t:
-    case M.Thread{_, +p, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
+    case M.Thread{+id, +p, title, _, _, turn, _, archived, override, +sa, +ua, pinned, _, +branch, _, _, model, _, _, _, _}:
       D.El{"header", "", [D.At{"class", "thread-head"}, D.At{"style", "--tint:" ++ BG.Badge.css_of(st, p)}], [
         D.Dom.button("back", "select", "", "Threads", "‹"),
         D.El{"span", "", [D.At{"class", "badge"}], [WI.WIcon.svg(BG.Badge.icon(st, p), 16)]},
@@ -298,6 +298,8 @@ def View.header(t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking:
         D.Dom.span("meta", Bool.pick(String, String.is_empty(branch), "", branch)),
         D.El{"div", "", [D.At{"class", "tools"}], List.concat(&2, D.Node, [D.Dom.when(View.running(turn), D.Dom.button("", "interrupt", "", "Stop the running turn", "Stop")),
           [View.pin(pinned), View.settle(override, Nat.is_gt(sa, ua))], View.snooze(snoozed, picking), [View.archive(archived)], View.del(del), [
+           D.Dom.button("", "fork", "", "A new thread that goes on from here", "Fork")],
+          D.Dom.when(Bool.not(String.is_empty(M.Fork.source(st, id))), D.Dom.button("", "back", "", "Send what this fork did to the thread it came from, with its next message", "Bring back")), [
            D.Dom.button(Bool.pick(String, term, "on", ""), "term-toggle", "@term-size", "Terminal (ctrl+j)", "Terminal"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")]])}]}
@@ -419,8 +421,8 @@ def View.qbtns(bs: List<&2, U.QBtn>) -> List<&2, D.Node>:
 def View.qrow(q: M.QItem, +first: Bool, +run: Bool) -> D.Node:
   match q:
     case M.QItem{+msg, text}:
-      D.El{"div", "", [D.At{"class", "queued"}], [D.Dom.span("label", Bool.pick(String, run, "Queued", "Held")), D.Dom.span("text", text),
-        D.El{"span", "", [D.At{"class", "q-acts"}], View.qbtns(U.Qu.buttons(run, first, msg))}]}
+      D.El{"div", "", [D.At{"class", "queued"}], [D.Dom.span("label", U.Qu.tag(run, msg)), D.Dom.span("text", U.Qu.label(msg, text)),
+        D.El{"span", "", [D.At{"class", "q-acts"}], View.qbtns(U.Qu.row_buttons(run, first, msg))}]}
 
 def View.qrows(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, D.Node>:
   match qs:

@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
@@ -3430,4 +3431,31 @@ def Laws.queue_row_running(m):
   {==}
 
 def Laws.queue_row_held(m):
+  {==}
+
+def Laws.hand_newest_fit():
+  {==}
+
+def Laws.hand_no_holes(fits, line, left, ls, om):
+  {==}
+
+def Laws.hand_cut_says():
+  {==}
+
+def Laws.handoff_never_runs_alone():
+  {==}
+
+def Laws.handoff_with_message_runs():
+  {==}
+
+def Laws.handoff_goes_first():
+  {==}
+
+def Laws.fork_records_source():
+  {==}
+
+def Laws.fork_waits_with_context():
+  {==}
+
+def Laws.back_needs_fork():
   {==}
