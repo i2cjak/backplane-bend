@@ -43,7 +43,7 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .add { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .add input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); padding: 3px 6px; }
 .project { padding: 8px 0 4px; }
-.project-head { display: flex; align-items: center; padding: 2px 8px 4px 12px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+.project-head { cursor: grab; display: flex; align-items: center; padding: 2px 8px 4px 12px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .project-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thread { display: flex; align-items: center; gap: 8px; padding: 4px 12px; cursor: pointer; }
 .thread:hover { background: var(--raise); }

@@ -565,7 +565,7 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project"]
 
 # Reading the client state
 # ------------------------
@@ -608,6 +608,17 @@ def Ui.project_root(s: M.State, +id: String) -> String:
   match s:
     case M.State{ps, _, _, _, _, _, _, _, _, _}:
       Ui.project_root.k(Map.get(M.Project, M.Project.blank(id), ps, id))
+
+def Ui.project_title.k(r: Map<&2, M.Project> & M.Project) -> String:
+  (_, p) = r
+  match p:
+    case M.Project{_, title, _, _, _}:
+      title
+
+def Ui.project_title(s: M.State, +id: String) -> String:
+  match s:
+    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+      Ui.project_title.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 def Ui.thread_project(t: M.Thread) -> String:
   match t:
@@ -703,6 +714,21 @@ def Tasks.title.k(t: M.Thread) -> String:
 def Tasks.title(s: M.State, +id: String) -> String:
   Tasks.title.k(Ui.thread(s, id))
 
+# A sidebar drag holds a thread id, or "project:<id>" for a project
+def Drag.project(+v: String) -> Bool:
+  String.starts_with(v, "project:")
+
+def Drag.title.k(project: Bool, +s: M.State, +v: String) -> String:
+  match project:
+    case True{}:
+      Ui.project_title(s, String.drop(v, 8n))
+    case False{}:
+      Tasks.title(s, v)
+
+# what the row being dragged is called
+def Drag.title(+s: M.State, +v: String) -> String:
+  Drag.title.k(Drag.project(v), s, v)
+
 def Tasks.parent.find(ts: List<&2, M.Task>, +thread: String) -> String:
   match ts:
     case Nil{}:
@@ -744,9 +770,10 @@ def Ui.answer(u: Ui, v: String) -> Act:
 
 # Sidebar model
 # -------------
-# Both clients draw the sidebar from these: projects by latest activity,
-# each with its threads on shelves (M.Sidebar.at: keys and snoozes), and the
-# visible order ctrl+1..9 counts in.
+# Both clients draw the sidebar from these: projects dragged into place
+# first (by order key), the rest by latest activity, each with its threads
+# on shelves (M.Sidebar.at: keys and snoozes), and the visible order
+# ctrl+1..9 counts in.
 
 type SRow is Data:
   SRow{rank: Nat, project: M.Project, shelves: M.Shelves}
@@ -756,6 +783,33 @@ def SRow.before(a: SRow, b: SRow) -> Bool:
     case SRow{ra, _, _} SRow{rb, _, _}:
       Nat.is_ge(ra, rb)
 
+# a row with its project's order key (Nil: none)
+type PSlot is Data:
+  PSlot{key: List<&2, Bool>, row: SRow}
+
+def PSlot.before.k(ka: List<&2, Bool>, kb: List<&2, Bool>, a: SRow, b: SRow) -> Bool:
+  match ka kb:
+    case Nil{} Nil{}:
+      SRow.before(a, b)
+    case Nil{} _ <> _:
+      False{}
+    case _ <> _ Nil{}:
+      True{}
+    case x <> xs y <> ys:
+      Cmp.is_le(M.Key.cmp(x <> xs, y <> ys))
+
+def PSlot.before(a: PSlot, b: PSlot) -> Bool:
+  match a b:
+    case PSlot{ka, ra} PSlot{kb, rb}:
+      PSlot.before.k(ka, kb, ra, rb)
+
+def PSlot.rows(xs: List<&2, PSlot>) -> List<&2, SRow>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case PSlot{_, r} <> t:
+      r <> PSlot.rows(t)
+
 def Side.latest(ts: List<&2, M.Thread>, +acc: Nat) -> Nat:
   match ts:
     case Nil{}:
@@ -763,24 +817,24 @@ def Side.latest(ts: List<&2, M.Thread>, +acc: Nat) -> Nat:
     case M.Thread{_, _, _, _, +a, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _} <> t:
       Side.latest(t, M.Time.max(acc, a))
 
-def Side.rows.k(removed: Bool, p: M.Project, +mine: List<&2, M.Thread>, +c: Nat, +navs: Map<&2, M.Nav>, +now: Nat, rest: List<&2, SRow>) -> List<&2, SRow>:
+def Side.rows.k(removed: Bool, p: M.Project, +mine: List<&2, M.Thread>, +c: Nat, +navs: Map<&2, M.Nav>, +now: Nat, +key: String, rest: List<&2, PSlot>) -> List<&2, PSlot>:
   match removed:
     case True{}:
       rest
     case False{}:
-      SRow{Side.latest(mine, c), p, M.Sidebar.at(mine, navs, now)} <> rest
+      PSlot{M.Key.read(key), SRow{Side.latest(mine, c), p, M.Sidebar.at(mine, navs, now)}} <> rest
 
-def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat) -> List<&2, SRow>:
+def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2, M.Nav>, +now: Nat) -> List<&2, PSlot>:
   match ps:
     case Nil{}:
       Nil{}
     case M.Project{+id, ti, r, +c, +rm} <> t:
-      Side.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, navs, now, Side.rows.go(t, ts, navs, now))
+      Side.rows.k(rm, M.Project{id, ti, r, c, rm}, M.Thread.filter_project(ts, id), c, navs, now, M.Nav.project_key(navs, id), Side.rows.go(t, ts, navs, now))
 
 # the sidebar's projects in order, their threads on shelves (delegated
 # child threads live under their parent instead)
 def Side.rows(+st: M.State, +now: Nat) -> List<&2, SRow>:
-  List.sort(~SRow, ~SRow.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now))
+  PSlot.rows(List.sort(~PSlot, ~PSlot.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now)))
 
 def Side.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
   match ts:
@@ -971,6 +1025,30 @@ def Ui.reorder.pair(+u: Ui, s: Sect) -> Act:
 # "id|target"
 def Ui.reorder(+u: Ui, v: String) -> Act:
   Ui.reorder.pair(u, Side.pair(String.split(v, '|')))
+
+def Ui.reorder_project.k(ok: Bool, +u: Ui, +ids: List<&2, String>, +id: String, +to: Nat) -> Act:
+  match ok:
+    case True{}:
+      Ui.rpc(u, "project.reorder", [J.KV{"project", J.Str{id}}, J.KV{"ids", J.Json.arr(Side.strs(M.Order.move(ids, id, to)))}])
+    case False{}:
+      Act{u, Nil{}}
+
+def Ui.reorder_project.to(+u: Ui, +ids: List<&2, String>, +id: String, +target: String) -> Act:
+  Ui.reorder_project.k(Bool.and(Bool.and(Side.has(ids, id), Bool.not(String.eq(id, target))), Side.has(ids, target)), u, ids, id, M.Order.index(ids, target, 0n))
+
+# a project dropped on a row: the target is a project, or a thread standing
+# for its project
+def Ui.reorder_project.pair(+u: Ui, s: Sect) -> Act:
+  match s:
+    case Sect{+id, t}:
+      +ids = Side.projects(u)
+      +target = Side.first(t)
+      Ui.reorder_project.to(u, ids, id, Bool.pick(String, Side.has(ids, target), target, Ui.thread_project(Ui.thread(Side.st(u), target))))
+
+# "project|target": move project `id` to where `target` (a project or one
+# of its threads) sits in the sidebar
+def Ui.reorder_project(+u: Ui, v: String) -> Act:
+  Ui.reorder_project.pair(u, Side.pair(String.split(v, '|')))
 
 def Ui.move.go(+u: Ui, +id: String, +up: Bool, +ids: List<&2, String>) -> Act:
   +i = M.Order.index(ids, id, 0n)
@@ -2274,6 +2352,8 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Ui.row_toggle(u, value)
     case 65n:
       Ui.on_thread(u, "kicad.open")
+    case 66n:
+      Ui.reorder_project(u, value)
     case _:
       Act{u, Nil{}}
 

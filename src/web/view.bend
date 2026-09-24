@@ -96,8 +96,8 @@ def View.snoozed(ts: List<&2, M.Thread>, +st: M.State, +sel: String, +now: Nat) 
 def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat) -> D.Node:
   match r:
     case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
-      D.El{"section", id, [D.At{"class", "project"}],
-        List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}],
+      D.El{"section", id, [D.At{"class", "project"}, D.At{"data-drag-to", id}, D.At{"data-drag-act", "reorder-project"}],
+        List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}, D.At{"draggable", "true"}, D.At{"data-drag", id}, D.At{"data-drag-act", "reorder-project"}],
             [D.Dom.span("name", title), WI.WIcon.button("icon", "new-thread", id, "New thread", "plus", 16, "")]}],
           View.rows_in(pinned, st, sel, now, True{}, False{}),
           View.rows_in(active, st, sel, now, True{}, False{}),

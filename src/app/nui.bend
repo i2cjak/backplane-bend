@@ -1222,6 +1222,9 @@ def Nui.nohit(m: Maybe<&2, Hit>) -> Bool:
 # A press on a row selects it and arms a drag (the thread and where the
 # press was, in the client's scratch state); a release far enough away
 # over another row of the same shelf reorders (client action "reorder").
+# A press on a project's name arms a drag of the project ("project:<id>");
+# a release over another project's name or rows moves it there (client
+# action "reorder-project").
 
 def Row.arm(s: Step, +id: String, +y: U32) -> Step:
   match s:
@@ -1245,10 +1248,17 @@ def Row.y(+n: Nui) -> U32:
 def Row.far(+y0: U32, +y: U32) -> Bool:
   U32.is_ge((U32.max(y, y0) - U32.min(y, y0) : U32), 6)
 
+def Row.drop.k(project: Bool, +n: Nui, +id: String, +a: String, +v: String) -> Step:
+  match project:
+    case True{}:
+      Bool.pick(Step, Bool.or(String.eq(a, "select"), String.eq(a, "project")), Nui.act(n, "reorder-project", String.drop(id, 8n) ++ "|" ++ v), Step{n, Nil{}, True{}})
+    case False{}:
+      Bool.pick(Step, String.eq(a, "select"), Nui.act(n, "reorder", id ++ "|" ++ v), Step{n, Nil{}, True{}})
+
 def Row.drop(m: Maybe<&2, Hit>, +n: Nui, +id: String) -> Step:
   match m:
     case Some{Hit{_, _, _, _, +a, +v}}:
-      Bool.pick(Step, String.eq(a, "select"), Nui.act(n, "reorder", id ++ "|" ++ v), Step{n, Nil{}, True{}})
+      Row.drop.k(U.Drag.project(id), n, id, a, v)
     case None{}:
       Step{n, Nil{}, True{}}
 
@@ -1700,7 +1710,8 @@ def Row.press.a(line: Bool, +n: Nui, +action: String, +value: String, +x: U32, +
     case True{}:
       Sel.start(n, value, x)
     case False{}:
-      Row.press.k(Bool.and(String.eq(action, "select"), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value), value, y)
+      Row.press.k(Bool.and(Bool.or(String.eq(action, "select"), String.eq(action, "project")), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value),
+        Bool.pick(String, String.eq(action, "project"), "project:" ++ value, value), y)
 
 def Row.press(m: Maybe<&2, Hit>, +n: Nui, +x: U32, +y: U32) -> Step:
   match m:
