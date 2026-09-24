@@ -149,3 +149,32 @@ installed apps with PKCE and a loopback redirect to the hub
 another device. Needs a Google Cloud OAuth client (Desktop app) id and
 secret in Settings. Tools: `gmail_search`, `gmail_read`, `gmail_send`
 (asks you first), `calendar_events`, `calendar_create` (asks you first).
+
+## Server
+
+`src/server/botnet.bend` (secrets, signing, verifying, the directory) and
+the Bots section of `src/server/server.bend` (effects, routes, Google's
+tools). Routes:
+
+| route | who | auth |
+|---|---|---|
+| `POST /hook/<id>` | anyone with the hook's secret | our signature or GitHub's, replay cache, 256 KB |
+| `POST /bots/deliver` | a linked machine | `X-Backplane-Peer` + signature with its secret, replay cache |
+| `POST /bots/link` | the holder of an invite | the same; once per peer id |
+| `GET /bots/dir` | a linked machine | the same, over the empty body |
+| `GET /bots/<id>/screen.jpg` | clients | loopback, or the pairing token |
+| `GET /oauth/google` | the user's browser | loopback, or the pairing token; Google's state |
+
+The signature is checked off the hub (the secret read from its file);
+the hub then accepts the replay key once and only then changes anything.
+Peer ids and hook ids name files only when they are plain ids
+(`[A-Za-z0-9_-]`, at most 80). Hub-to-hub requests go through `curl` with
+the signed headers on stdin and the body in a 0600 file under
+`<home>/secrets/tmp`, http(s) only, no redirects. This machine's name for
+others is `BACKPLANE_NAME`, else its host name; its address is its
+MagicDNS name on the tailnet (same port), else its listen address.
+
+Every minute the hub runs due routines (`date +%z` for the time zone)
+and asks each linked machine for its bots; the merged list is the info
+key `bots.remote` (a machine that does not answer keeps its bots, away).
+`test/tools/bots_e2e.ts` runs two hubs against each other.
