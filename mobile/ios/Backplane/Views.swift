@@ -380,17 +380,18 @@ struct ThreadScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
           VStack(spacing: 0) {
-            if !thread.queued.isEmpty {
+            ForEach(thread.queue ?? [], id: \.msg) { q in
                 HStack(spacing: 6) {
-                    Image(systemName: "clock")
-                    Text("Queued: ").bold() + Text(thread.queued)
+                    Text(q.tag).bold()
+                    Text(q.text).lineLimit(1)
                     Spacer(minLength: 0)
+                    ForEach(q.buttons, id: \.label) { b in
+                        Button(b.label) { model.act(b.action, b.value) }.buttonStyle(.borderless)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .lineLimit(2)
                 .padding(.horizontal).padding(.top, 8)
-                .accessibilityHint("Sends when this turn ends")
             }
             HStack {
                 Menu {
@@ -428,11 +429,17 @@ struct ThreadScreen: View {
                     .focused($focused)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 18))
-                Button { model.act("send") } label: {
-                    Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
-                }
-                .disabled(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel(thread.send)
+                // a long press sends with the other follow-up mode (queue or steer)
+                Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
+                    .foregroundStyle(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : Color.accentColor)
+                    .onTapGesture {
+                        if !model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.act("send") }
+                    }
+                    .onLongPressGesture {
+                        if !model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.act("send-alt") }
+                    }
+                    .accessibilityLabel(thread.send)
+                    .accessibilityAddTraits(.isButton)
             }
             .padding(.horizontal).padding(.vertical, 8)
           }

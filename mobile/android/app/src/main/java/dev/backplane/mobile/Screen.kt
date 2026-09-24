@@ -66,11 +66,17 @@ data class Viewer(
 // and the efforts the current one takes ("effort")
 data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>)
 
+// a message waiting in the thread's queue and its buttons (each sends
+// action with value)
+data class QButton(val label: String, val action: String, val value: String)
+data class QueueRow(val msg: String, val text: String, val tag: String, val buttons: List<QButton>)
+
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
+    val queue: List<QueueRow> = emptyList(),
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -130,6 +136,10 @@ private fun thread(o: JSONObject) = ThreadView(
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
     strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
     viewer(o.optJSONObject("viewer") ?: JSONObject()),
+    o.optJSONArray("queue").map {
+        QueueRow(it.optString("msg"), it.optString("text"), it.optString("tag"),
+            it.optJSONArray("buttons").map { b -> QButton(b.optString("label"), b.optString("action"), b.optString("value")) })
+    },
 )
 
 private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }

@@ -1389,7 +1389,7 @@ def Comp.foot(+h: U32) -> U32:
 def Comp.send_x(+ty: Ty, +x1: U32, +send: String) -> U32:
   (x1 - 10 - Lay.button.w(ty, send) : U32)
 
-def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, running: Bool, +models: String, +rs: List<&2, U.SkillRow>) -> Out:
+def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +models: String, +rs: List<&2, U.SkillRow>) -> Out:
   +tw = {(x1 - x0 - 40 : U32) : U32}
   +n = List.length(&2, String, ls)
   +v = S.Cs.rows(n)
@@ -1401,7 +1401,6 @@ def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, 
   +cx = Comp.x(ty, draft, caret, tw)
   +y = {(h - 120 - eh : U32) : U32}
   +fy = Comp.foot(h)
-  +send = Bool.pick(String, running, "Queue", "Send")
   Out.all([
     Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), (100 + eh : U32), 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
     Comp.sel(Bool.and(focused, Bool.not(Nat.is_eq(caret, mark))), ty, shown, top, draft, ED.Edit.lo(caret, mark), ED.Edit.hi(caret, mark), tw, (x0 + 16 : U32), (y + 12 : U32)),
@@ -1606,11 +1605,45 @@ def Lay.asks(+ty: Ty, as: List<&2, M.Ask>, +draft: String, +x0: U32, +x1: U32, +
       Out.cat(Ask.card(ty, a, draft, x0, x1, y), Lay.asks(ty, t, draft, x0, x1, (y + Ask.h(ty, a, (x1 - x0 - 32 : U32)) + 8 : U32)))
 
 # messages waiting for the running turn (stored on the server)
-def Lay.queued(+ty: Ty, +q: String, +x0: U32, +x1: U32, +h: U32) -> Out:
-  +label = "Queued: " ++ Ty.fit(ty, 2n, String.join(String.split(q, '\n'), " "), (x1 - x0 - 260 : U32)) ++ " · sends when this turn ends"
-  Out.when(Bool.not(String.is_empty(q)),
-    Out.ops(List.append(&2, R.Op, Lay.box(D.Clip.all(), x0, (h - 150 : U32), (x1 - x0 : U32), 26, 0, T.Th.raise(), T.Th.line()),
-      Ty.text(ty, 2n, label, D.Clip.all(), (x0 + 12 : U32), (h - 150 : U32), 26, T.Th.dim()))))
+def Lay.qhits(bs: List<&2, U.QBtn>, acc: List<&2, S.Hit>) -> List<&2, S.Hit>:
+  match bs:
+    case Nil{}:
+      acc
+    case U.QBtn{l, a, v} <> t:
+      Lay.qhits(t, S.Hit{0, 0, 0, 0, l, a ++ "|" ++ v} <> acc)
+
+def Lay.qrow(+ty: Ty, q: M.QItem, +first: Bool, +run: Bool, +more: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match q:
+    case M.QItem{+msg, +text}:
+      +bs = Lay.qhits(U.Qu.buttons(run, first, msg), Nil{})
+      +tag = Bool.pick(String, run, "Queued", "Held")
+      +tail = Bool.pick(String, Nat.is_eq(more, 0n), "", "  +" ++ Nat.show(more) ++ " more")
+      +tw = (x1 - x0 - Lay.buttons.w(ty, bs) - Ty.width(ty, 2n, tag ++ tail) - 40 : U32)
+      Out.cat(Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 30, 0, T.Th.raise(), T.Th.line()),
+          Ty.text(ty, 2n, tag, D.Clip.all(), (x0 + 12 : U32), y, 30, T.Th.queued()),
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, String.join(String.split(text, '\n'), " "), tw) ++ tail, D.Clip.all(), (x0 + 24 + Ty.width(ty, 2n, tag) : U32), y, 30, T.Th.dim())])),
+        Lay.buttons(ty, bs, (y + 1 : U32), (x1 - 4 : U32)))
+
+def Lay.qrows(qs: List<&2, M.QItem>, +ty: Ty, +i: Nat, +n: Nat, +run: Bool, +more: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match qs:
+    case Nil{}:
+      Out.none()
+    case q <> t:
+      Out.cat(Lay.qrow(ty, q, Nat.is_eq(i, 0n), run, Bool.pick(Nat, Nat.is_eq(1n+i, n), more, 0n), x0, x1, y),
+        Lay.qrows(t, ty, 1n+i, n, run, more, x0, x1, (y + 32 : U32)))
+
+# how many queued rows are shown
+def Lay.qn(+qs: List<&2, M.QItem>) -> Nat:
+  Bool.pick(Nat, Nat.is_gt(List.length(&2, M.QItem, qs), U.Qu.shown()), U.Qu.shown(), List.length(&2, M.QItem, qs))
+
+# the queue's height above the composer
+def Lay.qh(+qs: List<&2, M.QItem>) -> U32:
+  (U32.from_nat(Lay.qn(qs)) * 32 : U32)
+
+# the thread's waiting messages above the composer, next first, each with
+# its buttons (U.Qu.buttons); the rows end where the composer's box starts
+def Lay.queued(+ty: Ty, +qs: List<&2, M.QItem>, +run: Bool, +x0: U32, +x1: U32, +h: U32) -> Out:
+  Lay.qrows(List.take(&2, M.QItem, qs, Lay.qn(qs)), ty, 0n, Lay.qn(qs), run, Nat.sub(List.length(&2, M.QItem, qs), Lay.qn(qs)), x0, x1, (h - 124 - Lay.qh(qs) : U32))
 
 def Lay.empty(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +n: Nat) -> Out:
   +msg = Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")
@@ -1692,47 +1725,53 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
   +tms = U.Models.menu(U.Str.get(info, "models"), tp)
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
-  +total = {(804 + dy + ey : U32) : U32}
+  +total = {(868 + dy + ey : U32) : U32}
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
+  +b2 = {(b + 64 : U32) : U32}
+  +fu = M.Setting.get(st, "followup", "")
   Out.all([
     Out{Nil{}, [Lay.hit(x0, 52, (x1 - x0 : U32), (h - 52 : U32), "set-bg", U32.show(U32.dim(total, h)))]},
     Out.hits_below(52, Out.all([
     Set.head(ty, "Threads", x, (b + 76 : U32)),
-    Set.card(x, (b + 108 : U32), w, 64),
+    Set.card(x, (b + 108 : U32), w, 128),
     Set.row.r(ty, "Settle after", "Threads idle this long move to Settled. They stay saved.", x, (b + 110 : U32), w, 190),
     Set.days(ty, M.Setting.get(st, "settle.days", "3"), (x + w - 172 : U32), (b + 126 : U32)),
-    Set.head(ty, "Agents", x, (b + 192 : U32)),
-    Set.card(x, (b + 224 : U32), w, (124 + dy : U32)),
-    Set.row(ty, "Provider and model for new threads", Set.cli(U.Models.cli(U.Str.get(info, "models"), prov), prov) ++ ". Each thread keeps its own; change it from the composer.", x, (b + 226 : U32), w),
-    Set.chips(ty, ["claude", "codex", "grok"], prov, "agent.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b + 274 : U32)),
-    Set.chips(ty, ms, M.Setting.get(st, "agent.model", ""), "agent.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b + 308 : U32)),
+    Set.row.r(ty, "Follow-ups while a turn runs", "Queue waits for the turn to end; steer sends into it. Ctrl+Enter does the other.", x, (b + 174 : U32), w, 250),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Steer") - 6 - Lay.button.w(ty, "Queue") - 6 - Lay.button.w(ty, "Default") : U32), (b + 188 : U32), "Default", String.is_empty(fu), "setting", "followup="),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Steer") - 6 - Lay.button.w(ty, "Queue") : U32), (b + 188 : U32), "Queue", String.eq(fu, "queue"), "setting", "followup=queue"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Steer") : U32), (b + 188 : U32), "Steer", String.eq(fu, "steer"), "setting", "followup=steer"),
+    Set.head(ty, "Agents", x, (b2 + 192 : U32)),
+    Set.card(x, (b2 + 224 : U32), w, (124 + dy : U32)),
+    Set.row(ty, "Provider and model for new threads", Set.cli(U.Models.cli(U.Str.get(info, "models"), prov), prov) ++ ". Each thread keeps its own; change it from the composer.", x, (b2 + 226 : U32), w),
+    Set.chips(ty, ["claude", "codex", "grok"], prov, "agent.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b2 + 274 : U32)),
+    Set.chips(ty, ms, M.Setting.get(st, "agent.model", ""), "agent.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b2 + 308 : U32)),
     Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, Set.model_line(U.Models.label_of(U.Str.get(info, "models"), prov, M.Setting.get(st, "agent.model", "")), M.Setting.get(st, "agent.model", "")), (w - 32 : U32)),
-      D.Clip.all(), (x + 16 : U32), (b + 318 + dy : U32), 24, T.Th.dim())),
-    Set.head(ty, "Writing", x, (b + 368 + dy : U32)),
-    Set.card(x, (b + 400 + dy : U32), w, (150 + er : U32)),
-    Set.row(ty, "Model for titles, branch names and commit messages", "A small model keeps this cheap. It names each thread from its first message.", x, (b + 402 + dy : U32), w),
-    Set.chips(ty, ["claude", "codex", "grok"], tp, "text.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b + 450 + dy : U32)),
-    Set.chips(ty, tms, tm, "text.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b + 484 + dy : U32)),
+      D.Clip.all(), (x + 16 : U32), (b2 + 318 + dy : U32), 24, T.Th.dim())),
+    Set.head(ty, "Writing", x, (b2 + 368 + dy : U32)),
+    Set.card(x, (b2 + 400 + dy : U32), w, (150 + er : U32)),
+    Set.row(ty, "Model for titles, branch names and commit messages", "A small model keeps this cheap. It names each thread from its first message.", x, (b2 + 402 + dy : U32), w),
+    Set.chips(ty, ["claude", "codex", "grok"], tp, "text.provider", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b2 + 450 + dy : U32)),
+    Set.chips(ty, tms, tm, "text.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b2 + 484 + dy : U32)),
     Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, Set.model_line(U.Models.label_of(U.Str.get(info, "models"), tp, tm), tm), (w - 32 : U32)),
-      D.Clip.all(), (x + 16 : U32), (b + 520 + dy + er : U32), 24, T.Th.dim())),
-    Set.head(ty, "KiCad", x, (b + 368 + dy + ey : U32)),
-    Set.card(x, (b + 400 + dy + ey : U32), w, 150),
-    Set.row(ty, "KiCad CLI", U.Str.get(info, "kicad.cli"), x, (b + 402 + dy + ey : U32), w),
-    Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (b + 450 + dy + ey : U32)),
-    Set.row.r(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (b + 486 + dy + ey : U32), w, 140),
-    Lay.chip(ty, (x + w - 120 : U32), (b + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
-    Lay.chip(ty, (x + w - 70 : U32), (b + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
-    Set.head(ty, "Network and updates", x, (b + 570 + dy + ey : U32)),
-    Set.card(x, (b + 602 + dy + ey : U32), w, 164),
+      D.Clip.all(), (x + 16 : U32), (b2 + 520 + dy + er : U32), 24, T.Th.dim())),
+    Set.head(ty, "KiCad", x, (b2 + 368 + dy + ey : U32)),
+    Set.card(x, (b2 + 400 + dy + ey : U32), w, 150),
+    Set.row(ty, "KiCad CLI", U.Str.get(info, "kicad.cli"), x, (b2 + 402 + dy + ey : U32), w),
+    Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (b2 + 450 + dy + ey : U32)),
+    Set.row.r(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (b2 + 486 + dy + ey : U32), w, 140),
+    Lay.chip(ty, (x + w - 120 : U32), (b2 + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
+    Lay.chip(ty, (x + w - 70 : U32), (b2 + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
+    Set.head(ty, "Network and updates", x, (b2 + 570 + dy + ey : U32)),
+    Set.card(x, (b2 + 602 + dy + ey : U32), w, 164),
     Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), Bool.pick(String, String.eq(U.Str.get(info, "tailnet"), "off"), "Listening on " ++ U.Str.get(info, "listen") ++ " only (started with --no-tailscale, or Tailscale is not up).",
-      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b + 604 + dy + ey : U32), w),
-    Set.row.r(ty, "Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note), x, (b + 656 + dy + ey : U32), w, 150),
-    Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b + 666 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
-      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b + 666 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", "")),
-    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b + 708 + dy + ey : U32), w, 190),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b + 722 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b + 722 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly")])),
+      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 604 + dy + ey : U32), w),
+    Set.row.r(ty, "Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note), x, (b2 + 656 + dy + ey : U32), w, 150),
+    Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 666 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
+      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 666 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", "")),
+    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 708 + dy + ey : U32), w, 190),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 722 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 722 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly")])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])
@@ -2530,13 +2569,12 @@ def Lay.attach_field(+ty: Ty, on: Bool, +path: String, +caret: Nat, +mark: Nat, 
       Out.none()
 
 # the composer with its attachments
-def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +running: Bool, +models: String,
+def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +models: String,
     +rs: List<&2, U.SkillRow>, +atts: List<&2, String>, +up: String, +path: String) -> Out:
-  +send = Bool.pick(String, running, "Queue", "Send")
   +y = {(h - 120 - Comp.eh(List.length(&2, String, ls)) : U32) : U32}
   +fy = Comp.foot(h)
   Out.all([
-    Lay.composer(ty, draft, ls, held, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, running, models, rs),
+    Lay.composer(ty, draft, ls, held, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, send, models, rs),
     Lay.atts(ty, atts, up, (x0 + 58 + Ty.width(ty, 2n, models) : U32), fy),
     Lay.ibutton(ty, D.Clip.all(), (Comp.send_x(ty, x1, send) - 34 : U32), fy, "paperclip", T.Th.soft(), "focus", "attach-path"),
     Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, mark, x0, x1, (y - 36 : U32))])
@@ -2554,7 +2592,8 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
       +asks = U.Asks.open(st, sel)
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
-      +qh = {Bool.pick(U32, String.is_empty(M.Queue.of(st, sel)), 0, 30) : U32}
+      +qs = M.Queue.items(st, sel)
+      +qh = Lay.qh(qs)
       # the composer grows by eh, and all above it moves up
       +ls = Comp.wrap(ty, draft, cw)
       +eh = Comp.eh(List.length(&2, String, ls))
@@ -2565,8 +2604,8 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
         cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del),
           Lay.parent(ty, st, sel, cx0, 58),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
-          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, Lay.running(turn), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), rs, atts, up, path),
-          Lay.queued(ty, M.Queue.of(st, sel), cx0, cx1, (h - eh : U32)),
+          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.label(st, sel, Lay.running(turn)), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)), rs, atts, up, path),
+          Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
           Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), 60, U.Effort.chips(info, pr, mo), U.Effort.of(st, sel), moff)])
       Out.cat(tl, ch)

@@ -701,29 +701,31 @@ def Nui.composer.m(k: Nat, +n: Nui, +c: Nat, +m: Nat, +cl: String) -> Step:
     case _:
       Mark.set(Clip.also(Step{Nui.with_caret(n, c), Nil{}, True{}}, cl), m)
 
-def Nui.composer.k(e: Ed, n: Nui) -> Step:
+# Enter sends; ctrl+Enter sends with the other follow-up mode (queue or
+# steer, U.Follow.mode)
+def Nui.composer.k(e: Ed, n: Nui, +alt: Bool) -> Step:
   match e:
     case Ed{_, _, _, True{}, _, _, _}:
-      Step.caret(Nui.act(Undo.clear(n), "send", ""), 0n)
+      Step.caret(Nui.act(Undo.clear(n), Bool.pick(String, alt, "send-alt", "send"), ""), 0n)
     case Ed{+t, +c, +m, False{}, True{}, +cl, +k}:
       Mark.set(Clip.also(Step.caret(Nui.act(Undo.note(n, k), "draft", t), c), cl), m)
     case Ed{_, +c, +m, False{}, False{}, +cl, +k}:
       Nui.composer.m(k, n, c, m, cl)
 
-def Nui.composer.sk(complete: Bool, e: Ed, n: Nui) -> Step:
+def Nui.composer.sk(complete: Bool, e: Ed, n: Nui, +alt: Bool) -> Step:
   match complete:
     case True{}:
       Nui.skill(n)
     case False{}:
-      Nui.composer.k(e, n)
+      Nui.composer.k(e, n, alt)
 
 # while skills are offered, Tab and Enter complete the first
-def Nui.composer.s(has: Bool, +code: U32, +e: Ed, n: Nui) -> Step:
+def Nui.composer.s(has: Bool, +code: U32, +e: Ed, n: Nui, +alt: Bool) -> Step:
   match has:
     case True{}:
-      Nui.composer.sk(Bool.or(U32.is_eq(code, Key.tab()), Ed.submit(e)), e, n)
+      Nui.composer.sk(Bool.or(U32.is_eq(code, Key.tab()), Ed.submit(e)), e, n, alt)
     case False{}:
-      Nui.composer.k(e, n)
+      Nui.composer.k(e, n, alt)
 
 def Blink.sig(+n: Nui) -> String:
   Nui.focus_of(n) ++ ":" ++ Nat.show(Nui.caret_of(n)) ++ ":" ++ U.Palette.query(Nui.ui(n)) ++ ":" ++ U.Proj.query(Nui.ui(n))
@@ -1485,7 +1487,7 @@ def Nui.drop(+n: Nui, text: String) -> Step:
 def Nui.paste.comp(ps: List<&2, String>, n: Nui, +m: Nat, +text: String) -> Step:
   match ps n:
     case Nil{} Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, m, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.composer.k(Ed.insert(U.Ui.draft_text(u), ca, m, text), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, False{})
     case +p <> +t _:
       Nui.attach.all(p <> t, n)
 
@@ -1508,7 +1510,7 @@ def Nui.path.k(e: Ed, +n: Nui) -> Step:
 def Nui.field.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
   match comp path n:
     case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
+      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, U32.is_ne(U32.and(mods, 2), 0))
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
       Nui.path.k(Ed.key(code, text, mods, pa, ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case _ _ _:
