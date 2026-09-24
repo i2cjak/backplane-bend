@@ -3625,7 +3625,8 @@ def Bot.verify(+hook: Bool, +home: String, +kind: String, +id: String, +ts: Stri
   do IO<Unit>:
     +secret : String <- BN.Bn.secret.of(hook, home, id)
     +me : String <- Bot.me(String.eq(kind, "link"))
-    ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, BN.Bn.check(hook, secret, now, kind ++ ":" ++ id, ts, sig, gh, dl, body), body, me, reply})
+    +key : String = BN.Bn.check(hook, secret, now, kind ++ ":" ++ id, ts, sig, gh, dl, body)
+    ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, body, Bool.pick(String, String.contains(key, ":i:"), "ring", me), reply})
     return Unit{}
 
 def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String,
@@ -3656,12 +3657,21 @@ def Bot.hook.live.k(hk: BO.Hook, +st: M.State) -> Bool:
 def Bot.hook.live(+st: M.State, +id: String) -> Bool:
   Bot.hook.live.k(BO.World.hook(M.State.bots(st), id), st)
 
-def Hub.bot.hook(live: Bool, h: Hub, +hook: String, body: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+# a ring's voice note reaches the bot as the person's words (Bots.ring);
+# any other webhook's body as untrusted data (Bots.hooked)
+def Bot.hook.step(ring: Bool, +st: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
+  match ring:
+    case True{}:
+      BH.Bots.ring(st, now, hook, body)
+    case False{}:
+      BH.Bots.hooked(st, now, hook, body)
+
+def Hub.bot.hook(live: Bool, h: Hub, +hook: String, +body: String, ring: Bool, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match live h:
     case True{} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
       do IO<Hub>:
         Bot.answer(reply, W.Http.text("202 Accepted", "accepted"))
-        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, BH.Bots.hooked(st, now, hook, body))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, Bot.hook.step(ring, st, now, hook, body))
     case False{} _:
       Hub.answer(h, reply, W.Http.text("401 Unauthorized", "no such webhook"))
 
@@ -3705,7 +3715,7 @@ def Hub.bot.dir(live: Bool, h: Hub, +reply: Chan(List<&2, U32>)) -> IO(Hub):
 def Hub.bot.act(i: Nat, h: Hub, +arg: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match i h:
     case 0n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
-      Hub.bot.hook(Bot.hook.live(st, arg), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, body, reply, now)
+      Hub.bot.hook(Bot.hook.live(st, arg), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, body, String.eq(me, "ring"), reply, now)
     case 1n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
       Hub.bot.deliver(Bot.peer.live(st, arg), J.Json.parse(body), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, reply, now)
     case 2n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
@@ -3799,11 +3809,25 @@ def Conn.bot.signed.k(ok: Bool, big: Bool, s: Socket, rest: List<&2, U32>, +len:
 def Conn.bot.len(+hs: List<&2, W.Header>) -> Nat:
   Maybe.default(&2, Nat, Nat.read(W.Http.header_of(hs, "content-length")), 0n)
 
+# a third party's signature: the Pebble Index ring's (its X-Index-*
+# headers, packed after "index\n" for BN.Bn.check), else GitHub's
+def Bot.gh.k(ring: Bool, +hs: List<&2, W.Header>) -> String:
+  match ring:
+    case True{}:
+      "index\n" ++ String.join([W.Http.header_of(hs, "x-index-webhook-version"), W.Http.header_of(hs, "x-index-timestamp"),
+        W.Http.header_of(hs, "x-index-delivery"), W.Http.header_of(hs, "x-index-trigger"), W.Http.header_of(hs, "x-index-test"),
+        W.Http.header_of(hs, "x-index-signature")], "\n")
+    case False{}:
+      W.Http.header_of(hs, "x-hub-signature-256")
+
+def Bot.gh(+hs: List<&2, W.Header>) -> String:
+  Bot.gh.k(Bool.not(String.is_empty(W.Http.header_of(hs, "x-index-signature"))), hs)
+
 # a signed request (no token: webhooks come from outside; peers sign)
 def Conn.bot.signed(+kind: String, +arg: String, s: Socket, +hs: List<&2, W.Header>, rest: List<&2, U32>, +inbox: Chan(Msg)) -> IO(Unit):
   Conn.bot.signed.k(BN.Bn.safe(arg), Nat.is_gt(Conn.bot.len(hs), Bot.cap()), s, rest, Conn.bot.len(hs),
     BotReq{kind, arg, W.Http.header_of(hs, "x-backplane-peer"), W.Http.header_of(hs, "x-backplane-timestamp"), W.Http.header_of(hs, "x-backplane-signature"),
-      W.Http.header_of(hs, "x-hub-signature-256"), W.Http.header_of(hs, "x-github-delivery")}, inbox)
+      Bot.gh(hs), W.Http.header_of(hs, "x-github-delivery")}, inbox)
 
 # a client's own route (a bot's screen, Google's redirect): the same
 # authorisation as the websocket's

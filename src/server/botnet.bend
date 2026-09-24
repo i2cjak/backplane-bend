@@ -278,6 +278,30 @@ def Bn.check.ours(m: Maybe<&2, Nat>, +secret: String, +now: Nat, +body: String, 
     case None{}:
       ""
 
+def Bn.check.ring.k(ok: Bool, m: Maybe<&2, Nat>, +secret: String, +now: Nat, +dl: String, +tr: String, test: Bool, +body: String, +sig: String, +key: String) -> String:
+  match ok m:
+    case True{} Some{+ts}:
+      Bool.pick(String, SG.Sign.index(secret, now, ts, dl, tr, test, body, sig), key ++ ":i:" ++ dl, "")
+    case _ _:
+      ""
+
+# the Pebble Index ring (version 1): its headers came packed as
+# "index\n<version>\n<ts>\n<delivery>\n<trigger>\n<test>\n<sig>"; the
+# delivery id is the replay key, tagged ":i:" so the hub knows the ring
+def Bn.check.ring.f(fs: List<&2, String>, +secret: String, +now: Nat, +body: String, +key: String) -> String:
+  match fs:
+    case _ <> +v <> +ts <> +dl <> +tr <> +te <> +sig <> _:
+      Bn.check.ring.k(Bool.and(String.eq(v, "1"), Bool.not(String.is_empty(dl))), Nat.read(ts), secret, now, dl, tr, String.eq(te, "true"), body, sig, key)
+    case _:
+      ""
+
+def Bn.check.gh.or(ring: Bool, +secret: String, +now: Nat, +body: String, +gh: String, +delivery: String, +key: String) -> String:
+  match ring:
+    case True{}:
+      Bn.check.ring.f(String.split(gh, '\n'), secret, now, body, key)
+    case False{}:
+      Bn.check.gh(SG.Sign.github(secret, body, gh), key, delivery)
+
 def Bn.check.k(empty: Bool, ours: Bool, github: Bool, +secret: String, +now: Nat, +ts: String, +body: String, +sig: String, +gh: String,
     +delivery: String, +key: String) -> String:
   match empty ours github:
@@ -286,7 +310,7 @@ def Bn.check.k(empty: Bool, ours: Bool, github: Bool, +secret: String, +now: Nat
     case False{} True{} _:
       Bn.check.ours(Nat.read(ts), secret, now, body, sig, key)
     case False{} False{} True{}:
-      Bn.check.gh(SG.Sign.github(secret, body, gh), key, delivery)
+      Bn.check.gh.or(String.starts_with(gh, "index\n"), secret, now, body, gh, delivery, key)
     case False{} False{} False{}:
       ""
 

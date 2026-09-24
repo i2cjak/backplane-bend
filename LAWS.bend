@@ -2252,3 +2252,17 @@ law cat_moods_known:
 law cat_look_total:
   for +s: Nat
   {Nat.is_lt(CAT.Cat.look.index(s), CAT.Cat.looks()) == True{} : Bool}
+
+# a Pebble ring's webhook that is not fresh is never accepted, whatever it
+# carries or claims to be signed with
+law index_stale_rejected:
+  for secret: String
+  for +now: Nat
+  for +ts: Nat
+  for delivery: String
+  for trigger: String
+  for test: Bool
+  for body: String
+  for sig: String
+  for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
+  {SG.Sign.index(secret, now, ts, delivery, trigger, test, body, sig) == False{} : Bool}

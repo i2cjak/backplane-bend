@@ -63,6 +63,23 @@ def Sign.check(secret_hex: String, +now: Nat, +ts: Nat, body: String, sig: Strin
 def Sign.github(secret_hex: String, body: String, sig: String) -> Bool:
   S.Ct.eq(Sign.utf8(sig), Sign.utf8("sha256=" ++ S.Hex.encode(S.Hmac.sha256(Sign.utf8(secret_hex), Sign.utf8(body)))))
 
+# The Pebble Index ring's webhook (its app's INDEX_WEBHOOK_API.md, version
+# 1): X-Index-Signature is the lowercase hex HMAC-SHA256, keyed with the
+# secret's text as entered, of "v1\n<ts>\n<delivery>\n<trigger>\n<0|1>\n"
+# followed by the raw multipart body. Stale timestamps fail like ours.
+def Sign.index.bytes(+ts: Nat, delivery: String, trigger: String, test: Bool, body: String) -> List<&2, U32>:
+  Sign.utf8("v1\n" ++ Nat.show(ts) ++ "\n" ++ delivery ++ "\n" ++ trigger ++ "\n" ++ Bool.pick(String, test, "1", "0") ++ "\n" ++ body)
+
+def Sign.index.k(fresh: Bool, secret: String, ts: Nat, delivery: String, trigger: String, test: Bool, body: String, sig: String) -> Bool:
+  match fresh:
+    case False{}:
+      False{}
+    case True{}:
+      S.Ct.eq(Sign.utf8(sig), Sign.utf8(S.Hex.encode(S.Hmac.sha256(Sign.utf8(secret), Sign.index.bytes(ts, delivery, trigger, test, body)))))
+
+def Sign.index(secret: String, +now: Nat, +ts: Nat, delivery: String, trigger: String, test: Bool, body: String, sig: String) -> Bool:
+  Sign.index.k(Sign.fresh(now, ts), secret, ts, delivery, trigger, test, body, sig)
+
 # Replay cache
 # ------------
 

@@ -6,6 +6,7 @@ import ./hub.bend as B
 import ./mcp.bend as MC
 import ./bot.bend as BT
 import ./cron.bend as CR
+import ./ring.bend as RG
 
 # Bots, as a decider (docs/bots.md). Client requests ("bots.*"), the bots'
 # own MCP tools, messages between bots, routines, webhooks and messages
@@ -418,6 +419,31 @@ def Bots.incoming.k(b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +peer: String,
       Bots.incoming.go(Nat.is_le(hop, BT.Hop.max()), s, now, bot, from, rname, text, hop)
     case None{}:
       B.Step.none()
+
+def Bots.ring.note(+text: String) -> String:
+  Bool.pick(String, String.is_empty(text),
+    "[voice note from your Pebble ring] It came without words: set the ring's webhook to send the transcription.",
+    "[voice note from your Pebble ring]\n" ++ text)
+
+def Bots.ring.go(ok: Bool, test: Bool, +s: M.State, +now: Nat, +hid: String, +bot: String, +text: String) -> B.Step:
+  match ok test:
+    case True{} False{}:
+      B.Step.before([M.HookHit{hid, now}], Nil{}, Bots.wake(s, now, "", Bots.bot(s, bot), B.Hub.id("m", now, B.Hub.seq(s)), Bots.ring.note(text), 0n))
+    case True{} True{}:
+      B.Step{[M.HookHit{hid, now}], Nil{}}
+    case False{} _:
+      B.Step.none()
+
+def Bots.ring.k(h: BT.Hook, test: Bool, +s: M.State, +now: Nat, +text: String) -> B.Step:
+  match h:
+    case BT.Hook{+hid, +bot, _, _, revoked, _, _}:
+      Bots.ring.go(Bool.and(Bool.not(revoked), Bots.live(s, bot)), test, s, now, hid, bot, text)
+
+# a verified voice note from the person's Pebble Index ring (its signature
+# proves it came from their phone): the bot hears it as the person's own
+# words, at hop 0; the app's test button is logged and wakes no one
+def Bots.ring(+s: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
+  Bots.ring.k(BT.World.hook(M.State.bots(s), hook), RG.Ring.test(body), s, now, RG.Ring.text(body))
 
 # a message from a bot on a linked machine to a bot here
 def Bots.incoming(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:

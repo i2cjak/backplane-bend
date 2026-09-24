@@ -7,6 +7,7 @@ import ../src/core/hub.bend as B
 import ../src/core/bot.bend as BT
 import ../src/core/bothub.bend as BH
 import ../src/core/mcp.bend as MC
+import ../src/core/ring.bend as RG
 
 def yes(b: Bool) -> String:
   match b:
@@ -102,6 +103,24 @@ def mem.state() -> M.State:
 def hook.of(+s: M.State) -> String:
   BT.Hook.id(Maybe.default(&2, BT.Hook, List.head(&2, BT.Hook, BT.World.hooks(M.State.bots(s), id.of(s, "Tofu"))), BT.Hook.blank("?")))
 
+def ring.body() -> String:
+  "--x\r\nContent-Disposition: form-data; name=\"transcription\"\r\n\r\nremind me to order stencils\r\n--x\r\nContent-Disposition: form-data; name=\"recordedAt\"\r\n\r\n1790000000000\r\n--x\r\nContent-Disposition: form-data; name=\"client\"\r\n\r\nring\r\n--x--\r\n"
+
+def ring.test() -> String:
+  "--y\r\nContent-Disposition: form-data; name=\"transcription\"\r\n\r\nThis is a test\r\n--y\r\nContent-Disposition: form-data; name=\"test\"\r\n\r\ntrue\r\n--y--\r\n"
+
+def tags.cs(st: B.Step) -> List<&2, M.Change>:
+  match st:
+    case B.Step{cs, _}:
+      cs
+
+def changes.show(cs: List<&2, M.Change>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case c <> t:
+      J.Json.show(CD.Change.encode(c)) ++ changes.show(t)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +s : M.State = two()
@@ -171,3 +190,13 @@ def main() -> IO(Unit):
     C.Check.str("delete", st.tags(ask(s, 1004n, "bots.delete", "{\"bot\":\"" ++ id.of(s, "Tofu") ++ "\"}")), "BotDeleted | send:reply out fx:gone ")
     C.Check.str("deleted gone", Nat.show(List.length(&2, BT.Bot, BT.World.bots(M.State.bots(made(s, 1004n, "bots.delete", "{\"bot\":\"" ++ id.of(s, "Tofu") ++ "\"}"))))), "1")
     C.Check.str("codec", yes(String.contains(J.Json.show(CD.Change.encode(M.RoomPosted{"p", "r", "a", "t", 2n, 9n})), "\"hop\":2")), "yes")
+    # the Pebble ring
+    C.Check.str("ring text", RG.Ring.text(ring.body()), "remind me to order stencils")
+    C.Check.str("ring part", RG.Ring.part(ring.body(), "client"), "ring")
+    C.Check.str("ring no part", RG.Ring.part(ring.body(), "audio"), "")
+    C.Check.str("ring test flag", yes(RG.Ring.test(ring.test())), "yes")
+    C.Check.str("ring note flag", yes(RG.Ring.test(ring.body())), "no")
+    C.Check.str("ring wakes", st.tags(BH.Bots.ring(h, 1010n, hook.of(h), ring.body())), "HookHit BotWoke MessagePosted TurnChanged | out out ")
+    C.Check.str("ring words reach the bot", yes(String.contains(changes.show(tags.cs(BH.Bots.ring(h, 1010n, hook.of(h), ring.body()))), "[voice note from your Pebble ring]\\nremind me to order stencils")), "yes")
+    C.Check.str("ring test wakes no one", st.tags(BH.Bots.ring(h, 1010n, hook.of(h), ring.test())), "HookHit | ")
+    C.Check.str("ring revoked", st.tags(BH.Bots.ring(made(h, 1011n, "bots.hook_revoke", "{\"hook\":\"" ++ hook.of(h) ++ "\"}"), 1012n, hook.of(h), ring.body())), "| ")

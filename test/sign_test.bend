@@ -51,6 +51,15 @@ def key() -> String:
 def other() -> String:
   "ff112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
 
+def ring.body() -> String:
+  "--x\r\nContent-Disposition: form-data; name=\"transcription\"\r\n\r\nremind me to order stencils\r\n--x\r\nContent-Disposition: form-data; name=\"recordedAt\"\r\n\r\n1790000000000\r\n--x\r\nContent-Disposition: form-data; name=\"client\"\r\n\r\nring\r\n--x--\r\n"
+
+def ring.secret() -> String:
+  "354af29fd1b4fe9426d7f3a9a6fcbf9488a222cbaaee101128eb2e8e4c5bef35"
+
+def ring.sig() -> String:
+  "b892f374c0eae593c14cf99c4c9ef193d83d7da991555ee9dae592d5f05dc6e3"
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("sha256 empty", sha(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
@@ -97,3 +106,10 @@ def main() -> IO(Unit):
     C.Check.str("invite short secret", inv(G.Invite.parse("bp1:http://host:3787:p1:0011")), "none")
     C.Check.str("invite bad secret", inv(G.Invite.parse("bp1:http://host:3787:p1:zz112233445566778899aabbccddeeff00112233445566778899aabbccddeeff")), "none")
     C.Check.str("invite empty", inv(G.Invite.parse("")), "none")
+    C.Check.str("ring signature (python hmac)", yn(G.Sign.index(ring.secret(), 1790000100n, 1790000000n, "rec-42", "single-click-hold", False{}, ring.body(), ring.sig())), "yes")
+    C.Check.str("ring stale", yn(G.Sign.index(ring.secret(), 1790000301n, 1790000000n, "rec-42", "single-click-hold", False{}, ring.body(), ring.sig())), "no")
+    C.Check.str("ring other gesture", yn(G.Sign.index(ring.secret(), 1790000100n, 1790000000n, "rec-42", "double-click-hold", False{}, ring.body(), ring.sig())), "no")
+    C.Check.str("ring other delivery", yn(G.Sign.index(ring.secret(), 1790000100n, 1790000000n, "rec-43", "single-click-hold", False{}, ring.body(), ring.sig())), "no")
+    C.Check.str("ring as a test", yn(G.Sign.index(ring.secret(), 1790000100n, 1790000000n, "rec-42", "single-click-hold", True{}, ring.body(), ring.sig())), "no")
+    C.Check.str("ring tampered", yn(G.Sign.index(ring.secret(), 1790000100n, 1790000000n, "rec-42", "single-click-hold", False{}, ring.body() ++ " ", ring.sig())), "no")
+    C.Check.str("ring wrong secret", yn(G.Sign.index("00" ++ ring.secret(), 1790000100n, 1790000000n, "rec-42", "single-click-hold", False{}, ring.body(), ring.sig())), "no")

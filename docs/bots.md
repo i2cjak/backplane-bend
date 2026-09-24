@@ -88,6 +88,23 @@ directory (name, look, mood) every minute and deliver messages with
 - The payload reaches the bot marked as untrusted data, never as
   instructions.
 
+### A Pebble Index ring
+
+The ring's app signs its webhooks with HMAC-SHA256 (its protocol version
+1), and a hook takes those as well: make a webhook for the bot, then in
+the Pebble app (Index 01 Settings, Webhook, a gesture):
+
+- URL: `https://<this machine>.<tailnet>.ts.net/hook/<hook id>` (the hub
+  started with `--tailscale-https`; the phone must be on the tailnet)
+- Sign requests: on, with the webhook's secret pasted as it is shown
+- Send: Transcription only (the recording would pass the 256 KB cap)
+
+A voice note reaches the bot as the person's own words, `[voice note
+from your Pebble ring]` and the transcription, starting a conversation
+at hop 0: only the phone holding the secret can sign it. The app's
+"Send test event" is logged and wakes no one. Each gesture has its own
+URL, so Hold & talk and Double click & hold can go to different bots.
+
 ## Routines
 
 A routine is a cron line (5 fields, the hub's time zone, `*`, lists,

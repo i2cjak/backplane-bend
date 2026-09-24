@@ -4177,3 +4177,6 @@ def cat_mod_lt(n, m, d, r, bp, e):
 def Laws.cat_look_total(s):
   cat_mod_lt(s, 71n, 0n, 0n, 71n, {==})
 
+def Laws.index_stale_rejected(secret, now, ts, delivery, trigger, test, body, sig, h):
+  %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.index.k(_, secret, ts, delivery, trigger, test, body, sig) == False{} : Bool}
+  {==}
