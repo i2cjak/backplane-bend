@@ -2,13 +2,15 @@
 # Build the iOS app on a Mac over SSH (bend runs here; Xcode runs there).
 #   scripts/build-ios.sh [sim|archive]     (default sim)
 #   BACKPLANE_MAC=hs-mac-mini              the ssh host
+#   BACKPLANE_MAC_DIR=backplane-ios        the copy on the Mac (one per
+#                                          checkout when several build at once)
 #   sim      a Simulator build, installed and launched on a booted iPhone
 #   archive  a signed App Store archive (needs mobile/ios/signing.env there)
 set -eu
 cd "$(dirname "$0")/.."
 MAC=${BACKPLANE_MAC:-hs-mac-mini}
 MODE=${1:-sim}
-DIR=backplane-ios
+DIR=${BACKPLANE_MAC_DIR:-backplane-ios}
 [ -n "${BACKPLANE_SKIP_JS:-}" ] || scripts/build-mobile.sh --js
 cp mobile/build/assets/bridge.js mobile/ios/Backplane/bridge.js
 rsync -a --delete --exclude build/ --exclude authorize-mac.sh --exclude signing.env --exclude '*.p8' \

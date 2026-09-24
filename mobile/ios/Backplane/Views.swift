@@ -3,6 +3,8 @@ import SwiftUI
 struct RootView: View {
     @Bindable var model: AppModel
     @State private var pairing = false
+    // the delete just answered: its dialog stays down until the screen drops it
+    @State private var answered = ""
 
     var body: some View {
         if model.links.isEmpty {
@@ -16,6 +18,20 @@ struct RootView: View {
             }
             .alert(s.error, isPresented: Binding(get: { !s.error.isEmpty }, set: { if !$0 { model.act("dismiss") } })) {
                 Button("OK") { model.act("dismiss") }
+            }
+            .alert(s.deleting?.title ?? "", isPresented: Binding(get: { s.deleting.map { $0.id != answered } ?? false }, set: { _ in }),
+                   presenting: s.deleting) { d in
+                Button(d.yes, role: .destructive) { answered = d.id; model.act("row-delete", d.id) }
+                Button(d.no, role: .cancel) { answered = d.id; model.act("delete-no") }
+            } message: { d in
+                Text(d.body)
+            }
+            .onChange(of: s.deleting?.id) { answered = "" }
+            .sheet(isPresented: Binding(get: { model.screen?.settings != nil }, set: { if !$0, model.screen?.settings != nil { model.act("flag", "settings") } })) {
+                if let st = model.screen?.settings { SettingsSheet(model: model, settings: st, version: model.screen?.version ?? "") }
+            }
+            .sheet(isPresented: Binding(get: { model.screen?.find != nil }, set: { if !$0, model.screen?.find != nil { model.act("find-close") } })) {
+                if let f = model.screen?.find { FindSheet(model: model, find: f) }
             }
             .sheet(isPresented: $pairing) {
                 NavigationStack {
@@ -101,19 +117,6 @@ struct HubsView: View {
     }
 }
 
-private struct Status: View {
-    let state: String
-
-    var body: some View {
-        switch state {
-        case "run": ProgressView().controlSize(.mini)
-        case "fail": Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
-        case "stop": Image(systemName: "stop.circle").foregroundStyle(.orange)
-        default: Image(systemName: "circle.fill").font(.system(size: 7)).foregroundStyle(.quaternary)
-        }
-    }
-}
-
 private struct SwipeButton: View {
     let model: AppModel
     let swipe: Swipe
@@ -154,7 +157,7 @@ private struct ThreadRow: View {
     var body: some View {
         NavigationLink(value: row.id) {
             HStack(spacing: 10) {
-                Status(state: row.state).frame(width: 18)
+                StatusDot(state: row.state, status: row.status).frame(width: 18)
                 Text(row.title).lineLimit(1)
                 Spacer()
                 if row.pinned { Image(systemName: "pin.fill").font(.caption).foregroundStyle(.secondary) }
@@ -176,8 +179,6 @@ struct ProjectsView: View {
     @Binding var pairing: Bool
     // a swipe whose choices are up (a snooze)
     @State private var choosing: Swipe?
-    // the delete just answered: its dialog stays down until the screen drops it
-    @State private var answered = ""
 
     var body: some View {
         List {
@@ -198,6 +199,17 @@ struct ProjectsView: View {
                         }
                         .tint(.secondary)
                         if p.open { ForEach(p.settled) { ThreadRow(model: model, row: $0) { choosing = $0 } } }
+                    }
+                    if let arch = p.archived, !arch.isEmpty, let v = p.value {
+                        Button { model.act("toggle-settled", v) } label: {
+                            HStack {
+                                Text("Archived \(arch.count)").font(.subheadline)
+                                Spacer()
+                                Image(systemName: p.archOpen == true ? "chevron.down" : "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .tint(.secondary)
+                        if p.archOpen == true { ForEach(arch) { ThreadRow(model: model, row: $0) { choosing = $0 } } }
                     }
                 } header: {
                     HStack {
@@ -235,20 +247,17 @@ struct ProjectsView: View {
                     Button { model.act("picker-open") } label: { Image(systemName: "folder.badge.plus") }.accessibilityLabel("Add project")
                 }
                 Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Hubs")
+                Menu {
+                    Button("Search threads", systemImage: "magnifyingglass") { model.act("find-open", "search") }
+                    Button("Settings", systemImage: "gear") { model.act("flag", "settings") }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("More")
             }
         }
         .confirmationDialog(choosing?.label ?? "", isPresented: Binding(get: { choosing != nil }, set: { if !$0 { choosing = nil } }),
                             titleVisibility: .visible, presenting: choosing) { s in
             ForEach(s.options, id: \.self) { o in Button(o.label) { model.act(s.action, o.value) } }
         }
-        .alert(screen.deleting?.title ?? "", isPresented: Binding(get: { screen.deleting.map { $0.id != answered } ?? false }, set: { _ in }),
-               presenting: screen.deleting) { d in
-            Button(d.yes, role: .destructive) { answered = d.id; model.act("row-delete", d.id) }
-            Button(d.no, role: .cancel) { answered = d.id; model.act("delete-no") }
-        } message: { d in
-            Text(d.body)
-        }
-        .onChange(of: screen.deleting?.id) { answered = "" }
         .sheet(isPresented: Binding(get: { screen.folders != nil }, set: { if !$0 { model.act("proj-close") } })) {
             if let f = screen.folders { FoldersSheet(model: model, folders: f) }
         }
@@ -312,45 +321,20 @@ private struct FoldersSheet: View {
     }
 }
 
-private struct EntryView: View {
-    let model: AppModel
-    let entry: Entry
-
-    var body: some View {
-        switch entry.kind {
-        case "user":
-            HStack {
-                Spacer(minLength: 48)
-                Text(entry.text)
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Color.accentColor.opacity(0.15), in: .rect(cornerRadius: 18))
-                    .contextMenu { Button("Copy", systemImage: "doc.on.doc") { model.act("copy", entry.text) } }
-            }
-        case "assistant":
-            MarkdownView(blocks: entry.blocks ?? [])
-                .contextMenu { Button("Copy", systemImage: "doc.on.doc") { model.act("copy", entry.text) } }
-        default:
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(entry.label ?? "").foregroundStyle(.tertiary)
-                Text(entry.text).lineLimit(2)
-            }
-            .font(.caption.monospaced())
-            .foregroundStyle(entry.tone == "error" ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
 struct ThreadScreen: View {
     @Bindable var model: AppModel
     let thread: ThreadView
     @FocusState private var focused: Bool
+    // the image open in the lightbox
+    @State private var shown: Shown?
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    ForEach(thread.entries) { EntryView(model: model, entry: $0).id($0.id) }
+                    if let p = thread.parent { EntryRow(model: model, entry: p) { shown = $0 } }
+                    if let ts = thread.tasks, !ts.isEmpty { TasksView(model: model, tasks: ts) }
+                    ForEach(thread.entries) { EntryRow(model: model, entry: $0) { shown = $0 }.id($0.id) }
                     ForEach(Array(thread.sending.enumerated()), id: \.offset) { _, text in
                         VStack(alignment: .trailing, spacing: 2) {
                             Text(text)
@@ -365,9 +349,10 @@ struct ThreadScreen: View {
                         MarkdownView(blocks: thread.live)
                     } else if !thread.working.isEmpty {
                         HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
+                            if thread.state == "run" { ProgressView().controlSize(.small) }
                             Text(thread.working).foregroundStyle(.secondary)
                         }
+                        .font(thread.state == "run" ? .body : .caption)
                     }
                     Color.clear.frame(height: 1).id("end")
                 }
@@ -380,6 +365,9 @@ struct ThreadScreen: View {
         }
         .safeAreaInset(edge: .bottom) {
           VStack(spacing: 0) {
+            ForEach(thread.asks ?? []) { a in
+                AskCard(model: model, ask: a).padding(.horizontal).padding(.top, 8)
+            }
             if let td = thread.todos {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(td.head).bold()
@@ -443,7 +431,9 @@ struct ThreadScreen: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal).padding(.top, 8)
+            ComposerExtras(model: model, thread: thread)
             HStack(alignment: .bottom, spacing: 8) {
+                AttachButton(model: model)
                 TextField("Ask the agent", text: Binding(get: { model.composer }, set: { model.draft($0) }), axis: .vertical)
                     .lineLimit(1...6)
                     .focused($focused)
@@ -470,6 +460,13 @@ struct ThreadScreen: View {
         .fullScreenCover(isPresented: Binding(get: { !thread.viewer.open.isEmpty }, set: { if !$0 { model.act("view", "") } })) {
             if let v = model.screen?.thread?.viewer { PlotScreen(model: model, viewer: v) }
         }
+        .fullScreenCover(item: $shown) { s in Lightbox(shown: s) { shown = nil } }
+        .sheet(isPresented: Binding(get: { thread.diff != nil }, set: { if !$0, model.screen?.thread?.diff != nil { model.act("panel") } })) {
+            if let d = model.screen?.thread?.diff { DiffSheet(model: model, diff: d) }
+        }
+        .sheet(isPresented: Binding(get: { thread.term != nil }, set: { if !$0, model.screen?.thread?.term != nil { model.act("term-toggle") } })) {
+            if let t = model.screen?.thread?.term { TermSheet(model: model, term: t).presentationDetents([.large]) }
+        }
         .toolbar {
             if !thread.branch.isEmpty {
                 ToolbarItem(placement: .principal) {
@@ -495,14 +492,40 @@ struct ThreadScreen: View {
                 }
                 Menu {
                     ForEach(thread.tools.filter { $0.action != "interrupt" }, id: \.self) { t in
-                        Button { model.act(t.action) } label: {
+                        Button { model.act(t.action, t.value ?? "") } label: {
                             if t.on { Label(t.label, systemImage: "checkmark") } else { Text(t.label) }
+                        }
+                    }
+                    Divider()
+                    ForEach(thread.menu ?? [], id: \.self) { t in
+                        if let os = t.options, !os.isEmpty {
+                            Menu(t.label) {
+                                ForEach(os, id: \.self) { o in Button(o.label) { model.act(t.action, o.value) } }
+                            }
+                        } else {
+                            Button(role: t.danger == true ? .destructive : nil) {
+                                // the terminal opens at the size this phone has room for
+                                model.act(t.action, t.action == "term-toggle" ? TermSheet.size() : t.value ?? "")
+                            } label: {
+                                if t.on { Label(t.label, systemImage: "checkmark") } else { Label(t.label, systemImage: Self.icon(t.action)) }
+                            }
                         }
                     }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
             }
+        }
+    }
+
+    static func icon(_ action: String) -> String {
+        switch action {
+        case "diff": "plusminus"
+        case "term-toggle": "terminal"
+        case "find-open": "doc.text.magnifyingglass"
+        case "snooze": "moon.zzz"
+        case "row-delete": "trash"
+        default: "circle"
         }
     }
 }

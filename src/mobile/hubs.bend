@@ -86,7 +86,7 @@ def Hubs.rest(+v: String) -> String:
 # what a field of the screen holds: 1 left alone (a thread's entries, the
 # viewer's, model picker's and project picker's own values), 2 an id of this hub, 0 anything else
 def Q.kind(+k: String) -> Nat:
-  Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["entries", "live", "viewer", "blocks", "picker", "folders"], k), 6n), 1n,
+  Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["entries", "live", "viewer", "blocks", "picker", "folders", "asks", "menu", "diff", "term", "skills", "attaching", "find", "settings"], k), 14n), 1n,
     Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["id", "value", "sel", "thread"], k), 4n), 2n, 0n))
 
 # a hub's screen (or alerts) with every id made that hub's
@@ -118,8 +118,17 @@ def Q.all(j: J.Json, +p: String) -> J.Json:
 # tap, "view-unpick" closes the card, "view-mention" puts the inspected
 # item into the draft; "picker-open" opens the project picker at ~/,
 # "picker-type" is its field's new text (typed, or a folder tapped),
-# "picker-mkdir" makes a folder and goes into it; any action that moves to another project re-aims
+# "picker-mkdir" makes a folder and goes into it; "find-open" opens
+# thread search ("search") or the file picker ("files", which asks for the
+# thread's files), "find-q" sets its query, "find-close" closes it; any action that moves to another project re-aims
 # the viewer
+def One.find(files: Bool, +u: U.Ui, +mode: String) -> U.Act:
+  match files:
+    case True{}:
+      U.Ui.act(U.Palette.open(u, mode), "files", "")
+    case False{}:
+      U.Act{U.Palette.open(u, mode), Nil{}}
+
 def One.act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
   match i:
     case 0n:
@@ -136,11 +145,17 @@ def One.act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
       PK.MPick.type(u, value)
     case 6n:
       PK.MPick.mkdir(u, value)
+    case 7n:
+      One.find(String.eq(value, "files"), u, value)
+    case 8n:
+      U.Act{U.Palette.set(u, value, 0n), Nil{}}
+    case 9n:
+      U.Act{U.Ui.flag_off(u, "palette"), Nil{}}
     case _:
       VW.View.sync(U.Ui.act(u, action, value))
 
 def One.act(+u: U.Ui, +action: String, +value: String) -> U.Act:
-  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir"], action), u, action, value)
+  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close"], action), u, action, value)
 
 # what a step does to one hub's client
 type Op is Data:
@@ -369,10 +384,14 @@ def Hubs.focus(move: Bool, hs: Hubs, +key: String, +op: Op) -> HAct:
     case False{} Hubs{+cid, +now, +cur, list}:
       Hubs.step(Hubs{cid, now, cur, list}, Hubs.everywhere(Op.action(op)), key, op)
 
-def Hubs.act.k(+hs: Hubs, +cur: String, +known: Bool, +action: String, +value: String) -> HAct:
-  Hubs.focus(Bool.and(Bool.and(known, Nat.is_lt(Hubs.routed(action), 3n)), Bool.not(String.eq(Hubs.key_of(value), cur))), hs,
-    Bool.pick(String, known, Hubs.key_of(value), cur),
-    Do{action, Bool.pick(String, known, Hubs.rest(value), value)})
+# (matches, not Bool.pick: an unrouted value, which may be a big piece of
+# an upload, is never split)
+def Hubs.act.k(+hs: Hubs, +cur: String, known: Bool, +action: String, +value: String) -> HAct:
+  match known:
+    case True{}:
+      Hubs.focus(Bool.and(Nat.is_lt(Hubs.routed(action), 3n), Bool.not(String.eq(Hubs.key_of(value), cur))), hs, Hubs.key_of(value), Do{action, Hubs.rest(value)})
+    case False{}:
+      Hubs.focus(False{}, hs, cur, Do{action, value})
 
 def Hubs.cur(hs: Hubs) -> String:
   match hs:
@@ -384,8 +403,15 @@ def Hubs.list(hs: Hubs) -> List<&2, Hub>:
     case Hubs{_, _, _, l}:
       l
 
+def Hubs.act.r(routed: Bool, +hs: Hubs, +action: String, +value: String) -> HAct:
+  match routed:
+    case True{}:
+      Hubs.act.k(hs, Hubs.cur(hs), Hubs.has(Hubs.list(hs), Hubs.key_of(value)), action, value)
+    case False{}:
+      Hubs.act.k(hs, Hubs.cur(hs), False{}, action, value)
+
 def Hubs.act(+hs: Hubs, +action: String, +value: String) -> HAct:
-  Hubs.act.k(hs, Hubs.cur(hs), Bool.and(Nat.is_lt(Hubs.routed(action), 9n), Hubs.has(Hubs.list(hs), Hubs.key_of(value))), action, value)
+  Hubs.act.r(Nat.is_lt(Hubs.routed(action), 9n), hs, action, value)
 
 def Hubs.self(+u: U.Ui) -> String:
   J.Json.get_str(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "machines")), J.Null{}), "self"), "name", "")
@@ -543,6 +569,8 @@ def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J
     J.KV{"projects", J.Json.arr(Hubs.projects(ss, Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
     J.KV{"deleting", Hubs.first_obj(ss, "deleting")},
     J.KV{"folders", J.Json.get_obj(Hubs.of(ss, cur), "folders")},
+    J.KV{"settings", J.Json.get_obj(Hubs.of(ss, cur), "settings")},
+    J.KV{"find", J.Json.get_obj(Hubs.of(ss, cur), "find")},
     J.KV{"island", N.Note.island.k(Hubs.lines(ss))},
     J.KV{"thread", J.Json.get_obj(Hubs.of(ss, cur), "thread")},
     J.KV{"hub", J.Json.str(cur)},

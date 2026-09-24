@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Draws the markdown blocks Md.render made (p, h3-h5, ul/li, pre, code,
-// strong) with native text styles.
+// strong, a) with native text styles.
 
 private func inline(_ bs: [Block]) -> AttributedString {
     var out = AttributedString()
@@ -17,6 +17,12 @@ private func inline(_ bs: [Block]) -> AttributedString {
             part.backgroundColor = Color(.secondarySystemFill)
         case "strong":
             part.font = .body.weight(.semibold)
+        // a link opens in the browser (Text follows .link on a tap)
+        case "a":
+            if let h = b.href, let u = URL(string: h) {
+                part.link = u
+                part.underlineStyle = .single
+            }
         default:
             break
         }

@@ -63,6 +63,19 @@ def Img.pick(ws: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
     case +w <> t:
       Img.pick(t, Img.keep(Bool.and(Img.is_image(Img.bare(w)), Bool.not(Img.has(acc, Img.bare(w)))), Img.bare(w), acc))
 
+# whether a text may name an image: it holds an image extension, any
+# case. Every path Img.paths finds ends in one, so a text without is
+# skipped with a cheap search (a phone renders each reply on every screen)
+def Img.may.go(xs: List<&2, String>, +s: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +x <> t:
+      Bool.or(String.contains(s, x), Img.may.go(t, s))
+
+def Img.may(+s: String) -> Bool:
+  Img.may.go(Img.exts(), String.to_lower(s))
+
 # the images a message shows, in order, each once
 def Img.paths(+text: String) -> List<&2, String>:
   Img.pick(Img.split([' ', '\n', '\t', '(', ')', '[', ']', '<', '>', '`', '"', '\'', ',', ';', '|'], [text]), Nil{})
