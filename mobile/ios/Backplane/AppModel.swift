@@ -45,6 +45,8 @@ final class AppModel {
     // and SIMCTL_CHILD_BACKPLANE_ACTS="diff;;term-toggle=$SIZE;;…" runs
     // actions two seconds apart once the thread is open
     @ObservationIgnored private var acting = ProcessInfo.processInfo.environment["BACKPLANE_ACTS"]
+    // and SIMCTL_CHILD_BACKPLANE_BOT=<bot or room name> opens it (then ACTS run)
+    @ObservationIgnored private var botting = ProcessInfo.processInfo.environment["BACKPLANE_BOT"]
     #endif
 
     // this install's id, part of every message id (a resend is stored once)
@@ -220,6 +222,35 @@ final class AppModel {
         act("select", p.last ?? "")
     }
 
+    // the cats' rigs by key ("look:mood"), each asked of the bridge once
+    private(set) var cats: [String: [CatPart]] = [:]
+    @ObservationIgnored private var asked: Set<String> = []
+
+    func cat(_ key: String) async {
+        guard !key.isEmpty, !asked.contains(key) else { return }
+        asked.insert(key)
+        cats[key] = catRig(Data(await engine.cat(key).utf8))
+    }
+
+    // a bot form's field ("bfield"), typed: Bend keeps it without a new
+    // screen, the field on screen already shows it
+    func field(_ name: String, _ text: String) {
+        run { await $0.quiet("bfield", name + "\u{1f}" + text) }
+    }
+
+    // an address on the hub in focus (a bot's browser frame, a webhook)
+    func hubURL(_ path: String, query: [URLQueryItem] = [], token: Bool = true) -> URL? {
+        guard let s = screen, let l = links.first(where: { Pairing.key($0) == s.hub }) else { return nil }
+        return Pairing.http(l, path: path, query: query, token: token)
+    }
+
+    // what the stack shows: the thread selected, or a room or a bot on a
+    // linked machine (a bot's own view is its thread's)
+    private static func nav(_ s: Screen) -> String {
+        if let b = s.bot, b.kind != "bot" { return "@" + b.kind + ":" + b.id }
+        return s.sel
+    }
+
     func draft(_ text: String) {
         composer = text
         typing += 1
@@ -256,15 +287,23 @@ final class AppModel {
                 shownHub = s.hub
                 plots.reset()
             }
-            if s.sel != shownSel {
-                shownSel = s.sel
-                path = s.sel.isEmpty ? [] : [s.sel]
+            let nav = Self.nav(s)
+            if nav != shownSel {
+                shownSel = nav
+                path = nav.isEmpty ? [] : [nav]
             }
             island?.show(s.island, foreground: active)
             #if DEBUG
             if let id = opening, let row = s.projects.lazy.flatMap(\.threads).first(where: { $0.id == id || $0.id.hasSuffix("|" + id) }) {
                 opening = nil
                 act("select", row.id)
+            }
+            if let n = botting, let b = s.bots.first(where: { $0.name == n }) {
+                botting = nil
+                act(b.remote ? "remote" : "bot", b.id)
+            } else if let n = botting, let r = s.rooms.first(where: { $0.name == n }) {
+                botting = nil
+                act("room", r.id)
             }
             if opening == nil, let v = viewing, let t = s.thread, !t.viewer.choices.isEmpty {
                 viewing = nil

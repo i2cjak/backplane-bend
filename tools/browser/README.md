@@ -1,20 +1,31 @@
 # backplane-browser
 
 A headless Chromium that Backplane drives, both for the agents' `preview_*`
-MCP tools and for the native preview panel. It is a thin Bun host adapter
-over `playwright-core`: it runs requests and publishes frames. Product
-logic (which tab, when to show it, how to map panel clicks) stays in Bend.
+MCP tools and for the native preview panel, and one page per bot. It is a
+thin Bun host adapter over `playwright-core`: it runs requests and
+publishes frames. Product logic (which tab, when to show it, how to map
+panel clicks) stays in Bend.
 
 ```sh
 scripts/build-browser.sh              # -> dist/backplane-browser (bun --compile)
-dist/backplane-browser --frames /tmp/bp-preview.rgb
+dist/backplane-browser --frames /tmp/bp-preview.rgb --profile ~/.x/browser-profile --jpeg-dir ~/.x/shots
 bun tools/browser/test/smoke.ts [URL] # end-to-end check (src/main.ts, or $BACKPLANE_BROWSER)
+bun tools/browser/test/pages.ts       # pages per owner, the new ops, profile persistence
 ```
 
-Flags: `--frames FILE` (frame file path; default
-`$TMPDIR/backplane-browser-<pid>.rgb`, removed on exit), `--chromium PATH`,
-`--headed` (debugging). `BACKPLANE_BROWSER_DEBUG=1` logs frame timings to
-stderr.
+Flags:
+
+- `--frames FILE`: the shared page's raw frame file (default
+  `$TMPDIR/backplane-browser-<pid>.rgb`, removed on exit).
+- `--profile DIR`: the Chrome profile (cookies, logins, local storage). All
+  pages live in one persistent context on this directory, so a login made
+  on any page holds on every page and across restarts. Without it the
+  profile is a temporary directory, gone on exit. The hub passes
+  `<home>/browser-profile`. One Chrome at a time can use a profile.
+- `--jpeg-dir DIR`: write every page's frames as JPEG (below).
+- `--jpeg-fps N`: at most N JPEG writes a second per page (default 4, 1..30).
+- `--chromium PATH`, `--headed` (debugging). `BACKPLANE_BROWSER_DEBUG=1`
+  logs frame timings to stderr.
 
 ## Chrome
 
@@ -42,17 +53,31 @@ written to stdout; diagnostics go to stderr.
 
 ```
 -> {"id": 1, "op": "open", "url": "example.com", "width": 700, "height": 800}
+-> {"id": 2, "op": "open", "page": "bot-7", "url": "news.ycombinator.com"}
 <- {"id": 1, "ok": true, "result": {...}}
-<- {"id": 2, "ok": false, "error": "locator.click: Timeout 15000ms exceeded."}
+<- {"id": 3, "ok": false, "error": "locator.click: Timeout 15000ms exceeded."}
 <- {"event": "frame", "w": 700, "h": 800, "seq": 3, "path": "/tmp/bp-preview.rgb"}
+<- {"event": "frame", "page": "bot-7", "n": 12, "path": "/x/shots/bot-7.jpg"}
 ```
+
+- `page` names the owner the request acts for (a bot id). Absent or `""`
+  is the shared page every agent drives, exactly as before pages existed.
+  Each owner's page is made on its first request, in the one persistent
+  context. Only a top-level `page` counts; a `page` inside `args` is
+  ignored, so tool arguments passed through cannot reach another owner.
+- Each owner has its own tabs (its page, plus the popups it opens:
+  `window.open` and `target=_blank` join the opener's tabs and become the
+  active one), viewport, console log and JPEG frames. Every op below acts
+  on the owner's active tab.
 
 - `op` names the request. Arguments sit beside it (or inside `"args": {}`).
 - `id` is echoed back as given (any JSON value). Requests run concurrently,
   so replies may come out of order; match them by `id`.
 - `error` is one line. An unparseable line answers `{"id": null, "ok": false,
   "error": "bad JSON"}`; an unknown op answers `unknown op: X`.
-- EOF on stdin, SIGTERM, or `close` shuts the browser down and exits.
+- EOF on stdin, SIGTERM, or `close` without `page` shuts the browser down
+  and exits. (Backplane's Bend side always sends `page`, so an agent's
+  `close` closes only its page.)
 - `timeoutMs` (where accepted) defaults to 15000 and is capped at 60000.
 - URLs: absolute URLs (`https:`, `http:`, `file:`, `data:`, `about:`) pass
   through; a schemeless host gets `https://`, a loopback host
@@ -65,7 +90,7 @@ written to stdout; diagnostics go to stderr.
 | op | arguments | result |
 |---|---|---|
 | `status` | | Status |
-| `open` | `url?`, `width?`, `height?`, `timeoutMs?` | Status. Launches Chromium and the page if needed, sets the viewport, navigates (waits for `load`) when `url` is given. Default viewport 1280x800. |
+| `open` | `url?`, `width?`, `height?`, `timeoutMs?` | Status. Launches Chromium and the owner's page if needed, sets the owner's viewport, navigates (waits for `load`) when `url` is given. Default viewport 1280x800. |
 | `navigate` | `url`, `readiness?` (`"load"` default, `"domContentLoaded"`, `"none"`), `timeoutMs?` | Status |
 | `back`, `forward`, `reload` | `timeoutMs?` | Status |
 | `resize` | `width`, `height` (1..4096) | Status. With frames on, a fresh frame follows. |
@@ -77,9 +102,20 @@ written to stdout; diagnostics go to stderr.
 | `snapshot` | `screenshot?` (bool), `timeoutMs?` | Snapshot |
 | `evaluate` | `expression`, `awaitPromise?` (default true) | the value, JSON-serialised by Playwright. Over 64 KB: `{"truncated": true, "json": "<first 64000 chars>"}` |
 | `wait_for` | any of: a target (visible), `text` (substring of `document.body.innerText`), `url` (alias `urlIncludes`; substring of `location.href`); `timeoutMs?` | `{}` once all hold, else an error |
-| `frames` | `on` (bool), `maxFps?` (1..60, default 15) | `{on, maxFps, seq, path}`. Turning on publishes a frame at once. |
-| `frame` | | the frame event it published (always published, even if unchanged) |
-| `close` | | `{}`, then the helper exits |
+| `text` | a target?, `max?` (default 20000, up to 200000), `timeoutMs?` | `{url, title, text, length, truncated}`. The page's readable text: its `main`/`article` when that holds most of it, else the body (or the target's text); blank runs squeezed, cut to `max`. |
+| `select` | a target (a `<select>`), and `value`, `values` (list), `label` or `index` | `{selected: [values]}` |
+| `upload` | `path` or `paths`, a target? (default: the first `input[type=file]`) | `{files}`. A file input gets the files; any other target is clicked and the file chooser it opens gets them. |
+| `download` | `dir`, and a target to click or a `url`; `timeoutMs?` (default 30000) | `{path, url, suggestedFilename, bytes}`. Waits for the download and saves it in `dir` (made if missing) under its suggested name, `name (1).ext` if taken. |
+| `screenshot` | `path`, `fullPage?` (default true), a target? | `{path, bytes}`. PNG, JPEG when `path` ends in `.jpg`/`.jpeg`. |
+| `pdf` | `path` | `{path, bytes}`. Headless only. |
+| `cookies_clear` | `domain?` | `{}`. Clears cookies for every page (one profile). |
+| `tabs` | none, or `new` (`true` or a URL), `select` (index), `close` (index) | `{page, active, tabs: [{index, url, title, active}]}` after the change. |
+| `pages` | | `{pages: [{page, url, title, tabs, shot, n}]}`: every owner with an open tab. |
+| `frames` | `on` (bool), `maxFps?` (1..60, default 15) | `{on, maxFps, seq, path}`. Turning on publishes a frame at once. Shared page only. |
+| `frame` | | the frame event it published (always published, even if unchanged). Shared page only. |
+| `close` | with `page`: | `{}`. Closes that owner's tabs and removes its JPEG; the helper keeps running, and the owner's next request opens a fresh page. |
+| `close` | without `page` | `{}`, then the helper exits |
+| `close_page` | | the same as `close` with `page` (default the shared page) |
 
 A target is one of:
 
@@ -93,10 +129,14 @@ A locator or selector acts on its first match.
 Status:
 
 ```json
-{"version": "1", "open": true, "chromium": "/path/to/chrome", "url": "https://example.com/",
- "title": "Example Domain", "loading": false, "width": 700, "height": 800,
- "frames": {"on": true, "maxFps": 15, "seq": 3, "path": "/tmp/bp-preview.rgb"}}
+{"version": "2", "page": "", "open": true, "chromium": "/path/to/chrome", "profile": "/x/browser-profile",
+ "url": "https://example.com/", "title": "Example Domain", "loading": false, "width": 700, "height": 800,
+ "tabs": 1, "frames": {"on": true, "maxFps": 15, "seq": 3, "path": "/tmp/bp-preview.rgb"},
+ "shot": {"path": "/x/shots/shared.jpg", "n": 5, "maxFps": 4}}
 ```
+
+`frames` is always the shared page's raw frames; `shot` is the owner's
+JPEG (null without `--jpeg-dir`).
 
 Snapshot:
 
@@ -121,10 +161,11 @@ only when asked for.
 
 | event | fields | when |
 |---|---|---|
-| `ready` | `version`, `frames` (the frame file path) | once, at start |
-| `frame` | `w`, `h`, `seq`, `path` | a new frame file is in place |
-| `navigated` | `url` | the main frame committed a navigation |
-| `load` | `url` | the page fired `load` |
+| `ready` | `version`, `frames` (the frame file path), `profile`, `jpegDir` | once, at start |
+| `frame` | `w`, `h`, `seq`, `path` (no `page`) | a new raw frame file of the shared page is in place |
+| `frame` | `page`, `n`, `path` | a new JPEG of that owner's page is in place (with `--jpeg-dir`) |
+| `navigated` | `page`, `url` | an owner's active tab committed a navigation |
+| `load` | `page`, `url` | an owner's active tab fired `load` |
 | `closed` | | Chromium went away (crash or close); the next request relaunches it |
 
 ## Frames
@@ -172,6 +213,24 @@ r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 100
 
 A 700x800 frame is 1,680,016 bytes. The helper's decode and write take
 about 5-20 ms a frame.
+
+## JPEG frames
+
+With `--jpeg-dir DIR`, every owner's active tab runs its own screencast
+(`Page.startScreencast`, JPEG, quality 70, at most 1280 wide), which Chrome
+pushes only when the page repaints. The newest frame is written to
+`DIR/<owner>.jpg` via `DIR/<owner>.jpg.tmp` and a rename, at most
+`--jpeg-fps` times a second (a frame arriving early waits for its slot;
+older ones are dropped; a frame identical to the last is skipped), and
+announced with `{"event":"frame","page":<owner>,"n":<seq>,"path":...}`.
+`n` counts that owner's writes from 1 in this helper run.
+
+The file name is the owner mapped to `[A-Za-z0-9_-]` (every other
+character becomes `_`); `""` is `shared`. Distinct owners that map to the
+same name share a file, so owners should already be safe names (bot ids
+are). Switching tabs moves the screencast to the new active tab. The
+shared page has both: raw RGB for the native window and JPEG for web and
+phone clients (two screencasts on one page, one per CDP session).
 
 ## Choices
 

@@ -1,4 +1,6 @@
 import Base
+import ./src/core/bot.bend as BOT
+import ./src/core/botui.bend as BU
 import ./LAWS.bend as Laws
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
@@ -35,12 +37,17 @@ import ./src/gfx/face.bend as FA
 import ./src/core/glb.bend as G
 import ./src/mobile/picker.bend as MP
 import ./src/mobile/hubs.bend as Hb
+import ./src/core/space.bend as SPC
 import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
 import ./src/core/hier.bend as HI
 
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
+import ./src/core/sign.bend as SG
+import ./src/core/cron.bend as CR
+import ./src/core/google.bend as GO
+import ./src/core/cat.bend as CAT
 
 # Lemmas
 # ------
@@ -840,7 +847,7 @@ def Laws.device_drop_never_sent(tok, at):
 
 def Laws.device_blank_ignored(s, p, k, th, e, b, at):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.device_register_once(tok, h, p, k, th, e, b, at, p2, k2, th2, e2, b2, at2):
@@ -3836,12 +3843,12 @@ def Laws.tl_memos_bounded(m, ms):
 
 def Laws.window_state_private(s):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.window_state_seq(s):
   match s:
-    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv}:
+    case M.State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
       {==}
 
 def Laws.window_adopt(u, st):
@@ -3950,4 +3957,226 @@ def Laws.view_key_shift_z_in():
   {==}
 
 def Laws.view_key_other_none():
+  {==}
+
+def Laws.sign_stale_rejected(secret, now, ts, body, sig, h):
+  %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.check.k(_, secret, ts, body, sig) == False{} : Bool}
+  {==}
+
+def Laws.sign_window_300():
+  {==}
+
+def Laws.seen_add_has(s, k, now):
+  match s:
+    case SG.Seen{items}:
+      %Equal.sym(Bool, String.eq(k, k), True{}, Laws.string_eq_refl(k)) : {Bool.or(_, SG.Seen.any(SG.Seen.prune(items, now), k)) == True{} : Bool}
+      {==}
+
+def Laws.invite_roundtrip():
+  {==}
+
+# Routine schedules
+# -----------------
+
+law cron_guard_ok:
+  for +a: Nat
+  for b: Bool
+  for x: Nat
+  for h: {Nat.is_gt(x, a) == b : Bool}
+  {CR.Cron.ok(a, CR.Cron.guard.k(b, x)) == True{} : Bool}
+
+def cron_guard_ok(a, b, x, h):
+  match b:
+    case True{}:
+      match x:
+        case 0n:
+          {==}
+        case 1n+k:
+          h
+    case False{}:
+      {==}
+
+def Laws.cron_next_after(c, after, off, east):
+  cron_guard_ok(after, Nat.is_gt(CR.Cron.raw(c, after, off, east), after), CR.Cron.raw(c, after, off, east), {==})
+
+def Laws.cron_due_fires_once(c, now, off, east):
+  %Equal.sym(Cmp, Nat.cmp(now, now), EQ{}, nat_cmp_refl(now)) : {CR.Cron.due.k(_, CR.Cron.next(c, now, off, east), now) == False{} : Bool}
+  {==}
+# Bot spaces
+# ----------
+
+# taking n blocks leaves at most n
+law take_le:
+  for xs: List<&2, SPC.Block>
+  for n: Nat
+  {Nat.is_le(List.length(&2, SPC.Block, List.take(&2, SPC.Block, xs, n)), n) == True{} : Bool}
+
+def take_le(xs, n):
+  match xs n:
+    case Nil{} 0n:
+      {==}
+    case Nil{} 1n+p:
+      {==}
+    case h <> t 0n:
+      {==}
+    case h <> t 1n+p:
+      take_le(t, p)
+
+law starts_with_empty:
+  for s: String
+  {String.starts_with(s, "") == True{} : Bool}
+
+def starts_with_empty(s):
+  match s:
+    case SNil{}:
+      {==}
+    case SCon{h, t}:
+      {==}
+
+def Laws.space_caps(j):
+  take_le(SPC.Sp.all(j), 200n)
+
+def Laws.space_progress_max(p):
+  min_le_k(Nat.is_le(p, 1000n), p, 1000n, {==})
+
+def Laws.space_message_prefix(action, value):
+  starts_with_empty(SPC.Sp.msg.k(String.is_empty(value), action, value))
+# Google laws
+# -----------
+
+def Laws.google_scopes_nonempty():
+  {==}
+
+def Laws.google_b64url_roundtrip_example():
+  {==}
+
+def Laws.google_code_of_example():
+  {==}
+
+def Laws.google_denied_no_code():
+  {==}
+
+def Laws.google_header_no_newline_example():
+  {==}
+
+def Laws.google_send_asks():
+  {==}
+
+def Laws.google_create_asks():
+  {==}
+
+def google_add60_gt(n: Nat) -> {GT{} == Nat.cmp(Nat.add(n, 60n), n) : Cmp}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      google_add60_gt(p)
+
+def Laws.google_expiring_not_fresh(now):
+  %google_add60_gt(now) : {Cmp.is_lt(_) == False{} : Bool}
+  {==}
+
+# Bots
+# ----
+
+def Laws.bot_hop_step(ok, n, h):
+  match ok:
+    case True{}:
+      h
+    case False{}:
+      {==}
+
+def Laws.bot_hop_bounded(h):
+  Laws.bot_hop_step(Nat.is_le(1n+h, BOT.Hop.max()), 1n+h, {==})
+
+def Laws.bot_mood_wait(talked, idle):
+  {==}
+
+def Laws.bot_mood_input(talked, idle):
+  {==}
+
+def Laws.bot_mood_sleep_still():
+  {==}
+
+def Laws.bot_mood_rest(talked):
+  {==}
+# Cats
+# ----
+
+def Laws.cat_sleep_still():
+  {==}
+
+def Laws.cat_error_still():
+  {==}
+
+def Laws.cat_away_still():
+  {==}
+
+# a greyed rig carries no animation
+law cat_grey_still:
+  for ps: List<&2, CAT.Part>
+  {CAT.Cat.anims.count(CAT.Cat.grey.all(ps)) == 0n : Nat}
+
+def cat_grey_still(ps):
+  match ps:
+    case Nil{}:
+      {==}
+    case CAT.Part{n, d, f, l, w, a, as} <> t:
+      cat_grey_still(t)
+
+def Laws.cat_away_holds_still(look):
+  cat_grey_still(CAT.Cat.rig.k(CAT.Cat.look(look), 7))
+
+def Laws.cat_moods_known():
+  {==}
+
+law cat_add_zero:
+  for r: Nat
+  {Nat.add(r, 0n) == r : Nat}
+
+def cat_add_zero(r):
+  match r:
+    case 0n:
+      {==}
+    case 1n+p:
+      %cat_add_zero(p) : {1n+Nat.add(p, 0n) == 1n+_ : Nat}
+      {==}
+
+law cat_lt_succ_add:
+  for r: Nat
+  for -m: Nat
+  {Nat.is_lt(r, 1n+Nat.add(r, m)) == True{} : Bool}
+
+def cat_lt_succ_add(r, m):
+  match r:
+    case 0n:
+      {==}
+    case 1n+p:
+      cat_lt_succ_add(p, m)
+
+# Nat.divmod's loop keeps r + m = b - 1, so the remainder stays below b
+law cat_mod_lt:
+  for n: Nat
+  for +m: Nat
+  for -d: Nat
+  for +r: Nat
+  for -bp: Nat
+  for e: {Nat.add(r, m) == bp : Nat}
+  {Nat.is_lt(Nat.mod.fin(Nat.divmod.go(n, m, d, r)), 1n+bp) == True{} : Bool}
+
+def cat_mod_lt(n, m, d, r, bp, e):
+  match n m:
+    case 0n _:
+      %e : {Nat.is_lt(r, 1n+_) == True{} : Bool}
+      cat_lt_succ_add(r, m)
+    case 1n+np 0n:
+      cat_mod_lt(np, r, 1n+d, 0n, bp, Equal.trans(Nat, r, Nat.add(r, 0n), bp, Equal.sym(Nat, Nat.add(r, 0n), r, cat_add_zero(r)), e))
+    case 1n+np 1n+mp:
+      cat_mod_lt(np, mp, d, 1n+r, bp, Equal.trans(Nat, 1n+Nat.add(r, mp), Nat.add(r, 1n+mp), bp, Equal.sym(Nat, Nat.add(r, 1n+mp), 1n+Nat.add(r, mp), add_succ_r(r, mp)), e))
+
+def Laws.cat_look_total(s):
+  cat_mod_lt(s, 71n, 0n, 0n, 71n, {==})
+
+def Laws.index_stale_rejected(secret, now, ts, delivery, trigger, test, body, sig, h):
+  %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.index.k(_, secret, ts, delivery, trigger, test, body, sig) == False{} : Bool}
   {==}

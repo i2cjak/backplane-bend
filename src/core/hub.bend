@@ -38,6 +38,9 @@ type Out is Data:
   # what a piece a phone tapped is: the info of piece idx of the chunk at
   # `at` of the plot key it holds (the plot actor answers)
   PlotInfo{client: U32, id: String, key: String, at: Nat, idx: Nat}
+  # a bot effect the server runs with IO or secrets (bothub.bend): kind
+  # home, gone, hook, unhook, send, invite, join, unpeer, google
+  BotFx{kind: String, a: String, b: String, c: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
@@ -69,7 +72,7 @@ def Hub.id(prefix: String, +now: Nat, +seq: Nat) -> String:
 
 def Hub.seq(s: M.State) -> Nat:
   match s:
-    case M.State{_, _, _, n, _, _, _, _, _, _}:
+    case M.State{_, _, _, n, _, _, _, _, _, _, _}:
       n
 
 def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
@@ -81,7 +84,7 @@ def Hub.thread.k(r: Map<&2, M.Thread> & M.Thread) -> M.Thread:
 
 def Hub.thread(s: M.State, +id: String) -> M.Thread:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
       Hub.thread.k(Map.get(M.Thread, M.Thread.blank(id), ts, id))
 
 def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
@@ -90,7 +93,7 @@ def Hub.project.k(r: Map<&2, M.Project> & M.Project) -> M.Project:
 
 def Hub.project(s: M.State, +id: String) -> M.Project:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Hub.project.k(Map.get(M.Project, M.Project.blank(id), ps, id))
 
 # the base name of a path, for a default project title
@@ -202,7 +205,7 @@ def Hub.has_msg(es: List<&2, M.Entry>, +id: String) -> Bool:
 
 def Hub.entries(s: M.State) -> List<&2, M.Entry>:
   match s:
-    case M.State{_, _, es, _, _, _, _, _, _, _}:
+    case M.State{_, _, es, _, _, _, _, _, _, _, _}:
       es
 
 # a thread works in its own worktree unless asked for the project folder
@@ -263,7 +266,7 @@ def Hub.has_root(ps: List<&2, M.Project>, +root: String) -> Bool:
 
 def Hub.projects(s: M.State) -> List<&2, M.Project>:
   match s:
-    case M.State{ps, _, _, _, _, _, _, _, _, _}:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Project, ps)
 
 def Hub.project_add.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:
@@ -1625,7 +1628,7 @@ def Task.of_child.k(+ts: List<&2, M.Task>, +child: String) -> Maybe<&2, M.Task>:
 # the task a child thread is working on, if any
 def Task.of_child(s: M.State, +child: String) -> Maybe<&2, M.Task>:
   match s:
-    case M.State{_, _, _, _, tk, _, _, _, _, _}:
+    case M.State{_, _, _, _, tk, _, _, _, _, _, _}:
       Task.of_child.k(Map.values(&2, M.Task, tk), child)
 
 def Task.depth.k(m: Maybe<&2, M.Task>) -> Nat:
@@ -1665,7 +1668,7 @@ def Task.last.go(es: List<&2, M.Entry>, hit: Bool, +th: String) -> String:
 
 def Task.last(s: M.State, +th: String) -> String:
   match s:
-    case M.State{_, _, +es, _, _, _, _, _, _, _}:
+    case M.State{_, _, +es, _, _, _, _, _, _, _, _}:
       Task.last.go(es, Task.last.hit(es, th), th)
 
 # the turn outcome a step reports for a thread, if it ended one
@@ -1792,7 +1795,7 @@ def Drop.asks(ts: List<&2, M.Thread>, +s: M.State, +now: Nat, +w: Nat) -> List<&
 # stranded worktree waits run
 def Hub.tick(+s: M.State, +now: Nat) -> Step:
   match s:
-    case M.State{ps, +ts, _, _, +tk, _, _, _, _, _}:
+    case M.State{ps, +ts, _, _, +tk, _, _, _, _, _, _}:
       Step.before(Hub.settle.go(Map.values(&2, M.Thread, ts), M.State.navs(s), Map.values(&2, M.Task, tk), now, Hub.settle.window(s)),
         List.append(&2, Out, Merge.asks(Map.values(&2, M.Project, ps), Map.values(&2, M.Thread, ts), s), Drop.asks(Map.values(&2, M.Thread, ts), s, now, Hub.wt.window(s))),
         Wt.stale(Map.values(&2, M.Thread, ts), s, now))
@@ -1905,7 +1908,7 @@ def Rec.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
 
 def Rec.threads(s: M.State) -> List<&2, M.Thread>:
   match s:
-    case M.State{_, ts, _, _, _, _, _, _, _, _}:
+    case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Thread, ts)
 
 def Rec.step(r: Rec) -> Step:

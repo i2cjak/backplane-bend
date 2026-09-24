@@ -20,6 +20,8 @@ type WinEv is Data:
   WDrop{text: String}
   # the window lost the keyboard (keys held then are let go unseen)
   WBlur{}
+  # the window has the keyboard again
+  WFocus{}
 
 def Win.open(title: String, w: U32, h: U32) -> IO(Result<&1, &1, U32 & String, Window>):
   import "./effects/win.c"
@@ -91,6 +93,8 @@ def Win.ev.k(k: Nat, +a: U32, +b: U32, +c: U32, +d: U32) -> WinEv:
       WDrop{""}
     case 11n:
       WBlur{}
+    case 12n:
+      WFocus{}
     case _:
       WQuit{}
 

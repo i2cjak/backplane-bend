@@ -30,6 +30,8 @@ import ../gfx/bitmap.bend as BM
 import ../gfx/tiles.bend as TI
 import ../core/lightbox.bend as LBX
 import ../core/model.bend as M
+import ./bots.bend as BV
+import ./cats.bend as CA
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -59,10 +61,11 @@ type ShellMsg is Data:
 type Tie is Data:
   Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat, pics: Map<&2, BM.Bitmap>, asked: Map<&2, Bool>}
 
-# what one frame keeps for the next: its tiles and the timeline's memos
-# (the open thread's first, then the threads shown before it)
+# what one frame keeps for the next: its tiles, the timeline's memos
+# (the open thread's first, then the threads shown before it) and the
+# bots' cats, flattened once per look and mood
 type Kept is Data:
-  Kept{frames: TI.Frames, memos: List<&2, L.TLMemo>}
+  Kept{frames: TI.Frames, memos: List<&2, L.TLMemo>, cats: Map<&2, CA.CatF>}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -175,6 +178,24 @@ def Shell.blink.k(go: Bool, +n: N.Nui, +q: Chan(ShellMsg), +wait: Nat, +ms: Nat)
     case False{}:
       IO.pure(N.Nui, n)
 
+# Cats move at about 30 frames a second, and only while one on show moves
+# and the window has the keys: each frame asks for the next, unless one
+# is already due (a sleeping, failed or absent cat never asks)
+def Cats.gap() -> Nat:
+  33n
+
+def Shell.cats.k(go: Bool, +n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
+  match go:
+    case True{}:
+      do IO<N.Nui>:
+        IO.spawn(Unit, Timer.blink(q, Cats.gap()))
+        return N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "cat.due", Nat.show(Nat.add(ms, Cats.gap()))))
+    case False{}:
+      IO.pure(N.Nui, n)
+
+def Shell.cats(+n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
+  Shell.cats.k(Bool.and(BV.Bv.moving(n), Nat.is_le(Maybe.default(&2, Nat, Nat.read(U.Ui.info(N.Nui.ui(n), "cat.due")), 0n), ms)), n, q, ms)
+
 def Shell.blink(+n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
   Shell.blink.k(Bool.and(Nat.is_gt(N.Blink.wait(n, ms), 0n), Nat.is_le(Maybe.default(&2, Nat, Nat.read(U.Ui.info(N.Nui.ui(n), "caret.due")), 0n), ms)),
     n, q, N.Blink.wait(n, ms), ms)
@@ -226,14 +247,33 @@ def Pics.sent(r: Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, +q: Ch
 def Pics.full(+key: String) -> Bool:
   String.starts_with(key, "full:")
 
+# "shot:<bot>:<n>": frame n of a bot's browser page, a JPEG the hub keeps
+# at <home>/shots/<bot>.jpg (GET /bots/<bot>/screen.jpg on another machine)
+def Shot.is(+key: String) -> Bool:
+  String.starts_with(key, "shot:")
+
+def Shot.bot(+key: String) -> String:
+  Maybe.default(&2, String, List.get(&2, String, String.split(key, ':'), 1n), "")
+
+# this hub's home (where the drafts live, one level up)
+def Shot.home(+n: N.Nui) -> String:
+  +d = U.Ui.info(N.Nui.ui(n), "local.drafts")
+  Bool.pick(String, String.ends_with(d, "/drafts"), String.take(d, Nat.sub(String.length(d), 7n)), d)
+
+def Shot.file(+home: String, +key: String) -> String:
+  home ++ "/shots/" ++ Shot.bot(key) ++ ".jpg"
+
+def Shot.url(+key: String) -> String:
+  "/bots/" ++ Shot.bot(key) ++ "/screen.jpg"
+
 def Pics.src(+key: String) -> String:
   Bool.pick(String, Pics.full(key), String.drop(key, 5n), key)
 
 def Pics.maxw.of(+key: String) -> U32:
-  Bool.pick(U32, Pics.full(key), 1600, Pics.maxw())
+  Bool.pick(U32, Bool.or(Pics.full(key), Shot.is(key)), 1600, Pics.maxw())
 
 def Pics.maxh.of(+key: String) -> U32:
-  Bool.pick(U32, Pics.full(key), 1000, Pics.maxh())
+  Bool.pick(U32, Bool.or(Pics.full(key), Shot.is(key)), 1000, Pics.maxh())
 
 def Pics.decode(+file: String, +q: Chan(ShellMsg), +tag: String, +path: String) -> IO(Unit):
   IO.bind(Result<&1, &1, U32 & String, U32 & U32 & List<&2, U32>>, Unit, IF.Imgfx.decode(file, Pics.maxw.of(path), Pics.maxh.of(path)), r => Pics.sent(r, q, tag, path))
@@ -250,13 +290,21 @@ def Pics.fetched(r: P.Ran, +q: Chan(ShellMsg), +tag: String, +path: String) -> I
         ok : Bool <- Chan.send(ShellMsg, q, PicErr{tag, path, "that machine did not send it"})
         return Unit{}
 
+# the file an image key names on this machine
+def Pics.file(+src: String, +home: String, +bp: String) -> String:
+  Bool.pick(String, Shot.is(src), Shot.file(bp, src), Bool.pick(String, String.starts_with(src, "~/"), home ++ String.drop(src, 1n), src))
+
+# where another machine's hub serves an image key
+def Pics.route(+src: String) -> String:
+  Bool.pick(String, Shot.is(src), Shot.url(src), IM.Img.url(src))
+
 # an image on this machine is read here; another machine's hub sends it
-def Pics.load(local: Bool, +path: String, +url: String, +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+def Pics.load(local: Bool, +path: String, +url: String, +q: Chan(ShellMsg), +tag: String, +bp: String) -> IO(Unit):
   match local:
     case True{}:
-      IO.bind(String, Unit, S.Env.get("HOME", ""), home => Pics.decode(Bool.pick(String, String.starts_with(Pics.src(path), "~/"), home ++ String.drop(Pics.src(path), 1n), Pics.src(path)), q, tag, path))
+      IO.bind(String, Unit, S.Env.get("HOME", ""), home => Pics.decode(Pics.file(Pics.src(path), home, bp), q, tag, path))
     case False{}:
-      IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "f=$(mktemp) && curl -sf -m 30 -o \"$f\" \"$1\" && echo \"$f\"", "sh", url ++ IM.Img.url(Pics.src(path))], "/"),
+      IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", "f=$(mktemp) && curl -sf -m 30 -o \"$f\" \"$1\" && echo \"$f\"", "sh", url ++ Pics.route(Pics.src(path))], "/"),
         r => Pics.fetched(r, q, tag, path))
 
 def Pics.new.k(fresh: Bool, +v: String, rest: List<&2, String>) -> List<&2, String>:
@@ -280,14 +328,14 @@ def Pics.mark(ps: List<&2, String>, asked: Map<&2, Bool>) -> Map<&2, Bool>:
     case p <> t:
       Pics.mark(t, Map.set(&2, Bool, asked, p, True{}))
 
-def Pics.spawn(ps: List<&2, String>, +url: String, +q: Chan(ShellMsg), +tag: String) -> IO(Unit):
+def Pics.spawn(ps: List<&2, String>, +url: String, +q: Chan(ShellMsg), +tag: String, +bp: String) -> IO(Unit):
   match ps:
     case Nil{}:
       IO.pure(Unit, Unit{})
     case +p <> t:
       do IO<Unit>:
-        IO.spawn(Unit, Pics.load(String.is_empty(url), p, url, q, tag))
-        Pics.spawn(t, url, q, tag)
+        IO.spawn(Unit, Pics.load(String.is_empty(url), p, url, q, tag, bp))
+        Pics.spawn(t, url, q, tag, bp)
 
 def Pics.keep(m: Maybe<&2, BM.Bitmap>, ps: Map<&2, BM.Bitmap>, +path: String) -> Map<&2, BM.Bitmap>:
   match m:
@@ -296,10 +344,45 @@ def Pics.keep(m: Maybe<&2, BM.Bitmap>, ps: Map<&2, BM.Bitmap>, +path: String) ->
     case None{}:
       ps
 
+# a bot's older browser frames leave when a newer one arrives
+def Shot.drop.k(hit: Bool, ps: Map<&2, BM.Bitmap>, +k: String) -> Map<&2, BM.Bitmap>:
+  match hit:
+    case True{}:
+      Map.del(&2, BM.Bitmap, ps, k)
+    case False{}:
+      ps
+
+def Shot.drop(ks: List<&2, String>, +pre: String, ps: Map<&2, BM.Bitmap>) -> Map<&2, BM.Bitmap>:
+  match ks:
+    case Nil{}:
+      ps
+    case +k <> t:
+      Shot.drop(t, pre, Shot.drop.k(String.starts_with(k, pre), ps, k))
+
+def Shot.keep(ok: Bool, m: Maybe<&2, BM.Bitmap>, +ps: Map<&2, BM.Bitmap>, +path: String) -> Map<&2, BM.Bitmap>:
+  match ok:
+    case True{}:
+      Pics.keep(m, Shot.drop(Map.keys(&2, BM.Bitmap, ps), "shot:" ++ Shot.bot(path) ++ ":", ps), path)
+    case False{}:
+      Pics.keep(m, ps, path)
+
+# the frame on show for a bot is the newest one loaded
+def Shot.note(+u: U.Ui, +path: String, +note: String) -> U.Ui:
+  Bool.pick(U.Ui, Bool.and(Shot.is(path), Bool.not(String.starts_with(note, "err:"))), U.Ui.info_set(u, "shot.ok." ++ Shot.bot(path), path), u)
+
+# a loaded bot frame (not an error)
+def Shot.ok(+path: String, +note: String) -> Bool:
+  Bool.and(Shot.is(path), Bool.not(String.starts_with(note, "err:")))
+
+# the client notes an image's size (or why it failed)
+def Pics.noted(u: U.Ui, +path: String, +note: String) -> U.Ui:
+  Shot.note(U.Ui.info_set(u, "img:" ++ path, note), path, note)
+
 def Pics.store(a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
   match a:
     case Shell{+n, w, _, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, ps, ak}, fr}}:
-      Shell.later(Shell{N.Nui.with_ui(n, U.Ui.info_set(N.Nui.ui(n), "img:" ++ path, note)), w, True{}, qd, q, i, Aux{ws, ty, Tie{home, url, tag, k, Pics.keep(m, ps, path), ak}, fr}})
+      Shell.later(Shell{N.Nui.with_ui(n, Pics.noted(N.Nui.ui(n), path, note)), w, True{}, qd, q, i,
+        Aux{ws, ty, Tie{home, url, tag, k, Shot.keep(Shot.ok(path, note), m, ps, path), ak}, fr}})
 
 # an image loaded (or failed) for this connection: keep it and redraw
 def Pics.got(current: Bool, a: Shell, +path: String, +note: String, m: Maybe<&2, BM.Bitmap>) -> IO(Shell):
@@ -324,11 +407,11 @@ def Pics.uniq(ps: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
       Pics.uniq(t, Bool.pick(List<&2, String>, Pics.had(acc, p), acc, p <> acc))
 
 # images the frame shows that were never asked for start loading
-def Pics.ask(+hs: List<&2, N.Hit>, wa: Aux, +q: Chan(ShellMsg)) -> IO(Aux):
+def Pics.ask(+hs: List<&2, N.Hit>, wa: Aux, +q: Chan(ShellMsg), +bp: String) -> IO(Aux):
   match wa:
     case Aux{ws, ty, Tie{home, +url, +tag, n, ps, +ak}, fr}:
       +fresh = Pics.uniq(Pics.new(hs, ak), Nil{})
-      IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}, fr}))
+      IO.bind(Unit, Aux, Pics.spawn(fresh, url, q, tag, bp), u => IO.pure(Aux, Aux{ws, ty, Tie{home, url, tag, n, ps, Pics.mark(fresh, ak)}, fr}))
 
 # no caret blinks under the lightbox (nothing else asks for frames then)
 def Lbv.blink(on: Bool, +n: N.Nui, +q: Chan(ShellMsg), +ms: Nat) -> IO(N.Nui):
@@ -350,8 +433,9 @@ def Shell.shown(r: Window & Image, +n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg
   (w, img) = r
   do IO<Shell>:
     Unit <- IO.pure(Unit, Image.drop!(img))
-    +n2 : N.Nui <- Lbv.blink(N.Lbx.on(n), n, q, ms)
-    wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q)
+    +n1 : N.Nui <- Lbv.blink(N.Lbx.on(n), n, q, ms)
+    +n2 : N.Nui <- Shell.cats(n1, q, ms)
+    wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q, "")
     Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa2})
 
 def Pics.found(r: Map<&2, BM.Bitmap> & BM.Bitmap) -> BM.Bitmap:
@@ -1305,23 +1389,33 @@ def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
-    case Aux{_, _, _, Kept{f, _}}:
+    case Aux{_, _, _, Kept{f, _, _}}:
       f
 
 def Aux.memos(a: Aux) -> List<&2, L.TLMemo>:
   match a:
-    case Aux{_, _, _, Kept{_, m}}:
+    case Aux{_, _, _, Kept{_, m, _}}:
       m
 
 def Aux.with_frames(a: Aux, f: TI.Frames) -> Aux:
   match a:
-    case Aux{ws, ty, ti, Kept{_, m}}:
-      Aux{ws, ty, ti, Kept{f, m}}
+    case Aux{ws, ty, ti, Kept{_, m, cs}}:
+      Aux{ws, ty, ti, Kept{f, m, cs}}
 
 def Aux.with_memos(a: Aux, m: List<&2, L.TLMemo>) -> Aux:
   match a:
-    case Aux{ws, ty, ti, Kept{f, _}}:
-      Aux{ws, ty, ti, Kept{f, m}}
+    case Aux{ws, ty, ti, Kept{f, _, cs}}:
+      Aux{ws, ty, ti, Kept{f, m, cs}}
+
+def Aux.cats(a: Aux) -> Map<&2, CA.CatF>:
+  match a:
+    case Aux{_, _, _, Kept{_, _, cs}}:
+      cs
+
+def Aux.with_cats(a: Aux, cs: Map<&2, CA.CatF>) -> Aux:
+  match a:
+    case Aux{ws, ty, ti, Kept{f, m, _}}:
+      Aux{ws, ty, ti, Kept{f, m, cs}}
 
 # frames go on while a fade, a hover ease or a lightbox ease runs
 def Shell.anim(+n: N.Nui, +ms: Nat) -> Bool:
@@ -1387,8 +1481,12 @@ def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Ch
       Lbv.paint(N.Lbx.on(n), ops, hs, oh, n, w, q, i, wa, epoch, ms)
 
 # the timeline's memo is brought up to this frame first; layout draws from it
+# the cats the frame shows are posed into the cache first
+def Shell.paint.c(+cats: Map<&2, CA.CatF>, +memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+  Shell.paint.out(BV.Bv.frame(Aux.ty(wa), L.TL.memos.now(memos), cats, n), oh, n, w, q, i, Aux.with_cats(Aux.with_memos(wa, memos), cats), epoch, ms)
+
 def Shell.paint.m(+memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(L.Lay.frame(Aux.ty(wa), L.TL.memos.now(memos), n), oh, n, w, q, i, Aux.with_memos(wa, memos), epoch, ms)
+  Shell.paint.c(BV.Bv.warm(N.Nui.ui(n), Aux.cats(wa), BV.Bv.clock.of(n)), memos, oh, n, w, q, i, wa, epoch, ms)
 
 def Shell.paint.go(+oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   Shell.paint.m(L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa)), oh, n, w, q, i, wa, epoch, ms)
@@ -1399,8 +1497,16 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
       Shell.paint.go(oh, N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
         Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.flip(n0))}, w, q, i, wa, epoch, ms)
 
+# what a frame notes before it is laid out: the hover's and the caret's
+# starts, the lightbox's ease, the cats' clock
+def Shell.stamp.k(+n: N.Nui, +ms: Nat) -> N.Nui:
+  N.Lbx.stamp(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), ms)
+
+def Shell.stamp(+n: N.Nui, +ms: Nat) -> N.Nui:
+  BV.Bv.stamp(Shell.stamp.k(n, ms), ms)
+
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.k(N.Lbx.stamp(N.Blink.stamp(N.Hover.stamp(N.Nui.prepare(n), ms), ms), ms), w, q, i, wa, epoch, ms)
+  Shell.paint.k(Shell.stamp(n, ms), w, q, i, wa, epoch, ms)
 
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):
@@ -1485,7 +1591,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Ch
     got : Maybe<&1, L.Ty> <- Chan.recv(L.Ty, fq)
     ty : L.Ty <- Shell.fonts(got)
     ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
-    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}}}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}, CA.Cats.none()}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):

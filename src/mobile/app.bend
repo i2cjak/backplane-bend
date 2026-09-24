@@ -4,6 +4,7 @@ import ../core/client.bend as U
 import ../core/cbor.bend as CB
 import ../core/sha1.bend as SH
 import ./hubs.bend as H
+import ./bots.bend as MB
 
 # What bridge.js calls. The phone apps see only strings: server messages
 # in (binary CBOR frames, carried as base64, decoded by bridge.js) from
@@ -56,11 +57,27 @@ def alerts(a: H.HAct) -> String:
     case H.HAct{_, _, als}:
       J.Json.show(J.Json.arr(als))
 
+# a bot's browser has a new frame ({"t":"shot","bot":id,"n":n}): kept as
+# the client's info "shot.<bot>", which the bot's Browser tab shows as n
+# (the apps fetch the frame again when it changes)
+def shot(hit: Bool, +o: J.Json) -> J.Json:
+  match hit:
+    case True{}:
+      J.Json.obj([J.KV{"t", J.Json.str("info")},
+        J.KV{"info", J.Json.obj([J.KV{"shot." ++ J.Json.get_str(o, "bot", ""), J.Json.str(Nat.show(J.Json.get_nat(o, "n", 0n)))}])}])
+    case False{}:
+      o
+
 # a frame from hub `key`, already decoded: bridge.js reads the base64 and
 # CBOR natively (Cbor.decode here took 17x as long on a phone's
 # JavaScriptCore, which has no JIT), with these dictionaries
 def recv(+hs: H.Hubs, +key: String, +o: J.Json) -> H.HAct:
-  H.Hubs.recv(hs, key, o)
+  H.Hubs.recv(hs, key, shot(String.eq(J.Json.get_str(o, "t", ""), "shot"), o))
+
+# a cat's rig as JSON text, for the key the screen names it by
+# ("look:mood"); the apps ask once per key and keep it
+def cat(+look: Nat, +mood: String) -> String:
+  J.Json.show(MB.MBots.rig(look, mood))
 
 def cbor_keys() -> List<&2, String>:
   CB.Cbor.keys()

@@ -13,7 +13,11 @@ struct RootView: View {
             NavigationStack(path: Binding(get: { model.path }, set: { model.navigate($0) })) {
                 ProjectsView(model: model, screen: s, pairing: $pairing)
                     .navigationDestination(for: String.self) { _ in
-                        if let t = model.screen?.thread { ThreadScreen(model: model, thread: t) }
+                        if let b = model.screen?.bot {
+                            BotDestination(model: model, bot: b)
+                        } else if let t = model.screen?.thread {
+                            ThreadScreen(model: model, thread: t)
+                        }
                     }
             }
             .alert(s.error, isPresented: Binding(get: { !s.error.isEmpty }, set: { if !$0 { model.act("dismiss") } })) {
@@ -224,9 +228,12 @@ struct ProjectsView: View {
                     }
                 }
             }
+            if !screen.hubs.isEmpty { BotsSection(model: model, screen: screen) }
         }
         .overlay {
-            if screen.projects.isEmpty { ContentUnavailableView(screen.empty, systemImage: "folder") }
+            if screen.projects.isEmpty && screen.bots.isEmpty && screen.rooms.isEmpty {
+                ContentUnavailableView(screen.empty, systemImage: "folder")
+            }
         }
         .navigationTitle("Backplane")
         .toolbar {
@@ -260,6 +267,12 @@ struct ProjectsView: View {
         }
         .sheet(isPresented: Binding(get: { screen.folders != nil }, set: { if !$0 { model.act("proj-close") } })) {
             if let f = screen.folders { FoldersSheet(model: model, folders: f) }
+        }
+        .sheet(isPresented: Binding(get: { screen.newBot != nil }, set: { if !$0 { model.act("form-close", "@bnew") } })) {
+            if let f = model.screen?.newBot { NewBotSheet(model: model, form: f) }
+        }
+        .sheet(isPresented: Binding(get: { screen.newRoom != nil }, set: { if !$0 { model.act("form-close", "@rnew") } })) {
+            if let f = model.screen?.newRoom { NewRoomSheet(model: model, form: f) }
         }
     }
 }

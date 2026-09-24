@@ -250,9 +250,39 @@ def Change.encode(c: M.Change) -> J.Json:
       Change.obj("TodosSet", [J.KV{"thread", J.Str{thread}}, J.KV{"todos", J.Str{todos}}, J.KV{"at", Codec.nat(at)}])
     case M.UsageSet{thread, used, window, at}:
       Change.obj("UsageSet", [J.KV{"thread", J.Str{thread}}, J.KV{"used", Codec.nat(used)}, J.KV{"window", Codec.nat(window)}, J.KV{"at", Codec.nat(at)}])
+    case M.BotSet{id, name, thread, look, persona, at}:
+      Change.obj("BotSet", [J.KV{"id", J.Str{id}}, J.KV{"name", J.Str{name}}, J.KV{"thread", J.Str{thread}}, J.KV{"look", Codec.nat(look)}, J.KV{"persona", J.Str{persona}}, J.KV{"at", Codec.nat(at)}])
+    case M.BotDeleted{id, at}:
+      Change.obj("BotDeleted", [J.KV{"id", J.Str{id}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoomSet{id, name, members, at}:
+      Change.obj("RoomSet", [J.KV{"id", J.Str{id}}, J.KV{"name", J.Str{name}}, J.KV{"members", J.Str{members}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoomDeleted{id, at}:
+      Change.obj("RoomDeleted", [J.KV{"id", J.Str{id}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoomPosted{id, room, from, text, hop, at}:
+      Change.obj("RoomPosted", [J.KV{"id", J.Str{id}}, J.KV{"room", J.Str{room}}, J.KV{"from", J.Str{from}}, J.KV{"text", J.Str{text}}, J.KV{"hop", Codec.nat(hop)}, J.KV{"at", Codec.nat(at)}])
+    case M.HookSet{id, bot, name, revoked, at}:
+      Change.obj("HookSet", [J.KV{"id", J.Str{id}}, J.KV{"bot", J.Str{bot}}, J.KV{"name", J.Str{name}}, J.KV{"revoked", J.Flag{revoked}}, J.KV{"at", Codec.nat(at)}])
+    case M.HookHit{id, at}:
+      Change.obj("HookHit", [J.KV{"id", J.Str{id}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoutineSet{id, bot, name, cron, prompt, on, at}:
+      Change.obj("RoutineSet", [J.KV{"id", J.Str{id}}, J.KV{"bot", J.Str{bot}}, J.KV{"name", J.Str{name}}, J.KV{"cron", J.Str{cron}}, J.KV{"prompt", J.Str{prompt}}, J.KV{"on", J.Flag{on}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoutineDeleted{id, at}:
+      Change.obj("RoutineDeleted", [J.KV{"id", J.Str{id}}, J.KV{"at", Codec.nat(at)}])
+    case M.RoutineFired{id, at}:
+      Change.obj("RoutineFired", [J.KV{"id", J.Str{id}}, J.KV{"at", Codec.nat(at)}])
+    case M.MemorySaved{bot, key, kind, text, tags, at}:
+      Change.obj("MemorySaved", [J.KV{"bot", J.Str{bot}}, J.KV{"key", J.Str{key}}, J.KV{"kind", J.Str{kind}}, J.KV{"text", J.Str{text}}, J.KV{"tags", J.Str{tags}}, J.KV{"at", Codec.nat(at)}])
+    case M.MemoryForgot{bot, key, at}:
+      Change.obj("MemoryForgot", [J.KV{"bot", J.Str{bot}}, J.KV{"key", J.Str{key}}, J.KV{"at", Codec.nat(at)}])
+    case M.SpaceSet{bot, spec, at}:
+      Change.obj("SpaceSet", [J.KV{"bot", J.Str{bot}}, J.KV{"spec", J.Str{spec}}, J.KV{"at", Codec.nat(at)}])
+    case M.PeerSet{id, name, url, revoked, at}:
+      Change.obj("PeerSet", [J.KV{"id", J.Str{id}}, J.KV{"name", J.Str{name}}, J.KV{"url", J.Str{url}}, J.KV{"revoked", J.Flag{revoked}}, J.KV{"at", Codec.nat(at)}])
+    case M.BotWoke{bot, hop, at}:
+      Change.obj("BotWoke", [J.KV{"bot", J.Str{bot}}, J.KV{"hop", Codec.nat(hop)}, J.KV{"at", Codec.nat(at)}])
 
 def Change.tags() -> List<&2, String>:
-  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed", "DeviceRegistered", "DeviceDropped", "ThreadSnoozed", "ThreadOrdered", "WorktreeSkipped", "ThreadMerged", "WorktreeRemoved", "ProjectOrdered", "QueueEdited", "QueueRemoved", "QueueMoved", "QueueTakenOne", "ThreadForked", "ProviderSet", "TodosSet", "UsageSet"]
+  ["ProjectCreated", "ProjectRemoved", "ThreadCreated", "ThreadRenamed", "MessagePosted", "TurnChanged", "PendingChanged", "ActivityLogged", "ThreadSettled", "ThreadUnsettled", "ThreadArchived", "ThreadPinned", "ThreadDeleted", "WorktreeSet", "SessionSet", "ModesSet", "TaskDelegated", "TaskStateSet", "TaskDelivered", "SettingSet", "TurnQueued", "QueueTaken", "AskOpened", "AskClosed", "DeviceRegistered", "DeviceDropped", "ThreadSnoozed", "ThreadOrdered", "WorktreeSkipped", "ThreadMerged", "WorktreeRemoved", "ProjectOrdered", "QueueEdited", "QueueRemoved", "QueueMoved", "QueueTakenOne", "ThreadForked", "ProviderSet", "TodosSet", "UsageSet", "BotSet", "BotDeleted", "RoomSet", "RoomDeleted", "RoomPosted", "HookSet", "HookHit", "RoutineSet", "RoutineDeleted", "RoutineFired", "MemorySaved", "MemoryForgot", "SpaceSet", "PeerSet", "BotWoke"]
 
 def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
   match i:
@@ -336,6 +366,36 @@ def Change.decode.k(i: Nat, +o: J.Json) -> Maybe<&2, M.Change>:
       Some{M.TodosSet{J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "todos", ""), J.Json.get_nat(o, "at", 0n)}}
     case 39n:
       Some{M.UsageSet{J.Json.get_str(o, "thread", ""), J.Json.get_nat(o, "used", 0n), J.Json.get_nat(o, "window", 0n), J.Json.get_nat(o, "at", 0n)}}
+    case 40n:
+      Some{M.BotSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "name", ""), J.Json.get_str(o, "thread", ""), J.Json.get_nat(o, "look", 0n), J.Json.get_str(o, "persona", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 41n:
+      Some{M.BotDeleted{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 42n:
+      Some{M.RoomSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "name", ""), J.Json.get_str(o, "members", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 43n:
+      Some{M.RoomDeleted{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 44n:
+      Some{M.RoomPosted{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "room", ""), J.Json.get_str(o, "from", ""), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "hop", 0n), J.Json.get_nat(o, "at", 0n)}}
+    case 45n:
+      Some{M.HookSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "bot", ""), J.Json.get_str(o, "name", ""), J.Json.get_bool(o, "revoked", False{}), J.Json.get_nat(o, "at", 0n)}}
+    case 46n:
+      Some{M.HookHit{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 47n:
+      Some{M.RoutineSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "bot", ""), J.Json.get_str(o, "name", ""), J.Json.get_str(o, "cron", ""), J.Json.get_str(o, "prompt", ""), J.Json.get_bool(o, "on", False{}), J.Json.get_nat(o, "at", 0n)}}
+    case 48n:
+      Some{M.RoutineDeleted{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 49n:
+      Some{M.RoutineFired{J.Json.get_str(o, "id", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 50n:
+      Some{M.MemorySaved{J.Json.get_str(o, "bot", ""), J.Json.get_str(o, "key", ""), J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "text", ""), J.Json.get_str(o, "tags", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 51n:
+      Some{M.MemoryForgot{J.Json.get_str(o, "bot", ""), J.Json.get_str(o, "key", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 52n:
+      Some{M.SpaceSet{J.Json.get_str(o, "bot", ""), J.Json.get_str(o, "spec", ""), J.Json.get_nat(o, "at", 0n)}}
+    case 53n:
+      Some{M.PeerSet{J.Json.get_str(o, "id", ""), J.Json.get_str(o, "name", ""), J.Json.get_str(o, "url", ""), J.Json.get_bool(o, "revoked", False{}), J.Json.get_nat(o, "at", 0n)}}
+    case 54n:
+      Some{M.BotWoke{J.Json.get_str(o, "bot", ""), J.Json.get_nat(o, "hop", 0n), J.Json.get_nat(o, "at", 0n)}}
     case _:
       None{}
 
@@ -433,6 +493,36 @@ def Change.wire(c: M.Change) -> J.Json:
       Change.encode(M.TodosSet{thread, todos, at})
     case M.UsageSet{thread, used, window, at}:
       Change.encode(M.UsageSet{thread, used, window, at})
+    case M.BotSet{id, name, thread, look, persona, at}:
+      Change.encode(M.BotSet{id, name, thread, look, persona, at})
+    case M.BotDeleted{id, at}:
+      Change.encode(M.BotDeleted{id, at})
+    case M.RoomSet{id, name, members, at}:
+      Change.encode(M.RoomSet{id, name, members, at})
+    case M.RoomDeleted{id, at}:
+      Change.encode(M.RoomDeleted{id, at})
+    case M.RoomPosted{id, room, from, text, hop, at}:
+      Change.encode(M.RoomPosted{id, room, from, text, hop, at})
+    case M.HookSet{id, bot, name, revoked, at}:
+      Change.encode(M.HookSet{id, bot, name, revoked, at})
+    case M.HookHit{id, at}:
+      Change.encode(M.HookHit{id, at})
+    case M.RoutineSet{id, bot, name, cron, prompt, on, at}:
+      Change.encode(M.RoutineSet{id, bot, name, cron, prompt, on, at})
+    case M.RoutineDeleted{id, at}:
+      Change.encode(M.RoutineDeleted{id, at})
+    case M.RoutineFired{id, at}:
+      Change.encode(M.RoutineFired{id, at})
+    case M.MemorySaved{bot, key, kind, text, tags, at}:
+      Change.encode(M.MemorySaved{bot, key, kind, text, tags, at})
+    case M.MemoryForgot{bot, key, at}:
+      Change.encode(M.MemoryForgot{bot, key, at})
+    case M.SpaceSet{bot, spec, at}:
+      Change.encode(M.SpaceSet{bot, spec, at})
+    case M.PeerSet{id, name, url, revoked, at}:
+      Change.encode(M.PeerSet{id, name, url, revoked, at})
+    case M.BotWoke{bot, hop, at}:
+      Change.encode(M.BotWoke{bot, hop, at})
 
 def Change.private(+tag: String) -> Bool:
   Bool.or(String.eq(tag, "DeviceRegistered"), String.eq(tag, "DeviceDropped"))

@@ -85,4 +85,6 @@ final class Engine: @unchecked Sendable {
     func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
     func online(_ key: String, _ b: Bool) async -> Out? { await out("online", [key, b]) }
     func tick(_ now: Int) async -> Out? { await out("tick", [now]) }
+    // a cat's rig for its key ("look:mood")
+    func cat(_ key: String) async -> String { await call("cat", [key]) { $0 } }
 }

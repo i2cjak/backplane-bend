@@ -14,6 +14,8 @@ import ../core/fold.bend as FO
 import ../core/diff.bend as DF
 import ../core/vt.bend as VT
 import ../core/codec.bend as C
+import ../core/botui.bend as B
+import ./bots.bend as MB
 
 # Ui -> the screen the phone apps draw, as JSON. SwiftUI and Compose map
 # it onto native lists, toolbars and text fields; every decision (order,
@@ -684,4 +686,9 @@ def Mob.screen(+u: U.Ui) -> J.Json:
         J.KV{"find", Mob.find(U.Ui.flag(u, "palette"), u)},
         J.KV{"folders", PK.MPick.json(u)},
         J.KV{"island", N.Note.island(U.Ui.threads(st), U.Ui.entries(st))},
-        J.KV{"thread", Mob.main(String.is_empty(sel), u, sel)}])
+        J.KV{"thread", Mob.main(String.is_empty(sel), u, sel)},
+        J.KV{"bots", J.Json.arr(MB.MBots.rows(B.BU.rows(u)))},
+        J.KV{"rooms", J.Json.arr(MB.MBots.rooms(B.BU.rooms(u)))},
+        J.KV{"newBot", MB.MBots.new(u)},
+        J.KV{"newRoom", MB.MBots.rnew(u)},
+        J.KV{"bot", MB.MBots.json(u)}])

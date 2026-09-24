@@ -197,6 +197,11 @@ globalThis.Backplane = {
   screen() {
     return out(null);
   },
+  // a cat's rig (JSON text) for the key a screen names it by, "look:mood"
+  cat(key) {
+    const i = String(key).indexOf(":");
+    return App.cat(BigInt(Number(String(key).slice(0, i)) || 0), String(key).slice(i + 1));
+  },
   // a binary frame from hub k, as base64
   recv(k, data) {
     return step(App.recv(hubs, k, cbor(bytes(data))));

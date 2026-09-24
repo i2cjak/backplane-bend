@@ -30,6 +30,11 @@ src=$1
 out=$2
 cd "$(dirname "$0")/.."
 jobs=${BACKPLANE_JOBS:-4}
+# bend is a Bun program: JavaScriptCore sizes its heap to the machine's RAM
+# and let the app's emit grow past 28 GB (systemd-oomd then killed whole
+# desktop sessions). Told the machine has 12 GB, it peaks near 12 GB and
+# takes a few seconds longer.
+export BUN_JSC_forceRAMSize=${BUN_JSC_forceRAMSize:-12884901888}
 cpus=${BACKPLANE_CPUS-0-3}
 pin=""
 if [ -n "$cpus" ] && command -v taskset >/dev/null 2>&1; then

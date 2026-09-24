@@ -1,4 +1,6 @@
 import Base
+import ./src/core/bot.bend as BOT
+import ./src/core/botui.bend as BU
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
 import ./src/core/semver.bend as SV
@@ -46,6 +48,11 @@ import ./src/core/hier.bend as HI
 
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
+import ./src/core/sign.bend as SG
+import ./src/core/cron.bend as CR
+import ./src/core/space.bend as SPC
+import ./src/core/google.bend as GO
+import ./src/core/cat.bend as CAT
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2081,3 +2088,181 @@ law view_key_shift_z_in:
 
 law view_key_other_none:
   {N.Key3.act(97, 0) == 0 : U32}
+# Signed requests
+# ---------------
+
+# a webhook or peer request outside the clock window is refused, whatever
+# its signature
+law sign_stale_rejected:
+  for secret: String
+  for +now: Nat
+  for +ts: Nat
+  for body: String
+  for sig: String
+  for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
+  {SG.Sign.check(secret, now, ts, body, sig) == False{} : Bool}
+
+# the window is five minutes
+law sign_window_300:
+  {SG.Sign.window() == 300n : Nat}
+
+# a key just accepted is in the replay cache, so it is refused next time
+law seen_add_has:
+  for s: SG.Seen
+  for +k: String
+  for +now: Nat
+  {SG.Seen.has(SG.Seen.add(s, k, now), k) == True{} : Bool}
+
+# an invite reads back as what made it, colons in its url and all
+law invite_roundtrip:
+  {SG.Invite.parse(SG.Invite.make("http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))
+    == Some{SG.Inv{"http://host:3787", "p1", "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"}} : Maybe<&2, SG.Inv>}
+# Routine schedules
+# -----------------
+
+# a routine's next time is after the time asked about, or 0 (never)
+law cron_next_after:
+  for +c: CR.Cron
+  for +after: Nat
+  for +off: Nat
+  for +east: Bool
+  {CR.Cron.ok(after, CR.Cron.next(c, after, off, east)) == True{} : Bool}
+
+# once a routine fires at now (last := now) it is not due again at now
+law cron_due_fires_once:
+  for +c: CR.Cron
+  for +now: Nat
+  for +off: Nat
+  for +east: Bool
+  {CR.Cron.due(c, now, now, off, east) == False{} : Bool}
+# Bot spaces
+# ----------
+
+# a parsed space never holds more than 200 blocks, whatever a bot writes
+law space_caps:
+  for +j: J.Json
+  {Nat.is_le(SPC.Space.count(SPC.Space.parse(j)), 200n) == True{} : Bool}
+
+# a progress bar never runs past full
+law space_progress_max:
+  for +p: Nat
+  {Nat.is_le(SPC.Space.clamp(p), 1000n) == True{} : Bool}
+
+# what a space's button or input sends the bot is always marked as coming
+# from the space
+law space_message_prefix:
+  for +action: String
+  for +value: String
+  {String.starts_with(SPC.Space.message(action, value), "[space] ") == True{} : Bool}
+# Google (bots' Gmail and Calendar)
+# ---------------------------------
+
+# the sign-in asks for access at all (openid, email, Gmail, Calendar)
+law google_scopes_nonempty:
+  {List.is_empty(&2, String, GO.Google.scopes()) == False{} : Bool}
+
+# base64url undoes itself on bytes that need both '-' and '_'
+law google_b64url_roundtrip_example:
+  {GO.Gb64.decode(GO.Gb64.encode_url([251, 255, 0, 104])) == [251, 255, 0, 104] : List<&2, U32>}
+
+# a pasted redirect gives its code and state, decoded
+law google_code_of_example:
+  {GO.Google.code_of("http://127.0.0.1:3787/oauth/google?state=st8&code=4%2F0Ab&scope=email") == Some{GO.CodeState{"4/0Ab", "st8", False{}}} : Maybe<&2, GO.CodeState>}
+
+# a redirect without a code (the user said no) is no code
+law google_denied_no_code:
+  {GO.Google.code_of("http://127.0.0.1:3787/oauth/google?error=access_denied&state=st8") == None{} : Maybe<&2, GO.CodeState>}
+
+# a To, Cc or Subject cannot start a header of its own
+law google_header_no_newline_example:
+  {GO.Mail.clean("a@x.org\r\nBcc: e@x.org") == "a@x.org  Bcc: e@x.org" : String}
+
+# sending mail and creating events ask the user first
+law google_send_asks:
+  {GO.Google.asks("gmail_send") == True{} : Bool}
+
+law google_create_asks:
+  {GO.Google.asks("calendar_create") == True{} : Bool}
+
+# an access token is never used in its last minute
+law google_expiring_not_fresh:
+  for +now: Nat
+  {GO.Google.fresh(now, now) == False{} : Bool}
+
+# Bots
+# ----
+
+# the step behind bot_hop_bounded: a message goes out only within the bound
+law bot_hop_step:
+  for ok: Bool
+  for +n: Nat
+  for h: {Nat.is_le(n, BOT.Hop.max()) == ok : Bool}
+  {BOT.Hop.bound(BOT.Hop.send.k(ok, n)) == True{} : Bool}
+
+# a message between bots never goes out deeper than the bound, so two bots
+# cannot keep each other talking forever
+law bot_hop_bounded:
+  for +h: Nat
+  {BOT.Hop.bound(BOT.Hop.next(h)) == True{} : Bool}
+
+# a cat waits for you (ears up) whenever its thread needs an approval
+law bot_mood_wait:
+  for talked: Bool
+  for idle: Bool
+  {BU.Mood.of(M.StApproval{}, talked, idle) == "wait" : String}
+
+# ... or an answer
+law bot_mood_input:
+  for talked: Bool
+  for idle: Bool
+  {BU.Mood.of(M.StInput{}, talked, idle) == "wait" : String}
+
+# a sleeping cat holds still: a window of resting bots never repaints
+law bot_mood_sleep_still:
+  {BU.Mood.moving("sleep") == False{} : Bool}
+
+# a bot at rest for a quarter hour is asleep
+law bot_mood_rest:
+  for talked: Bool
+  {BU.Mood.of(M.StReady{}, talked, True{}) == "sleep" : String}
+# Cats
+# ----
+
+# a sleeping, failed or unreachable cat holds still in the window: it never
+# asks for frames
+law cat_sleep_still:
+  {CAT.Cat.moving("sleep") == False{} : Bool}
+
+law cat_error_still:
+  {CAT.Cat.moving("error") == False{} : Bool}
+
+law cat_away_still:
+  {CAT.Cat.moving("away") == False{} : Bool}
+
+# an unreachable cat carries no animation at all, on any client
+law cat_away_holds_still:
+  for +look: Nat
+  {CAT.Cat.anims.count(CAT.Cat.rig(look, "away")) == 0n : Nat}
+
+# each mood has its own pose (none falls back to idle but idle)
+law cat_moods_known:
+  {CAT.Cat.mood.all(CAT.Cat.moods()) == [0, 1, 2, 3, 4, 5, 6, 7] : List<&2, U32>}
+
+# every seed has a look: its index is one of the looks
+law cat_look_total:
+  for +s: Nat
+  {Nat.is_lt(CAT.Cat.look.index(s), CAT.Cat.looks()) == True{} : Bool}
+
+# a Pebble ring's webhook that is not fresh is never accepted, whatever it
+# carries or claims to be signed with
+law index_stale_rejected:
+  for secret: String
+  for +now: Nat
+  for +ts: Nat
+  for delivery: String
+  for trigger: String
+  for test: Bool
+  for body: String
+  for sig: String
+  for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
+  {SG.Sign.index(secret, now, ts, delivery, trigger, test, body, sig) == False{} : Bool}

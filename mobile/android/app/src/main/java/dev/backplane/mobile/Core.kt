@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
@@ -127,6 +128,31 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
 
     fun act(action: String, value: String = "") {
         scope.launch { apply(engine.act(action, value)) }
+    }
+
+    // the cats' rigs by key ("look:mood"), each asked of the bridge once
+    val cats = mutableStateMapOf<String, List<CatPart>>()
+    private val asked = mutableSetOf<String>()
+
+    fun cat(key: String) {
+        if (key.isEmpty() || !asked.add(key)) return
+        scope.launch {
+            val text = engine.cat(key)
+            cats[key] = try { catRig(org.json.JSONArray(text)) } catch (e: Exception) { emptyList() }
+        }
+    }
+
+    // a bot form's field ("bfield"), typed: Bend keeps it without a new
+    // screen, the field on screen already shows it
+    fun field(name: String, text: String) {
+        scope.launch { apply(engine.quiet("bfield", name + "\u001f" + text)) }
+    }
+
+    // an address on the hub in focus (a bot's browser frame, a webhook)
+    fun hubUrl(path: String, query: String = "", token: Boolean = true): String? {
+        val s = screen ?: return null
+        val l = links.firstOrNull { Pairing.key(it) == s.hub } ?: return null
+        return Pairing.http(l, path, query, token)
     }
 
     fun draft(text: String) {

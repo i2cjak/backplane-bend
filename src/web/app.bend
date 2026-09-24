@@ -6,6 +6,7 @@ import ./view.bend as V
 import ../core/cbor.bend as C
 import ../core/attach.bend as AT
 import ../core/lightbox.bend as LB
+import ./cat.bend as WC
 
 # What host.js calls. Everything the page decides happens behind these.
 
@@ -16,8 +17,26 @@ def init(now: Nat, cid: String) -> U.Ui:
 def restore(u: U.Ui, id: String, text: String) -> U.Ui:
   U.Ui.restore(u, id, text)
 
-def recv(u: U.Ui, o: J.Json) -> U.Act:
-  U.Ui.recv_act(u, o)
+# a bot's browser has a new frame ({"t":"shot","bot":...,"n":...}): the
+# Browser tab loads /bots/<bot>/screen.jpg?n=<n>
+def recv.k(shot: Bool, u: U.Ui, +o: J.Json) -> U.Act:
+  match shot:
+    case True{}:
+      U.Act{U.Ui.info_set(u, "shot." ++ J.Json.get_str(o, "bot", ""), J.Json.as_raw(J.Json.get(o, "n"), "")), Nil{}}
+    case False{}:
+      U.Ui.recv_act(u, o)
+
+def recv(u: U.Ui, +o: J.Json) -> U.Act:
+  recv.k(String.eq(J.Json.get_str(o, "t", ""), "shot"), u, o)
+
+# a bot's cat for an <img data-cat="<look>:<mood>:<px>"> (host.js keeps
+# each answer)
+def cat(name: String) -> String:
+  WC.WCat.uri(name)
+
+# the page's own address (a webhook's URL starts with it)
+def page(u: U.Ui, origin: String) -> U.Ui:
+  U.Ui.scratch_set(u, "@page", origin)
 
 def act(u: U.Ui, action: String, value: String) -> U.Act:
   U.Ui.act(u, action, value)

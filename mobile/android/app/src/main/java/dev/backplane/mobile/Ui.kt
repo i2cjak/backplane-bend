@@ -104,6 +104,11 @@ fun App(m: AppModel) {
             BackHandler { m.act("view", "") }
             PlotScreen(m, s.thread.viewer)
         }
+        // a bot (its chat is its thread), a room, or a bot on a linked machine
+        s.bot != null -> {
+            BackHandler { m.act("select", "") }
+            BotDestination(m, s, s.bot)
+        }
         s.thread != null -> {
             BackHandler { m.act("select", "") }
             ThreadScreen(m, s, s.thread)
@@ -309,7 +314,7 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
         },
         snackbarHost = { SnackbarHost(snacks) },
     ) { pad ->
-        if (s.projects.isEmpty()) {
+        if (s.projects.isEmpty() && s.bots.isEmpty() && s.rooms.isEmpty()) {
             Box(Modifier.fillMaxSize().padding(pad), contentAlignment = Alignment.Center) {
                 Text(s.empty, style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.outline)
             }
@@ -349,6 +354,7 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                 }
                 item(key = "d:" + p.id) { HorizontalDivider() }
             }
+            if (s.hubs.isNotEmpty()) botsSection(m, s)
         }
     }
     val d = s.deleting
@@ -366,6 +372,8 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
         dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
     )
     s.folders?.let { FolderPicker(m, it) }
+    s.newBot?.let { NewBotDialog(m, it) }
+    s.newRoom?.let { NewRoomDialog(m, it) }
 }
 
 // the project picker: a path field over the listed folder's rows
@@ -455,9 +463,10 @@ private fun SendingView(text: String) {
     }
 }
 
+// below: more under the top bar (a bot's cat and tabs)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
+fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -> Unit)? = null) {
     val snacks = remember { SnackbarHostState() }
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
@@ -469,7 +478,7 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
         if (count > 0 && last >= count - 3) list.animateScrollToItem(count - 1)
     }
     Scaffold(
-        topBar = {
+        topBar = { Column {
             TopAppBar(
                 navigationIcon = { IconButton(onClick = { m.act("select", "") }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 title = {
@@ -504,7 +513,8 @@ private fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView) {
                     }
                 },
             )
-        },
+            below?.invoke()
+        } },
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {

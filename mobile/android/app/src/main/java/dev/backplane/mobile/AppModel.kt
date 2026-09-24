@@ -18,4 +18,8 @@ class AppModel(app: Application) : AndroidViewModel(app) {
     fun unpair(key: String) = core.unpair(key)
     fun act(action: String, value: String = "") = core.act(action, value)
     fun draft(text: String) = core.draft(text)
+    val cats get() = core.cats
+    fun cat(key: String) = core.cat(key)
+    fun field(name: String, text: String) = core.field(name, text)
+    fun hubUrl(path: String, query: String = "", token: Boolean = true) = core.hubUrl(path, query, token)
 }

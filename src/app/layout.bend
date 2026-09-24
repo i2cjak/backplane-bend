@@ -536,7 +536,7 @@ def Lay.hint.ids(alt: Bool, ctrl: Bool, +u: U.Ui) -> List<&2, String>:
       Nil{}
 
 def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, +adding: Bool, +v: String,
-    +sd: U32, +caret: Nat, +mark: Nat, +focus: String, +path: String, +h: U32, +settings: Bool, +ms: List<&2, U.MRow>, +hint: String, +ids: List<&2, String>, +look: String) -> Out:
+    +sd: U32, +caret: Nat, +mark: Nat, +focus: String, +path: String, +h: U32, +settings: Bool, +ms: List<&2, U.MRow>, +hint: String, +ids: List<&2, String>, +look: String, more: D.Clip -> U32 -> Col) -> Out:
   +top = {D.Clip{0, 0, 264, 52} : D.Clip}
   +many = Nat.is_gt(List.length(&2, U.MRow, ms), 1n)
   +y0 = {(Bool.pick(U32, adding, 96, 60) + Mach.h(many) : U32) : U32}
@@ -548,8 +548,8 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
     Out{Lay.icon(ty, "plus", top, 234, 18, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "vw-projo", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret, mark),
-    Links.over(Lay.hints(hint, Lay.col.out(Lay.projects(ty, U.Side.rows(st, now), open, st, sel, now, look,
-      D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd))), ty, D.Clip{0, y0, 264, (h - 48 : U32)}, ids), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
+    Links.over(Lay.hints(hint, Lay.col.out(Lay.col.then(Lay.projects(ty, U.Side.rows(st, now), open, st, sel, now, look,
+      D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd)), more(D.Clip{0, y0, 264, (h - 48 : U32)}))), ty, D.Clip{0, y0, 264, (h - 48 : U32)}, ids), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
         List.append(&2, R.Op, Lay.icon(ty, "settings", D.Clip.all(), 16, (h - 32 : U32), Bool.pick(U32, settings, T.Th.text(), T.Th.dim())), Ty.text(ty, 2n, "Settings", D.Clip.all(), 40, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim())))),
       [Lay.hit(0, (h - 48 : U32), 263, 48, "flag", "settings")]},
@@ -1175,21 +1175,21 @@ def Lay.fit_or_none(+ty: Ty, +k: Nat, +s: String, +px: U32) -> String:
 
 # the thread's project badge (its icon in its colour), then the title and
 # branch in what the buttons leave
-def Lay.header.k(+ty: Ty, +title: String, +branch: String, +icon: String, +tint: U32, +bs: List<&2, S.Hit>, +x0: U32, +x1: U32) -> Out:
+def Lay.header.k(+ty: Ty, +title: String, +branch: String, +icon: String, +tint: U32, +bs: List<&2, S.Hit>, +x0: U32, +x1: U32, +hy: U32) -> Out:
   +room = {U32.dim(U32.dim((x1 - x0 : U32), Lay.buttons.w(ty, bs)), 80) : U32}
   +t = Ty.fit(ty, 0n, title, room)
   +tw = Ty.width(ty, 0n, t)
   Out.all([
-    Out.ops([D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)]),
-    Out.ops(Lay.icon(ty, icon, D.Clip.all(), (x0 + 24 : U32), 18, tint)),
-    Out.ops(Ty.text(ty, 0n, t, D.Clip.all(), (x0 + 48 : U32), 0, 52, T.Th.text())),
-    Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.dim(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 60 + tw : U32), 0, 52, T.Th.faint())),
-    Lay.buttons(ty, bs, 12, (x1 - 16 : U32))])
+    Out.ops([D.Draw.rect(D.Clip.all(), x0, (hy + 51 : U32), (x1 - x0 : U32), 1, T.Th.line(), 255)]),
+    Out.ops(Lay.icon(ty, icon, D.Clip.all(), (x0 + 24 : U32), (hy + 18 : U32), tint)),
+    Out.ops(Ty.text(ty, 0n, t, D.Clip.all(), (x0 + 48 : U32), hy, 52, T.Th.text())),
+    Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.dim(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 60 + tw : U32), hy, 52, T.Th.faint())),
+    Lay.buttons(ty, bs, (hy + 12 : U32), (x1 - 16 : U32))])
 
-def Lay.header(+ty: Ty, t: M.Thread, +st: M.State, +x0: U32, +x1: U32, panel: Bool, +snoozed: Bool, del: Bool) -> Out:
+def Lay.header(+ty: Ty, t: M.Thread, +st: M.State, +x0: U32, +x1: U32, panel: Bool, +snoozed: Bool, del: Bool, +hy: U32) -> Out:
   match t:
     case M.Thread{+id, +p, +title, _, _, turn, _, +archived, override, +sa, +ua, pinned, _, +branch, _, _, _, _, _, _, _}:
-      Lay.header.k(ty, title, branch, BG.Badge.icon(st, p), BG.Badge.rgb_of(st, p), Lay.header.bs(turn, override, sa, ua, pinned, panel, archived, snoozed, del, Bool.not(String.is_empty(M.Fork.source(st, id)))), x0, x1)
+      Lay.header.k(ty, title, branch, BG.Badge.icon(st, p), BG.Badge.rgb_of(st, p), Lay.header.bs(turn, override, sa, ua, pinned, panel, archived, snoozed, del, Bool.not(String.is_empty(M.Fork.source(st, id)))), x0, x1, hy)
 
 def Lay.lines(+ty: Ty, ls: List<&2, String>, +c: D.Clip, +x: U32, +y: U32) -> Out:
   match ls:
@@ -2217,11 +2217,15 @@ def Lay.ghost(+ty: Ty, +n: S.Nui) -> Out:
       Lay.ghost.k(Bool.and(Bool.not(String.is_empty(U.Ui.scratch(u, "@drag"))), S.Row.far(S.Row.y(n), my)), ty,
         U.Drag.title(U.Ui.state(u), U.Ui.scratch(u, "@drag")), U32.max(my, 67))
 
-def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
+def Lay.sidebar.x(+ty: Ty, +n: S.Nui, +h: U32, more: D.Clip -> U32 -> Col) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Out.all([Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, S.Nui.mark(n), focus, path, h, U.Flag.get(open, "settings"), U.Machines.rows(S.Nui.ui(n)),
-        U.Ui.scratch(S.Nui.ui(n), "@hint"), Lay.hint.ids(String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "alt"), String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "ctrl"), S.Nui.ui(n)), U.Ui.scratch(S.Nui.ui(n), "@look")), Lay.note(ty, note, h), Lay.ghost(ty, n)])
+        U.Ui.scratch(S.Nui.ui(n), "@hint"), Lay.hint.ids(String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "alt"), String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "ctrl"), S.Nui.ui(n)), U.Ui.scratch(S.Nui.ui(n), "@look"), more), Lay.note(ty, note, h), Lay.ghost(ty, n)])
+
+# the sidebar with nothing under the projects
+def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
+  Lay.sidebar.x(ty, n, h, c => y => Col{Out.none(), y})
 
 # Command palette (ctrl+k)
 # ------------------------
@@ -2679,7 +2683,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String
 
 def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
-    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase) -> Out:
+    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase, +hy: U32) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
@@ -2687,7 +2691,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       +cx1 = {(cx0 + cw : U32) : U32}
       +ts = U.Tasks.of(st, sel)
       +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
-      +top = {(52 + pl + Tasks.height(ts) : U32) : U32}
+      +top = {(52 + hy + pl + Tasks.height(ts) : U32) : U32}
       +asks = U.Asks.open(st, sel)
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
       +qs = M.Queue.items(st, sel)
@@ -2700,14 +2704,14 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       tl ch = Lay.timeline(ty,
         List.concat(&2, TLine, [TL.memo.shown(ty, memo, st, sel, cw, pics), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), ph, live, cw)]),
-        cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del),
-          Lay.parent(ty, st, sel, cx0, 58),
-          Lay.tasks(ty, ts, st, cx0, cx1, (60 + pl : U32)),
+        cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del, hy),
+          Lay.parent(ty, st, sel, cx0, (58 + hy : U32)),
+          Lay.tasks(ty, ts, st, cx0, cx1, (60 + hy + pl : U32)),
           Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.label(st, sel, Lay.running(turn)), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)) ++ U.Usage.tail(st, sel), rs, atts, up, path),
           Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
           Lay.todos(ty, tds, cx0, cx1, (h - eh - 124 - Lay.qh(qs) : U32)),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
-          Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), 60, U.Chip.all(info, pr, mo), U.Effort.of(st, sel), moff)])
+          Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), (60 + hy : U32), U.Chip.all(info, pr, mo), U.Effort.of(st, sel), moff)])
       Out.cat(tl, ch)
 
 # while files dragged in hover over the window, an accent ring around the
@@ -2726,12 +2730,16 @@ def Lay.drop_mark(on: Bool, +ty: Ty, +draft: String, +x0: U32, +x1: U32, +h: U32
     case False{}:
       Out.none()
 
-def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
       Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel))))
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy))
+
+# the thread view with its header at the top
+def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  Lay.thread.at(ty, memo, n, x0, x1, 0)
 
 # only the screen shown is laid out (a Bool.pick would lay out all three)
 def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:
@@ -2769,12 +2777,25 @@ def Lay.proj.if(open: Bool, +ty: Ty, +n: S.Nui, +w: U32, +h: U32) -> Out:
     case False{}:
       Out.none()
 
-# the whole window, topmost first
-def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
+# the main area: the one given (a bot's, a room's), or the usual one
+def Lay.main.m(m: Maybe<&2, Out>, +ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  match m:
+    case Some{o}:
+      o
+    case None{}:
+      Lay.main(ty, memo, n, x0, x1)
+
+# the main area's right edge (half the window with the viewer open)
+def Lay.x1(+n: S.Nui) -> U32:
+  Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((S.Nui.width(n) - 264 : U32)) : U32), S.Nui.width(n))
+
+# the whole window, topmost first; `more` lays out what the sidebar shows
+# under the projects, `main` a main area in place of the usual one
+def Lay.frame.x(+ty: Ty, +memo: TLMemo, +n: S.Nui, more: D.Clip -> U32 -> Col, main: Maybe<&2, Out>) -> Out:
   match n:
     case S.Nui{U.Ui{_, _, _, _, _, _, _, _, +pa, _, _, _, +err, note, _, _, _}, +w, +h, _, _, _, _, _, _, _, _, _, _}:
       # the main area and the sidebar are laid out at once
-      mn sb = Lay.main(ty, memo, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)) Lay.sidebar(ty, n, h)
+      mn sb = Lay.main.m(main, ty, memo, Lay.shrink(n, Lay.term_h(n)), 264, Bool.pick(U32, pa, (264 + U32.shr((w - 264 : U32)) : U32), w)) Lay.sidebar.x(ty, n, h, more)
       Lay.rev(Out.all([
         mn,
         Lay.viewer.if(pa, ty, n, (264 + U32.shr((w - 264 : U32)) : U32), w, h),
@@ -2784,6 +2805,9 @@ def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
         Lay.palette.if(U.Ui.flag(S.Nui.ui(n), "palette"), ty, n, w, h),
         Lay.proj.if(U.Ui.flag(S.Nui.ui(n), "proj"), ty, n, w, h),
         Lay.hover(U.Ui.info(S.Nui.ui(n), "hover"), S.Hover.alpha(n, S.Nui.ms_of(n)))]))
+
+def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
+  Lay.frame.x(ty, memo, n, c => y => Col{Out.none(), y}, None{})
 
 # the timeline's width, as Lay.frame lays it out
 def Lay.tl.px(+n: S.Nui) -> U32:

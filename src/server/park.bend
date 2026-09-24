@@ -36,11 +36,16 @@ def Park.take(ps: List<&2, Parked>, hit: Bool, +ask: String) -> Taken:
     case Nil{} _:
       Taken{None{}, Nil{}}
 
+# the reply a parked request gets: its permission answer, or (parked
+# with no body, as the server's own waits are) the user's answer itself
+def Park.reply(+body: String, +answer: String) -> String:
+  Bool.pick(String, String.is_empty(body), answer, MC.Mcp.permission.reply(body, answer))
+
 def Park.send(t: Taken, +answer: String) -> IO(List<&2, Parked>):
   match t:
-    case Taken{Some{Parked{_, body, reply}}, rest}:
+    case Taken{Some{Parked{_, +body, reply}}, rest}:
       do IO<List<&2, Parked>>:
-        ok : Bool <- Chan.send(String, reply, MC.Mcp.permission.reply(body, answer))
+        ok : Bool <- Chan.send(String, reply, Park.reply(body, answer))
         return rest
     case Taken{None{}, rest}:
       IO.pure(List<&2, Parked>, rest)

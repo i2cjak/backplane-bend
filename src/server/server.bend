@@ -29,6 +29,12 @@ import ../core/attach.bend as AT
 import ../core/sha1.bend as SH
 import ../core/boot.bend as BT
 import ../core/store.bend as ST
+import ./botnet.bend as BN
+import ../core/bothub.bend as BH
+import ../core/bot.bend as BO
+import ../core/sign.bend as SG
+import ./google.bend as GS
+import ../core/google.bend as GG
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -74,11 +80,26 @@ type Msg is Data:
   TurnDone{tag: String}
   # the hub just started from its log (B.Hub.recover)
   Recover{}
+  # changes a job off the hub made (a bot's home folder, a linked machine)
+  Commit{changes: List<&2, M.Change>}
+  # the minute tick for bots: routines and the linked machines' bots, with
+  # this machine's UTC offset as `date +%z` prints it
+  BotTick{tz: String}
+  # the bots on linked machines (a JSON array)
+  BotsFound{dir: String}
+  # a request for bots' routes (a webhook, a linked machine, a bot's
+  # screen, Google's sign-in redirect); the reply is the whole response
+  BotHttp{kind: String, arg: String, peer: String, ts: String, sig: String, gh: String, delivery: String, body: String, reply: Chan(List<&2, U32>)}
+  # the same, its signature checked off the hub: `key` is its replay key
+  # ("" when it is not genuine); `me` is this machine's name
+  BotVerified{kind: String, arg: String, key: String, body: String, me: String, reply: Chan(List<&2, U32>)}
+  # a browser page has a new frame: {"t":"shot",...} for every client
+  Shot{text: String}
 
 # remote access: also listen on the tailnet, serve HTTPS through
 # `tailscale serve`, and the token remote clients must present
 type Net is Data:
-  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>, machines: String, pv: Maybe<&2, Chan(PV.PMsg)>}
+  Net{tailnet: Bool, https: Bool, token: String, models: String, mtext: String, rt: K.Rt, br: Maybe<&2, Chan(BR.BMsg)>, pk: Maybe<&2, Chan(PK.PMsg)>, tm: Maybe<&2, Chan(TM.TMsg)>, machines: String, pv: Maybe<&2, Chan(PV.PMsg)>, bn: BN.Bn}
 
 type Cfg is Data:
   Cfg{home: String, web: String, host: String, port: U32, prompt: String, dirs: List<&2, String>, version: String, net: Net}
@@ -533,18 +554,6 @@ def Conn.head.got(r: Socket & Result<&1, &1, U32 & String, List<&2, U32>>, buf: 
     case Fail{_}:
       Socket.close(s)
 
-# a tick at start (threads idle past the window settle at once), then
-# every minute
-def Ticker.loop(fuel: Nat, +inbox: Chan(Msg)) -> IO(Unit):
-  match fuel:
-    case 0n:
-      IO.pure(Unit, Unit{})
-    case 1n+f:
-      do IO<Unit>:
-        ok : Bool <- Chan.send(Msg, inbox, Tick{})
-        IO.sleep(60000)
-        Ticker.loop(f, inbox)
-
 # The hub
 # -------
 
@@ -561,8 +570,8 @@ def Info.kicad(rt: K.Rt) -> List<&2, J.KV>:
 
 def Info.net(n: Net) -> List<&2, J.KV>:
   match n:
-    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx, mc, pvx}:
-      List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"machines", J.Str{mc}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
+    case Net{tn, hs, _, ms, _, rt, brx, pkx, tmx, mc, pvx, bnx}:
+      List.append(&2, J.KV, [J.KV{"models", J.Str{ms}}, J.KV{"machines", J.Str{mc}}, J.KV{"bots.remote", J.Str{BN.Bn.dir(bnx)}}, J.KV{"tailnet", J.Str{Bool.pick(String, tn, Bool.pick(String, hs, "https", "on"), "off")}}], Info.kicad(rt))
 
 # what this machine runs, for the settings screen and the model picker
 def Hub.info(c: Cfg) -> J.Json:
@@ -1226,6 +1235,20 @@ def Snooze.tz(r: P.Ran) -> String:
     case _:
       "+0000"
 
+# a tick at start (threads idle past the window settle at once), then
+# every minute
+def Ticker.loop(fuel: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, Tick{})
+        tz : P.Ran <- P.Proc.run("date", ["+%z"], "/")
+        ok2 : Bool <- Chan.send(Msg, inbox, BotTick{Snooze.tz(tz)})
+        IO.sleep(60000)
+        Ticker.loop(f, inbox)
+
 # snooze until 9:00 tomorrow here: the hub hears the time as thread.snooze
 def Snooze.tomorrow(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +now: String) -> IO(Unit):
   do IO<Unit>:
@@ -1581,7 +1604,7 @@ def Cfg.port(c: Cfg) -> U32:
 
 def Net.token(n: Net) -> String:
   match n:
-    case Net{_, _, t, _, _, _, brx, pkx, tmx, mc, pvx}:
+    case Net{_, _, t, _, _, _, brx, pkx, tmx, mc, pvx, bnx}:
       t
 
 # Effects
@@ -1594,12 +1617,12 @@ def Hub.mcp_url(+cfg: Cfg, +thread: String) -> String:
 
 def Cfg.mtext(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, mt, _, brx, pkx, tmx, mc, pvx, bnx}}:
       mt
 
 def Cfg.rt(c: Cfg) -> K.Rt:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, rt, brx, pkx, tmx, mc, pvx, bnx}}:
       rt
 
 def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
@@ -1618,7 +1641,7 @@ def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Fil
   String.join([Cfg.prompt(cfg),
     Hub.prompt.kicad(Cfg.rt(cfg), Bool.not(String.eq(M.Setting.get(st, "kicad.ipc", "on"), "off"))),
     Hub.prompt.files(cwd, fs),
-    Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n")
+    Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n") ++ BH.Bots.prompt(st, thread, Cfg.home(cfg))
 
 def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String, +effort: String) -> List<&2, String>:
   match cfg:
@@ -1756,8 +1779,8 @@ def Token.load(+home: String) -> IO(String):
 
 def Cfg.with_token(c: Cfg, +t: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, _, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}
 
 # Startup
 # -------
@@ -1813,12 +1836,12 @@ def Agent.pid_is(m: Maybe<&2, Agent>, +pid: U32) -> Bool:
 
 def Cfg.models(c: Cfg) -> String:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx, bnx}}:
       ms
 
 def Cfg.pk(c: Cfg) -> Maybe<&2, Chan(PK.PMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, pk, tmx, mc, pvx, bnx}}:
       pk
 
 def Park.put(m: Maybe<&2, Chan(PK.PMsg)>, +msg: PK.PMsg) -> IO(Unit):
@@ -1855,27 +1878,27 @@ def Hub.mcp.send(later: Bool, +park: String, +body: String, +text: String, +repl
 
 def Net.with_br(n: Net, q: Chan(BR.BMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, _, g, i, mc, pvx}:
-      Net{a, b, c, d, e, f, Some{q}, g, i, mc, pvx}
+    case Net{a, b, c, d, e, f, _, g, i, mc, pvx, bnx}:
+      Net{a, b, c, d, e, f, Some{q}, g, i, mc, pvx, bnx}
 
 def Net.with_tm(n: Net, q: Chan(TM.TMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, h, _, mc, pvx}:
-      Net{a, b, c, d, e, f, g, h, Some{q}, mc, pvx}
+    case Net{a, b, c, d, e, f, g, h, _, mc, pvx, bnx}:
+      Net{a, b, c, d, e, f, g, h, Some{q}, mc, pvx, bnx}
 
 def Net.with_pv(n: Net, q: Chan(PV.PMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, h, i, mc, _}:
-      Net{a, b, c, d, e, f, g, h, i, mc, Some{q}}
+    case Net{a, b, c, d, e, f, g, h, i, mc, _, bnx}:
+      Net{a, b, c, d, e, f, g, h, i, mc, Some{q}, bnx}
 
 def Cfg.pv(c: Cfg) -> Maybe<&2, Chan(PV.PMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, _, _, pv}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, _, _, pv, bnx}}:
       pv
 
 def Cfg.tm(c: Cfg) -> Maybe<&2, Chan(TM.TMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, _, _, tm, mc, pvx, bnx}}:
       tm
 
 # a shell's output, to the hub (which sends it to every client)
@@ -2055,8 +2078,8 @@ def Term.json(+thread: String, bs: List<&2, U32>) -> String:
 
 def Net.with_pk(n: Net, q: Chan(PK.PMsg)) -> Net:
   match n:
-    case Net{a, b, c, d, e, f, g, _, i, mc, pvx}:
-      Net{a, b, c, d, e, f, g, Some{q}, i, mc, pvx}
+    case Net{a, b, c, d, e, f, g, _, i, mc, pvx, bnx}:
+      Net{a, b, c, d, e, f, g, Some{q}, i, mc, pvx, bnx}
 
 def Browser.exe() -> IO(String):
   do IO<String>:
@@ -2066,7 +2089,7 @@ def Browser.exe() -> IO(String):
 
 def Cfg.br(c: Cfg) -> Maybe<&2, Chan(BR.BMsg)>:
   match c:
-    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx, mc, pvx}}:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, br, pkx, tmx, mc, pvx, bnx}}:
       br
 
 def Preview.shot(+o: J.Json) -> List<&2, J.Json>:
@@ -2108,11 +2131,11 @@ def Preview.content(+o: J.Json) -> J.Json:
 def Preview.answer(+id: String, +line: String) -> String:
   "{\"jsonrpc\":\"2.0\",\"id\":" ++ id ++ ",\"result\":" ++ J.Json.show(Preview.content(Maybe.default(&2, J.Json, J.Json.parse(line), J.Null{}))) ++ "}"
 
-def Preview.run.k(m: Maybe<&2, Chan(BR.BMsg)>, +id: String, +op: String, args: J.Json, +reply: Chan(String)) -> IO(Unit):
+def Preview.run.k(m: Maybe<&2, Chan(BR.BMsg)>, +page: String, +id: String, +op: String, args: J.Json, +reply: Chan(String)) -> IO(Unit):
   match m:
     case Some{q}:
       do IO<Unit>:
-        line : String <- BR.Browser.ask(q, op, args)
+        line : String <- BR.Browser.ask_on(q, page, op, args)
         ok : Bool <- Chan.send(String, reply, Preview.answer(id, line))
         return Unit{}
     case None{}:
@@ -2120,9 +2143,10 @@ def Preview.run.k(m: Maybe<&2, Chan(BR.BMsg)>, +id: String, +op: String, args: J
         ok : Bool <- Chan.send(String, reply, Preview.answer(id, BR.Browser.fail("no browser in this Backplane")))
         return Unit{}
 
-# a preview_* tool call, answered by the browser off the hub's thread
-def Preview.run(+cfg: Cfg, +o: J.Json, +reply: Chan(String)) -> IO(Unit):
-  Preview.run.k(Cfg.br(cfg), J.Json.as_raw(J.Json.get(o, "id"), "null"), String.drop(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), 8n),
+# a preview_* tool call, answered by the browser off the hub's thread, on
+# the page of `page` (a bot's own; "" is the shared page)
+def Preview.run(+cfg: Cfg, +page: String, +o: J.Json, +reply: Chan(String)) -> IO(Unit):
+  Preview.run.k(Cfg.br(cfg), page, J.Json.as_raw(J.Json.get(o, "id"), "null"), String.drop(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), 8n),
     J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments"), reply)
 
 def Preview.is(+o: J.Json) -> Bool:
@@ -2131,14 +2155,6 @@ def Preview.is(+o: J.Json) -> Bool:
 # opening or navigating brings the Browser tab forward in every window
 def Preview.shows(+o: J.Json) -> Bool:
   Bool.or(String.eq(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "preview_open"), String.eq(J.Json.get_str(J.Json.get_obj(o, "params"), "name", ""), "preview_navigate"))
-
-def Hub.preview(h: Hub, +o: J.Json, +reply: Chan(String)) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, +cl, as, inbox, +cfg, note}:
-      do IO<Hub>:
-        IO.spawn(Unit, Preview.run(cfg, o, reply))
-        Bool.pick(IO(Unit), Preview.shows(o), Wire.all(cl, "{\"t\":\"view\",\"kind\":\"browser\",\"path\":\"\"}"), IO.pure(Unit, Unit{}))
-        return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 # a shell's output goes to every client (each keeps its own screen)
 def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
@@ -2150,8 +2166,8 @@ def Hub.term_out(h: Hub, +thread: String, data: List<&2, U32>) -> IO(Hub):
 
 def Cfg.with_models(c: Cfg, +ms: String, +mt: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx, mc, pvx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, _, _, rt, brx, pkx, tmx, mc, pvx, bnx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}
 
 def Hub.models.k(h: Hub) -> IO(Hub):
   match h:
@@ -2162,8 +2178,8 @@ def Hub.models.k(h: Hub) -> IO(Hub):
 
 def Cfg.with_machines(c: Cfg, +mc: String) -> Cfg:
   match c:
-    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, _, pvx}}:
-      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx}}
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, _, pvx, bnx}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}
 
 # the owner's other machines changed: every client hears
 def Hub.machines(h: Hub, +mc: String) -> IO(Hub):
@@ -2240,12 +2256,12 @@ def Main.args(xs: List<String>, c: Cfg) -> Cfg:
       Main.args(t, Cfg{h, x, ho, po, pr, ds, v, nt})
     case "--home" <> x <> t Cfg{_, w, ho, po, pr, ds, v, nt}:
       Main.args(t, Cfg{x, w, ho, po, pr, ds, v, nt})
-    case "--no-tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{False{}, False{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
-    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
-    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}}:
-      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx}})
+    case "--no-tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{False{}, False{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}})
+    case "--tailscale" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, https, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}})
+    case "--tailscale-https" <> t Cfg{h, w, ho, po, pr, ds, v, Net{_, _, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}}:
+      Main.args(t, Cfg{h, w, ho, po, pr, ds, v, Net{True{}, True{}, tok, ms, mt, rt, brx, pkx, tmx, mc, pvx, bnx}})
     case _ <> t _:
       Main.args(t, c)
     case Nil{} _:
@@ -2265,7 +2281,7 @@ def Models.cache(+home: String) -> String:
 
 def Net.models(n: Net) -> String:
   match n:
-    case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx}:
+    case Net{_, _, _, ms, _, _, brx, pkx, tmx, mc, pvx, bnx}:
       ms
 
 # Machines
@@ -2629,94 +2645,6 @@ def Conn.route.mcp(mcp: Bool, s: Socket, +req: W.Request, rest: List<&2, U32>, +
     case False{} _:
       Conn.route.k(Conn.is_ws(req), s, req, rest, web, id, inbox, trusted, token)
 
-def Conn.route(s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
-  Conn.route.mcp(Conn.is_mcp(req), s, req, rest, web, id, inbox, trusted, token)
-
-def Conn.head.k(m: Maybe<&2, W.Split>, s: Socket, buf: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg),
-    +trusted: Bool, +token: String, k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
-  match m:
-    case Some{W.Split{head, rest}}:
-      Conn.route(s, W.Http.request(head), rest, web, id, inbox, trusted, token)
-    case None{}:
-      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536), r => Conn.head.got(r, buf, k))
-
-# read until the request head is complete (at most 64 reads)
-def Conn.head(fuel: Nat, s: Socket, +buf: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
-  match fuel:
-    case 0n:
-      Conn.finish(s, W.Http.text("431 Request Header Fields Too Large", "too large"))
-    case 1n+f:
-      Conn.head.k(W.Http.split(buf), s, buf, web, id, inbox, trusted, token, s2 => b2 => Conn.head(f, s2, b2, web, id, inbox, trusted, token))
-
-# Accepting
-# ---------
-
-# a tailnet connection from a device its owner also owns is trusted like
-# loopback (Tailscale vouches for it); others still need the token
-def Accept.whois(r: Socket & String, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
-  (s, ip) = r
-  do IO<Unit>:
-    w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
-    Conn.head(64n, s, Nil{}, web, id, inbox, TN.Tailnet.trusts(owner, TN.Tailnet.login(Tailnet.out(w))), token)
-
-def Accept.trust(ask: Bool, s: Socket, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
-  match ask:
-    case True{}:
-      IO.bind(Socket & String, Unit, H.Sock.peer(s), r => Accept.whois(r, owner, id, web, inbox, token))
-    case False{}:
-      Conn.head(64n, s, Nil{}, web, id, inbox, trusted, token)
-
-def Accept.got(r: Listener & Result<&1, &1, U32 & String, Socket>, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String, k: Listener -> IO(Unit)) -> IO(Unit):
-  (l, res) = r
-  match res:
-    case Done{s}:
-      do IO<Unit>:
-        IO.spawn(Unit, Accept.trust(Bool.and(Bool.not(trusted), Bool.not(String.is_empty(owner))), s, owner, id, web, inbox, trusted, token))
-        k(l)
-    case Fail{_}:
-      k(l)
-
-# connections from one listener; ids count up from `id` (loopback from 1,
-# the tailnet from 2^31, so they never meet)
-def Accept.loop(fuel: Nat, l: Listener, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String) -> IO(Unit):
-  match fuel:
-    case 0n:
-      Listener.close(l)
-    case 1n+f:
-      IO.bind(Listener & Result<&1, &1, U32 & String, Socket>, Unit, TCP.accept(l),
-        r => Accept.got(r, id, web, inbox, trusted, token, owner, l2 => Accept.loop(f, l2, (id + 1 : U32), web, inbox, trusted, token, owner)))
-
-def Tailnet.listened(r: Result<&1, &1, U32 & String, Listener>, +ip: String, +port: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
-  match r:
-    case Done{l}:
-      do IO<Unit>:
-        w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
-        +owner : String = TN.Tailnet.login(Tailnet.out(w))
-        IO.print("Backplane on your tailnet: http://" ++ ip ++ ":" ++ U32.show(port) ++ "/ (" ++ Bool.pick(String, String.is_empty(owner), "pairing token " ++ token, owner ++ "'s devices, or pairing token " ++ token) ++ ")")
-        IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 2147483648, web, inbox, False{}, token, owner))
-    case Fail{_}:
-      Log.info("could not listen on the tailnet address " ++ ip)
-
-def Tailnet.listen.k(none: Bool, +ip: String, +port: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
-  match none:
-    case True{}:
-      Log.info("tailscale is not up (tailscale ip -4 gave nothing)")
-    case False{}:
-      IO.bind(Result<&1, &1, U32 & String, Listener>, Unit, H.Net.listen(ip, port), r => Tailnet.listened(r, ip, port, web, inbox, token))
-
-# listen on the tailnet address too (clients there need the token), and
-# serve HTTPS through `tailscale serve` when asked
-def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
-  match n:
-    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx, mc, pvx}:
-      do IO<Unit>:
-        r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
-        +ip : String = Tailnet.first(r)
-        Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
-        Tailnet.https(https, port, token)
-    case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc, pvx}:
-      IO.pure(Unit, Unit{})
-
 def Refresh.news(news: Bool, +ms: String, +mt: String, +inbox: Chan(Msg), +cache: String, +last: String) -> IO(String):
   match news:
     case True{}:
@@ -2873,7 +2801,7 @@ def Main.prepare(+user: String, +exe: String) -> IO(Boot):
 def Main.config(+user: String, +exe: String, args: List<String>, b: Boot) -> Cfg:
   Boot{kdir, skills, rt, ms, mt} = b
   Main.args(args, Cfg{user ++ "/.backplane-bend", exe ++ "/web", "127.0.0.1", 3787,
-    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{True{}, False{}, "", ms, mt, rt, None{}, None{}, None{}, "", None{}}})
+    Q.Prompt.runtime("Backplane", skills), [kdir], Main.version(), Net{True{}, False{}, "", ms, mt, rt, None{}, None{}, None{}, "", None{}, BN.Bn.empty()}})
 
 def Sys.exe_dir.io() -> IO(String):
   H.Sys.exe_dir()
@@ -3054,6 +2982,395 @@ def Media.run.k(i: Nat, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U3
 def Media.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
   Media.run.k(C.Codec.pos(["attach.put", "attach.file", "attach.claude", "update.check"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
 
+# thread_wait: the check (MC.Wait.now) goes through the hub each second,
+# off the hub, until the thread is done or the time is up; its last answer
+# is the reply
+def Wait.next(stop: Bool, text: String, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
+  match stop:
+    case True{}:
+      IO.bind(Bool, Unit, Chan.send(String, reply, text), ok => IO.pure(Unit, Unit{}))
+    case False{}:
+      IO.bind(Unit, Unit, IO.sleep(1000), k)
+
+def Wait.got(m: Maybe<&1, String>, +left: Nat, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{+text}:
+      Wait.next(Bool.or(MC.Wait.done(text), Nat.is_eq(left, 0n)), text, reply, k)
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Wait.loop(+fuel: Nat, +thread: String, +check: String, +reply: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        +r2 : Chan(String) <- Chan.new(String, 1)
+        ok : Bool <- Chan.send(Msg, inbox, Mcp{thread, check, r2})
+        m : Maybe<&1, String> <- Chan.recv(String, r2)
+        Wait.got(m, f, reply, _ => Wait.loop(f, thread, check, reply, inbox))
+
+def Hub.agent_write(h: Hub, +thread: String, line: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      do IO<Hub>:
+        Hub.agent_send(Agents.get(as, thread), line)
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.update_check(h: Hub) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, +inbox, cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Media.check(M.Setting.get(st, "update.channel", "stable"), inbox, 0, ""))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Agent.pid_of(m: Maybe<&2, Agent>) -> Maybe<&2, U32>:
+  match m:
+    case Some{Agent{_, _, p, _}}:
+      Some{p}
+    case None{}:
+      None{}
+
+def Hub.turn_pid.k(run: Bool, h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
+  match run h:
+    case True{} Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      do IO<Hub>:
+        Hub.agent_stop(Agents.get(as, thread))
+        return Hub{st, f, ls, cl, Agent{thread, input, pid, "turn"} <> Agents.drop(as, thread), inbox, cfg, note}
+    case False{} _:
+      do IO<Hub>:
+        Chan.close(String, input)
+        H.Proc.kill(pid, 15)
+        return h
+
+# a turn process started: it replaces whatever ran for the thread before;
+# one whose turn was stopped before it came up is stopped at once
+def Hub.turn_pid(h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.turn_pid.k(B.Hub.running(B.Hub.thread(st, thread)), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, pid, input)
+
+def Hub.turn_done.k(same: Bool, h: Hub, +thread: String) -> Hub:
+  match same h:
+    case True{} Hub{st, f, ls, cl, as, inbox, cfg, note}:
+      Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
+    case False{} _:
+      h
+
+# a turn process exited: forgotten, unless another replaced it already
+def Hub.turn_done(h: Hub, +tag: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
+      IO.pure(Hub, Hub.turn_done.k(B.Tag.heard(B.Tag.pid(tag), Agent.pid_of(Agents.get(as, B.Tag.thread(tag)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Tag.thread(tag)))
+
+# Bots
+# ----
+# The IO of docs/bots.md around the pure decider (core/bothub.bend):
+# effects (B.BotFx), signed requests from webhooks and linked machines,
+# Google's tools, a bot's own browser page. Secrets are handled by
+# botnet.bend and never reach the log, the event log or a broadcast.
+
+def Cfg.bn(c: Cfg) -> BN.Bn:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{_, _, _, _, _, _, brx, pkx, tmx, mc, pvx, bnx}}:
+      bnx
+
+def Cfg.with_bn(c: Cfg, b: BN.Bn) -> Cfg:
+  match c:
+    case Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx, _}}:
+      Cfg{h, w, ho, p, pr, ds, v, Net{tn, hs, t, ms, mt, rt, brx, pkx, tmx, mc, pvx, b}}
+
+def Cfg.host(c: Cfg) -> String:
+  match c:
+    case Cfg{_, _, ho, _, _, _, _, _}:
+      ho
+
+def Cfg.tailnet(c: Cfg) -> Bool:
+  match c:
+    case Cfg{_, _, _, _, _, _, _, Net{tn, _, _, _, _, _, brx, pkx, tmx, mc, pvx, bnx}}:
+      tn
+
+def Hub.broadcast(h: Hub, +text: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, +cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Wire.all(cl, text)
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+# a bot's browser page is named by its id; other threads use the shared one
+def Bot.page.k(m: Maybe<&2, BO.Bot>) -> String:
+  match m:
+    case Some{b}:
+      BO.Bot.id(b)
+    case None{}:
+      ""
+
+def Bot.page(+st: M.State, +thread: String) -> String:
+  Bot.page.k(BO.World.of_thread(M.State.bots(st), thread))
+
+# a bot's page is its own: only the shared page brings the Browser tab
+# forward
+def Hub.preview(h: Hub, +thread: String, +o: J.Json, +reply: Chan(String)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, +cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        +page : String = Bot.page(st, thread)
+        IO.spawn(Unit, Preview.run(cfg, page, o, reply))
+        Bool.pick(IO(Unit), Bool.and(String.is_empty(page), Preview.shows(o)), Wire.all(cl, "{\"t\":\"view\",\"kind\":\"browser\",\"path\":\"\"}"), IO.pure(Unit, Unit{}))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+# requests: "bots.*" to the bots' decider, the rest to the hub's
+def Bot.request.k(bots: Bool, +o: J.Json, +st: M.State, +now: Nat, +client: U32) -> B.Step:
+  match bots:
+    case True{}:
+      BH.Bots.request(st, now, client, o)
+    case False{}:
+      B.Hub.request(st, now, client, o)
+
+def Bot.request(m: Maybe<&2, J.Json>, +st: M.State, +now: Nat, +client: U32, +text: String) -> B.Step:
+  match m:
+    case Some{+o}:
+      Bot.request.k(BH.Bots.is(J.Json.get_str(o, "m", "")), o, st, now, client)
+    case None{}:
+      B.Hub.request_text(st, now, client, text)
+
+# Memory reaches only the agent: a bot's turn text gets its <memory>
+# block here, after the timeline kept the text as it was sent
+
+def Bot.line.k(m: Maybe<&2, J.Json>, +st: M.State, +now: Nat, +thread: String, +line: String) -> String:
+  match m:
+    case Some{+o}:
+      Bool.pick(String, String.eq(J.Json.get_str(o, "type", ""), "user"), B.Claude.user(BH.Bots.turn(st, now, thread, Mention.user_text(o))), line)
+    case None{}:
+      line
+
+# a Claude stream-json line for a bot's thread: a user message gets the memory
+def Bot.line(bot: Bool, +st: M.State, +now: Nat, +thread: String, +line: String) -> String:
+  match bot:
+    case True{}:
+      Bot.line.k(J.Json.parse(line), st, now, thread, line)
+    case False{}:
+      line
+
+# a Claude message with images carries its text in the job's `a`
+def Bot.attach(claude: Bool, +st: M.State, +now: Nat, +thread: String, +a: String) -> String:
+  match claude:
+    case True{}:
+      BH.Bots.turn(st, now, thread, a)
+    case False{}:
+      a
+
+# Effects
+# -------
+
+def BotJob.reply(+inbox: Chan(Msg), +client: U32, +id: String, +ok: Bool, kvs: List<&2, J.KV>) -> IO(Unit):
+  do IO<Unit>:
+    sent : Bool <- Chan.send(Msg, inbox, Push{client, J.Json.show(J.Json.obj(List.append(&2, J.KV, [J.KV{"t", J.Str{"reply"}}, J.KV{"id", J.Num{id}}, J.KV{"ok", J.Flag{ok}}], kvs)))})
+    return Unit{}
+
+def BotJob.fail(+inbox: Chan(Msg), +client: U32, +id: String, msg: String) -> IO(Unit):
+  BotJob.reply(inbox, client, id, False{}, [J.KV{"error", J.Str{msg}}])
+
+def BotJob.client(+b: String) -> U32:
+  Maybe.default(&2, U32, U32.read(b), 0)
+
+def BotJob.id(+c: String) -> String:
+  Bool.pick(String, String.is_empty(c), "0", c)
+
+# a bot's home folder, a git repository (so its turns get checkpoints),
+# becomes its thread's folder
+def BotJob.home.k(safe: Bool, +inbox: Chan(Msg), +home: String, +bot: String, +thread: String) -> IO(Unit):
+  match safe:
+    case True{}:
+      do IO<Unit>:
+        +path : String = home ++ "/bots/" ++ bot
+        mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(path)
+        r : P.Ran <- P.Proc.run("git", ["init", "-q"], path)
+        +now : Nat <- Now.nat()
+        ok : Bool <- Chan.send(Msg, inbox, Commit{[M.WorktreeSet{thread, "", path, now}]})
+        return Unit{}
+    case False{}:
+      Log.info("bots: not a folder name: " ++ bot)
+
+def BotJob.hooked(+secret: String, +inbox: Chan(Msg), +client: U32, +id: String, +hook: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(secret), BotJob.fail(inbox, client, id, "could not keep the webhook's secret"),
+    BotJob.reply(inbox, client, id, True{}, [J.KV{"hook", J.Str{hook}}, J.KV{"secret", J.Str{secret}}, J.KV{"path", J.Str{"/hook/" ++ hook}}]))
+
+# a webhook's secret: made and kept here, shown once to the client that asked
+def BotJob.hook(+inbox: Chan(Msg), +home: String, +hook: String, +client: U32, +id: String) -> IO(Unit):
+  IO.bind(String, Unit, BN.Bn.hook.make(home, hook), s => BotJob.hooked(s, inbox, client, id, hook))
+
+def BotJob.sent(r: BN.Resp, +peer: String, +path: String) -> IO(Unit):
+  match r:
+    case BN.Resp{+code, _}:
+      Bool.pick(IO(Unit), Bool.and(Nat.is_ge(code, 200n), Nat.is_lt(code, 300n)), IO.pure(Unit, Unit{}),
+        Log.info("bots: " ++ path ++ " to " ++ peer ++ " failed (" ++ Nat.show(code) ++ ")"))
+
+# a signed POST to a linked machine
+def BotJob.send(+home: String, +url: String, +peer: String, +path: String, +body: String) -> IO(Unit):
+  do IO<Unit>:
+    +now : Nat <- Now.nat()
+    r : BN.Resp <- BN.Bn.to_peer(home, url, peer, now, path, True{}, body)
+    BotJob.sent(r, peer, path)
+
+def BotJob.invited(ok: Bool, +inbox: Chan(Msg), +client: U32, +id: String, +url: String, +peer: String, +secret: String) -> IO(Unit):
+  match ok:
+    case True{}:
+      BotJob.reply(inbox, client, id, True{}, [J.KV{"invite", J.Str{SG.Invite.make(url, peer, secret)}}, J.KV{"peer", J.Str{peer}}])
+    case False{}:
+      BotJob.fail(inbox, client, id, "could not keep the invite's secret")
+
+# an invite: a new peer id and secret, kept here; the other machine links
+# with it (POST /bots/link) and both keep the secret
+def BotJob.invite(+inbox: Chan(Msg), +home: String, +tailnet: Bool, +host: String, +port: U32, +given: String, +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    +here : String <- BN.Bn.url.here(tailnet, host, port)
+    +r : String <- BN.Bn.random(2n)
+    +peer : String = "p" ++ r
+    +secret : String <- BN.Bn.secret.fresh()
+    ok : Bool <- BN.Bn.peer.save(home, peer, secret)
+    BotJob.invited(ok, inbox, client, id, Bool.pick(String, String.is_empty(String.trim(given)), here, String.trim(given)), peer, secret)
+
+def BotJob.linked.k(ok: Bool, +name: String, +code: Nat, +body: String, +inbox: Chan(Msg), +home: String, +url: String, +peer: String, +client: U32, +id: String, +now: Nat) -> IO(Unit):
+  match ok:
+    case True{}:
+      do IO<Unit>:
+        +shown : String = Bool.pick(String, String.is_empty(name), peer, name)
+        sent : Bool <- Chan.send(Msg, inbox, Commit{[M.PeerSet{peer, shown, url, False{}, now}]})
+        BotJob.reply(inbox, client, id, True{}, [J.KV{"peer", J.Str{peer}}, J.KV{"name", J.Str{shown}}])
+    case False{}:
+      do IO<Unit>:
+        BN.Bn.peer.forget(home, peer)
+        BotJob.fail(inbox, client, id, "the other machine did not link (" ++ Nat.show(code) ++ ") " ++ String.take(String.trim(body), 200n))
+
+def BotJob.linked(r: BN.Resp, +inbox: Chan(Msg), +home: String, +url: String, +peer: String, +client: U32, +id: String, +now: Nat) -> IO(Unit):
+  match r:
+    case BN.Resp{+code, +body}:
+      BotJob.linked.k(Nat.is_eq(code, 200n), BN.Bn.clean(J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), "name", "")), code, body,
+        inbox, home, url, peer, client, id, now)
+
+# joining with an invite: keep its secret, tell the inviter where we are
+# (signed POST /bots/link), and link once it answers with its name
+def BotJob.join(+inbox: Chan(Msg), +home: String, +tailnet: Bool, +host: String, +port: U32, +url: String, +peer: String, +secret: String, +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- BN.Bn.peer.save(home, peer, secret)
+    +here : String <- BN.Bn.url.here(tailnet, host, port)
+    +me : String <- BN.Bn.name()
+    +now : Nat <- Now.nat()
+    r : BN.Resp <- BN.Bn.signed(home, url, peer, secret, now, "/bots/link", True{}, J.Json.show(J.Json.obj([J.KV{"url", J.Str{here}}, J.KV{"name", J.Str{me}}])))
+    BotJob.linked(r, inbox, home, url, peer, client, id, now)
+
+def BotJob.join.go(ok: Bool, linked: Bool, +inbox: Chan(Msg), +cfg: Cfg, +url: String, +peer: String, +secret: String, +client: U32, +id: String) -> IO(Unit):
+  match ok linked:
+    case True{} False{}:
+      IO.spawn(Unit, BotJob.join(inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), url, peer, secret, client, id))
+    case True{} True{}:
+      BotJob.fail(inbox, client, id, "already linked to that machine")
+    case False{} _:
+      BotJob.fail(inbox, client, id, "not a usable invite")
+
+def Bot.peer.live.k(p: BO.Peer) -> Bool:
+  match p:
+    case BO.Peer{_, _, _, _, revoked}:
+      Bool.not(revoked)
+
+def Bot.peer.live(+st: M.State, +id: String) -> Bool:
+  Bot.peer.live.k(BO.World.peer(M.State.bots(st), id))
+
+def Bot.peer.url.k(p: BO.Peer) -> String:
+  match p:
+    case BO.Peer{_, _, u, _, revoked}:
+      Bool.pick(String, revoked, "", u)
+
+# a live peer's address ("" for none)
+def Bot.peer.url(+st: M.State, +id: String) -> String:
+  Bot.peer.url.k(BO.World.peer(M.State.bots(st), id))
+
+def Bot.peer.name.k(p: BO.Peer, +id: String) -> String:
+  match p:
+    case BO.Peer{_, +n, _, _, _}:
+      Bool.pick(String, String.is_empty(n), id, n)
+
+# what bots here call a peer ("name@<this>")
+def Bot.peer.name(+st: M.State, +id: String) -> String:
+  Bot.peer.name.k(BO.World.peer(M.State.bots(st), id), id)
+
+def BotJob.join.k(m: Maybe<&2, SG.Inv>, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +client: U32, +id: String) -> IO(Unit):
+  match m:
+    case Some{SG.Inv{+url, +peer, +secret}}:
+      BotJob.join.go(Bool.and(BN.Bn.url.ok(url), BN.Bn.safe(peer)), Bot.peer.live(st, peer), inbox, cfg, url, peer, secret, client, id)
+    case None{}:
+      BotJob.fail(inbox, client, id, "not an invite")
+
+def BotJob.send.k(+url: String, +cfg: Cfg, +peer: String, +path: String, +body: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(url), Log.info("bots: no linked machine " ++ peer),
+    IO.spawn(Unit, BotJob.send(Cfg.home(cfg), url, peer, path, body)))
+
+def BotJob.close(m: Maybe<&2, Chan(BR.BMsg)>, +bot: String) -> IO(Unit):
+  match m:
+    case Some{q}:
+      IO.bind(String, Unit, BR.Browser.ask_on(q, bot, "close", J.Json.obj(Nil{})), r => IO.pure(Unit, Unit{}))
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+def Bot.redirect(+port: U32) -> String:
+  "http://127.0.0.1:" ++ U32.show(port) ++ "/oauth/google"
+
+# "configure" (phones) and "config" are the same op
+def BotJob.google.pos(+op: String) -> Nat:
+  Bool.pick(Nat, String.eq(op, "configure"), 0n, C.Codec.pos(["config", "begin", "finish", "status", "disconnect"], op))
+
+def BotJob.google.op(i: Nat, +home: String, +p: J.Json, +redirect: String) -> IO(String):
+  match i:
+    case 0n:
+      GS.Google.configure(home, J.Json.get_str(p, "clientId", ""), J.Json.get_str(p, "clientSecret", ""))
+    case 1n:
+      GS.Google.begin(home, redirect)
+    case 2n:
+      GS.Google.finish(home, J.Json.get_str(p, "pasted", ""), redirect)
+    case 3n:
+      GS.Google.status(home)
+    case 4n:
+      GS.Google.disconnect(home)
+    case _:
+      IO.pure(String, "error: unknown Google request")
+
+def BotJob.google.done(+text: String, +begin: Bool, +inbox: Chan(Msg), +client: U32, +id: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.starts_with(text, "error"), BotJob.fail(inbox, client, id, Bool.pick(String, String.starts_with(text, "error: "), String.drop(text, 7n), text)),
+    BotJob.reply(inbox, client, id, True{}, [J.KV{Bool.pick(String, begin, "googleUrl", "google"), J.Str{text}}]))
+
+# Google's setup and sign-in (src/server/google.bend), off the hub
+def BotJob.google(+inbox: Chan(Msg), +home: String, +port: U32, +params: String, +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    +p : J.Json = Maybe.default(&2, J.Json, J.Json.parse(params), J.Null{})
+    +i : Nat = BotJob.google.pos(J.Json.get_str(p, "op", ""))
+    +text : String <- BotJob.google.op(i, home, p, Bot.redirect(port))
+    BotJob.google.done(text, Nat.is_eq(i, 1n), inbox, client, id)
+
+# one B.BotFx: home, gone, hook, unhook, send, invite, join, unpeer, google
+def Bot.fx(i: Nat, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +a: String, +b: String, +c: String) -> IO(Unit):
+  match i:
+    case 0n:
+      IO.spawn(Unit, BotJob.home.k(BN.Bn.safe(a), inbox, Cfg.home(cfg), a, b))
+    case 1n:
+      IO.spawn(Unit, BotJob.close(Cfg.br(cfg), a))
+    case 2n:
+      IO.spawn(Unit, BotJob.hook(inbox, Cfg.home(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 3n:
+      IO.spawn(Unit, BN.Bn.hook.forget(Cfg.home(cfg), a))
+    case 4n:
+      BotJob.send.k(Bot.peer.url(st, a), cfg, a, b, c)
+    case 5n:
+      IO.spawn(Unit, BotJob.invite(inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 6n:
+      BotJob.join.k(SG.Invite.parse(a), st, inbox, cfg, BotJob.client(b), BotJob.id(c))
+    case 7n:
+      IO.spawn(Unit, BN.Bn.peer.forget(Cfg.home(cfg), a))
+    case 8n:
+      IO.spawn(Unit, BotJob.google(inbox, Cfg.home(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case _:
+      IO.pure(Unit, Unit{})
+
 def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
   match h o:
     case Hub{st, f, ls, +cl, as, inbox, cfg, note} B.Send{+client, text}:
@@ -3068,7 +3385,9 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
       Hub.start.k(Agents.get(as, thread), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, cwd, model, session, r, i, Hub.effort_of(st, thread))
     case Hub{+st, f, ls, cl, +as, inbox, cfg, note} B.AgentSend{+thread, +line}:
       do IO<Hub>:
-        Hub.agent_send.k(String.contains(line, "$"), Agents.get(as, thread), line, B.Hub.cwd(st, B.Hub.thread(st, thread)))
+        +now : Nat <- Now.nat()
+        +l2 : String = Bot.line(BO.World.is_bot_thread(M.State.bots(st), thread), st, now, thread, line)
+        Hub.agent_send.k(String.contains(l2, "$"), Agents.get(as, thread), l2, B.Hub.cwd(st, B.Hub.thread(st, thread)))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, +as, inbox, cfg, note} B.AgentStop{+thread}:
       do IO<Hub>:
@@ -3085,7 +3404,8 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.CodexTurn{+thread, +cwd, +model, +session, r, text}:
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
-        IO.spawn(Unit, Codex.go(cfg, st, thread, cwd, model, session, r, text, fs, inbox))
+        +now : Nat <- Now.nat()
+        IO.spawn(Unit, Codex.go(cfg, st, thread, cwd, model, session, r, BH.Bots.turn(st, now, thread, text), fs, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note} B.KiCadInstall{}:
       do IO<Hub>:
@@ -3094,7 +3414,8 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.GrokTurn{+thread, +cwd, +model, +session, r, +text}:
       do IO<Hub>:
         fs : K.Files <- K.Files.read(cwd)
-        IO.spawn(Unit, Grok.go(cfg, st, thread, cwd, model, session, r, text, fs, inbox))
+        +now : Nat <- Now.nat()
+        IO.spawn(Unit, Grok.go(cfg, st, thread, cwd, model, session, r, BH.Bots.turn(st, now, thread, text), fs, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
@@ -3110,7 +3431,8 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.Git{+client, +id, +job, +thread, +cwd, +a, +b}:
       do IO<Hub>:
-        Media.run(AG.Text.of(st), job, inbox, client, id, thread, cwd, a, b, Cfg.home(cfg))
+        +now : Nat <- Now.nat()
+        Media.run(AG.Text.of(st), job, inbox, client, id, thread, cwd, Bot.attach(String.eq(job, "attach.claude"), st, now, thread, a), b, Cfg.home(cfg))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, inbox, +cfg, note} B.AskAnswered{+ask, +answer}:
       do IO<Hub>:
@@ -3119,6 +3441,10 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.Upgrade{}:
       do IO<Hub>:
         IO.spawn(Unit, Upgrade.go(Cfg.home(cfg), M.Setting.get(st, "update.channel", "stable"), inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.BotFx{+kind, +a, +b, +c}:
+      do IO<Hub>:
+        Bot.fx(C.Codec.pos(["home", "gone", "hook", "unhook", "send", "invite", "join", "unpeer", "google"], kind), st, inbox, cfg, a, b, c)
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
@@ -3144,7 +3470,7 @@ def Hub.step(h: Hub, s: B.Step) -> IO(Hub):
 
 def Hub.rpc.k(p: M.State & Hub, +client: U32, +text: String, +now: Nat) -> IO(Hub):
   (st, h) = p
-  Hub.step(h, B.Hub.request_text(st, now, client, text))
+  Hub.step(h, Bot.request(J.Json.parse(text), st, now, client, text))
 
 def Hub.rpc(h: Hub, +client: U32, +text: String, +now: Nat) -> IO(Hub):
   Hub.rpc.k(Hub.state(h), client, text, now)
@@ -3185,36 +3511,9 @@ def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String), +body: String) -> IO(H
 def Hub.mcp.hub(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   match h:
     case Hub{+st, f, ls, cl, as, inbox, +cfg, note}:
-      Hub.mcp.k(MC.Mcp.text(st, now, thread, Maybe.default(&2, J.Json, J.Json.parse(Cfg.models(cfg)), J.Null{}), Cfg.version(cfg), body),
+      Hub.mcp.k(BH.Bots.mcp(st, now, thread, Maybe.default(&2, J.Json, J.Json.parse(Cfg.models(cfg)), J.Null{}), Cfg.version(cfg),
+          Maybe.default(&2, J.Json, J.Json.parse(BN.Bn.dir(Cfg.bn(cfg))), J.Json.arr(Nil{})), GG.Google.tool_defs(), body),
         Hub{st, f, ls, cl, as, inbox, cfg, note}, reply, body)
-
-# thread_wait: the check (MC.Wait.now) goes through the hub each second,
-# off the hub, until the thread is done or the time is up; its last answer
-# is the reply
-def Wait.next(stop: Bool, text: String, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
-  match stop:
-    case True{}:
-      IO.bind(Bool, Unit, Chan.send(String, reply, text), ok => IO.pure(Unit, Unit{}))
-    case False{}:
-      IO.bind(Unit, Unit, IO.sleep(1000), k)
-
-def Wait.got(m: Maybe<&1, String>, +left: Nat, +reply: Chan(String), k: Unit -> IO(Unit)) -> IO(Unit):
-  match m:
-    case Some{+text}:
-      Wait.next(Bool.or(MC.Wait.done(text), Nat.is_eq(left, 0n)), text, reply, k)
-    case None{}:
-      IO.pure(Unit, Unit{})
-
-def Wait.loop(+fuel: Nat, +thread: String, +check: String, +reply: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
-  match fuel:
-    case 0n:
-      IO.pure(Unit, Unit{})
-    case 1n+f:
-      do IO<Unit>:
-        +r2 : Chan(String) <- Chan.new(String, 1)
-        ok : Bool <- Chan.send(Msg, inbox, Mcp{thread, check, r2})
-        m : Maybe<&1, String> <- Chan.recv(String, r2)
-        Wait.got(m, f, reply, _ => Wait.loop(f, thread, check, reply, inbox))
 
 def Hub.mcp.w(secs: Nat, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   match secs h:
@@ -3223,30 +3522,6 @@ def Hub.mcp.w(secs: Nat, h: Hub, +thread: String, +o: J.Json, body: String, +rep
     case 1n+k Hub{st, f, ls, cl, as, +inbox, cfg, note}:
       do IO<Hub>:
         IO.spawn(Unit, Wait.loop(1n+k, thread, MC.Wait.now(o), reply, inbox))
-        return Hub{st, f, ls, cl, as, inbox, cfg, note}
-
-def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
-  match pv:
-    case True{}:
-      Hub.preview(h, o, reply)
-    case False{}:
-      Hub.mcp.w(MC.Wait.secs(o), h, thread, o, body, reply, now)
-
-def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
-  Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)
-
-def Hub.agent_write(h: Hub, +thread: String, line: String) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
-      do IO<Hub>:
-        Hub.agent_send(Agents.get(as, thread), line)
-        return Hub{st, f, ls, cl, as, inbox, cfg, note}
-
-def Hub.update_check(h: Hub) -> IO(Hub):
-  match h:
-    case Hub{+st, f, ls, cl, as, +inbox, cfg, note}:
-      do IO<Hub>:
-        IO.spawn(Unit, Media.check(M.Setting.get(st, "update.channel", "stable"), inbox, 0, ""))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 # a line from an agent: a turn process's only while it is the one the hub
@@ -3258,54 +3533,508 @@ def Hub.tagged.k(heard: Bool, h: Hub, +thread: String, line: String, +now: Nat) 
     case False{}:
       IO.pure(Hub, h)
 
-def Agent.pid_of(m: Maybe<&2, Agent>) -> Maybe<&2, U32>:
-  match m:
-    case Some{Agent{_, _, p, _}}:
-      Some{p}
-    case None{}:
-      None{}
-
 def Hub.tagged(h: Hub, +tag: String, line: String, +now: Nat) -> IO(Hub):
   match h:
     case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
       Hub.tagged.k(B.Tag.heard(B.Tag.pid(tag), Agent.pid_of(Agents.get(as, B.Tag.thread(tag)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Tag.thread(tag), line, now)
 
-def Hub.turn_pid.k(run: Bool, h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
-  match run h:
-    case True{} Hub{st, f, ls, cl, +as, inbox, cfg, note}:
-      do IO<Hub>:
-        Hub.agent_stop(Agents.get(as, thread))
-        return Hub{st, f, ls, cl, Agent{thread, input, pid, "turn"} <> Agents.drop(as, thread), inbox, cfg, note}
-    case False{} _:
-      do IO<Hub>:
-        Chan.close(String, input)
-        H.Proc.kill(pid, 15)
-        return h
-
-# a turn process started: it replaces whatever ran for the thread before;
-# one whose turn was stopped before it came up is stopped at once
-def Hub.turn_pid(h: Hub, +thread: String, +pid: U32, input: Chan(String)) -> IO(Hub):
-  match h:
-    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
-      Hub.turn_pid.k(B.Hub.running(B.Hub.thread(st, thread)), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, pid, input)
-
-def Hub.turn_done.k(same: Bool, h: Hub, +thread: String) -> Hub:
-  match same h:
-    case True{} Hub{st, f, ls, cl, as, inbox, cfg, note}:
-      Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}
-    case False{} _:
-      h
-
-# a turn process exited: forgotten, unless another replaced it already
-def Hub.turn_done(h: Hub, +tag: String) -> IO(Hub):
-  match h:
-    case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
-      IO.pure(Hub, Hub.turn_done.k(B.Tag.heard(B.Tag.pid(tag), Agent.pid_of(Agents.get(as, B.Tag.thread(tag)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Tag.thread(tag)))
-
 def Hub.recover(h: Hub, +now: Nat) -> IO(Hub):
   match h:
     case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
       Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.recover(st, now))
+
+# The minute
+# ----------
+
+def Bot.dir.job(ps: List<&2, BO.Peer>, +home: String, +now: Nat, +prev: String, +inbox: Chan(Msg)) -> IO(Unit):
+  IO.bind(String, Unit, BN.Bn.dir.fetch(ps, home, now, prev), d => IO.bind(Bool, Unit, Chan.send(Msg, inbox, BotsFound{d}), ok => IO.pure(Unit, Unit{})))
+
+# routines that are due run, and the linked machines are asked for their bots
+def Hub.bot_tick(h: Hub, +tz: String, +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, +inbox, +cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Bot.dir.job(BO.World.peers(M.State.bots(st)), Cfg.home(cfg), now, BN.Bn.dir(Cfg.bn(cfg)), inbox))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, BH.Bots.tick(st, now, BH.Tz{M.Snooze.tz.secs(tz), M.Snooze.tz.east(tz)}))
+
+def Hub.bots_found.k(same: Bool, h: Hub, d: String) -> IO(Hub):
+  match same h:
+    case True{} _:
+      IO.pure(Hub, h)
+    case False{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      Hub.models.k(Hub{st, f, ls, cl, as, inbox, Cfg.with_bn(cfg, BN.Bn.with_dir(Cfg.bn(cfg), d)), note})
+
+# the linked machines' bots changed: every client hears (info "bots.remote")
+def Hub.bots_found(h: Hub, +d: String) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      Hub.bots_found.k(String.eq(BN.Bn.dir(Cfg.bn(cfg)), d), Hub{st, f, ls, cl, as, inbox, cfg, note}, d)
+
+# Requests from outside
+# ---------------------
+# A webhook (POST /hook/<id>) or a linked machine (POST /bots/deliver,
+# POST /bots/link, GET /bots/dir) is checked off the hub: its secret read,
+# its signature compared (Sign.check: fresh, constant time). Back on the
+# hub the replay cache accepts its key once, and only then does anything
+# change. A bot's screen (GET /bots/<id>/screen.jpg) and Google's redirect
+# (GET /oauth/google) come from clients the server already lets in.
+
+def Bot.cap() -> Nat:
+  262144n
+
+def Bot.answer(+reply: Chan(List<&2, U32>), bs: List<&2, U32>) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- Chan.send(List<&2, U32>, reply, bs)
+    return Unit{}
+
+def Hub.answer(h: Hub, +reply: Chan(List<&2, U32>), bs: List<&2, U32>) -> IO(Hub):
+  do IO<Hub>:
+    Bot.answer(reply, bs)
+    return h
+
+def Bot.json(+status: String, +text: String) -> List<&2, U32>:
+  W.Http.response(status, "application/json", U.Utf8.encode(text), "")
+
+def Bot.shot.sent(bs: List<&2, U32>, +reply: Chan(List<&2, U32>)) -> IO(Unit):
+  match bs:
+    case Nil{}:
+      Bot.answer(reply, W.Http.text("404 Not Found", "no screen yet"))
+    case b <> t:
+      Bot.answer(reply, W.Http.response.c("200 OK", "image/jpeg", b <> t, "no-store", ""))
+
+# a bot's newest browser frame, as the helper wrote it
+def Bot.shot(+home: String, +bot: String, +reply: Chan(List<&2, U32>)) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(bot), Bot.answer(reply, W.Http.text("404 Not Found", "no such bot")),
+    IO.bind(List<&2, U32>, Unit, Files.read(BR.Br.shot_file(home, bot)), bs => Bot.shot.sent(bs, reply)))
+
+def Bot.oauth.page(+text: String) -> String:
+  GG.Google.page(Bool.pick(String, String.starts_with(text, "error"), text, "Google is connected to Backplane. You can close this tab."))
+
+# Google sent the browser back with a code: finish signing in
+def Bot.oauth(+home: String, +port: U32, +path: String, +reply: Chan(List<&2, U32>)) -> IO(Unit):
+  IO.bind(String, Unit, GS.Google.finish(home, path, Bot.redirect(port)),
+    t => Bot.answer(reply, W.Http.response("200 OK", "text/html; charset=utf-8", U.Utf8.encode(Bot.oauth.page(t)), "")))
+
+def Bot.me(+link: Bool) -> IO(String):
+  Bool.pick(IO(String), link, BN.Bn.name(), IO.pure(String, ""))
+
+# the secret of the hook or the peer, the signature against it, and the
+# replay key (or "") back to the hub
+def Bot.verify(+hook: Bool, +home: String, +kind: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +secret : String <- BN.Bn.secret.of(hook, home, id)
+    +me : String <- Bot.me(String.eq(kind, "link"))
+    +key : String = BN.Bn.check(hook, secret, now, kind ++ ":" ++ id, ts, sig, gh, dl, body)
+    ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, body, Bool.pick(String, String.contains(key, ":i:"), "ring", me), reply})
+    return Unit{}
+
+def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String,
+    +body: String, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  match i:
+    case 0n:
+      Bot.shot(home, arg, reply)
+    case 1n:
+      Bot.oauth(home, port, arg, reply)
+    case 2n:
+      Bot.verify(True{}, home, kind, arg, ts, sig, gh, dl, body, reply, now, inbox)
+    case _:
+      Bot.verify(False{}, home, kind, peer, ts, sig, gh, dl, body, reply, now, inbox)
+
+def Hub.bot_http(h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, as, +inbox, +cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Bot.http.job(C.Codec.pos(["shot", "oauth", "hook"], kind), Cfg.home(cfg), Cfg.port(cfg), kind, arg, peer, ts, sig, gh, dl, body, reply, now, inbox))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Bot.hook.live.k(hk: BO.Hook, +st: M.State) -> Bool:
+  match hk:
+    case BO.Hook{_, +bot, _, _, revoked, _, _}:
+      Bool.and(Bool.not(revoked), BH.Bots.live(st, bot))
+
+def Bot.hook.live(+st: M.State, +id: String) -> Bool:
+  Bot.hook.live.k(BO.World.hook(M.State.bots(st), id), st)
+
+# a ring's voice note reaches the bot as the person's words (Bots.ring);
+# any other webhook's body as untrusted data (Bots.hooked)
+def Bot.hook.step(ring: Bool, +st: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
+  match ring:
+    case True{}:
+      BH.Bots.ring(st, now, hook, body)
+    case False{}:
+      BH.Bots.hooked(st, now, hook, body)
+
+def Hub.bot.hook(live: Bool, h: Hub, +hook: String, +body: String, ring: Bool, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match live h:
+    case True{} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Bot.answer(reply, W.Http.text("202 Accepted", "accepted"))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, Bot.hook.step(ring, st, now, hook, body))
+    case False{} _:
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "no such webhook"))
+
+def Hub.bot.deliver(live: Bool, m: Maybe<&2, J.Json>, h: Hub, +peer: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match live m h:
+    case True{} Some{+o} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        Bot.answer(reply, Bot.json("200 OK", "{\"ok\":true}"))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, BH.Bots.incoming(st, now, Bot.peer.name(st, peer), o))
+    case True{} None{} _:
+      Hub.answer(h, reply, W.Http.text("400 Bad Request", "not JSON"))
+    case False{} _ _:
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "not a linked machine"))
+
+def Hub.bot.link.k(ok: Bool, h: Hub, +url: String, +name: String, +peer: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match ok:
+    case True{}:
+      do IO<Hub>:
+        Bot.answer(reply, Bot.json("200 OK", J.Json.show(J.Json.obj([J.KV{"name", J.Str{me}}]))))
+        Hub.step(h, B.Step{[M.PeerSet{peer, Bool.pick(String, String.is_empty(name), peer, name), url, False{}, now}], Nil{}})
+    case False{}:
+      Hub.answer(h, reply, W.Http.text("400 Bad Request", "no http address"))
+
+# an invite used: the machine that holds it says where it is; once only
+def Hub.bot.link(fresh: Bool, m: Maybe<&2, J.Json>, h: Hub, +peer: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match fresh m:
+    case True{} Some{+o}:
+      Hub.bot.link.k(BN.Bn.url.ok(J.Json.get_str(o, "url", "")), h, J.Json.get_str(o, "url", ""), BN.Bn.clean(J.Json.get_str(o, "name", "")), peer, me, reply, now)
+    case True{} None{}:
+      Hub.answer(h, reply, W.Http.text("400 Bad Request", "not JSON"))
+    case False{} _:
+      Hub.answer(h, reply, W.Http.text("409 Conflict", "already linked"))
+
+def Hub.bot.dir(live: Bool, h: Hub, +reply: Chan(List<&2, U32>)) -> IO(Hub):
+  match live h:
+    case True{} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.answer(Hub{st, f, ls, cl, as, inbox, cfg, note}, reply, Bot.json("200 OK", BN.Bn.mine(st)))
+    case False{} _:
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "not a linked machine"))
+
+def Hub.bot.act(i: Nat, h: Hub, +arg: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match i h:
+    case 0n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.bot.hook(Bot.hook.live(st, arg), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, body, String.eq(me, "ring"), reply, now)
+    case 1n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.bot.deliver(Bot.peer.live(st, arg), J.Json.parse(body), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, reply, now)
+    case 2n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.bot.link(Bool.not(Bot.peer.live(st, arg)), J.Json.parse(body), Hub{st, f, ls, cl, as, inbox, cfg, note}, arg, me, reply, now)
+    case 3n Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.bot.dir(Bot.peer.live(st, arg), Hub{st, f, ls, cl, as, inbox, cfg, note}, reply)
+    case _ _:
+      Hub.answer(h, reply, W.Http.text("404 Not Found", "not found"))
+
+def Hub.bot.seen(bad: Bool, m: Maybe<&2, SG.Seen>, h: Hub, +kind: String, +arg: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match bad m h:
+    case True{} _ _:
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "bad or stale signature"))
+    case False{} None{} _:
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "already seen"))
+    case False{} Some{s} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      Hub.bot.act(C.Codec.pos(["hook", "deliver", "link", "dir"], kind), Hub{st, f, ls, cl, as, inbox, Cfg.with_bn(cfg, BN.Bn.with_seen(Cfg.bn(cfg), s)), note},
+        arg, body, me, reply, now)
+
+# a signed request, checked: genuine (key), not seen before, then acted on
+def Hub.bot_verified(h: Hub, +kind: String, +arg: String, +key: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match h:
+    case Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      Hub.bot.seen(String.is_empty(key), BN.Bn.accept(Cfg.bn(cfg), key, now), Hub{st, f, ls, cl, as, inbox, cfg, note}, kind, arg, body, me, reply, now)
+
+# Connections for bots' routes
+# ----------------------------
+
+type BotReq is Data:
+  BotReq{kind: String, arg: String, peer: String, ts: String, sig: String, gh: String, delivery: String}
+
+def Conn.bot.kind.k(+post: Bool, +get: Bool, +r: String) -> Nat:
+  Bool.pick(Nat, Bool.and(post, String.starts_with(r, "/hook/")), 1n,
+    Bool.pick(Nat, Bool.and(post, String.eq(r, "/bots/deliver")), 2n,
+      Bool.pick(Nat, Bool.and(post, String.eq(r, "/bots/link")), 3n,
+        Bool.pick(Nat, Bool.and(get, String.eq(r, "/bots/dir")), 4n,
+          Bool.pick(Nat, Bool.and(get, Bool.and(String.starts_with(r, "/bots/"), String.ends_with(r, "/screen.jpg"))), 5n,
+            Bool.pick(Nat, Bool.and(get, String.eq(r, "/oauth/google")), 6n, 0n))))))
+
+# which bots' route a request is (0: none)
+def Conn.bot.kind(req: W.Request) -> Nat:
+  match req:
+    case W.Request{+m, +p, _}:
+      Conn.bot.kind.k(String.eq(m, "POST"), String.eq(m, "GET"), W.Http.route(p))
+
+# /bots/<id>/screen.jpg: the id ("" when it is not a plain id)
+def Conn.bot.shot_id(+r: String) -> String:
+  Bool.pick(String, BN.Bn.safe(String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n))), String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n)), "")
+
+def Conn.bot.answer(m: Maybe<&1, List<&2, U32>>, s: Socket) -> IO(Unit):
+  match m:
+    case Some{bs}:
+      Conn.finish(s, bs)
+    case None{}:
+      Conn.finish(s, W.Http.text("503 Service Unavailable", "the hub is gone"))
+
+# the hub answers the whole response on a channel made for this request
+def Conn.bot.ask(s: Socket, rq: BotReq, body: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match rq:
+    case BotReq{k, a, p, t, sg, g, d}:
+      do IO<Unit>:
+        +reply : Chan(List<&2, U32>) <- Chan.new(List<&2, U32>, 1)
+        ok : Bool <- Chan.send(Msg, inbox, BotHttp{k, a, p, t, sg, g, d, body, reply})
+        m : Maybe<&1, List<&2, U32>> <- Chan.recv(List<&2, U32>, reply)
+        Conn.bot.answer(m, s)
+
+def Conn.bot.body.k(full: Bool, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+  match full:
+    case True{}:
+      Conn.bot.ask(s, rq, U.Utf8.decode(List.take(&2, U32, buf, len)), inbox)
+    case False{}:
+      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536), r => Mcp.got(r, buf, k))
+
+# read the body (Content-Length bytes, capped before reading)
+def Conn.bot.body(fuel: Nat, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Conn.finish(s, W.Http.text("408 Request Timeout", "the body did not arrive"))
+    case 1n+f:
+      Conn.bot.body.k(Nat.is_ge(List.length(&2, U32, buf), len), s, buf, len, rq, inbox, s2 => b2 => Conn.bot.body(f, s2, b2, len, rq, inbox))
+
+def Conn.bot.signed.k(ok: Bool, big: Bool, s: Socket, rest: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
+  match ok big:
+    case False{} _:
+      Conn.finish(s, W.Http.text("401 Unauthorized", "unknown sender"))
+    case True{} True{}:
+      Conn.finish(s, W.Http.text("413 Payload Too Large", "at most 256 KB"))
+    case True{} False{}:
+      Conn.bot.body(4096n, s, rest, len, rq, inbox)
+
+def Conn.bot.len(+hs: List<&2, W.Header>) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(W.Http.header_of(hs, "content-length")), 0n)
+
+# a third party's signature: the Pebble Index ring's (its X-Index-*
+# headers, packed after "index\n" for BN.Bn.check), else GitHub's
+def Bot.gh.k(ring: Bool, +hs: List<&2, W.Header>) -> String:
+  match ring:
+    case True{}:
+      "index\n" ++ String.join([W.Http.header_of(hs, "x-index-webhook-version"), W.Http.header_of(hs, "x-index-timestamp"),
+        W.Http.header_of(hs, "x-index-delivery"), W.Http.header_of(hs, "x-index-trigger"), W.Http.header_of(hs, "x-index-test"),
+        W.Http.header_of(hs, "x-index-signature")], "\n")
+    case False{}:
+      W.Http.header_of(hs, "x-hub-signature-256")
+
+def Bot.gh(+hs: List<&2, W.Header>) -> String:
+  Bot.gh.k(Bool.not(String.is_empty(W.Http.header_of(hs, "x-index-signature"))), hs)
+
+# a signed request (no token: webhooks come from outside; peers sign)
+def Conn.bot.signed(+kind: String, +arg: String, s: Socket, +hs: List<&2, W.Header>, rest: List<&2, U32>, +inbox: Chan(Msg)) -> IO(Unit):
+  Conn.bot.signed.k(BN.Bn.safe(arg), Nat.is_gt(Conn.bot.len(hs), Bot.cap()), s, rest, Conn.bot.len(hs),
+    BotReq{kind, arg, W.Http.header_of(hs, "x-backplane-peer"), W.Http.header_of(hs, "x-backplane-timestamp"), W.Http.header_of(hs, "x-backplane-signature"),
+      Bot.gh(hs), W.Http.header_of(hs, "x-github-delivery")}, inbox)
+
+# a client's own route (a bot's screen, Google's redirect): the same
+# authorisation as the websocket's
+def Conn.bot.own(ok: Bool, s: Socket, rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
+  match ok:
+    case True{}:
+      Conn.bot.ask(s, rq, "", inbox)
+    case False{}:
+      Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
+
+def Conn.route.bot(k: Nat, s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  match k req:
+    case 1n W.Request{_, +p, +hs}:
+      Conn.bot.signed("hook", String.drop(W.Http.route(p), 6n), s, hs, rest, inbox)
+    case 2n W.Request{_, _, +hs}:
+      Conn.bot.signed("deliver", W.Http.header_of(hs, "x-backplane-peer"), s, hs, rest, inbox)
+    case 3n W.Request{_, _, +hs}:
+      Conn.bot.signed("link", W.Http.header_of(hs, "x-backplane-peer"), s, hs, rest, inbox)
+    case 4n W.Request{_, _, +hs}:
+      Conn.bot.signed("dir", W.Http.header_of(hs, "x-backplane-peer"), s, hs, rest, inbox)
+    case 5n W.Request{_, +p, +hs}:
+      Conn.bot.own(Conn.allowed(trusted, hs, p, token), s, BotReq{"shot", Conn.bot.shot_id(W.Http.route(p)), "", "", "", "", ""}, inbox)
+    case 6n W.Request{_, +p, +hs}:
+      Conn.bot.own(Conn.allowed(trusted, hs, p, token), s, BotReq{"oauth", p, "", "", "", "", ""}, inbox)
+    case _ _:
+      Conn.route.mcp(Conn.is_mcp(req), s, req, rest, web, id, inbox, trusted, token)
+
+def Conn.route(s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  Conn.route.bot(Conn.bot.kind(req), s, req, rest, web, id, inbox, trusted, token)
+
+def Conn.head.k(m: Maybe<&2, W.Split>, s: Socket, buf: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg),
+    +trusted: Bool, +token: String, k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{W.Split{head, rest}}:
+      Conn.route(s, W.Http.request(head), rest, web, id, inbox, trusted, token)
+    case None{}:
+      IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536), r => Conn.head.got(r, buf, k))
+
+# read until the request head is complete (at most 64 reads)
+def Conn.head(fuel: Nat, s: Socket, +buf: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Conn.finish(s, W.Http.text("431 Request Header Fields Too Large", "too large"))
+    case 1n+f:
+      Conn.head.k(W.Http.split(buf), s, buf, web, id, inbox, trusted, token, s2 => b2 => Conn.head(f, s2, b2, web, id, inbox, trusted, token))
+
+# Accepting
+# ---------
+
+# a tailnet connection from a device its owner also owns is trusted like
+# loopback (Tailscale vouches for it); others still need the token
+def Accept.whois(r: Socket & String, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
+  (s, ip) = r
+  do IO<Unit>:
+    w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
+    Conn.head(64n, s, Nil{}, web, id, inbox, TN.Tailnet.trusts(owner, TN.Tailnet.login(Tailnet.out(w))), token)
+
+def Accept.trust(ask: Bool, s: Socket, +owner: String, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
+  match ask:
+    case True{}:
+      IO.bind(Socket & String, Unit, H.Sock.peer(s), r => Accept.whois(r, owner, id, web, inbox, token))
+    case False{}:
+      Conn.head(64n, s, Nil{}, web, id, inbox, trusted, token)
+
+def Accept.got(r: Listener & Result<&1, &1, U32 & String, Socket>, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String, k: Listener -> IO(Unit)) -> IO(Unit):
+  (l, res) = r
+  match res:
+    case Done{s}:
+      do IO<Unit>:
+        IO.spawn(Unit, Accept.trust(Bool.and(Bool.not(trusted), Bool.not(String.is_empty(owner))), s, owner, id, web, inbox, trusted, token))
+        k(l)
+    case Fail{_}:
+      k(l)
+
+# connections from one listener; ids count up from `id` (loopback from 1,
+# the tailnet from 2^31, so they never meet)
+def Accept.loop(fuel: Nat, l: Listener, +id: U32, +web: String, +inbox: Chan(Msg), +trusted: Bool, +token: String, +owner: String) -> IO(Unit):
+  match fuel:
+    case 0n:
+      Listener.close(l)
+    case 1n+f:
+      IO.bind(Listener & Result<&1, &1, U32 & String, Socket>, Unit, TCP.accept(l),
+        r => Accept.got(r, id, web, inbox, trusted, token, owner, l2 => Accept.loop(f, l2, (id + 1 : U32), web, inbox, trusted, token, owner)))
+
+def Tailnet.listened(r: Result<&1, &1, U32 & String, Listener>, +ip: String, +port: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
+  match r:
+    case Done{l}:
+      do IO<Unit>:
+        w : P.Ran <- P.Proc.run("tailscale", ["whois", "--json", ip], "/")
+        +owner : String = TN.Tailnet.login(Tailnet.out(w))
+        IO.print("Backplane on your tailnet: http://" ++ ip ++ ":" ++ U32.show(port) ++ "/ (" ++ Bool.pick(String, String.is_empty(owner), "pairing token " ++ token, owner ++ "'s devices, or pairing token " ++ token) ++ ")")
+        IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 2147483648, web, inbox, False{}, token, owner))
+    case Fail{_}:
+      Log.info("could not listen on the tailnet address " ++ ip)
+
+def Tailnet.listen.k(none: Bool, +ip: String, +port: U32, +web: String, +inbox: Chan(Msg), +token: String) -> IO(Unit):
+  match none:
+    case True{}:
+      Log.info("tailscale is not up (tailscale ip -4 gave nothing)")
+    case False{}:
+      IO.bind(Result<&1, &1, U32 & String, Listener>, Unit, H.Net.listen(ip, port), r => Tailnet.listened(r, ip, port, web, inbox, token))
+
+# listen on the tailnet address too (clients there need the token), and
+# serve HTTPS through `tailscale serve` when asked
+def Tailnet.start(n: Net, +port: U32, +web: String, +inbox: Chan(Msg)) -> IO(Unit):
+  match n:
+    case Net{True{}, https, +token, _, _, _, brx, pkx, tmx, mc, pvx, bnx}:
+      do IO<Unit>:
+        r : P.Ran <- P.Proc.run("tailscale", ["ip", "-4"], "")
+        +ip : String = Tailnet.first(r)
+        Tailnet.listen.k(String.is_empty(ip), ip, port, web, inbox, token)
+        Tailnet.https(https, port, token)
+    case Net{False{}, _, _, _, _, _, brx, pkx, tmx, mc, pvx, bnx}:
+      IO.pure(Unit, Unit{})
+
+# Google's tools for bots
+# -----------------------
+# gmail_search, gmail_read, calendar_events run at once, off the hub;
+# gmail_send and calendar_create first open an approval ask (the reply
+# waits in the park until the user answers).
+
+def Gg.is(+o: J.Json) -> Bool:
+  Bool.and(String.eq(J.Json.get_str(o, "method", ""), "tools/call"),
+    Nat.is_lt(C.Codec.pos(["gmail_search", "gmail_read", "gmail_send", "calendar_events", "calendar_create"], J.Json.get_str(J.Json.get_obj(o, "params"), "name", "")), 5n))
+
+def Gg.tool(+o: J.Json) -> String:
+  J.Json.get_str(J.Json.get_obj(o, "params"), "name", "")
+
+def Gg.args(+o: J.Json) -> J.Json:
+  J.Json.get_obj(J.Json.get_obj(o, "params"), "arguments")
+
+def Gg.say(+reply: Chan(String), +id: J.Json, +ok: Bool, text: String) -> IO(Unit):
+  do IO<Unit>:
+    sent : Bool <- Chan.send(String, reply, MC.Mcp.result(id, J.Json.obj([J.KV{"content", J.Json.arr([J.Json.obj([J.KV{"type", J.Str{"text"}}, J.KV{"text", J.Str{text}}])])},
+      J.KV{"isError", J.Flag{Bool.not(ok)}}])))
+    return Unit{}
+
+def Gg.said(+t: String, +id: J.Json, +reply: Chan(String)) -> IO(Unit):
+  Gg.say(reply, id, Bool.not(String.starts_with(t, "error")), t)
+
+def Gg.call(+home: String, +tool: String, +args: J.Json, +id: J.Json, +reply: Chan(String)) -> IO(Unit):
+  IO.bind(String, Unit, GS.Google.call(home, tool, args), t => Gg.said(t, id, reply))
+
+def Gg.wait.k(m: Maybe<&1, String>, +home: String, +tool: String, +args: J.Json, +id: J.Json, +reply: Chan(String)) -> IO(Unit):
+  match m:
+    case Some{+answer}:
+      Bool.pick(IO(Unit), Bool.or(String.eq(answer, "accept"), String.eq(answer, "session")), Gg.call(home, tool, args, id, reply),
+        Gg.say(reply, id, False{}, "The user declined this."))
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+# the user's answer (raw from the park), then the call or a refusal
+def Gg.wait(+r2: Chan(String), +home: String, +tool: String, +args: J.Json, +id: J.Json, +reply: Chan(String)) -> IO(Unit):
+  IO.bind(Maybe<&1, String>, Unit, Chan.recv(String, r2), m => Gg.wait.k(m, home, tool, args, id, reply))
+
+def Gg.detail.k(send: Bool, +a: J.Json) -> String:
+  match send:
+    case True{}:
+      "To: " ++ J.Json.get_str(a, "to", "") ++ Bool.pick(String, String.is_empty(J.Json.get_str(a, "cc", "")), "", "\nCc: " ++ J.Json.get_str(a, "cc", "")) ++
+        "\nSubject: " ++ J.Json.get_str(a, "subject", "") ++ "\n\n" ++ String.take(J.Json.get_str(a, "body", ""), 1500n)
+    case False{}:
+      J.Json.get_str(a, "summary", "") ++ "\n" ++ J.Json.get_str(a, "start", "") ++ " to " ++ J.Json.get_str(a, "end", "") ++
+        Bool.pick(String, List.is_empty(&2, J.Json, J.Json.elems(J.Json.get_obj(a, "attendees"))), "", "\nInvites: " ++ J.Json.show(J.Json.get_obj(a, "attendees")))
+
+# what the user approves: the mail's recipients, subject and text, or the event
+def Gg.detail(+o: J.Json) -> String:
+  Gg.detail.k(String.eq(Gg.tool(o), "gmail_send"), Gg.args(o))
+
+def Hub.google.k(ask: Bool, h: Hub, +thread: String, +o: J.Json, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match ask h:
+    case False{} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        IO.spawn(Unit, Gg.call(Cfg.home(cfg), Gg.tool(o), Gg.args(o), J.Json.get_obj(o, "id"), reply))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+    case True{} Hub{+st, f, ls, cl, as, inbox, +cfg, note}:
+      do IO<Hub>:
+        +ask : String = B.Hub.id("q", now, B.Hub.seq(st))
+        +r2 : Chan(String) <- Chan.new(String, 1)
+        Park.put(Cfg.pk(cfg), PK.PPark{ask, "", r2})
+        IO.spawn(Unit, Gg.wait(r2, Cfg.home(cfg), Gg.tool(o), Gg.args(o), J.Json.get_obj(o, "id"), reply))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Step{[M.AskOpened{ask, thread, "approval", Gg.tool(o), Gg.detail(o), "", now}], Nil{}})
+
+def Hub.google(bot: Bool, h: Hub, +thread: String, +o: J.Json, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match bot h:
+    case True{} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.google.k(Bool.and(GG.Google.asks(Gg.tool(o)), Bool.not(MC.Perm.session_ok(M.Asks.all(st), thread, Gg.tool(o)))), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, o, reply, now)
+    case False{} _:
+      do IO<Hub>:
+        Gg.say(reply, J.Json.get_obj(o, "id"), False{}, "only bots have this tool")
+        return h
+
+def Hub.mcp.gg(g: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match g h:
+    case True{} Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      Hub.google(BO.World.is_bot_thread(M.State.bots(st), thread), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, o, reply, now)
+    case False{} _:
+      Hub.mcp.w(MC.Wait.secs(o), h, thread, o, body, reply, now)
+
+def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  match pv:
+    case True{}:
+      Hub.preview(h, thread, o, reply)
+    case False{}:
+      Hub.mcp.gg(Gg.is(o), h, thread, o, body, reply, now)
+
+def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
+  Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)
 
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
@@ -3347,6 +4076,18 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.models(h, ms, mt)
     case MachinesFound{mc}:
       Hub.machines(h, mc)
+    case Commit{cs}:
+      Hub.step(h, B.Step{cs, Nil{}})
+    case BotTick{tz}:
+      Hub.bot_tick(h, tz, now)
+    case BotsFound{d}:
+      Hub.bots_found(h, d)
+    case BotHttp{kind, arg, peer, ts, sig, gh, dl, body, reply}:
+      Hub.bot_http(h, kind, arg, peer, ts, sig, gh, dl, body, reply, now)
+    case BotVerified{kind, arg, key, body, me, reply}:
+      Hub.bot_verified(h, kind, arg, key, body, me, reply, now)
+    case Shot{text}:
+      Hub.broadcast(h, text)
 
 def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
   match m:
@@ -3399,6 +4140,26 @@ def Main.listened(r: Result<&1, &1, U32 & String, Listener>, h: Hub, +web: Strin
         Log.info("web server off: " ++ addr ++ " is taken")
         Main.headless(h, inbox, cfg, front)
 
+# Browser frames
+# --------------
+
+def Shot.fwd.got(m: Maybe<&1, String>, +inbox: Chan(Msg), k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{+line}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, Shot{BR.Browser.shot(line)})
+        k(Unit{})
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+# page-frame events from the browser, to the hub
+def Shot.fwd(fuel: Nat, +ev: Chan(String), +inbox: Chan(Msg)) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      IO.bind(Maybe<&1, String>, Unit, Chan.recv(String, ev), m => Shot.fwd.got(m, inbox, u => Shot.fwd(f, ev, inbox)))
+
 def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2, String>, cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   match r cfg:
     case Done{f} Cfg{+home, +web, +host, +port, +pr, +ds, +v, nt0}:
@@ -3407,7 +4168,10 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
         rc : Bool <- Chan.send(Msg, inbox, Recover{})
         +bq : Chan(BR.BMsg) <- Chan.new(BR.BMsg, 256)
         bexe : String <- Browser.exe()
-        IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, BR.Br.new(bexe, home ++ "/browser.rgb")))
+        # page-frame events from the browser, broadcast by the hub as {"t":"shot",...}
+        +bev : Chan(String) <- Chan.new(String, 256)
+        IO.spawn(Unit, Shot.fwd(Fuel.forever(), bev, inbox))
+        IO.spawn(Unit, BR.Browser.loop(Fuel.forever(), bq, bev, BR.Br.at(bexe, home)))
         +pq : Chan(PK.PMsg) <- Chan.new(PK.PMsg, 256)
         IO.spawn(Unit, PK.Park.loop(Fuel.forever(), pq, Nil{}))
         +tq : Chan(TM.TMsg) <- Chan.new(TM.TMsg, 1024)
