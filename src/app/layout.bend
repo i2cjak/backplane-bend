@@ -13,6 +13,9 @@ import ../web/dom.bend as N
 import ./theme.bend as T
 import ./nui.bend as S
 import ./viewer.bend as V
+import ../core/board.bend as B
+import ../core/schematic.bend as SC
+import ../core/hier.bend as HI
 import ../core/glb.bend as G
 import ../gfx/face.bend as FA
 import ../gfx/bitmap.bend as BM
@@ -1779,6 +1782,14 @@ def Info.draw(+ty: Ty, rs: List<&2, KV2>, +x: U32, +y: U32, +w: U32) -> Out:
 
 # what the picked item is: its kind, then key = value rows (the info the
 # parser recorded: net, ref, value, footprint, pin, label...)
+# the value of the first "key=value" part (key given with its "=")
+def Info.get(ps: List<&2, String>, +k: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case +p <> t:
+      Bool.pick(String, String.starts_with(p, k), String.drop(p, String.length(k)), Info.get(t, k))
+
 def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   +ps = String.split(info, ';')
   +title = Maybe.default(&2, String, List.head(&2, String, ps), "")
@@ -1793,7 +1804,8 @@ def Lay.inspect(+ty: Ty, +info: String, +draft: String, +x0: U32, +x1: U32, +h: 
     Out.ops(Ty.text(ty, 1n, title, D.Clip.all(), (x0 + 30 : U32), (y + 8 : U32), 28, T.Th.text())),
     Out{Lay.icon(ty, "x", D.Clip.all(), (x0 + w - 10 : U32), (y + 12 : U32), T.Th.dim()), [Lay.hit((x0 + w - 16 : U32), (y + 6 : U32), 28, 28, "vw-unpick", "")]},
     Info.draw(ty, rows, (x0 + 16 : U32), (y + 38 : U32), w),
-    Lay.button(ty, D.Clip.all(), (x0 + 30 : U32), (y + ch - 40 : U32), "Mention in chat", T.Th.accent(), "draft", draft ++ Bool.pick(String, String.is_empty(draft), "", " ") ++ mention)]))
+    Lay.button(ty, D.Clip.all(), (x0 + 30 : U32), (y + ch - 40 : U32), "Mention in chat", T.Th.accent(), "draft", draft ++ Bool.pick(String, String.is_empty(draft), "", " ") ++ mention),
+    Out.when(String.eq(title, "sheet"), Lay.button(ty, D.Clip.all(), (x0 + 38 + Lay.button.w(ty, "Mention in chat") : U32), (y + ch - 40 : U32), "Open sheet", T.Th.accent(), "vw-open", Info.get(ps, "name=")))]))
 
 def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
   Lay.chip(ty, x, 12, label, U32.is_eq(k, cur), "vw-kind", U32.show(k))
@@ -1937,9 +1949,117 @@ def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +x0: U32, +x1
     case V.Vw{+ss, V.View{_, _, oy}, _, _, _, _, _, _, _, _, +vx}:
       Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft, diff, D.Draw.floor(F32.max(oy, 0.0)))
 
-# the viewer's chrome; the scene under it is drawn by the viewer
-def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
-  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h)
+# Layers and sheets
+# -----------------
+# Over a board or schematic: a "Layers" chip opening a list of the layers
+# the scene has items on (a click turns one on or off, S.Nui.flip), and
+# for a schematic with sheets, the trail from the root to the sheet on
+# show and the whole sheet tree in the same list (a click goes there).
+
+def Side.names(+k: U32) -> List<&2, String>:
+  Bool.pick(List<&2, String>, U32.is_eq(k, 1), SC.Sch.layer_names(), B.Layer.names())
+
+def Side.color(l: U32 & U32) -> U32:
+  (c, _) = l
+  c
+
+def Side.has(+present: U32, +i: U32, +count: Nat) -> Bool:
+  Bool.and(Nat.is_lt(U32.to_nat(i), count), Bool.not(U32.is_eq(U32.and(present, V.Look.bit(i)), 0)))
+
+def Side.layer(+ty: Ty, +k: U32, +l: U32, +name: String, +flip: U32, +x: U32, +y: U32, +w: U32, +c: D.Clip) -> Out:
+  +on = V.Look.shows(k, l, flip)
+  Out{List.append(&2, R.Op, [D.Draw.rect(c, (x + 12 : U32), (y + 6 : U32), 10, 10, Side.color(V.Look.of(k, l)), Bool.pick(U32, on, 255, 50))],
+      Ty.text(ty, 2n, name, c, (x + 32 : U32), y, 22, Bool.pick(U32, on, T.Th.text(), T.Th.faint()))),
+    [Lay.hit(x, y, w, 22, "vw-layer", U32.show(l))]}
+
+def Side.layer.if(show: Bool, +ty: Ty, +k: U32, +l: U32, +name: String, +flip: U32, +x: U32, +y: U32, +w: U32, +c: D.Clip) -> Out:
+  match show:
+    case True{}:
+      Side.layer(ty, k, l, name, flip, x, y, w, c)
+    case False{}:
+      Out.none()
+
+# one row per layer the scene has, from y down
+def Side.layers(ns: List<&2, String>, +i: U32, +y: U32, +ty: Ty, +k: U32, +present: U32, +flip: U32, +x: U32, +w: U32, +c: D.Clip) -> List<&2, Out>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +nm <> t:
+      Side.layer.if(Side.has(present, i, V.Look.count(k)), ty, k, i, nm, flip, x, y, w, c)
+      <> Side.layers(t, (i + 1 : U32), Bool.pick(U32, Side.has(present, i, V.Look.count(k)), (y + 22 : U32), y), ty, k, present, flip, x, w, c)
+
+def Side.n(ns: List<&2, String>, +i: U32, +present: U32, +count: Nat, +acc: U32) -> U32:
+  match ns:
+    case Nil{}:
+      acc
+    case _ <> t:
+      Side.n(t, (i + 1 : U32), present, count, Bool.pick(U32, Side.has(present, i, count), (acc + 1 : U32), acc))
+
+def Side.sheet(+ty: Ty, r: HI.Row, +j: Nat, +at: Nat, +x: U32, +y: U32, +w: U32, +c: D.Clip) -> Out:
+  match r:
+    case HI.Row{+d, +nm, _, +loop}:
+      +ind = {U32.from_nat(Nat.mul(d, 14n)) : U32}
+      Out{List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, Nat.is_eq(j, at), [D.Draw.rect(c, x, y, w, 22, T.Th.sel(), 255)], Nil{}),
+          Ty.text(ty, 2n, Bool.pick(String, loop, nm ++ " (repeats a sheet above)", nm), c, (x + 12 + ind : U32), y, 22,
+            Bool.pick(U32, loop, T.Th.faint(), Bool.pick(U32, Nat.is_eq(j, at), T.Th.text(), T.Th.dim())))),
+        Bool.pick(List<&2, S.Hit>, loop, Nil{}, [Lay.hit(x, y, w, 22, "vw-sheet", Nat.show(j))])}
+
+def Side.sheets(rs: List<&2, HI.Row>, +j: Nat, +at: Nat, +ty: Ty, +x: U32, +y: U32, +w: U32, +c: D.Clip) -> List<&2, Out>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case r <> t:
+      Side.sheet(ty, r, j, at, x, y, w, c) <> Side.sheets(t, 1n+j, at, ty, x, (y + 22 : U32), w, c)
+
+def Side.reset(+ty: Ty, +x: U32, +y: U32, +c: D.Clip) -> Out:
+  Out{Ty.text(ty, 2n, "Reset layers", c, (x + 12 : U32), y, 22, T.Th.accent()), [Lay.hit(x, y, 200, 22, "vw-layers-reset", "")]}
+
+# the open list: the sheet tree (schematics with sheets), then the layers
+def Side.list(+ty: Ty, +k: U32, +present: U32, +flip: U32, +rs: List<&2, HI.Row>, +at: Nat, +x1: U32, +h: U32) -> Out:
+  +w = {240 : U32}
+  +x = {(x1 - 16 - w : U32) : U32}
+  +ns = {U32.from_nat(Bool.pick(Nat, Nat.is_gt(List.length(&2, HI.Row, rs), 1n), List.length(&2, HI.Row, rs), 0n)) : U32}
+  +sh = {Bool.pick(U32, U32.is_eq(ns, 0), 0, (ns * 22 + 9 : U32)) : U32}
+  +nl = {Side.n(Side.names(k), 0, present, V.Look.count(k), 0) : U32}
+  +rh = {Bool.pick(U32, U32.is_eq(flip, 0), 0, 22) : U32}
+  +ph = {U32.min((sh + nl * 22 + rh + 12 : U32), (h - 112 : U32)) : U32}
+  +c = {D.Clip{x, 96, (x + w : U32), (96 + ph : U32)} : D.Clip}
+  Out.all([
+    Out{Lay.box(D.Clip.all(), x, 96, w, ph, 6, T.Th.panel(), T.Th.line()), [Lay.hit(x, 96, w, ph, "vw-panel", "")]},
+    Out.all(Side.sheets(Bool.pick(List<&2, HI.Row>, U32.is_eq(ns, 0), Nil{}, rs), 0n, at, ty, x, 102, w, c)),
+    Out.ops(Bool.pick(List<&2, R.Op>, U32.is_eq(ns, 0), Nil{}, [D.Draw.rect(c, (x + 8 : U32), (102 + sh - 5 : U32), (w - 16 : U32), 1, T.Th.line(), 255)])),
+    Out.all(Side.layers(Side.names(k), 0, (102 + sh : U32), ty, k, present, flip, x, w, c)),
+    Out.when(Bool.not(U32.is_eq(flip, 0)), Side.reset(ty, x, (102 + sh + nl * 22 : U32), c))])
+
+def Side.list.if(open: Bool, +ty: Ty, +k: U32, +ss: List<&2, V.Seen>, +flip: U32, +rs: List<&2, HI.Row>, +at: Nat, +x1: U32, +h: U32) -> Out:
+  match open:
+    case True{}:
+      Side.list(ty, k, V.Layers.present(ss, 0), flip, rs, at, x1, h)
+    case False{}:
+      Out.none()
+
+# the sheets from the root to the one on show, each a chip that goes there
+def Side.trail(cs: List<&2, Nat>, +rs: List<&2, HI.Row>, +at: Nat, +ty: Ty, +x: U32) -> List<&2, Out>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case +j <> t:
+      Lay.chip(ty, x, 60, HI.Hier.name(rs, j), Nat.is_eq(j, at), "vw-sheet", Nat.show(j))
+      <> Side.trail(t, rs, at, ty, (x + Lay.button.w(ty, HI.Hier.name(rs, j)) + 6 : U32))
+
+def Side.k(board: Bool, +ty: Ty, +n: S.Nui, +k: U32, +ss: List<&2, V.Seen>, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match board:
+    case True{}:
+      +rs = S.Nui.rows(n)
+      +at = S.Nui.sheet.at(n)
+      +open = Bool.not(String.is_empty(U.Ui.scratch(S.Nui.ui(n), "@vw.layers")))
+      +sheets = Bool.and(U32.is_eq(k, 1), Nat.is_gt(List.length(&2, HI.Row, rs), 1n))
+      Out.all([
+        Out.all(Side.trail(Bool.pick(List<&2, Nat>, sheets, HI.Hier.chain(rs, at), Nil{}), rs, at, ty, (x0 + 16 : U32))),
+        Lay.chip(ty, (x1 - 16 - Lay.button.w(ty, "Layers") : U32), 60, "Layers", open, "vw-layers", ""),
+        Side.list.if(open, ty, k, ss, S.Nui.flip(n), Bool.pick(List<&2, HI.Row>, sheets, rs, Nil{}), at, x1, h)])
+    case False{}:
+      Out.none()
 
 def Lay.toast(+ty: Ty, +e: String, +w: U32, +h: U32) -> Out:
   +tw = {(Ty.width(ty, 2n, e) + 28 : U32) : U32}
@@ -1957,6 +2077,12 @@ def Lay.scene(n: S.Nui) -> List<&2, V.Seen>:
   match n:
     case S.Nui{_, _, _, _, _, _, _, _, _, _, _, _, V.Vw{ss, _, _, _, _, _, _, _, _, _, vx}}:
       ss
+
+# the viewer's chrome; the scene under it is drawn by the viewer
+def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
+  Out.all([
+    Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h),
+    Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h)])
 
 def Lay.note.k(+ty: Ty, empty: Bool, offer: Bool, +note: String, +x: U32, +y: U32) -> Out:
   match empty offer:

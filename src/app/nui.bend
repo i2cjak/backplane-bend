@@ -3,6 +3,7 @@ import ../core/client.bend as U
 import ./win.bend as W
 import ../core/json.bend as J
 import ./viewer.bend as V
+import ../core/hier.bend as HI
 import ../core/board.bend as B
 import ../core/glb.bend as G
 import ../gfx/mesh.bend as MS
@@ -520,6 +521,14 @@ def Vw.x(v: V.Vw) -> V.Vx:
 
 def Vw.kind(v: V.Vw) -> U32:
   Vx.kind(Vw.x(v))
+
+# the layers the user turned on or off in the kind on show (V.Look.on);
+# kept per kind in the scratch, so a board's and a schematic's differ
+def Nui.flip.key(+n: Nui) -> String:
+  "@vw.flip." ++ U32.show(Vw.kind(Nui.vw(n)))
+
+def Nui.flip(+n: Nui) -> U32:
+  Maybe.default(&2, U32, U32.read(U.Ui.scratch(Nui.ui(n), Nui.flip.key(n))), 0)
 
 def Vx.orbit(x: V.Vx, +dx: F32, +dy: F32) -> V.Vx:
   match x:
@@ -1238,10 +1247,10 @@ def Vw.press(v: V.Vw, +x: U32, +y: U32) -> V.Vw:
     case V.Vw{s, vi, f, r, _, _, _, b, fr, cu, V.Vx{k, p, t, c, sh, bu, _, _, pa, se, bm}}:
       V.Vw{s, vi, f, r, True{}, x, y, b, fr, cu, V.Vx{k, p, t, c, sh, bu, x, y, pa, se, bm}}
 
-def Vw.release.k(click: Bool, v: V.Vw, +x: U32, +y: U32) -> V.Vw:
+def Vw.release.k(click: Bool, v: V.Vw, +x: U32, +y: U32, +flip: U32) -> V.Vw:
   match click v:
     case True{} V.Vw{+s, +vi, f, r, _, lx, ly, b, fr, cu, V.Vx{+k, _, t, c, sh, bu, px, py, pa, se, bm}}:
-      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k)), t, c, sh, bu, px, py, pa, se, bm}}
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, fr, cu, V.Vx{k, Bool.pick(String, U32.is_eq(k, 2), "", V.Pick.at(s, vi, U32.to_f32(x), U32.to_f32(y), k, flip)), t, c, sh, bu, px, py, pa, se, bm}}
     case False{} V.Vw{s, vi, f, r, _, lx, ly, b, fr, cu, +vx}:
       V.Vw{s, vi, f, r, False{}, lx, ly, b, Bool.and(fr, Bool.not(U32.is_eq(Vx.kind(vx), 2))), cu, vx}
 
@@ -1259,15 +1268,15 @@ def Vw.dragging(v: V.Vw) -> Bool:
     case V.Vw{_, _, _, _, d, _, _, _, _, _, _}:
       d
 
-def Vw.release(+v: V.Vw, +x: U32, +y: U32) -> V.Vw:
-  Vw.release.k(Bool.and(Vw.dragging(v), Vw.near(Vx.press_at(Vw.x(v)), x, y)), v, x, y)
+def Vw.release(+v: V.Vw, +x: U32, +y: U32, +flip: U32) -> V.Vw:
+  Vw.release.k(Bool.and(Vw.dragging(v), Vw.near(Vx.press_at(Vw.x(v)), x, y)), v, x, y, flip)
 
 def Nui.view_press(+n: Nui, +x: U32, +y: U32, down: Bool) -> Step:
   match down:
     case True{}:
       Step{Nui.with_vw(n, Vw.press(Nui.vw(n), x, y)), Nil{}, False{}}
     case False{}:
-      Step{Nui.with_vw(n, Vw.release(Nui.vw(n), x, y)), Nil{}, Vw.dragging(Nui.vw(n))}
+      Step{Nui.with_vw(n, Vw.release(Nui.vw(n), x, y, Nui.flip(n))), Nil{}, Vw.dragging(Nui.vw(n))}
 
 def Nui.dragging(n: Nui) -> Bool:
   match n:
@@ -1626,6 +1635,63 @@ def Pal.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
 def Pal.click(+n: Nui, +v: String) -> Step:
   Pal.run(U.Palette.at(U.Palette.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)
 
+# Layers and sheets
+# -----------------
+# "@vw.layers" is set while the layer list is open. "@vw.tree" holds the
+# schematic's sheet tree (HI.Hier.show rows, sent by the shell) and
+# "@vw.at" the row on show; the viewer's path is that row's file.
+
+def Vx.path(x: V.Vx) -> String:
+  match x:
+    case V.Vx{_, _, _, _, _, _, _, _, pa, _, bm}:
+      pa
+
+def Nui.rows(+n: Nui) -> List<&2, HI.Row>:
+  HI.Hier.read(U.Ui.scratch(Nui.ui(n), "@vw.tree"))
+
+# the file on show: the viewer's path, or the tree's root when it has none
+def Nui.sheet.file(+n: Nui) -> String:
+  Bool.pick(String, String.is_empty(Vx.path(Vw.x(Nui.vw(n)))), HI.Hier.file(Nui.rows(n), 0n), Vx.path(Vw.x(Nui.vw(n))))
+
+# the tree row on show
+def Nui.sheet.at(+n: Nui) -> Nat:
+  HI.Hier.at(Nui.rows(n), Maybe.default(&2, Nat, Nat.read(U.Ui.scratch(Nui.ui(n), "@vw.at")), 0n), Nui.sheet.file(n))
+
+# show tree row i (a new scene: it fades in and refits)
+def Nui.sheet.go(+n: Nui, +i: Nat) -> Step:
+  Step{Nui.with_vw(Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@vw.at", Nat.show(i))),
+    Vw.kind_set(Nui.vw(n), 1, HI.Hier.file(Nui.rows(n), i))), Nil{}, True{}}
+
+def Nui.sheet.open(m: Maybe<&2, Nat>, +n: Nui) -> Step:
+  match m:
+    case Some{+i}:
+      Nui.sheet.go(n, i)
+    case None{}:
+      Step{n, Nil{}, False{}}
+
+def Nui.layers.set(+n: Nui, +flip: U32) -> Step:
+  Step{Nui.with_vw(Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), Nui.flip.key(n), U32.show(flip))), Vw.stale(Nui.vw(n))), Nil{}, True{}}
+
+def Nui.layers.open(+n: Nui) -> Step:
+  Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@vw.layers", Bool.pick(String, String.is_empty(U.Ui.scratch(Nui.ui(n), "@vw.layers")), "1", ""))), Nil{}, True{}}
+
+def Nui.vw_act.more(i: Nat, +n: Nui, +value: String) -> Step:
+  match i:
+    case 0n:
+      Nui.layers.open(n)
+    case 1n:
+      Nui.layers.set(n, V.Look.toggle(Nui.flip(n), Maybe.default(&2, U32, U32.read(value), 31)))
+    case 2n:
+      Nui.layers.set(n, 0)
+    case 3n:
+      Nui.sheet.go(n, Maybe.default(&2, Nat, Nat.read(value), 0n))
+    case 4n:
+      Nui.sheet.open(HI.Hier.child(Nui.rows(n), Nui.sheet.at(n), value), n)
+    case 5n:
+      Nui.sheet.go(n, HI.Hier.parent(Nui.rows(n), Nui.sheet.at(n)))
+    case _:
+      Step{n, Nil{}, False{}}
+
 def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
   match i:
     case 0n:
@@ -1645,11 +1711,11 @@ def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
     case 7n:
       Pal.open(n, "", value)
     case _:
-      Step{n, Nil{}, False{}}
+      Nui.vw_act.more(Nat.sub(i, 8n), n, value)
 
 # the window's own actions (they never reach the client state)
 def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
-  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo", "vw-find"], action, 0n), n, value)
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo", "vw-find", "vw-layers", "vw-layer", "vw-layers-reset", "vw-sheet", "vw-open", "vw-up"], action, 0n), n, value)
 
 # a link in a message: only a web address is ever opened (law link_no_script)
 def Nui.click.url(url: Bool, +n: Nui, +action: String, +value: String) -> Step:

@@ -10,10 +10,12 @@ import ../gfx/bitmap.bend as BM
 import ../core/look.bend as LO
 
 # The board viewer. A scene is the board's items, each with the time it
-# appeared. A new file merges into the scene by key: an item whose key and
-# signature are unchanged keeps its birth time (law scene_merge_self: an
-# unchanged board never re-fades); anything new or changed is born now and
-# fades in. Geometry always comes from the newest file.
+# appeared, kept in paint order: by layer, then key. A new file merges into
+# the scene by that order: an item whose layer, key and signature are
+# unchanged keeps its birth time (law scene_merge_self: an unchanged board
+# never re-fades); anything new or changed is born now and fades in.
+# Geometry always comes from the newest file. Because the scene is already
+# in paint order, a frame draws it in one pass.
 
 type Seen is Data:
   Seen{item: B.Item, born: Nat}
@@ -39,10 +41,25 @@ def Key.cmp.fin(r: (String & String) & Cmp) -> Cmp:
 def Key.cmp(a: String, b: String) -> Cmp:
   Key.cmp.fin(String.cmp(a, b))
 
-def Key.le(a: B.Item, b: B.Item) -> Bool:
-  Cmp.is_le(Key.cmp(Key.of(a), Key.of(b)))
+def Scene.cmp.k(c: Cmp, +a: String, +b: String) -> Cmp:
+  match c:
+    case EQ{}:
+      Key.cmp(a, b)
+    case LT{}:
+      LT{}
+    case GT{}:
+      GT{}
 
-# items in key order (merge needs both sides sorted)
+# paint order: layer, then key
+def Scene.cmp(a: B.Item, b: B.Item) -> Cmp:
+  match a b:
+    case B.Item{+ka, _, +la, _, _} B.Item{+kb, _, +lb, _, _}:
+      Scene.cmp.k(U32.cmp(la, lb), ka, kb)
+
+def Key.le(a: B.Item, b: B.Item) -> Bool:
+  Cmp.is_le(Scene.cmp(a, b))
+
+# items in paint order (merge needs both sides sorted)
 def Scene.sort(+xs: List<&2, B.Item>) -> List<&2, B.Item>:
   List.sort(~B.Item, ~Key.le, xs)
 
@@ -53,7 +70,7 @@ def Scene.sort(+xs: List<&2, B.Item>) -> List<&2, B.Item>:
 def Scene.heads(os: List<&2, Seen>, ns: List<&2, B.Item>) -> Cmp:
   match os ns:
     case Seen{+o, _} <> _ +n <> _:
-      Key.cmp(Key.of(o), Key.of(n))
+      Scene.cmp(o, n)
     case _ _:
       EQ{}
 
@@ -263,16 +280,16 @@ def Ops.prim(p: B.Prim, +v: View, +c: D.Clip, +color: U32, +alpha: U32) -> List<
     case B.PPoly{+ps, +w, False{}}:
       Ops.line(List.append(&2, D.P2, View.ps(ps, v), [View.p(v, Maybe.default(&2, B.Pt, List.head(&2, B.Pt, ps), B.Pt{0.0, 0.0}))]), c, View.w(v, w), color, alpha)
 
-def Ops.item.show(hidden: Bool, p: B.Prim, +v: View, +c: D.Clip, +color: U32, +alpha: U32) -> List<&2, R.Op>:
+def Ops.item.show(hidden: Bool, p: B.Prim, +v: View, +c: D.Clip, +color: U32, +alpha: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   match hidden:
     case True{}:
-      Nil{}
+      rest
     case False{}:
-      Ops.prim(p, v, c, color, alpha)
+      List.append(&2, R.Op, Ops.prim(p, v, c, color, alpha), rest)
 
-def Ops.item.k(look: U32 & U32, p: B.Prim, +v: View, +c: D.Clip, +fade: U32) -> List<&2, R.Op>:
+def Ops.item.k(look: U32 & U32, p: B.Prim, +v: View, +c: D.Clip, +fade: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   (color, +base) = look
-  Ops.item.show(U32.is_eq(base, 0), p, v, c, color, ((base * fade : U32) / 255 : U32))
+  Ops.item.show(U32.is_eq(base, 0), p, v, c, color, ((base * fade : U32) / 255 : U32), rest)
 
 # a layer's colour and opacity in a board (kind 0) or a schematic (kind 1)
 def Look.of(+kind: U32, +layer: U32) -> U32 & U32:
@@ -281,17 +298,95 @@ def Look.of(+kind: U32, +layer: U32) -> U32 & U32:
 def Look.count(+kind: U32) -> Nat:
   LO.Look.count(kind)
 
-def Ops.layer.k(on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
-  match on:
-    case True{}:
-      List.append(&2, R.Op, Ops.item.k(Look.of(kind, layer), p, v, c, fade), rest)
-    case False{}:
-      rest
+# Layer visibility
+# ----------------
+# The user turns layers on and off one by one. `flip` holds a bit per
+# layer index: a set bit shows a layer the viewer hides by default (at
+# Look.dim) and hides one it shows. 0 is the default look (law
+# look_flip_none); flipping a layer twice gives it back (law
+# look_flip_twice).
 
-def Ops.pick(keep: Bool, on: Bool, p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+def Look.dim() -> U32:
+  170
+
+def Look.bit(+layer: U32) -> U32:
+  U32.shln(1, U32.to_nat(layer))
+
+def Look.flipped.k(none: Bool, +flip: U32, +layer: U32) -> Bool:
+  match none:
+    case True{}:
+      False{}
+    case False{}:
+      Bool.not(U32.is_eq(U32.and(flip, Look.bit(layer)), 0))
+
+# whether a layer's bit is set in `flip` (no shifting when none is)
+def Look.flipped(+flip: U32, +layer: U32) -> Bool:
+  Look.flipped.k(U32.is_eq(flip, 0), flip, layer)
+
+# `flip` with one layer toggled
+def Look.toggle(+flip: U32, +layer: U32) -> U32:
+  U32.xor(flip, Look.bit(layer))
+
+def Look.flip.k(on: Bool, look: U32 & U32) -> U32 & U32:
+  match on:
+    case False{}:
+      look
+    case True{}:
+      (c, +a) = look
+      (c, Bool.pick(U32, U32.is_eq(a, 0), Look.dim(), 0))
+
+# a layer's colour and opacity once the user's flips apply
+def Look.on(+kind: U32, +layer: U32, +flip: U32) -> U32 & U32:
+  Look.flip.k(Look.flipped(flip, layer), Look.of(kind, layer))
+
+def Look.alpha.k(l: U32 & U32) -> U32:
+  (_, a) = l
+  a
+
+def Look.alpha(+kind: U32, +layer: U32, +flip: U32) -> U32:
+  Look.alpha.k(Look.on(kind, layer, flip))
+
+# whether a layer shows
+def Look.shows(+kind: U32, +layer: U32, +flip: U32) -> Bool:
+  U32.is_gt(Look.alpha(kind, layer, flip), 0)
+
+# the layers a scene has items on, as bits (for the layer list)
+def Layers.present(ss: List<&2, Seen>, +acc: U32) -> U32:
+  match ss:
+    case Nil{}:
+      acc
+    case Seen{B.Item{_, _, +l, _, _}, _} <> t:
+      Layers.present(t, U32.or(acc, Look.bit(l)))
+
+# Culling
+# -------
+# An item wholly outside the panel makes no ops at all: when zoomed in,
+# most of a board is skipped before any geometry is transformed.
+
+def Cull.pt(p: B.Pt, +pad: F32, b: D.Box) -> D.Box:
+  match p b:
+    case B.Pt{+x, +y} D.Box{+x0, +y0, +x1, +y1}:
+      D.Box{F32.min(x0, F32.sub(x, pad)), F32.min(y0, F32.sub(y, pad)), F32.max(x1, F32.add(x, pad)), F32.max(y1, F32.add(y, pad))}
+
+def Cull.pts(ps: List<&2, B.Pt>, +pad: F32, b: D.Box) -> D.Box:
+  match ps:
+    case Nil{}:
+      b
+    case p <> t:
+      Cull.pts(t, pad, Cull.pt(p, pad, b))
+
+# whether a box in mm meets the clip on screen (a pixel of slack for the
+# one-pixel minimum stroke)
+def Cull.meets(b: D.Box, +v: View, c: D.Clip) -> Bool:
+  match b c:
+    case D.Box{+x0, +y0, +x1, +y1} D.Clip{+cx0, +cy0, +cx1, +cy1}:
+      Bool.and(Bool.and(F32.is_ge(F32.add(View.x(v, x1), 1.0), U32.to_f32(cx0)), F32.is_le(F32.sub(View.x(v, x0), 1.0), U32.to_f32(cx1))),
+        Bool.and(F32.is_ge(F32.add(View.y(v, y1), 1.0), U32.to_f32(cy0)), F32.is_le(F32.sub(View.y(v, y0), 1.0), U32.to_f32(cy1))))
+
+def Ops.pick(keep: Bool, +p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, +flip: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   match keep:
     case True{}:
-      Ops.layer.k(on, p, layer, v, c, fade, kind, rest)
+      Ops.item.k(Look.on(kind, layer, flip), p, v, c, fade, rest)
     case False{}:
       rest
 
@@ -326,27 +421,6 @@ def Src.key(+kind: U32, +root: String, +path: String) -> String:
 # whether an item belongs in a base drawn at `cut`
 def Vw.settled(+born: Nat, +cut: Nat) -> Bool:
   Nat.is_le(Nat.add(born, Fade.ms()), cut)
-
-# the ops of one layer's items, in paint order: those in a base drawn at
-# `cut` when `base` is set, the others when it is not
-def Ops.layer(ss: List<&2, Seen>, +layer: U32, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
-  match ss:
-    case Nil{}:
-      Nil{}
-    case Seen{B.Item{_, _, +l, p, _}, +b} <> t:
-      Ops.pick(Bool.not(Bool.xor(base, Vw.settled(b, cut))), U32.is_eq(l, layer), p, layer, v, c, Fade.alpha(now, b), kind,
-        Ops.layer(t, layer, v, c, now, cut, base, kind))
-
-def Ops.layers(n: Nat, +i: U32, +ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
-  match n:
-    case 0n:
-      Nil{}
-    case 1n+m:
-      List.append(&2, R.Op, Ops.layer(ss, i, v, c, now, cut, base, kind), Ops.layers(m, (i + 1 : U32), ss, v, c, now, cut, base, kind))
-
-# the whole scene bottom-up (paint order), cut to the panel
-def Ops.scene(+ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32) -> List<&2, R.Op>:
-  Ops.layers(Look.count(kind), 0, ss, v, c, now, cut, base, kind)
 
 # Picking
 # -------
@@ -386,6 +460,48 @@ def Pick.area(b: D.Box) -> F32:
 def Pick.big() -> D.Box:
   D.Box{1000000.0, 1000000.0, F32.neg(1000000.0), F32.neg(1000000.0)}
 
+# a prim's extent in mm, strokes included
+def Cull.box(p: B.Prim) -> D.Box:
+  match p:
+    case B.PSeg{a, e, +w}:
+      Cull.pt(e, F32.mul(w, 0.5), Cull.pt(a, F32.mul(w, 0.5), Pick.big()))
+    case B.PLine{ps, +w}:
+      Cull.pts(ps, F32.mul(w, 0.5), Pick.big())
+    case B.PCirc{c, +r, +w, _}:
+      Cull.pt(c, F32.add(r, F32.mul(w, 0.5)), Pick.big())
+    case B.PPoly{ps, +w, _}:
+      Cull.pts(ps, F32.mul(w, 0.5), Pick.big())
+
+def Cull.in(+p: B.Prim, +v: View, +c: D.Clip) -> Bool:
+  Cull.meets(Cull.box(p), v, c)
+
+def Ops.cull(on: Bool, +p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +fade: U32, +kind: U32, +flip: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+  match on:
+    case True{}:
+      Ops.pick(Cull.in(p, v, c), p, layer, v, c, fade, kind, flip, rest)
+    case False{}:
+      rest
+
+def Ops.gate(keep: Bool, +p: B.Prim, +layer: U32, +v: View, +c: D.Clip, +now: Nat, +born: Nat, +kind: U32, +flip: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+  match keep:
+    case True{}:
+      Ops.cull(Bool.and(Look.shows(kind, layer, flip), Nat.is_lt(U32.to_nat(layer), Look.count(kind))), p, layer, v, c, Fade.alpha(now, born), kind, flip, rest)
+    case False{}:
+      rest
+
+# the scene's ops in paint order (it is kept that way): those in a base
+# drawn at `cut` when `base` is set, the others when it is not; layers
+# past the kind's count, hidden layers and items off the panel make none.
+# The cheap test (base or not) comes first, so a settled scene's overlay
+# costs one comparison per item.
+def Ops.scene(ss: List<&2, Seen>, +v: View, +c: D.Clip, +now: Nat, +cut: Nat, +base: Bool, +kind: U32, +flip: U32) -> List<&2, R.Op>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Seen{B.Item{_, _, +l, +p, _}, +b} <> t:
+      Ops.gate(Bool.not(Bool.xor(base, Vw.settled(b, cut))), p, l, v, c, now, b, kind, flip,
+        Ops.scene(t, v, c, now, cut, base, kind, flip))
+
 def Pick.circ(c: B.Pt, +r: F32) -> D.Box:
   match c:
     case B.Pt{+x, +y}:
@@ -419,29 +535,22 @@ def Pick.better(r: Bool & F32, +shown: Bool, +key: String, best: String & F32) -
   (bk, +ba) = best
   Pick.better.k(Bool.and(Bool.and(hit, shown), F32.is_lt(area, ba)), key, area, bk, ba)
 
-def Look.alpha.k(l: U32 & U32) -> U32:
-  (_, a) = l
-  a
-
-def Look.alpha(+kind: U32, +layer: U32) -> U32:
-  Look.alpha.k(Look.of(kind, layer))
-
-def Pick.go(ss: List<&2, Seen>, +x: F32, +y: F32, +tol: F32, +kind: U32, best: String & F32) -> String & F32:
+def Pick.go(ss: List<&2, Seen>, +x: F32, +y: F32, +tol: F32, +kind: U32, +flip: U32, best: String & F32) -> String & F32:
   match ss:
     case Nil{}:
       best
     case Seen{B.Item{+k, _, +l, p, _}, _} <> t:
-      Pick.go(t, x, y, tol, kind, Pick.better(Pick.hit(p, x, y, tol), U32.is_gt(Look.alpha(kind, l), 0), k, best))
+      Pick.go(t, x, y, tol, kind, flip, Pick.better(Pick.hit(p, x, y, tol), Look.shows(kind, l, flip), k, best))
 
 def Pick.key(r: String & F32) -> String:
   (k, _) = r
   k
 
 # the key of the item under screen point (sx, sy), "" for none
-def Pick.at(+ss: List<&2, Seen>, v: View, +sx: F32, +sy: F32, +kind: U32) -> String:
+def Pick.at(+ss: List<&2, Seen>, v: View, +sx: F32, +sy: F32, +kind: U32, +flip: U32) -> String:
   match v:
     case View{+z, +ox, +oy}:
-      Pick.key(Pick.go(ss, F32.div(F32.sub(sx, ox), z), F32.div(F32.sub(sy, oy), z), F32.div(4.0, z), kind, ("", 1000000000000.0)))
+      Pick.key(Pick.go(ss, F32.div(F32.sub(sx, ox), z), F32.div(F32.sub(sy, oy), z), F32.div(4.0, z), kind, flip, ("", 1000000000000.0)))
 
 # the picked item's info ("" when it is gone)
 def Pick.info(ss: List<&2, Seen>, +key: String) -> String:
