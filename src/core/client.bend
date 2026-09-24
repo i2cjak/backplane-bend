@@ -8,6 +8,7 @@ import ./agent.bend as AG
 import ./attach.bend as AT
 import ./fold.bend as FO
 import ./todo.bend as TD
+import ./bot.bend as BT
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -474,7 +475,7 @@ def Ui.on_thread(u: Ui, m: String) -> Act:
 def Ui.select(u: Ui, +id: String) -> Act:
   match u:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Act{Ui{st, id, Map.set(&2, String, dr, "@del", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
+      Act{Ui{st, id, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@del", ""), "@bot", ""), "@room", ""), "@remote", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
 
 # Drafts kept
 # -----------
@@ -577,11 +578,9 @@ def Follow.label.k(run: Bool, +mode: String) -> String:
 def Follow.label(+st: M.State, +sel: String, run: Bool) -> String:
   Follow.label.k(run, Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), False{}))
 
-def Ui.send.k(empty: Bool, u: Ui, text: String, +mode: String) -> Act:
-  match empty u:
-    case True{} _:
-      Act{u, Nil{}}
-    case False{} Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
+def Ui.send.t(u: Ui, text: String, +mode: String) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
       Ui.also(Ui.rpc.keep(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@att:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
         "turn.start", [J.KV{"thread", J.Str{sel}}, J.KV{"text", J.Str{text}}, J.KV{"msg", J.Str{Ui.msg_id(Str.get(nf, "cid"), now, rid)}}, J.KV{"mode", J.Str{mode}}]), List.append(&2, Cmd, Draft.keep(sel, ""), [Scroll{}]))
 
@@ -677,7 +676,10 @@ def Ui.actions() -> List<&2, String>:
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
    "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set",
-   "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back"]
+   "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back",
+   "bot", "bot-tab", "bot-new", "bot-create", "bot-delete", "bot-edit", "bfield", "room", "room-new", "room-save", "room-pick", "room-post",
+   "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
+   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit"]
 
 # Reading the client state
 # ------------------------
@@ -2097,15 +2099,6 @@ def Att.nonblank(ls: List<&2, String>) -> List<&2, String>:
     case +l <> t:
       Att.keep(String.is_empty(String.trim(l)), String.trim(l), Att.nonblank(t))
 
-# the draft, then a line per attachment (attach.bend's format)
-# the draft sent; alt: the other follow-up mode (ctrl+Enter)
-def Ui.send(u: Ui, alt: Bool) -> Act:
-  match u:
-    case Ui{+st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
-      Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text,
-        Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), alt))
-
 def Att.drop(ps: List<&2, String>, +p: String) -> List<&2, String>:
   match ps:
     case Nil{}:
@@ -2163,41 +2156,6 @@ def Ui.reply.body(u: Ui, +o: J.Json) -> Ui:
 # skills list is kept for the composer
 def Ui.reply.skills(u: Ui, +o: J.Json) -> Ui:
   Skills.got(Skills.has(o), Ui.reply.body(u, o), o)
-
-# an answer: its request leaves the outbox; a diff opens the diff view
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Proj.reply(o, Ui.reply.skills(u, o))
-
-def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
-  match i:
-    case 0n:
-      Ui.reset(u, o)
-    case 1n:
-      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
-    case 2n:
-      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
-    case 3n:
-      Ui.reply(u, o)
-    case 4n:
-      Ui.update(u, o)
-    case 5n:
-      Ui.view(u, o)
-    case 6n:
-      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
-    case 7n:
-      Ui.info_merge(u, J.Json.get_obj(o, "info"))
-    case _:
-      u
-
-# a message from the server
-def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)
-
-# a message from the server, with what to send: a (re)connection (the
-# server's log arrives first on each) sends the outbox again, so nothing
-# the user sent is lost to a dropped link
-def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
-  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
 
 def Ui.error_set(u: Ui, e: String) -> Ui:
   match u:
@@ -2511,6 +2469,271 @@ def Ui.q_edit.k(a: Act, +msg: String) -> Act:
 def Ui.q_edit(+u: Ui, +msg: String) -> Act:
   Ui.q_edit.k(Ui.draft.set(u, Qu.merge(Ui.draft_text(u), Qu.text(M.Queue.find(M.Queue.items(Ui.state(u), Ui.sel(u)), msg)))), msg)
 
+# Bots
+# ----
+# (docs/bots.md) The client keeps which bot, room or remote bot is shown in
+# scratch keys: "@bot" (its thread is `sel`), "@room", "@remote", and the
+# bot's tab "@btab". Form fields are scratch keys "@f.<name>" set by the
+# "bfield" action ("<name>\u001f<text>"). A bot's thread gets the usual
+# timeline, composer and model picker; what is sent there goes to the bot
+# as "bots.say", which starts its conversation over (hop 0).
+
+def Ui.state.of(u: Ui) -> M.State:
+  match u:
+    case Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      st
+
+def Ui.sel.of(u: Ui) -> String:
+  match u:
+    case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      sel
+
+def Bots.of_thread(+st: M.State, +thread: String) -> Maybe<&2, BT.Bot>:
+  BT.World.of_thread(M.State.bots(st), thread)
+
+def Bots.field(+u: Ui, +k: String) -> String:
+  Ui.scratch(u, "@f." ++ k)
+
+def Bots.fields.clear.go(ks: List<&2, String>, u: Ui) -> Ui:
+  match ks:
+    case Nil{}:
+      u
+    case +k <> t:
+      Bots.fields.clear.go(t, Ui.scratch_set(u, "@f." ++ k, ""))
+
+def Bots.fields.clear(u: Ui, ks: List<&2, String>) -> Ui:
+  Bots.fields.clear.go(ks, u)
+
+# the draft (and attachments) of the selected thread cleared
+def Bots.say.clear(u: Ui) -> Ui:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@att:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+
+def Bots.say(u: Ui, +bot: String, text: String) -> Act:
+  Ui.also(Ui.rpc.keep(Bots.say.clear(u), "bots.say", [J.KV{"bot", J.Str{bot}}, J.KV{"text", J.Str{text}}]), [Scroll{}])
+
+def Ui.send.b(empty: Bool, b: Maybe<&2, BT.Bot>, u: Ui, text: String, +mode: String) -> Act:
+  match empty b:
+    case True{} _:
+      Act{u, Nil{}}
+    case False{} Some{bot}:
+      Bots.say(u, BT.Bot.id(bot), text)
+    case False{} None{}:
+      Ui.send.t(u, text, mode)
+
+def Ui.send.k(empty: Bool, +u: Ui, text: String, +mode: String) -> Act:
+  Ui.send.b(empty, Bots.of_thread(Ui.state.of(u), Ui.sel.of(u)), u, text, mode)
+
+# the draft, then a line per attachment (attach.bend's format)
+# the draft sent; alt: the other follow-up mode (ctrl+Enter)
+def Ui.send(u: Ui, alt: Bool) -> Act:
+  match u:
+    case Ui{+st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
+      Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text,
+        Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), alt))
+
+def Bots.sel.set(u: Ui, +th: String) -> Ui:
+  match u:
+    case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui{st, th, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+
+def Bots.views(u: Ui, +bot: String, +room: String, +remote: String) -> Ui:
+  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@bot", bot), "@room", room), "@remote", remote), "@del", "")
+
+# a bot shown: its thread is selected, its tab kept
+def Bots.select.k(m: Maybe<&2, BT.Bot>, u: Ui) -> Act:
+  match m:
+    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
+      Act{Bots.views(Bots.sel.set(u, th), i, "", ""), [Focus{"composer"}, Scroll{}]}
+    case None{}:
+      Act{u, Nil{}}
+
+def Bots.select(+u: Ui, +id: String) -> Act:
+  Bots.select.k(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), id)), u)
+
+def Bots.room.select(u: Ui, +id: String) -> Act:
+  Act{Bots.views(u, "", id, ""), [Focus{"room-post"}, Scroll{}]}
+
+def Bots.remote.select(u: Ui, +id: String) -> Act:
+  Act{Bots.views(u, "", "", id), [Focus{"remote-send"}, Scroll{}]}
+
+# "name\u001ftext": a form field
+def Bots.bfield.k(ps: List<&2, String>, u: Ui) -> Ui:
+  match ps:
+    case k <> t:
+      Ui.scratch_set(u, "@f." ++ k, String.join(t, "\u{1f}"))
+    case Nil{}:
+      u
+
+def Bots.bfield(u: Ui, +v: String) -> Ui:
+  Bots.bfield.k(String.split(v, '\u{1f}'), u)
+
+def Bots.flag(+u: Ui, +k: String) -> Ui:
+  Ui.scratch_set(u, k, Bool.pick(String, String.eq(Ui.scratch(u, k), "1"), "", "1"))
+
+def Bots.create(+u: Ui) -> Act:
+  Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@bnew", ""), ["name", "persona"]), "bots.create",
+    [J.KV{"name", J.Str{String.trim(Bots.field(u, "name"))}}, J.KV{"persona", J.Str{Bots.field(u, "persona")}},
+     J.KV{"provider", J.Str{Bool.pick(String, String.is_empty(Bots.field(u, "provider")), M.Setting.get(Ui.state.of(u), "agent.provider", "claude"), Bots.field(u, "provider"))}},
+     J.KV{"model", J.Str{Bots.field(u, "model")}}])
+
+def Bots.cur(+u: Ui) -> String:
+  Ui.scratch(u, "@bot")
+
+def Bots.edit(+u: Ui) -> Act:
+  Ui.rpc(u, "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"persona", J.Str{Bots.field(u, "persona")}}])
+
+def Bots.look(+u: Ui, +v: String) -> Act:
+  Ui.rpc(u, "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"look", J.Num{v}}])
+
+def Bots.drop(ms: List<&2, String>, +id: String) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> +t:
+      Bool.pick(List<&2, String>, String.eq(m, id), Bots.drop(t, id), m <> Bots.drop(t, id))
+
+# the room form's members: bot ids, one per line; picking one again drops it
+def Bots.pick.k(has: Bool, +ms: List<&2, String>, +id: String) -> List<&2, String>:
+  match has:
+    case True{}:
+      List.filter(~String, ~(x => Bool.not(String.is_empty(x))), Bots.drop(ms, id))
+    case False{}:
+      List.append(&2, String, ms, [id])
+
+def Bots.pick(+u: Ui, +id: String) -> Ui:
+  Ui.scratch_set(u, "@f.rmembers", String.join(Bots.pick.k(BT.Room.has(BT.Room.members.of(Bots.field(u, "rmembers")), id), BT.Room.members.of(Bots.field(u, "rmembers")), id), "\n"))
+
+def Bots.room.save(+u: Ui) -> Act:
+  Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@rnew", ""), ["rname", "rmembers", "rid"]), "bots.room",
+    [J.KV{"room", J.Str{Bots.field(u, "rid")}}, J.KV{"name", J.Str{Bool.pick(String, String.is_empty(String.trim(Bots.field(u, "rname"))), "room", String.trim(Bots.field(u, "rname")))}},
+     J.KV{"members", J.Str{Bots.field(u, "rmembers")}}])
+
+def Bots.room.post.k(empty: Bool, +u: Ui) -> Act:
+  match empty:
+    case True{}:
+      Act{u, Nil{}}
+    case False{}:
+      Ui.also(Ui.rpc.keep(Ui.scratch_set(u, "@f.rpost", ""), "bots.post", [J.KV{"room", J.Str{Ui.scratch(u, "@room")}}, J.KV{"text", J.Str{Bots.field(u, "rpost")}}]), [Scroll{}])
+
+def Bots.room.post(+u: Ui) -> Act:
+  Bots.room.post.k(String.is_empty(String.trim(Bots.field(u, "rpost"))), u)
+
+def Bots.remote.send.k(empty: Bool, +u: Ui) -> Act:
+  match empty:
+    case True{}:
+      Act{u, Nil{}}
+    case False{}:
+      Ui.also(Ui.rpc.keep(Ui.scratch_set(u, "@f.rtext", ""), "bots.tell", [J.KV{"to", J.Str{Ui.scratch(u, "@remote")}}, J.KV{"text", J.Str{Bots.field(u, "rtext")}}]), [Scroll{}])
+
+def Bots.remote.send(+u: Ui) -> Act:
+  Bots.remote.send.k(String.is_empty(String.trim(Bots.field(u, "rtext"))), u)
+
+# a space's button ("bot\u001faction") or field ("bot\u001faction\u001ftext")
+def Bots.space.k(ps: List<&2, String>, u: Ui) -> Act:
+  match ps:
+    case b <> a <> t:
+      Ui.rpc(u, "bots.space", [J.KV{"bot", J.Str{b}}, J.KV{"action", J.Str{a}}, J.KV{"value", J.Str{String.join(t, "\u{1f}")}}])
+    case _:
+      Act{u, Nil{}}
+
+def Bots.space(u: Ui, +v: String) -> Act:
+  Bots.space.k(String.split(v, '\u{1f}'), u)
+
+def Bots.routine.save(+u: Ui) -> Act:
+  Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@onew", ""), ["oid", "oname", "ocron", "oprompt"]), "bots.routine",
+    [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"routine", J.Str{Bots.field(u, "oid")}}, J.KV{"name", J.Str{Bool.pick(String, String.is_empty(Bots.field(u, "oname")), "routine", Bots.field(u, "oname"))}},
+     J.KV{"cron", J.Str{Bots.field(u, "ocron")}}, J.KV{"prompt", J.Str{Bots.field(u, "oprompt")}}, J.KV{"on", J.Flag{True{}}}])
+
+def Bots.routine.of(+u: Ui, +id: String) -> BT.Routine:
+  BT.World.routine(M.State.bots(Ui.state.of(u)), id)
+
+def Bots.routine.toggle(+u: Ui, r: BT.Routine) -> Act:
+  match r:
+    case BT.Routine{i, b, n, c, p, on, _, _, _}:
+      Ui.rpc(u, "bots.routine", [J.KV{"bot", J.Str{b}}, J.KV{"routine", J.Str{i}}, J.KV{"name", J.Str{n}}, J.KV{"cron", J.Str{c}}, J.KV{"prompt", J.Str{p}}, J.KV{"on", J.Flag{Bool.not(on)}}])
+
+# a routine's fields into the form, to change it
+def Bots.routine.edit(u: Ui, r: BT.Routine) -> Ui:
+  match r:
+    case BT.Routine{i, _, n, c, p, _, _, _, _}:
+      Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@onew", "1"), "@f.oid", i), "@f.oname", n), "@f.ocron", c), "@f.oprompt", p)
+
+def Bots.hook.new(+u: Ui) -> Act:
+  Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@hook.secret", ""), ["hname"]), "bots.hook",
+    [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"name", J.Str{Bool.pick(String, String.is_empty(Bots.field(u, "hname")), "webhook", Bots.field(u, "hname"))}}])
+
+def Bots.google(+u: Ui, +op: String) -> Act:
+  Ui.rpc(u, "bots.google", [J.KV{"op", J.Str{op}}, J.KV{"clientId", J.Str{Bots.field(u, "gid")}}, J.KV{"clientSecret", J.Str{Bots.field(u, "gsecret")}},
+    J.KV{"pasted", J.Str{Bots.field(u, "gpaste")}}])
+
+def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
+  match i:
+    case 0n:
+      Bots.select(u, value)
+    case 1n:
+      Act{Ui.scratch_set(u, "@btab", value), [Scroll{}]}
+    case 2n:
+      Act{Bots.flag(u, "@bnew"), [Focus{"bot-name"}]}
+    case 3n:
+      Bots.create(u)
+    case 4n:
+      Ui.rpc(Bots.views(u, "", "", ""), "bots.delete", [J.KV{"bot", J.Str{value}}])
+    case 5n:
+      Bots.edit(u)
+    case 6n:
+      Act{Bots.bfield(u, value), Nil{}}
+    case 7n:
+      Bots.room.select(u, value)
+    case 8n:
+      Act{Bots.flag(Bots.fields.clear(u, ["rname", "rmembers", "rid"]), "@rnew"), [Focus{"room-name"}]}
+    case 9n:
+      Bots.room.save(u)
+    case 10n:
+      Act{Bots.pick(u, value), Nil{}}
+    case 11n:
+      Bots.room.post(u)
+    case 12n:
+      Bots.space(u, value)
+    case 13n:
+      Bots.space(u, value)
+    case 14n:
+      Ui.rpc(u, "bots.forget", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"key", J.Str{value}}])
+    case 15n:
+      Bots.routine.save(u)
+    case 16n:
+      Bots.routine.toggle(u, Bots.routine.of(u, value))
+    case 17n:
+      Ui.rpc(u, "bots.routine_delete", [J.KV{"routine", J.Str{value}}])
+    case 18n:
+      Ui.rpc(u, "bots.routine_run", [J.KV{"routine", J.Str{value}}])
+    case 19n:
+      Bots.hook.new(u)
+    case 20n:
+      Ui.rpc(u, "bots.hook_revoke", [J.KV{"hook", J.Str{value}}])
+    case 21n:
+      Ui.rpc(Ui.scratch_set(u, "@peer.invite", ""), "bots.invite", [J.KV{"url", J.Str{Bots.field(u, "purl")}}])
+    case 22n:
+      Ui.rpc(Bots.fields.clear(u, ["invite"]), "bots.join", [J.KV{"invite", J.Str{String.trim(Bots.field(u, "invite"))}}])
+    case 23n:
+      Ui.rpc(u, "bots.unpeer", [J.KV{"peer", J.Str{value}}])
+    case 24n:
+      Bots.google(u, value)
+    case 25n:
+      Bots.remote.select(u, value)
+    case 26n:
+      Bots.remote.send(u)
+    case 27n:
+      Bots.look(u, value)
+    case 28n:
+      Ui.rpc(Bots.views(u, "", "", ""), "bots.room_delete", [J.KV{"room", J.Str{value}}])
+    case 29n:
+      Act{Bots.routine.edit(u, Bots.routine.of(u, value)), [Focus{"routine-name"}]}
+    case _:
+      Act{u, Nil{}}
+
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2656,8 +2879,88 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 76n:
       Ui.on_thread(u, "thread.back")
     case _:
-      Act{u, Nil{}}
+      Bots.act(Nat.sub(i, 77n), u, value)
 
 # a user action with its value
 def Ui.act(u: Ui, +action: String, +value: String) -> Act:
   Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
+
+# the reply may beat the bot's own change: remember it, and show it when it comes
+def Bots.reply.show(m: Maybe<&2, BT.Bot>, +id: String, u: Ui) -> Ui:
+  match m:
+    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
+      Bots.views(Bots.sel.set(u, th), i, "", "")
+    case None{}:
+      Ui.scratch_set(u, "@bot.want", id)
+
+def Bots.reply.bot.k(none: Bool, +o: J.Json, +u: Ui) -> Ui:
+  match none:
+    case True{}:
+      u
+    case False{}:
+      Bots.reply.show(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), J.Json.get_str(o, "bot", ""))), J.Json.get_str(o, "bot", ""), u)
+
+# answers that carry something for the bots' screens: a new bot is shown;
+# a webhook's secret and an invite are shown once; Google's sign-in link
+def Bots.reply.bot(+o: J.Json, u: Ui) -> Ui:
+  Bots.reply.bot.k(String.is_empty(J.Json.get_str(o, "bot", "")), o, u)
+
+def Bots.reply.put(+o: J.Json, +key: String, +into: String, +u: Ui) -> Ui:
+  Bool.pick(Ui, String.is_empty(J.Json.get_str(o, key, "")), u, Ui.scratch_set(u, into, J.Json.get_str(o, key, "")))
+
+def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
+  Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
+    Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id", Bots.reply.bot(o, u))))))
+
+# an answer: its request leaves the outbox; a diff opens the diff view
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Bots.reply(o, Proj.reply(o, Ui.reply.skills(u, o)))
+
+def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 0n:
+      Ui.reset(u, o)
+    case 1n:
+      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
+    case 2n:
+      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
+    case 3n:
+      Ui.reply(u, o)
+    case 4n:
+      Ui.update(u, o)
+    case 5n:
+      Ui.view(u, o)
+    case 6n:
+      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
+    case 7n:
+      Ui.info_merge(u, J.Json.get_obj(o, "info"))
+    case _:
+      u
+
+def Bots.wanted.m(m: Maybe<&2, BT.Bot>, u: Ui) -> Ui:
+  match m:
+    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
+      Ui.scratch_set(Bots.views(Bots.sel.set(u, th), i, "", ""), "@bot.want", "")
+    case None{}:
+      u
+
+def Bots.wanted.k(none: Bool, +u: Ui) -> Ui:
+  match none:
+    case True{}:
+      u
+    case False{}:
+      Bots.wanted.m(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), Ui.scratch(u, "@bot.want"))), u)
+
+# a bot asked for (just made) is shown once its change has come
+def Bots.wanted(+u: Ui) -> Ui:
+  Bots.wanted.k(String.is_empty(Ui.scratch(u, "@bot.want")), u)
+
+# a message from the server
+def Ui.recv(u: Ui, +o: J.Json) -> Ui:
+  Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o))
+
+# a message from the server, with what to send: a (re)connection (the
+# server's log arrives first on each) sends the outbox again, so nothing
+# the user sent is lost to a dropped link
+def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
