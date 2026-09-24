@@ -33,7 +33,9 @@ Backplane stands. Updated as features land.
   - a checkpoint per turn in hidden refs
   - a Diff view
   - Revert thread, Commit & push, Open PR (`gh`)
-  - a worktree thread's temporary branch is renamed from its first message, and commit messages are written from the thread's diff (a one-shot `claude -p --model haiku`; the thread's title when that fails)
+  - a worktree thread's temporary branch is renamed from its first message, and commit messages are written from the thread's diff (a one-shot run of the text generation model; the thread's title when that fails)
+- **Thread titles:** a thread's first message titles it at once with its first line; the text generation model then writes a 3 to 7 word title, which replaces that only while the thread still has it (a rename by the user wins; no answer changes nothing). Local and worktree threads alike.
+- **Text generation model:** the settings `text.provider` (`claude`, `codex` or `grok`; default `claude`) and `text.model` (empty, or another provider's model: the provider's light model, `haiku`, `gpt-6-luna` or `grok-4.7-build-fast`) pick the model for all one-shot writing: thread titles, branch names and commit messages. Claude runs `claude -p` without tools, Codex `codex exec --json` in a read-only sandbox at low effort, Grok its headless single-turn mode.
 - **Terminal:** a shell per thread in a pty (ctrl+j), rendered by the Bend VT emulator in both clients' state. The web client draws it too: styled rows, the cursor, keys and paste while focused, a Terminal button and ctrl+j, and a phone's keyboard.
 - **Diff on the web:** the web client's Diff button and ctrl+d show what the thread changed: files, hunks, and added and removed lines. It has Commit & push, Open PR and Revert thread, and fills the screen on a phone.
 - **Attachments:** files and images in a turn.

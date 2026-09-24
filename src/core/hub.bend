@@ -434,7 +434,7 @@ def Hub.reorder(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
-  ["thread.branch", "skills.list", "thread.effort", "thread.local", "thread.merged", "thread.unrooted"]
+  ["thread.branch", "skills.list", "thread.effort", "thread.local", "thread.merged", "thread.unrooted", "thread.titled"]
 
 def Hub.provider_of(t: M.Thread) -> String:
   match t:
@@ -471,6 +471,39 @@ def Name.first(t: M.Thread, +text: String) -> List<&2, Out>:
   match t:
     case M.Thread{+id, _, _, _, _, _, _, _, _, _, _, _, _, +br, +wt, _, _, _, _, _, _}:
       Name.out.k(Bool.and(AG.Name.temp(br), Bool.not(String.is_empty(wt))), id, wt, br, text)
+
+# A thread's first message titles it at once with its first line (the
+# placeholder); the server asks the text generation model for a better
+# title (Git job "title": a is the placeholder, b the message) and answers
+# with thread.titled {thread, placeholder, title}
+def Title.out(fresh: Bool, +thread: String, +text: String) -> List<&2, Out>:
+  match fresh:
+    case True{}:
+      Bool.pick(List<&2, Out>, String.is_empty(Hub.title.of(text)), Nil{}, [Git{0, "", "title", thread, "", Hub.title.of(text), String.take(text, 4000n)}])
+    case False{}:
+      Nil{}
+
+def Title.changes.ok(ok: Bool, +thread: String, +title: String, +now: Nat) -> List<&2, M.Change>:
+  match ok:
+    case True{}:
+      [M.ThreadRenamed{thread, title, now}]
+    case False{}:
+      Nil{}
+
+def Title.changes.k(same: Bool, ok: Bool, +thread: String, +title: String, +now: Nat) -> List<&2, M.Change>:
+  match same:
+    case True{}:
+      Title.changes.ok(ok, thread, title, now)
+    case False{}:
+      Nil{}
+
+# the writer's title replaces the placeholder only while the thread still
+# has it (a rename by the user wins) and only when there is an answer
+def Title.changes(+current: String, +placeholder: String, +answer: String, +thread: String, +now: Nat) -> List<&2, M.Change>:
+  Title.changes.k(Bool.and(String.eq(current, placeholder), Bool.not(String.is_empty(placeholder))), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now)
+
+def Title.got(+s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +p: J.Json) -> Step:
+  Step.reply(client, id, Title.changes(Hub.thread_title(Hub.thread(s, thread)), J.Json.get_str(p, "placeholder", ""), J.Json.get_str(p, "title", ""), thread, now))
 
 # Commit & push and Open PR without a message: the server writes one from
 # the thread's diff (the thread's title when it cannot)
@@ -679,6 +712,8 @@ def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.
       Merge.found(M.Merge.due(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), s, now, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "url", ""))
     case 5n:
       Step.reply(client, id, [M.WorktreeRemoved{J.Json.get_str(p, "thread", ""), now}])
+    case 6n:
+      Title.got(s, now, client, id, J.Json.get_str(p, "thread", ""), p)
     case _:
       Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
 
@@ -807,7 +842,9 @@ def Hub.answer(+s: M.State, +now: Nat, +client: U32, +id: String, +ask: String, 
 def Hub.turn.go(+s: M.State, +t: M.Thread, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
   match t:
     case M.Thread{_, _, +title, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
-      Step.before(Hub.title.k(String.eq(title, "New thread"), thread, text, now, Nil{}), Reply.ok(client, id) <> Name.out(Hub.thread(s, thread), text), Hub.post(s, now, thread, msg, M.User{}, text))
+      Step.before(Hub.title.k(String.eq(title, "New thread"), thread, text, now, Nil{}),
+        Reply.ok(client, id) <> List.append(&2, Out, Name.out(Hub.thread(s, thread), text), Title.out(String.eq(title, "New thread"), thread, text)),
+        Hub.post(s, now, thread, msg, M.User{}, text))
 
 def Hub.turn.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +thread: String, +msg: String, +text: String) -> Step:
   match dup:

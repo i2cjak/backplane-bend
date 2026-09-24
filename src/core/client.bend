@@ -657,13 +657,13 @@ def Models.menu(+info: String, +provider: String) -> List<&2, String>:
   "" <> Models.menu.go(Models.list(info, provider))
 
 # The writing model: the small model that titles threads, names branches
-# and writes commit messages (settings text.provider, text.model; Claude's
-# Haiku unless set, like T3 Code's text generation model)
+# and writes commit messages (settings text.provider, text.model; each
+# provider's light model unless set, like T3 Code's text generation model)
 def TextGen.provider(+st: M.State) -> String:
-  M.Setting.get(st, "text.provider", "claude")
+  AG.Text.provider(st)
 
 def TextGen.model(+st: M.State) -> String:
-  Bool.pick(String, Bool.and(String.eq(TextGen.provider(st), "claude"), String.is_empty(M.Setting.get(st, "text.model", ""))), "haiku", M.Setting.get(st, "text.model", ""))
+  AG.Text.model(st)
 
 def Models.label(+provider: String, +model: String) -> String:
   provider ++ " · " ++ Bool.pick(String, String.is_empty(model), "default", model)

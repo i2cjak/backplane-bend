@@ -6,6 +6,7 @@ import ./src/core/board.bend as B
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/hub.bend as H
+import ./src/core/agent.bend as AG
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
 import ./src/core/codec.bend as C
@@ -3111,4 +3112,54 @@ def Laws.mpick_opens_home():
   {==}
 
 def Laws.mpick_tilde():
+  {==}
+
+law title_k_nil:
+  for same: Bool
+  for +thread: String
+  for +title: String
+  for +now: Nat
+  {H.Title.changes.k(same, False{}, thread, title, now) == [] : List<&2, M.Change>}
+
+def title_k_nil(same, thread, title, now):
+  match same:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.title_user_rename_wins(current, placeholder, answer, thread, now, h):
+  %Equal.sym(Bool, String.eq(current, placeholder), False{}, h) : {H.Title.changes.k(Bool.and(_, Bool.not(String.is_empty(placeholder))), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [] : List<&2, M.Change>}
+  {==}
+
+def Laws.title_applies_when_placeholder(current, placeholder, answer, thread, now, same, set, some):
+  %Equal.sym(Bool, String.eq(current, placeholder), True{}, same) : {H.Title.changes.k(Bool.and(_, Bool.not(String.is_empty(placeholder))), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  %Equal.sym(Bool, String.is_empty(placeholder), False{}, set) : {H.Title.changes.k(Bool.and(True{}, Bool.not(_)), Bool.not(String.is_empty(AG.Title.clean(answer))), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  %Equal.sym(Bool, String.is_empty(AG.Title.clean(answer)), False{}, some) : {H.Title.changes.k(True{}, Bool.not(_), thread, AG.Title.clean(answer), now) == [M.ThreadRenamed{thread, AG.Title.clean(answer), now}] : List<&2, M.Change>}
+  {==}
+
+def Laws.title_empty_keeps(current, placeholder, thread, now):
+  title_k_nil(Bool.and(String.eq(current, placeholder), Bool.not(String.is_empty(placeholder))), thread, AG.Title.clean(""), now)
+
+def Laws.text_model_default():
+  {==}
+
+def Laws.text_model_unknown_provider():
+  {==}
+
+def Laws.text_model_light():
+  {==}
+
+def Laws.text_model_mismatch(provider, model, h):
+  %Equal.sym(Bool, AG.Text.fits(AG.Text.norm(String.trim(provider)), String.trim(model)), False{}, h) : {AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.pick.m(Bool.and(Bool.not(String.is_empty(String.trim(model))), _), AG.Text.norm(String.trim(provider)), String.trim(model))} == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+  %Equal.sym(Bool, Bool.and(Bool.not(String.is_empty(String.trim(model))), False{}), False{}, and_false_r(Bool.not(String.is_empty(String.trim(model))))) : {AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.pick.m(_, AG.Text.norm(String.trim(provider)), String.trim(model))} == AG.Tx{AG.Text.norm(String.trim(provider)), AG.Text.light(AG.Text.norm(String.trim(provider)))} : AG.Tx}
+  {==}
+
+def Laws.text_model_mismatch_codex():
+  {==}
+
+def Laws.text_model_mismatch_claude():
+  {==}
+
+def Laws.text_model_kept():
   {==}
