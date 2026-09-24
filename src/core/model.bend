@@ -612,14 +612,16 @@ type State is Data:
     asks: Map<&2, Ask>,
     devices: Map<&2, Device>,
     nav: Map<&2, Nav>,
-    bots: BT.World
+    # behind a List: the native window holds the State in its own, and a
+    # World record flattened into it passes the C emitter's 255 arguments
+    bots: List<&2, BT.World>
   }
 
 def State.empty() -> State:
-  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, List<&2, QItem>), Map.new(&2, Ask), Map.new(&2, Device), Map.new(&2, Nav), BT.World.empty()}
+  State{Map.new(&2, Project), Map.new(&2, Thread), Nil{}, 0n, Map.new(&2, Task), Map.new(&2, String), Map.new(&2, List<&2, QItem>), Map.new(&2, Ask), Map.new(&2, Device), Map.new(&2, Nav), [BT.World.empty()]}
 
 # apply f to the thread at `id` (a blank, hidden thread when absent)
-def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: BT.World, id: String, r: Map<&2, Thread> & Thread) -> State:
+def State.thread.fin(f: Thread -> Thread, ps: Map<&2, Project>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: List<&2, BT.World>, id: String, r: Map<&2, Thread> & Thread) -> State:
   (ts, t) = r
   State{ps, Map.set(&2, Thread, ts, id, f(t)), es, n, tk, sg, qu, ak, dv, nv, bw}
 
@@ -637,7 +639,7 @@ def State.put_project(s: State, p: Project) -> State:
   Project{+id, ti, r, c, rm} = p
   State{Map.set(&2, Project, ps, id, Project{id, ti, r, c, rm}), ts, es, n, tk, sg, qu, ak, dv, nv, bw}
 
-def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: BT.World, id: String, r: Map<&2, Project> & Project) -> State:
+def State.remove_project.fin(ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, tk: Map<&2, Task>, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: List<&2, BT.World>, id: String, r: Map<&2, Project> & Project) -> State:
   (ps, p) = r
   Project{i, ti, rt, c, _} = p
   State{Map.set(&2, Project, ps, id, Project{i, ti, rt, c, True{}}), ts, es, n, tk, sg, qu, ak, dv, nv, bw}
@@ -661,7 +663,7 @@ def State.message(s: State, +thread: String, msg: String, role: Role, text: Stri
     case _:
       State.post(s, Msg{msg, thread, role, text, at})
 
-def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: BT.World, id: String, r: Map<&2, Task> & Task) -> State:
+def State.task.fin(f: Task -> Task, ps: Map<&2, Project>, ts: Map<&2, Thread>, es: List<&2, Entry>, n: Nat, sg: Map<&2, String>, qu: Map<&2, List<&2, QItem>>, ak: Map<&2, Ask>, dv: Map<&2, Device>, nv: Map<&2, Nav>, bw: List<&2, BT.World>, id: String, r: Map<&2, Task> & Task) -> State:
   (tk, t) = r
   State{ps, ts, es, n, Map.set(&2, Task, tk, id, f(t)), sg, qu, ak, dv, nv, bw}
 
@@ -1154,10 +1156,13 @@ def State.navs(s: State) -> Map<&2, Nav>:
     case State{_, _, _, _, _, _, _, _, _, nv, bw}:
       nv
 
+def State.bots.k(bw: List<&2, BT.World>) -> BT.World:
+  Maybe.default(&2, BT.World, List.head(&2, BT.World, bw), BT.World.empty())
+
 def State.world(f: BT.World -> BT.World, s: State) -> State:
   match s:
     case State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, bw}:
-      State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, f(bw)}
+      State{ps, ts, es, n, tk, sg, qu, ak, dv, nv, [f(State.bots.k(bw))]}
 
 def State.apply.go(s: State, e: Change) -> State:
   match e:
@@ -1275,7 +1280,7 @@ def State.apply.go(s: State, e: Change) -> State:
 def State.bots(s: State) -> BT.World:
   match s:
     case State{_, _, _, _, _, _, _, _, _, _, bw}:
-      bw
+      State.bots.k(bw)
 
 # one event folded into the read model; every event bumps the sequence
 def State.apply(s: State, e: Change) -> State:
