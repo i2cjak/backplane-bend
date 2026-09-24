@@ -1327,6 +1327,22 @@ def Effort.known(m: Maybe<&2, J.Json>, +provider: String) -> List<&2, String>:
 def Effort.name(+e: String) -> String:
   Bool.pick(String, String.is_empty(e), "auto", e)
 
+# Context usage: how much of its model's window the thread's session
+# holds, after the model chip's label ("ctx 12% of 200k"; tokens alone
+# while the window is unknown; nothing before the first reading)
+
+def Usage.tokens(+n: Nat) -> String:
+  Bool.pick(String, Nat.is_ge(n, 1000000n), Nat.show(Nat.div(n, 1000000n)) ++ "M",
+    Bool.pick(String, Nat.is_ge(n, 1000n), Nat.show(Nat.div(n, 1000n)) ++ "k", Nat.show(n)))
+
+def Usage.text(+used: Nat, +window: Nat) -> String:
+  Bool.pick(String, Nat.is_eq(used, 0n), "",
+    Bool.pick(String, Nat.is_eq(window, 0n), " · ctx " ++ Usage.tokens(used),
+      " · ctx " ++ Nat.show(Nat.div(Nat.mul(used, 100n), window)) ++ "% of " ++ Usage.tokens(window)))
+
+def Usage.tail(+st: M.State, +th: String) -> String:
+  Usage.text(M.Usage.used(M.Setting.get(st, M.Usage.key(th), "")), M.Usage.window(M.Setting.get(st, M.Usage.key(th), "")))
+
 # the model chip's label with the thread's effort
 def Effort.label(+label: String, +e: String) -> String:
   Bool.pick(String, String.is_empty(e), label, label ++ " · " ++ e)

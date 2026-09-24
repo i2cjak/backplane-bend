@@ -3781,3 +3781,24 @@ def Laws.todo_shown_while_left(run):
       {==}
     case False{}:
       {==}
+
+def Laws.usage_keeps_window():
+  {==}
+
+def Laws.usage_keeps_used():
+  {==}
+
+def Laws.usage_text_share():
+  {==}
+
+def Laws.usage_text_tokens():
+  {==}
+
+def Laws.usage_nothing_yet(w):
+  {==}
+
+def Laws.usage_same_nothing():
+  {==}
+
+def Laws.usage_change_logged():
+  {==}

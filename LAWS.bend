@@ -1969,3 +1969,32 @@ law todo_hidden_when_done:
 # an assistant message with a todo tool sets the thread's list, once
 law todo_write_sets_list:
   {List.length(&2, M.Change, H.Claude.todos(M.State.empty(), "t1", 5n, [J.Json.obj([J.KV{"type", J.Str{"tool_use"}}, J.KV{"name", J.Str{"TodoWrite"}}, J.KV{"input", J.Json.obj([J.KV{"todos", J.Json.arr([])}])}])])) == 1n : Nat}
+
+# Context usage
+# -------------
+
+# a reading keeps the part it does not know (0) from the last one
+law usage_keeps_window:
+  {M.Usage.merge("10/200", 5n, 0n) == "5/200" : String}
+
+law usage_keeps_used:
+  {M.Usage.merge("10/200", 0n, 400n) == "10/400" : String}
+
+# the chip says the share of the window, tokens alone without a window,
+# and nothing before the first reading
+law usage_text_share:
+  {U.Usage.text(50n, 200n) == " · ctx 25% of 200" : String}
+
+law usage_text_tokens:
+  {U.Usage.text(5000n, 0n) == " · ctx 5k" : String}
+
+law usage_nothing_yet:
+  for +w: Nat
+  {U.Usage.text(0n, w) == "" : String}
+
+# a reading goes to the log only when it changes
+law usage_same_nothing:
+  {H.Usage.used.k(M.State.replay([M.UsageSet{"t1", 7n, 0n, 1n}], M.State.empty()), "t1", 2n, 7n) == [] : List<&2, M.Change>}
+
+law usage_change_logged:
+  {H.Usage.used.k(M.State.replay([M.UsageSet{"t1", 7n, 0n, 1n}], M.State.empty()), "t1", 2n, 8n) == [M.UsageSet{"t1", 8n, 0n, 2n}] : List<&2, M.Change>}
