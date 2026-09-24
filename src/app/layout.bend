@@ -333,13 +333,14 @@ def Look.open(open: Bool, +ty: Ty, +st: M.State, +id: String, +c: D.Clip, +y: U3
     case False{}:
       Col{Out.none(), y}
 
-# a project's name under its badge's icon (a click opens the editor), its
+# a project's name under its badge's icon (a click opens the editor; its
+# hit starts past x 10, where a drag drops onto the header), its
 # + for a new thread, the editor when open, then its threads
 def Lay.project(+ty: Ty, r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +c: D.Clip, +y: U32) -> Col:
   match r:
     case U.SRow{_, M.Project{+id, title, _, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
-      Lay.col.cat(Out.all([Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 180), c, 38, (y + 4 : U32), 28, T.Th.dim())),
-          Out{Lay.icon(ty, BG.Badge.icon(st, id), c, 14, (y + 10 : U32), BG.Badge.rgb_of(st, id)), [Lay.hit(8, (y + 4 : U32), 28, 28, "look", id)]},
+      Lay.col.cat(Out.all([Out{Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 180), c, 38, (y + 4 : U32), 28, T.Th.dim()), [Lay.hit(0, y, 228, 32, "project", id)]},
+          Out{Lay.icon(ty, BG.Badge.icon(st, id), c, 14, (y + 10 : U32), BG.Badge.rgb_of(st, id)), [Lay.hit(12, (y + 4 : U32), 24, 28, "look", id)]},
           Out{Lay.icon(ty, "plus", c, 236, (y + 10 : U32), T.Th.faint()), [Lay.hit(230, (y + 4 : U32), 28, 28, "new-thread", id)]}]),
         Lay.col.then(Look.open(String.eq(look, id), ty, st, id, c, (y + 32 : U32)), y0 =>
         Lay.col.then(Lay.rows(ty, pinned, st, sel, now, False{}, c, y0), y1 =>
@@ -1937,7 +1938,7 @@ def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +x0: U32, +x1
 
 # the viewer's chrome; the scene under it is drawn by the viewer
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
-  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.info(S.Nui.ui(n), "diff"), x0, x1, h)
+  Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h)
 
 def Lay.toast(+ty: Ty, +e: String, +w: U32, +h: U32) -> Out:
   +tw = {(Ty.width(ty, 2n, e) + 28 : U32) : U32}
@@ -1985,7 +1986,7 @@ def Lay.ghost(+ty: Ty, +n: S.Nui) -> Out:
   match n:
     case S.Nui{+u, _, _, _, +my, _, _, _, _, _, _, _, vw}:
       Lay.ghost.k(Bool.and(Bool.not(String.is_empty(U.Ui.scratch(u, "@drag"))), S.Row.far(S.Row.y(n), my)), ty,
-        U.Tasks.title(U.Ui.state(u), U.Ui.scratch(u, "@drag")), U32.max(my, 67))
+        U.Drag.title(U.Ui.state(u), U.Ui.scratch(u, "@drag")), U32.max(my, 67))
 
 def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:
   match n:

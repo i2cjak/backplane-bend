@@ -383,7 +383,7 @@ def Hub.methods.fs() -> List<&2, String>:
 
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
-  ["thread.snooze", "thread.reorder", "files.list", "kicad.open"]
+  ["thread.snooze", "thread.reorder", "files.list", "kicad.open", "project.reorder"]
 
 # snooze a thread: {thread, for: "1h" | "1w" | "tomorrow" | "off"} or
 # {thread, until}. Tomorrow 9:00 is local time, which the server knows:
@@ -431,6 +431,27 @@ def Hub.reorder.k(ok: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +
 # the one moved, ids: the shelf's threads in their new order}
 def Hub.reorder(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
   Hub.reorder.k(Bool.or(String.eq(J.Json.get_str(p, "section", ""), "pinned"), String.eq(J.Json.get_str(p, "section", ""), "active")), s, now, client, id, J.Json.get_str(p, "section", ""), p)
+
+def Reorder.pkeys(xs: List<&2, J.Json>, +navs: Map<&2, M.Nav>) -> List<&2, M.OKey>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case J.Str{+i} <> t:
+      M.OKey{i, M.Nav.project_key(navs, i)} <> Reorder.pkeys(t, navs)
+    case _ <> t:
+      Reorder.pkeys(t, navs)
+
+def Reorder.projects(ks: List<&2, M.OKey>, +now: Nat) -> List<&2, M.Change>:
+  match ks:
+    case Nil{}:
+      Nil{}
+    case M.OKey{i, k} <> t:
+      M.ProjectOrdered{i, k, now} <> Reorder.projects(t, now)
+
+# the sidebar's projects in their new order after a drag: {project: the one
+# moved, ids: every project in the new order}
+def Hub.reorder_projects(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
+  Step.reply(client, id, Reorder.projects(M.Order.plan(Reorder.pkeys(J.Json.elems(J.Json.get_obj(p, "ids")), M.State.navs(s)), J.Json.get_str(p, "project", "")), now))
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
@@ -727,6 +748,8 @@ def Hub.nav(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Jso
       Step.outs([Git{client, id, "files", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
     case 3n:
       Step.outs([Git{client, id, "kicad", J.Json.get_str(p, "thread", ""), Hub.cwd(s, Hub.thread(s, J.Json.get_str(p, "thread", ""))), "", ""}])
+    case 4n:
+      Hub.reorder_projects(s, now, client, id, p)
     case _:
       Hub.agentm(C.Codec.pos(Hub.methods.agent(), m), s, now, client, id, p, m)
 

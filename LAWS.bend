@@ -164,6 +164,22 @@ law key_mid_below:
   for h: {M.Key.lt(a, b) == True{} : Bool}
   {M.Key.lt(M.Key.mid(a, b), b) == True{} : Bool}
 
+# a project dragged into place sits above every project never dragged
+law project_keyed_first:
+  for x: Bool
+  for xs: List<&2, Bool>
+  for a: U.SRow
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{x <> xs, a}, U.PSlot{Nil{}, b}) == True{} : Bool}
+
+# and one never dragged sits below every one that was
+law project_unkeyed_below:
+  for a: U.SRow
+  for y: Bool
+  for ys: List<&2, Bool>
+  for b: U.SRow
+  {U.PSlot.before(U.PSlot{Nil{}, a}, U.PSlot{y <> ys, b}) == False{} : Bool}
+
 # Sidebar status
 # --------------
 
@@ -1310,3 +1326,13 @@ law text_model_mismatch_claude:
 # a model the provider owns, or one no provider is known to own, is kept
 law text_model_kept:
   {AG.Text.pick("claude", "claude-sonnet-5") == AG.Tx{"claude", "claude-sonnet-5"} : AG.Tx}
+
+# an agent's viewer_show opens the viewer only from the thread on screen:
+# another thread's request waits in that thread's view
+law view_other_stays_shut:
+  for u: U.Ui
+  for +th: String
+  for +o: J.Json
+  for p: {U.Ui.panel(u) == False{} : Bool}
+  for h: {String.eq(th, U.Ui.sel(u)) == False{} : Bool}
+  {U.Ui.panel(U.Ui.view.k(u, th, o)) == False{} : Bool}

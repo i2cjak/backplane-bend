@@ -912,6 +912,12 @@ def Laws.key_mid_below(a, b, h):
 # Sidebar status
 # --------------
 
+def Laws.project_keyed_first(x, xs, a, b):
+  {==}
+
+def Laws.project_unkeyed_below(a, y, ys, b):
+  {==}
+
 def Laws.status_approval_first(i, t, q):
   {==}
 
@@ -3163,3 +3169,10 @@ def Laws.text_model_mismatch_claude():
 
 def Laws.text_model_kept():
   {==}
+
+def Laws.view_other_stays_shut(u, th, o, p, h):
+  match u:
+    case U.Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      %Equal.sym(Bool, pa, False{}, p) : {Bool.or(_, String.eq(th, sel)) == False{} : Bool}
+      %Equal.sym(Bool, String.eq(th, sel), False{}, h) : {Bool.or(False{}, _) == False{} : Bool}
+      {==}
