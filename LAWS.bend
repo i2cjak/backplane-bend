@@ -49,6 +49,7 @@ import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
 import ./src/core/space.bend as SPC
+import ./src/core/google.bend as GO
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2150,3 +2151,37 @@ law space_message_prefix:
   for +action: String
   for +value: String
   {String.starts_with(SPC.Space.message(action, value), "[space] ") == True{} : Bool}
+# Google (bots' Gmail and Calendar)
+# ---------------------------------
+
+# the sign-in asks for access at all (openid, email, Gmail, Calendar)
+law google_scopes_nonempty:
+  {List.is_empty(&2, String, GO.Google.scopes()) == False{} : Bool}
+
+# base64url undoes itself on bytes that need both '-' and '_'
+law google_b64url_roundtrip_example:
+  {GO.Gb64.decode(GO.Gb64.encode_url([251, 255, 0, 104])) == [251, 255, 0, 104] : List<&2, U32>}
+
+# a pasted redirect gives its code and state, decoded
+law google_code_of_example:
+  {GO.Google.code_of("http://127.0.0.1:3787/oauth/google?state=st8&code=4%2F0Ab&scope=email") == Some{GO.CodeState{"4/0Ab", "st8", False{}}} : Maybe<&2, GO.CodeState>}
+
+# a redirect without a code (the user said no) is no code
+law google_denied_no_code:
+  {GO.Google.code_of("http://127.0.0.1:3787/oauth/google?error=access_denied&state=st8") == None{} : Maybe<&2, GO.CodeState>}
+
+# a To, Cc or Subject cannot start a header of its own
+law google_header_no_newline_example:
+  {GO.Mail.clean("a@x.org\r\nBcc: e@x.org") == "a@x.org  Bcc: e@x.org" : String}
+
+# sending mail and creating events ask the user first
+law google_send_asks:
+  {GO.Google.asks("gmail_send") == True{} : Bool}
+
+law google_create_asks:
+  {GO.Google.asks("calendar_create") == True{} : Bool}
+
+# an access token is never used in its last minute
+law google_expiring_not_fresh:
+  for +now: Nat
+  {GO.Google.fresh(now, now) == False{} : Bool}

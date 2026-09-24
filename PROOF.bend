@@ -44,6 +44,7 @@ import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
+import ./src/core/google.bend as GO
 
 # Lemmas
 # ------
@@ -4035,3 +4036,37 @@ def Laws.space_progress_max(p):
 
 def Laws.space_message_prefix(action, value):
   starts_with_empty(SPC.Sp.msg.k(String.is_empty(value), action, value))
+# Google laws
+# -----------
+
+def Laws.google_scopes_nonempty():
+  {==}
+
+def Laws.google_b64url_roundtrip_example():
+  {==}
+
+def Laws.google_code_of_example():
+  {==}
+
+def Laws.google_denied_no_code():
+  {==}
+
+def Laws.google_header_no_newline_example():
+  {==}
+
+def Laws.google_send_asks():
+  {==}
+
+def Laws.google_create_asks():
+  {==}
+
+def google_add60_gt(n: Nat) -> {GT{} == Nat.cmp(Nat.add(n, 60n), n) : Cmp}:
+  match n:
+    case 0n:
+      {==}
+    case 1n+p:
+      google_add60_gt(p)
+
+def Laws.google_expiring_not_fresh(now):
+  %google_add60_gt(now) : {Cmp.is_lt(_) == False{} : Bool}
+  {==}
