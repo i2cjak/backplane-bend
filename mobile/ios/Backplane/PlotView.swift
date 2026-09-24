@@ -30,30 +30,78 @@ private struct LayerDraw {
     var freshTris: Range<Int>
 }
 
-// a 3D camera: orbiting a target, in a right-handed world where the
-// board's y is flipped (KiCad's y points down the screen), micrometres
+// a 3D camera turning freely about a pivot (the model's centre), like
+// SolidWorks, in a right-handed world where the board's y is flipped
+// (KiCad's y points down the screen), micrometres. r, u, f: the view's
+// right, up and forward; pan: in the view plane; dist: from the eye to the
+// pivot's depth
 struct Orbit {
-    var target = SIMD3<Float>(0, 0, 0)
-    var yaw: Float = 0.5
-    var pitch: Float = 0.75
+    var pivot = SIMD3<Float>(0, 0, 0)
+    var r = SIMD3<Float>(1, 0, 0)
+    var u = SIMD3<Float>(0, 0, 1)
+    var f = SIMD3<Float>(0, 1, 0)
+    var pan = SIMD2<Float>(0, 0)
     var dist: Float = 100_000
     var fov: Float = 35
 
-    var eye: SIMD3<Float> {
-        target + dist * SIMD3(sin(yaw) * cos(pitch), -cos(yaw) * cos(pitch), sin(pitch))
+    var target: SIMD3<Float> { pivot + r * pan.x + u * pan.y }
+    var eye: SIMD3<Float> { target - f * dist }
+
+    // world units per point (or pixel) at the pivot's depth, in a view h tall
+    func unit(_ h: Float) -> Float { dist * 2 * tan(fov * .pi / 360) / max(h, 1) }
+
+    // looking at the pivot from yaw and pitch (radians), world z up
+    mutating func aim(yaw: Float, pitch: Float) {
+        f = SIMD3(-sin(yaw) * cos(pitch), cos(yaw) * cos(pitch), -sin(pitch))
+        u = SIMD3(0, 0, 1)
+        square()
+    }
+
+    // orthonormal again (no drift): f, then r = f x u, u = r x f
+    private mutating func square() {
+        f = simd_normalize(f)
+        r = simd_normalize(simd_cross(f, u))
+        u = simd_normalize(simd_cross(r, f))
+    }
+
+    // the view turned by a about a unit axis (the model turns by -a)
+    private mutating func turn(_ k: SIMD3<Float>, _ a: Float) {
+        let q = simd_quatf(angle: a, axis: k)
+        r = q.act(r)
+        u = q.act(u)
+        f = q.act(f)
+        square()
+    }
+
+    // a finger moved m on screen, radians per unit: the model under it follows
+    mutating func spin(_ m: SIMD2<Float>, _ k: Float) {
+        let l = simd_length(m)
+        guard l > 1e-6 else { return }
+        turn((u * m.x + r * m.y) / l, -l * k)
+    }
+
+    // the model turned clockwise on screen by a
+    mutating func roll(_ a: Float) { turn(f, -a) }
+
+    // the point under the fingers at the pivot's depth moves with them (s: world per unit)
+    mutating func move(_ m: SIMD2<Float>, _ s: Float) { pan += SIMD2(-m.x, m.y) * s }
+
+    // dist over k, keeping the point at p (world units from the view's centre) where it is
+    mutating func zoom(_ k: Float, _ p: SIMD2<Float>) {
+        let d = min(max(dist / k, 2_000), 5_000_000)
+        pan += p * (1 - d / dist)
+        dist = d
     }
 
     func proj(_ aspect: Float) -> float4x4 {
-        let f = 1 / tan(fov * .pi / 360), n = dist * 0.01, fa = dist * 20 + 1_000_000
+        let f = 1 / tan(fov * .pi / 360), n = max(dist * 0.01, 1), fa = dist * 20 + 1_000_000
         return float4x4(columns: (SIMD4(f / aspect, 0, 0, 0), SIMD4(0, f, 0, 0), SIMD4(0, 0, fa / (n - fa), -1), SIMD4(0, 0, n * fa / (n - fa), 0)))
     }
 
     var view: float4x4 {
-        let e = eye, fw = simd_normalize(target - e)
-        let r = simd_normalize(simd_cross(fw, SIMD3(0, 0, 1)))
-        let u = simd_cross(r, fw)
-        return float4x4(columns: (SIMD4(r.x, u.x, -fw.x, 0), SIMD4(r.y, u.y, -fw.y, 0), SIMD4(r.z, u.z, -fw.z, 0),
-                                  SIMD4(-simd_dot(r, e), -simd_dot(u, e), simd_dot(fw, e), 1)))
+        let e = eye
+        return float4x4(columns: (SIMD4(r.x, u.x, -f.x, 0), SIMD4(r.y, u.y, -f.y, 0), SIMD4(r.z, u.z, -f.z, 0),
+                                  SIMD4(-simd_dot(r, e), -simd_dot(u, e), simd_dot(f, e), 1)))
     }
 
     // board micrometres to clip space
@@ -75,7 +123,9 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
     private var hiCount = (0, 0)
     private var hiLayer = -1
     private var slabCount = 0
-    private var cov, stencil, depth: MTLTexture?
+    private var cov, stencil, depth, msColor, msDepth: MTLTexture?
+    // the model's multisampling (4x where the GPU has it)
+    private let samples: Int
     var bg = SIMD4<Float>(0, 0, 0, 1)
     // 2D view: pixels per micrometre and where 0,0 lands, in points
     var scale: Float = 0.01
@@ -107,6 +157,7 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
         lib = l
         view.device = d
         view.colorPixelFormat = .bgra8Unorm
+        samples = [4, 2].first { d.supportsTextureSampleCount($0) } ?? 1
         func ds(_ f: (MTLDepthStencilDescriptor) -> Void) -> MTLDepthStencilState { let x = MTLDepthStencilDescriptor(); f(x); return d.makeDepthStencilState(descriptor: x)! }
         // nonzero winding: counter-clockwise triangles count up, others down
         func windUp(_ x: MTLDepthStencilDescriptor) {
@@ -137,8 +188,8 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
     // a pipeline: vertex and fragment functions, the target (coverage or
     // the frame), writing or not, blending by max (coverage) or over; in 3D
     // with depth
-    private func pipe(_ v: String, _ f: String, cov: Bool, write: Bool = true, three: Bool) -> MTLRenderPipelineState {
-        let key = "\(v)|\(f)|\(cov)|\(write)|\(three)"
+    private func pipe(_ v: String, _ f: String, cov: Bool, write: Bool = true, three: Bool, samples n: Int = 1) -> MTLRenderPipelineState {
+        let key = "\(v)|\(f)|\(cov)|\(write)|\(three)|\(n)"
         if let p = pipes[key] { return p }
         let p = MTLRenderPipelineDescriptor()
         p.vertexFunction = lib.makeFunction(name: v)
@@ -162,7 +213,11 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
                 c.destinationAlphaBlendFactor = .oneMinusSourceAlpha
             }
         }
-        if three {
+        if n > 1 {
+            // the model's multisampled pass: depth, no stencil
+            p.rasterSampleCount = n
+            p.depthAttachmentPixelFormat = .depth32Float
+        } else if three {
             p.depthAttachmentPixelFormat = .depth32Float_stencil8
             p.stencilAttachmentPixelFormat = .depth32Float_stencil8
         } else if cov {
@@ -243,15 +298,23 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
 
     private func targets(_ w: Int, _ h: Int) {
         if let c = cov, c.width == w, c.height == h { return }
-        func tex(_ f: MTLPixelFormat, _ u: MTLTextureUsage, _ m: MTLStorageMode) -> MTLTexture? {
+        func tex(_ f: MTLPixelFormat, _ u: MTLTextureUsage, _ m: MTLStorageMode, samples n: Int = 1) -> MTLTexture? {
             let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: f, width: w, height: h, mipmapped: false)
             d.usage = u
             d.storageMode = m
+            if n > 1 {
+                d.textureType = .type2DMultisample
+                d.sampleCount = n
+            }
             return device.makeTexture(descriptor: d)
         }
         cov = tex(.r8Unorm, [.renderTarget, .shaderRead], .private)
         stencil = tex(.stencil8, .renderTarget, .memoryless)
         depth = tex(.depth32Float_stencil8, .renderTarget, .private)
+        if samples > 1 {
+            msColor = tex(.bgra8Unorm, .renderTarget, .memoryless, samples: samples)
+            msDepth = tex(.depth32Float, .renderTarget, .memoryless, samples: samples)
+        }
     }
 
     private func frame(_ cb: MTLCommandBuffer, _ t: MTLTexture, clear: Bool, depth d: Bool, _ f: (MTLRenderCommandEncoder) -> Void) {
@@ -347,27 +410,45 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
         if three {
             u.mvp = orbit.mvp(Float(w) / Float(h))
             u.focal = 1 / tan(orbit.fov * .pi / 360) * Float(h) / 2
-            let e = simd_normalize(orbit.eye - orbit.target)
-            u.light = SIMD4(e.x, -e.y, e.z, 0)
+            // lit from the viewer (model space: y flipped)
+            u.light = SIMD4(-orbit.f.x, orbit.f.y, -orbit.f.z, 0)
             // the model (or a slab) with depth, then the faces' layers over it
-            let mc = meshCount, sc = slabCount
-            let (mb, cbuf, sb, sbc) = (meshBuf, colorBuf, slabBuf, colorSlab)
-            let meshPipe = pipe("mesh_v", "mesh_f", cov: false, three: true)
-            frame(cb, t, clear: true, depth: true) { e in
+            let (mb, cbuf, mc) = meshCount > 0 ? (meshBuf, colorBuf, meshCount) : (slabBuf, colorSlab, slabCount)
+            let dw = depthWrite
+            func model(_ e: MTLRenderCommandEncoder, _ p: MTLRenderPipelineState) {
                 e.setFrontFacing(.counterClockwise)
                 e.setCullMode(.none)
-                e.setDepthStencilState(depthWrite)
-                e.setRenderPipelineState(meshPipe)
+                e.setDepthStencilState(dw)
+                e.setRenderPipelineState(p)
                 e.setVertexBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 1)
-                if mc > 0 {
-                    e.setVertexBuffer(mb, offset: 0, index: 0)
-                    e.setVertexBuffer(cbuf, offset: 0, index: 2)
-                    e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: mc)
-                } else if sc > 0 {
-                    e.setVertexBuffer(sb, offset: 0, index: 0)
-                    e.setVertexBuffer(sbc, offset: 0, index: 2)
-                    e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: sc)
+                guard mc > 0, let mb, let cbuf else { return }
+                e.setVertexBuffer(mb, offset: 0, index: 0)
+                e.setVertexBuffer(cbuf, offset: 0, index: 2)
+                e.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: mc)
+            }
+            if samples > 1, let mcol = msColor, let mdep = msDepth {
+                // multisampled and resolved into the frame; the layers test
+                // against the model's depth drawn again single-sampled
+                let pass = MTLRenderPassDescriptor()
+                pass.colorAttachments[0].texture = mcol
+                pass.colorAttachments[0].resolveTexture = t
+                pass.colorAttachments[0].loadAction = .clear
+                pass.colorAttachments[0].clearColor = MTLClearColor(red: Double(bg.x), green: Double(bg.y), blue: Double(bg.z), alpha: 1)
+                pass.colorAttachments[0].storeAction = .multisampleResolve
+                pass.depthAttachment.texture = mdep
+                pass.depthAttachment.loadAction = .clear
+                pass.depthAttachment.clearDepth = 1
+                pass.depthAttachment.storeAction = .dontCare
+                let ms = pipe("mesh_v", "mesh_f", cov: false, three: true, samples: samples)
+                if let e = cb.makeRenderCommandEncoder(descriptor: pass) {
+                    model(e, ms)
+                    e.endEncoding()
                 }
+                let dp = pipe("mesh_v", "mesh_f", cov: false, write: false, three: true)
+                frame(cb, t, clear: false, depth: true) { e in model(e, dp) }
+            } else {
+                let mp = pipe("mesh_v", "mesh_f", cov: false, three: true)
+                frame(cb, t, clear: true, depth: true) { e in model(e, mp) }
             }
             for (face, z) in [(top, thick + 40), (bottom, Float(-40))] {
                 u.z = z
@@ -423,17 +504,24 @@ final class PlotCanvas: MTKView {
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(pinched(_:)))
         let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
         pan.maximumNumberOfTouches = 2
+        let twist = UIRotationGestureRecognizer(target: self, action: #selector(twisted(_:)))
         let twice = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
         twice.numberOfTapsRequired = 2
         let once = UITapGestureRecognizer(target: self, action: #selector(picked(_:)))
         once.require(toFail: twice)
-        for g in [pinch, pan, twice, once] as [UIGestureRecognizer] {
+        for g in [pinch, pan, twist, twice, once] as [UIGestureRecognizer] {
             g.delegate = self
             addGestureRecognizer(g)
         }
     }
 
     required init(coder: NSCoder) { fatalError() }
+
+    // every physical pixel (the default scale can be below the panel's)
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if let s = window?.windowScene?.screen { contentScaleFactor = s.nativeScale }
+    }
 
     private var three: Bool { renderer.three }
 
@@ -449,14 +537,13 @@ final class PlotCanvas: MTKView {
         let s = fit
         renderer.scale = s
         renderer.off = SIMD2(Float(bounds.width) / 2 - (box[0] + box[2]) / 2 * s, Float(bounds.height) / 2 - (box[1] + box[3]) / 2 * s)
-        var o = renderer.orbit
-        o.target = SIMD3((box[0] + box[2]) / 2, -(box[1] + box[3]) / 2, renderer.thick / 2)
+        var o = Orbit(fov: renderer.orbit.fov)
+        o.pivot = SIMD3((box[0] + box[2]) / 2, -(box[1] + box[3]) / 2, renderer.thick / 2)
+        o.aim(yaw: 0.5, pitch: 0.75)
         let diag = simd_length(SIMD2(box[2] - box[0], box[3] - box[1]))
         // the narrower of the two fields of view takes the whole board
         let half = tan(o.fov * .pi / 360), aspect = Float(bounds.width) / Float(max(bounds.height, 1))
         o.dist = diag / 2 / (half * min(aspect, 1)) * 1.1
-        o.yaw = 0.5
-        o.pitch = 0.75
         renderer.orbit = o
         fitted = true
         setNeedsDisplay()
@@ -495,7 +582,9 @@ final class PlotCanvas: MTKView {
 
     private func zoom(by f: Float, at p: CGPoint) {
         if three {
-            renderer.orbit.dist = min(max(renderer.orbit.dist / f, 2_000), 5_000_000)
+            // toward the point under the fingers
+            let s = renderer.orbit.unit(Float(bounds.height))
+            renderer.orbit.zoom(f, SIMD2(Float(p.x - bounds.width / 2), Float(bounds.height / 2 - p.y)) * s)
             return
         }
         let s0 = renderer.scale
@@ -516,16 +605,10 @@ final class PlotCanvas: MTKView {
         let t = g.translation(in: self)
         g.setTranslation(.zero, in: self)
         if three {
+            // one finger turns the model under it, two move it with them
             var o = renderer.orbit
-            if g.numberOfTouches >= 2 {
-                // two fingers move the target across the view
-                let s = o.dist * 2 * tan(o.fov * .pi / 360) / Float(max(bounds.height, 1))
-                let fw = simd_normalize(o.target - o.eye), r = simd_normalize(simd_cross(fw, SIMD3(0, 0, 1))), u = simd_cross(r, fw)
-                o.target += (-r * Float(t.x) + u * Float(t.y)) * s
-            } else {
-                o.yaw -= Float(t.x) * 0.008
-                o.pitch = min(max(o.pitch + Float(t.y) * 0.008, -1.5), 1.5)
-            }
+            let m = SIMD2(Float(t.x), Float(t.y))
+            if g.numberOfTouches >= 2 { o.move(m, o.unit(Float(bounds.height))) } else { o.spin(m, 0.008) }
             renderer.orbit = o
             setNeedsDisplay()
             return
@@ -537,6 +620,15 @@ final class PlotCanvas: MTKView {
             fling = SIMD2(Float(v.x), Float(v.y))
             run()
         }
+        setNeedsDisplay()
+    }
+
+    // two fingers twisting roll the model about the view axis
+    @objc private func twisted(_ g: UIRotationGestureRecognizer) {
+        let a = Float(g.rotation)
+        g.rotation = 0
+        guard three else { return }
+        renderer.orbit.roll(a)
         setNeedsDisplay()
     }
 
@@ -575,7 +667,7 @@ final class PlotCanvas: MTKView {
         // the finger's reach, in micrometres
         let tol: Float
         if three {
-            tol = tap * renderer.orbit.dist * 2 * tan(renderer.orbit.fov * .pi / 360) / Float(max(bounds.height, 1))
+            tol = tap * renderer.orbit.unit(Float(bounds.height))
         } else {
             tol = tap / renderer.scale
         }

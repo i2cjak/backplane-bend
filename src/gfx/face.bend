@@ -70,6 +70,12 @@ def Scene3.fit(s: Scene3) -> MS.Cam:
     case Scene3{m, _, _, _}:
       MS.Model.fit(m)
 
+# zoom to fit, turned as c is
+def Scene3.refit(s: Scene3, c: MS.Cam) -> MS.Cam:
+  match s:
+    case Scene3{m, _, _, _}:
+      MS.Model.refit(m, c)
+
 # Sorting items
 # -------------
 
@@ -603,8 +609,12 @@ def Face3.first(fs: List<&2, Face3>) -> Face3:
     case Nil{}:
       FNone{}
 
-# the scene in a pw x ph panel at (x0, y0) of a ww x hh frame, over bg
-def Scene3.render(+ww: U32, +hh: U32, +x0: U32, +y0: U32, +pw: U32, +ph: U32, s: Scene3, +c: MS.Cam, +now: Nat, +bg: U32) -> Image:
+# the scene in a pw x ph panel at (x0, y0) of a ww x hh frame, over bg;
+# four samples a pixel when fine
+def Scene3.render.q(+fine: Bool, +ww: U32, +hh: U32, +x0: U32, +y0: U32, +pw: U32, +ph: U32, s: Scene3, +c: MS.Cam, +now: Nat, +bg: U32) -> Image:
   match s:
     case Scene3{m, f, _, _}:
-      Face.draw(Face3.first(f), m, MS.Mesh.view(ww, hh, x0, y0, pw, ph, c), ww, hh, now, D.Clip{x0, y0, ww, hh}, bg)
+      Face.draw(Face3.first(f), m, MS.View.fine(fine, MS.Mesh.view(ww, hh, x0, y0, pw, ph, c)), ww, hh, now, D.Clip{x0, y0, ww, hh}, bg)
+
+def Scene3.render(+ww: U32, +hh: U32, +x0: U32, +y0: U32, +pw: U32, +ph: U32, s: Scene3, +c: MS.Cam, +now: Nat, +bg: U32) -> Image:
+  Scene3.render.q(False{}, ww, hh, x0, y0, pw, ph, s, c, now, bg)

@@ -3909,3 +3909,45 @@ def Laws.usage_same_nothing():
 
 def Laws.usage_change_logged():
   {==}
+
+def Laws.view_drag_rotates():
+  {==}
+
+def Laws.view_drag_ctrl_pans():
+  {==}
+
+def Laws.view_drag_shift_zooms():
+  {==}
+
+def Laws.view_drag_alt_rolls():
+  {==}
+
+def Laws.view_key_top():
+  {==}
+
+def Laws.view_key_iso():
+  {==}
+
+def Laws.view_key_ctrl_digit_free():
+  {==}
+
+def Laws.view_key_arrow_turns():
+  {==}
+
+def Laws.view_key_shift_arrow_quarter():
+  {==}
+
+def Laws.view_key_alt_arrow_rolls():
+  {==}
+
+def Laws.view_key_ctrl_arrow_pans():
+  {==}
+
+def Laws.view_key_z_out():
+  {==}
+
+def Laws.view_key_shift_z_in():
+  {==}
+
+def Laws.view_key_other_none():
+  {==}

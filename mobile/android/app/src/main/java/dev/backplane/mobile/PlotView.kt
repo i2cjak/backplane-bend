@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -175,18 +176,83 @@ private class Program(v: String, f: String) {
     fun at(name: String) = at.getOrPut(name) { glGetUniformLocation(id, name) }
 }
 
-// a 3D camera: orbiting a target, in a right-handed world where the
-// board's y is flipped (KiCad's y points down the screen), micrometres
-class Orbit(var tx: Float = 0f, var ty: Float = 0f, var tz: Float = 0f, var yaw: Float = 0.5f, var pitch: Float = 0.75f,
-            var dist: Float = 100_000f, var fov: Float = 35f) {
-    fun eye() = floatArrayOf(tx + dist * sin(yaw) * cos(pitch), ty - dist * cos(yaw) * cos(pitch), tz + dist * sin(pitch))
+private fun norm(v: FloatArray) {
+    val l = max(hypot(hypot(v[0], v[1]), v[2]), 1e-12f)
+    for (i in 0..2) v[i] /= l
+}
+
+private fun cross(a: FloatArray, b: FloatArray) =
+    floatArrayOf(a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+// v turned by an angle about a unit axis (Rodrigues)
+private fun turned(v: FloatArray, k: FloatArray, a: Float): FloatArray {
+    val c = cos(a); val s = sin(a); val kv = cross(k, v); val d = (k[0] * v[0] + k[1] * v[1] + k[2] * v[2]) * (1 - c)
+    return FloatArray(3) { v[it] * c + kv[it] * s + k[it] * d }
+}
+
+// a 3D camera turning freely about a pivot (the model's centre), like
+// SolidWorks, in a right-handed world where the board's y is flipped
+// (KiCad's y points down the screen), micrometres. r, u, f: the view's
+// right, up and forward; sx, sy: the pan in the view plane; dist: from the
+// eye to the pivot's depth. Gestures copy it, change the copy and swap it in.
+class Orbit(val pivot: FloatArray = floatArrayOf(0f, 0f, 0f), var r: FloatArray = floatArrayOf(1f, 0f, 0f),
+            var u: FloatArray = floatArrayOf(0f, 0f, 1f), var f: FloatArray = floatArrayOf(0f, 1f, 0f),
+            var sx: Float = 0f, var sy: Float = 0f, var dist: Float = 100_000f, var fov: Float = 35f) {
+    fun copy() = Orbit(pivot.copyOf(), r.copyOf(), u.copyOf(), f.copyOf(), sx, sy, dist, fov)
+    fun target() = FloatArray(3) { pivot[it] + r[it] * sx + u[it] * sy }
+    fun eye(): FloatArray { val t = target(); return FloatArray(3) { t[it] - f[it] * dist } }
+
+    // world units per pixel at the pivot's depth
+    fun unit(h: Int) = dist * 2 * tan(fov * Math.PI.toFloat() / 360f) / max(h, 1)
+
+    // looking at the pivot from yaw and pitch (radians), world z up
+    fun aim(yaw: Float, pitch: Float): Orbit {
+        f = floatArrayOf(-sin(yaw) * cos(pitch), cos(yaw) * cos(pitch), -sin(pitch))
+        u = floatArrayOf(0f, 0f, 1f)
+        return square()
+    }
+
+    // orthonormal again (no drift): f, then r = f x u, u = r x f
+    private fun square(): Orbit {
+        norm(f)
+        r = cross(f, u); norm(r)
+        u = cross(r, f); norm(u)
+        return this
+    }
+
+    // the view turned by a about a unit axis (the model turns by -a)
+    private fun turn(k: FloatArray, a: Float): Orbit {
+        r = turned(r, k, a); u = turned(u, k, a); f = turned(f, k, a)
+        return square()
+    }
+
+    // a finger moved (mx, my) on screen, radians per unit: the model under it follows
+    fun spin(mx: Float, my: Float, k: Float): Orbit {
+        val l = hypot(mx, my)
+        if (l < 1e-6f) return this
+        return turn(FloatArray(3) { (u[it] * mx + r[it] * my) / l }, -l * k)
+    }
+
+    // the model turned clockwise on screen by a
+    fun roll(a: Float) = turn(f.copyOf(), -a)
+
+    // the point under the fingers at the pivot's depth moves with them (s: world per pixel)
+    fun pan(mx: Float, my: Float, s: Float): Orbit { sx -= mx * s; sy += my * s; return this }
+
+    // dist over k, keeping the point at (x, y) world units from the view's centre where it is
+    fun zoom(k: Float, x: Float, y: Float): Orbit {
+        val d = min(max(dist / k, 2_000f), 5_000_000f)
+        val q = d / dist
+        sx += x * (1 - q); sy += y * (1 - q); dist = d
+        return this
+    }
 
     // board micrometres to clip space
     fun mvp(aspect: Float): FloatArray {
         val p = FloatArray(16); val v = FloatArray(16); val pv = FloatArray(16); val m = FloatArray(16); val out = FloatArray(16)
-        Matrix.perspectiveM(p, 0, fov, aspect, dist * 0.01f, dist * 20f + 1_000_000f)
-        val e = eye()
-        Matrix.setLookAtM(v, 0, e[0], e[1], e[2], tx, ty, tz, 0f, 0f, 1f)
+        Matrix.perspectiveM(p, 0, fov, aspect, max(dist * 0.01f, 1f), dist * 20f + 1_000_000f)
+        val e = eye(); val t = target()
+        Matrix.setLookAtM(v, 0, e[0], e[1], e[2], t[0], t[1], t[2], u[0], u[1], u[2])
         Matrix.multiplyMM(pv, 0, p, 0, v, 0)
         Matrix.setIdentityM(m, 0)
         Matrix.scaleM(m, 0, 1f, -1f, 1f)
@@ -214,9 +280,16 @@ class PlotRenderer : GLSurfaceView.Renderer {
     // capsules, fill vertices, the model, the slab, the highlight's capsules and fills
     private val bufs = IntArray(6)
     private val vao = IntArray(1)
-    private val fbo = IntArray(2)
+    // the scene, coverage, and the model's multisampled target
+    private val fbo = IntArray(3)
     private val tex = IntArray(2)
-    private val rb = IntArray(1)
+    // depth and stencil; the multisampled colour, depth and stencil
+    private val rb = IntArray(3)
+    private var samples = 0
+    private var ms = 0
+    private var msSize = 0L
+    // the camera this frame is drawn with
+    private var cam = Orbit()
     private var w = 0
     private var h = 0
     private var layers: List<Layer> = emptyList()
@@ -234,11 +307,15 @@ class PlotRenderer : GLSurfaceView.Renderer {
         meshP = Program(MESH_V, MESH_F)
         glGenBuffers(6, bufs, 0)
         glGenVertexArrays(1, vao, 0)
-        glGenFramebuffers(2, fbo, 0)
+        glGenFramebuffers(3, fbo, 0)
         glGenTextures(2, tex, 0)
-        glGenRenderbuffers(1, rb, 0)
+        glGenRenderbuffers(3, rb, 0)
+        val n = IntArray(1)
+        glGetIntegerv(GL_MAX_SAMPLES, n, 0)
+        samples = if (n[0] >= 2) min(n[0], 4) else 0
         w = 0
         h = 0
+        msSize = 0L
     }
 
     // the scene (colour) and coverage targets share one depth and stencil
@@ -259,6 +336,24 @@ class PlotRenderer : GLSurfaceView.Renderer {
             glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb[0])
         }
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
+    }
+
+    // the model's 4x multisampled target, made when 3D is first drawn at this size
+    private fun multisample() {
+        val size = (w.toLong() shl 32) or h.toLong()
+        if (msSize == size) return
+        msSize = size
+        ms = samples
+        if (ms == 0) return
+        glBindRenderbuffer(GL_RENDERBUFFER, rb[1])
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, ms, GL_RGBA8, w, h)
+        glBindRenderbuffer(GL_RENDERBUFFER, rb[2])
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, ms, GL_DEPTH24_STENCIL8, w, h)
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo[2])
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb[1])
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rb[2])
+        if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) ms = 0
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo[0])
     }
 
     private fun put(buf: Int, data: FloatArray) {
@@ -435,11 +530,9 @@ class PlotRenderer : GLSurfaceView.Renderer {
     private fun model(buf: Int, count: Int) {
         glUseProgram(meshP.id)
         glUniformMatrix4fv(meshP.at("mvp"), 1, false, mvp, 0)
-        val o = orbit
-        val e = o.eye()
-        val lx = e[0] - o.tx; val ly = -(e[1] - o.ty); val lz = e[2] - o.tz
-        val l = max(hypot(hypot(lx, ly), lz), 1e-6f)
-        glUniform3f(meshP.at("light"), lx / l, ly / l, lz / l)
+        // lit from the viewer (model space: y flipped)
+        val f = cam.f
+        glUniform3f(meshP.at("light"), -f[0], f[1], -f[2])
         glBindBuffer(GL_ARRAY_BUFFER, buf)
         for (k in 0..2) { glEnableVertexAttribArray(k); glVertexAttribDivisor(k, 0) }
         glVertexAttribPointer(0, 3, GL_FLOAT, false, 36, 0)
@@ -459,12 +552,33 @@ class PlotRenderer : GLSurfaceView.Renderer {
         glDepthMask(true)
         glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_STENCIL_BUFFER_BIT)
         if (three) {
-            mvp = orbit.mvp(w.toFloat() / max(h, 1))
-            // the model (or a slab) with depth, then the faces' layers over it
+            cam = orbit
+            mvp = cam.mvp(w.toFloat() / max(h, 1))
+            // the model (or a slab) with depth, then the faces' layers over it,
+            // the model multisampled (resolved into the scene)
+            val (mb, mc) = if (meshCount > 0) bufs[2] to meshCount else bufs[3] to slabCount
+            multisample()
+            if (ms > 0) {
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo[2])
+                glClear(GL_COLOR_BUFFER_BIT or GL_DEPTH_BUFFER_BIT or GL_STENCIL_BUFFER_BIT)
+            }
             glEnable(GL_DEPTH_TEST)
             glDepthFunc(GL_LESS)
             glDisable(GL_BLEND)
-            if (meshCount > 0) model(bufs[2], meshCount) else if (slabCount > 0) model(bufs[3], slabCount)
+            if (mc > 0) model(mb, mc)
+            if (ms > 0) {
+                // resolve the colour; the layers test against depth drawn again
+                // single-sampled (cheaper on tilers than storing and resolving
+                // the multisampled depth, and exact)
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo[2])
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo[0])
+                glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST)
+                glInvalidateFramebuffer(GL_READ_FRAMEBUFFER, 2, intArrayOf(GL_COLOR_ATTACHMENT0, GL_DEPTH_STENCIL_ATTACHMENT), 0)
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo[0])
+                glColorMask(false, false, false, false)
+                if (mc > 0) model(mb, mc)
+                glColorMask(true, true, true, true)
+            }
             glDisable(GL_DEPTH_TEST)
             for ((face, zz) in listOf(top to thick + 40f, bottom to -40f)) {
                 z = zz
@@ -534,8 +648,8 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
         val diag = hypot(box[2] - box[0], box[3] - box[1])
         // the narrower of the two fields of view takes the whole board
         val half = tan(o.fov * Math.PI.toFloat() / 360f)
-        renderer.orbit = Orbit((box[0] + box[2]) / 2, -(box[1] + box[3]) / 2, renderer.thick / 2, 0.5f, 0.75f,
-            diag / 2 / (half * min(width.toFloat() / max(height, 1), 1f)) * 1.1f, o.fov)
+        renderer.orbit = Orbit(floatArrayOf((box[0] + box[2]) / 2, -(box[1] + box[3]) / 2, renderer.thick / 2),
+            dist = diag / 2 / (half * min(width.toFloat() / max(height, 1), 1f)) * 1.1f, fov = o.fov).aim(0.5f, 0.75f)
         fitted = true
         requestRender()
     }
@@ -587,7 +701,10 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
 
     private fun zoom(by: Float, x: Float, y: Float) {
         if (three) {
-            renderer.orbit.dist = min(max(renderer.orbit.dist / by, 2_000f), 5_000_000f)
+            // toward the point under the fingers
+            val o = renderer.orbit
+            val s = o.unit(height)
+            renderer.orbit = o.copy().zoom(by, (x - width / 2f) * s, (height / 2f - y) * s)
             return
         }
         val s0 = renderer.scale
@@ -626,7 +743,7 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
     fun pick(px: Float, py: Float) {
         val (q, face) = board(px, py) ?: run { onPick("[]"); return }
         // the finger's reach, in micrometres
-        val tol = if (three) tap * density * renderer.orbit.dist * 2 * tan(renderer.orbit.fov * Math.PI.toFloat() / 360f) / max(height, 1)
+        val tol = if (three) tap * density * renderer.orbit.unit(height)
         else tap * density / renderer.scale
         val out = StringBuilder("[")
         for ((ci, c) in chunks.withIndex()) {
@@ -660,17 +777,9 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
 
         override fun onScroll(a: MotionEvent?, b: MotionEvent, dx: Float, dy: Float): Boolean {
             if (three) {
-                val o = renderer.orbit
-                if (b.pointerCount >= 2) {
-                    // two fingers move the target across the view
-                    val s = o.dist * 2 * tan(o.fov * Math.PI.toFloat() / 360f) / max(height, 1)
-                    val cy = cos(o.yaw); val sy = sin(o.yaw)
-                    o.tx += dx * s * cy; o.ty += dx * s * sy
-                    o.tz -= dy * s * cos(o.pitch)
-                } else {
-                    o.yaw += dx * 0.008f
-                    o.pitch = min(max(o.pitch - dy * 0.008f, -1.5f), 1.5f)
-                }
+                // one finger turns the model under it, two move it with them
+                val o = renderer.orbit.copy()
+                renderer.orbit = if (b.pointerCount >= 2) o.pan(-dx, -dy, o.unit(height)) else o.spin(-dx / density, -dy / density, 0.008f)
             } else {
                 renderer.offX -= dx
                 renderer.offY -= dy
@@ -699,8 +808,24 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
         }
     })
 
+    // two fingers twisting roll the model about the view axis
+    private var twist = Float.NaN
+
+    private fun twisted(e: MotionEvent) {
+        if (!three || e.pointerCount != 2 || e.actionMasked != MotionEvent.ACTION_MOVE) { twist = Float.NaN; return }
+        val a = atan2(e.getY(1) - e.getY(0), e.getX(1) - e.getX(0))
+        val t = twist
+        twist = a
+        if (t.isNaN()) return
+        var d = a - t
+        if (d > Math.PI) d -= 2 * Math.PI.toFloat() else if (d < -Math.PI) d += 2 * Math.PI.toFloat()
+        renderer.orbit = renderer.orbit.copy().roll(d)
+        requestRender()
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        twisted(e)
         scaler.onTouchEvent(e)
         gestures.onTouchEvent(e)
         return true

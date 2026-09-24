@@ -14,6 +14,7 @@ import ../../src/server/host.bend as H
 # way the viewer loads them (one after another here), timed.
 #   scripts/build-app.sh test/native/pcb3d_frame.bend build/pcb3d_frame
 #   build/pcb3d_frame BOARD.kicad_pcb [W H]   # frames to /tmp/pcb3d-N.ppm
+#                                             # (and four samples a pixel to /tmp/pcb3d-N-fine.ppm)
 
 def many(xs: List<&1, String>) -> List<&2, String>:
   match xs:
@@ -72,9 +73,14 @@ def frame(+n: Nat, +s: F.Scene3, +c: M.Cam, +w: U32, +h: U32) -> IO(Unit):
         +img : Image = F.Scene3.render(w, h, 0, 0, w, h, s, cam(c, k), 1n, 2105384)
         +px : U32 = isum(img)
         +t1 : Nat <- IO.now()
-        IO.print("frame " ++ Nat.show(k) ++ ": " ++ ms(t0, t1) ++ " (ops " ++ ms(t0, ta) ++ " n=" ++ Nat.show(no) ++ ", face raster " ++ ms(ta, tb) ++ ", all again " ++ ms(tb, t1) ++ ")" ++ U32.show((px + fs : U32)))
+        +fine : Image = F.Scene3.render.q(True{}, w, h, 0, 0, w, h, s, cam(c, k), 1n, 2105384)
+        +fx : U32 = isum(fine)
+        +t2 : Nat <- IO.now()
+        IO.print("frame " ++ Nat.show(k) ++ ": " ++ ms(t0, t1) ++ " (ops " ++ ms(t0, ta) ++ " n=" ++ Nat.show(no) ++ ", face raster " ++ ms(ta, tb) ++ ", all again " ++ ms(tb, t1) ++ "; fine " ++ ms(t1, t2) ++ ")" ++ U32.show((px + fs + fx : U32)))
         g : File <- IO.try(File, File.open("/tmp/pcb3d-" ++ Nat.show(k) ++ ".ppm", "w"))
         wr : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(g, D.Snap.ppm(img, w, h))
+        g2 : File <- IO.try(File, File.open("/tmp/pcb3d-" ++ Nat.show(k) ++ "-fine.ppm", "w"))
+        wr2 : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(g2, D.Snap.ppm(fine, w, h))
         frame(k, s, c, w, h)
 
 def scene(+items: Maybe<&2, List<&2, B.Item>>, +p: Maybe<&2, P.Pcb3>) -> F.Scene3:

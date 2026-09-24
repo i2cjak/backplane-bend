@@ -1239,13 +1239,14 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
 def Half.of(+n: U32) -> U32:
   U32.shr((n + 1 : U32))
 
-# a 3D scene into the panel; while it is dragged, a draft at half size
+# a 3D scene into the panel; while it is dragged, a draft at half size,
+# at rest four samples a pixel
 def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat) -> Image:
   match draft:
     case True{}:
       FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, 526603)
     case False{}:
-      FA.Scene3.render(ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, 526603)
+      FA.Scene3.render.q(True{}, ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, 526603)
 
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:

@@ -99,7 +99,7 @@ def main() -> IO(Unit):
     +u : U.Ui = ui_sel(U.Ui.act(U.Ui.fold(log(1790000000n), U.Ui.init(1790000100n)), "select", "t0"))
     +n : N.Nui = again(ty, N.Nui.init(u, 1400, 900))
     +n1 : N.Nui = again(ty, ev(n, W.WButton{460, 300, 1, True{}}))
-    +n2 : N.Nui = again(ty, ev(n1, W.WMove{800, 380}))
+    +n2 : N.Nui = again(ty, ev(n1, W.WMove{800, 380, 0}))
     +n3 : N.Nui = again(ty, ev(n2, W.WButton{800, 380, 1, False{}}))
     +n4 : N.Nui = again(ty, ev(n3, W.WButton{20, 880, 1, True{}}))
     C.Check.str("press starts", Bool.show(String.starts_with(U.Ui.scratch(N.Nui.ui(n1), "@ts"), "t0|")), "True")

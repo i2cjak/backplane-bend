@@ -9,7 +9,7 @@ import Base
 type WinEv is Data:
   WKey{code: U32, text: U32, mods: U32, down: Bool}
   WButton{x: U32, y: U32, button: U32, down: Bool}
-  WMove{x: U32, y: U32}
+  WMove{x: U32, y: U32, mods: U32}
   WWheel{x: U32, y: U32, dir: U32}
   WSize{w: U32, h: U32}
   WExpose{}
@@ -74,7 +74,7 @@ def Win.ev.k(k: Nat, +a: U32, +b: U32, +c: U32, +d: U32) -> WinEv:
     case 1n:
       WButton{a, b, c, U32.is_ne(d, 0)}
     case 2n:
-      WMove{a, b}
+      WMove{a, b, c}
     case 3n:
       WWheel{a, b, c}
     case 4n:

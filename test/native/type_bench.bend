@@ -226,7 +226,7 @@ def select(+ty: L.Ty, +k: Kept) -> String:
   +n = kept_n(k)
   +y = first_line(N.Nui.hits(n))
   +n1 = again(ty, ev(n, W.WButton{460, 300, 1, True{}}), kept_memo(k))
-  +n2 = again(ty, ev(n1, W.WMove{800, 380}), kept_memo(k))
+  +n2 = again(ty, ev(n1, W.WMove{800, 380, 0}), kept_memo(k))
   +n3 = again(ty, ev(n2, W.WButton{800, 380, 1, False{}}), kept_memo(k))
   N.Sel.text(n3)
 

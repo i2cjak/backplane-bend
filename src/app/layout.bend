@@ -1920,7 +1920,7 @@ def Lay.shown(+k: U32, +empty: Bool, +ts: FA.Scene3, b: BM.Bitmap) -> Bool:
 def Lay.help(+k: U32) -> String:
   Bool.pick(String, U32.is_eq(k, 4), "wheel scroll",
   Bool.pick(String, U32.is_eq(k, 3), "what the agents' browser shows, live",
-    Bool.pick(String, U32.is_eq(k, 2), "drag orbit · wheel zoom · f fit", "click inspect · drag pan · wheel zoom · f fit")))
+    Bool.pick(String, U32.is_eq(k, 2), "drag rotate · ctrl pan · shift zoom · alt roll · 1-7 views · f fit", "click inspect · drag pan · wheel zoom · f fit")))
 
 # Diff view
 # ---------

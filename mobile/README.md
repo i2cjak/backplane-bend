@@ -60,6 +60,13 @@ with that piece's info from the chunks this phone holds; the card offers
 by the hub in a child process) with the plot's layers laid sharp on its
 faces; before the model arrives, a slab of the board's thickness.
 
+3D moves like SolidWorks: the camera turns freely (no up axis, no limit)
+about the model's centre, which keeps its place on screen after a pan. One
+finger turns the model under it (about the screen's axes), two fingers
+drag it, pinch zooms toward the fingers, twisting two fingers rolls it
+about the view axis, and a double tap fits it again. The model is drawn 4x
+multisampled; the layers on its faces keep their analytic edge.
+
 Debug builds also read `BACKPLANE_VIEW` (board, schematic, 3d) and
 `BACKPLANE_TAP` (x,y in points) to open the viewer and tap without hands.
 

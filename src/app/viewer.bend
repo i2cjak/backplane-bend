@@ -409,7 +409,7 @@ type Vw is Data:
   Vw{scene: List<&2, Seen>, view: View, fitted: Bool, root: String, drag: Bool, lx: U32, ly: U32, base: Image, fresh: Bool, cut: Nat, x: Vx}
 
 def Vx.init() -> Vx:
-  Vx{0, "", FA.Scene3.none(), MS.Cam{0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.8}, "", "", 0, 0, "", "", BM.Bitmap{0, 0, 0n, Pix{0}, 0, 0, 0, 0}}
+  Vx{0, "", FA.Scene3.none(), MS.Cam.at(0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.8), "", "", 0, 0, "", "", BM.Bitmap{0, 0, 0n, Pix{0}, 0, 0, 0, 0}}
 
 def Vw.init() -> Vw:
   Vw{Nil{}, View{1.0, 0.0, 0.0}, False{}, "", False{}, 0, 0, Pix{0}, False{}, 0n, Vx.init()}
