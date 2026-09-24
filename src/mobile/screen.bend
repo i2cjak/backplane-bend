@@ -202,11 +202,14 @@ def Mob.efforts(es: List<&2, String>, +cur: String, +prov: String) -> List<&2, J
 # the composer's model chip and its menu: the thread's provider's models
 # (its default first; "model" sends one) and the efforts that model takes
 # ("effort")
-def Mob.picker(+info: String, +provider: String, +model: String, +effort: String) -> J.Json:
-  J.Json.obj([J.KV{"label", J.Json.str(U.Effort.label(U.Models.label(provider, model), effort))},
+def Mob.picker.ctx(+info: String, +provider: String, +model: String, +effort: String, +ctx: String) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(U.Effort.label(U.Models.label(provider, model), effort) ++ ctx)},
     J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.list(info, provider), info, provider, model))},
     J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort, provider))},
     J.KV{"providers", J.Json.arr(Mob.efforts(U.Chip.providers(), effort, provider))}])
+
+def Mob.picker(+info: String, +provider: String, +model: String, +effort: String) -> J.Json:
+  Mob.picker.ctx(info, provider, model, effort, "")
 
 def Mob.qbtns(bs: List<&2, U.QBtn>) -> List<&2, J.Json>:
   match bs:
@@ -251,7 +254,7 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Js
         J.KV{"working", J.Json.str(Mob.live(String.is_empty(U.Str.get(live, id)), V.View.running(turn)))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},
         J.KV{"send", J.Json.str(U.Follow.label(st, sel, V.View.running(turn)))},
-        J.KV{"picker", Mob.picker(U.Str.get(nf, "models"), pr, mo, U.Effort.of(st, sel))},
+        J.KV{"picker", Mob.picker.ctx(U.Str.get(nf, "models"), pr, mo, U.Effort.of(st, sel), U.Usage.tail(st, sel))},
         J.KV{"viewer", vw}])
 
 def Mob.main(none: Bool, +u: U.Ui, +sel: String) -> J.Json:

@@ -215,6 +215,8 @@ type Change is Data:
   ProviderSet{id: String, provider: String, model: String, at: Nat}
   # an agent's todo list for its thread, as JSON [{text, status}] (todo.bend)
   TodosSet{thread: String, todos: String, at: Nat}
+  # how much of its model's context a thread's session holds (tokens), and\nthe model's window; 0 keeps what was known
+  UsageSet{thread: String, used: Nat, window: Nat, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -1013,6 +1015,33 @@ def Switch.num(s: String, +acc: Nat) -> Nat:
 def Switch.seen(s: State, +th: String, +p: String) -> Nat:
   Switch.num(Setting.get(s, Switch.seen.key(th, p), "0"), 0n)
 
+# Context usage
+# -------------
+# How much of its model's context window a thread's session holds, as
+# "<used>/<window>" in the setting usage.<thread> (laws usage_*).
+
+def Usage.key(+th: String) -> String:
+  "usage." ++ th
+
+def Usage.part(ps: List<&2, String>, +i: Nat) -> Nat:
+  Switch.num(Maybe.default(&2, String, List.head(&2, String, List.drop(&2, String, ps, i)), "0"), 0n)
+
+def Usage.used(+v: String) -> Nat:
+  Usage.part(String.split(v, '/'), 0n)
+
+def Usage.window(+v: String) -> Nat:
+  Usage.part(String.split(v, '/'), 1n)
+
+def Usage.keep(+new: Nat, +old: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_eq(new, 0n), old, new)
+
+# a new reading over the old one (0 keeps the old part)
+def Usage.merge(+old: String, +used: Nat, +window: Nat) -> String:
+  Nat.show(Usage.keep(used, Usage.used(old))) ++ "/" ++ Nat.show(Usage.keep(window, Usage.window(old)))
+
+def State.usage(+s: State, +th: String, +used: Nat, +window: Nat) -> State:
+  State.setting(s, Usage.key(th), Usage.merge(Setting.get(s, Usage.key(th), ""), used, window))
+
 # Forks
 # -----
 # A fork remembers its source thread (the setting fork.<id>).
@@ -1168,6 +1197,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.setting(State.thread((t => Thread.settled(True{}, at, t)), s, id), Merge.key(id), url)
     case WorktreeRemoved{+id, _}:
       State.thread((t => Thread.unrooted(t)), s, id)
+    case UsageSet{+th, used, window, _}:
+      State.usage(s, th, used, window)
     case TodosSet{+th, todos, _}:
       State.setting(s, "todos." ++ th, todos)
     case ProviderSet{+id, +p, m, _}:

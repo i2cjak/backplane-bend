@@ -717,9 +717,64 @@ def Claude.todos.set(changed: Bool, +th: String, +now: Nat, +ts: String) -> List
 def Claude.todos(+s: M.State, +th: String, +now: Nat, +bs: List<&2, J.Json>) -> List<&2, M.Change>:
   Claude.todos.set(Claude.todo.any(bs), th, now, TD.Todo.show(Claude.todo.go(bs, Claude.todos.of(s, th))))
 
+# Context usage (Claude)
+# ----------------------
+# Each model call reports its usage: what it read (input and both caches)
+# plus what it wrote is what the session now holds. The result line names
+# the model's window; a compaction says what is left. A reading goes to the
+# log only when it changes (law usage_same_nothing).
+
+def Usage.now(+s: M.State, +th: String) -> String:
+  M.Setting.get(s, M.Usage.key(th), "")
+
+def Usage.set(fresh: Bool, +th: String, +used: Nat, +window: Nat, +now: Nat) -> List<&2, M.Change>:
+  match fresh:
+    case True{}:
+      [M.UsageSet{th, used, window, now}]
+    case False{}:
+      Nil{}
+
+def Usage.sum(+u: J.Json) -> Nat:
+  Nat.add(Nat.add(J.Json.get_nat(u, "input_tokens", 0n), J.Json.get_nat(u, "cache_creation_input_tokens", 0n)),
+    Nat.add(J.Json.get_nat(u, "cache_read_input_tokens", 0n), J.Json.get_nat(u, "output_tokens", 0n)))
+
+def Usage.used.k(+s: M.State, +th: String, +now: Nat, +n: Nat) -> List<&2, M.Change>:
+  Usage.set(Bool.and(Nat.is_gt(n, 0n), Bool.not(Nat.is_eq(n, M.Usage.used(Usage.now(s, th))))), th, n, 0n, now)
+
+# an assistant message's usage
+def Usage.claude(+s: M.State, +th: String, +now: Nat, +m: J.Json) -> List<&2, M.Change>:
+  Usage.used.k(s, th, now, Usage.sum(J.Json.get_obj(m, "usage")))
+
+def Usage.widest(fs: J.Json, +acc: Nat) -> Nat:
+  match fs:
+    case J.Field{_, +v, t}:
+      Usage.widest(t, Bool.pick(Nat, Nat.is_gt(J.Json.get_nat(v, "contextWindow", 0n), acc), J.Json.get_nat(v, "contextWindow", 0n), acc))
+    case _:
+      acc
+
+def Usage.fields(o: J.Json) -> J.Json:
+  match o:
+    case J.Obj{fs}:
+      fs
+    case _:
+      J.Null{}
+
+def Usage.window.k(+s: M.State, +th: String, +now: Nat, +w: Nat) -> List<&2, M.Change>:
+  Usage.set(Bool.and(Nat.is_gt(w, 0n), Bool.not(Nat.is_eq(w, M.Usage.window(Usage.now(s, th))))), th, 0n, w, now)
+
+# the result's window: the widest model it used (the main one; helpers
+# such as a small model have smaller windows)
+def Usage.window(+s: M.State, +th: String, +now: Nat, +o: J.Json) -> List<&2, M.Change>:
+  Usage.window.k(s, th, now, Usage.widest(Usage.fields(J.Json.get_obj(o, "modelUsage")), 0n))
+
+# a compaction: what the session holds after it
+def Usage.compact(+s: M.State, +th: String, +now: Nat, +o: J.Json) -> List<&2, M.Change>:
+  Bool.pick(List<&2, M.Change>, String.eq(J.Json.get_str(o, "subtype", ""), "compact_boundary"),
+    Usage.used.k(s, th, now, J.Json.get_nat(J.Json.get_obj(o, "compact_metadata"), "post_tokens", 0n)), Nil{})
+
 # an assistant message and what its todo tools do to the thread's list
 def Claude.assistant.t(+s: M.State, +thread: String, +now: Nat, +m: J.Json) -> Step:
-  Step.before(Nil{}, Nil{}, Step.after(Claude.assistant(thread, now, Hub.seq(s), m), Claude.todos(s, thread, now, J.Json.elems(J.Json.get_obj(m, "content")))))
+  Step.after(Step.after(Claude.assistant(thread, now, Hub.seq(s), m), Claude.todos(s, thread, now, J.Json.elems(J.Json.get_obj(m, "content")))), Usage.claude(s, thread, now, m))
 
 def Claude.result.text(+c: J.Json) -> String:
   J.Json.get_str(Maybe.default(&2, J.Json, List.head(&2, J.Json, J.Json.elems(c)), J.Null{}), "text", J.Json.as_str(Some{c}, ""))
@@ -757,13 +812,13 @@ def Claude.init(+s: M.State, +thread: String, +now: Nat, +o: J.Json) -> Step:
 def Claude.line.k(i: Nat, +s: M.State, +thread: String, +now: Nat, +o: J.Json) -> Step:
   match i:
     case 0n:
-      Claude.init(s, thread, now, o)
+      Step.after(Claude.init(s, thread, now, o), Usage.compact(s, thread, now, o))
     case 1n:
       Claude.stream(thread, J.Json.get_obj(o, "event"))
     case 2n:
       Claude.assistant.t(s, thread, now, J.Json.get_obj(o, "message"))
     case 3n:
-      Claude.result(thread, now, o)
+      Step.after(Claude.result(thread, now, o), Usage.window(s, thread, now, o))
     case 4n:
       Claude.named(s, thread, now, o)
     case _:
