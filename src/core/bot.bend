@@ -801,3 +801,8 @@ def Mem.block.k(ls: List<&2, String>) -> String:
 # the block a turn starts with ("" when the bot knows nothing yet)
 def Mem.block(+ms: List<&2, Mem>, text: String, +now: Nat) -> String:
   Mem.block.k(Mem.fit(Mem.lines(List.append(&2, Mem, List.filter(~Mem, ~Mem.always, ms), Mem.recall(Mem.others(ms, now), text, 6n))), Mem.budget()))
+
+def Hook.id(h: Hook) -> String:
+  match h:
+    case Hook{i, _, _, _, _, _, _}:
+      i

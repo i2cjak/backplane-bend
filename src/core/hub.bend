@@ -38,6 +38,9 @@ type Out is Data:
   # what a piece a phone tapped is: the info of piece idx of the chunk at
   # `at` of the plot key it holds (the plot actor answers)
   PlotInfo{client: U32, id: String, key: String, at: Nat, idx: Nat}
+  # a bot effect the server runs with IO or secrets (bothub.bend): kind
+  # home, gone, hook, unhook, send, invite, join, unpeer, google
+  BotFx{kind: String, a: String, b: String, c: String}
 
 type Step is Data:
   Step{changes: List<&2, M.Change>, outs: List<&2, Out>}
