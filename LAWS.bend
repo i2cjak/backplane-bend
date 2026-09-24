@@ -1096,3 +1096,13 @@ law mpick_opens_home:
 
 law mpick_tilde:
   {MP.MPick.field("/home/h", "/home/h/docs") == "~/docs/" : String}
+
+# an agent's viewer_show opens the viewer only from the thread on screen:
+# another thread's request waits in that thread's view
+law view_other_stays_shut:
+  for u: U.Ui
+  for +th: String
+  for +o: J.Json
+  for p: {U.Ui.panel(u) == False{} : Bool}
+  for h: {String.eq(th, U.Ui.sel(u)) == False{} : Bool}
+  {U.Ui.panel(U.Ui.view.k(u, th, o)) == False{} : Bool}
