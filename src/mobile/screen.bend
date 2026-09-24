@@ -6,6 +6,7 @@ import ../web/dom.bend as D
 import ../web/view.bend as V
 import ./notify.bend as N
 import ./view.bend as VW
+import ./picker.bend as PK
 
 # Ui -> the screen the phone apps draw, as JSON. SwiftUI and Compose map
 # it onto native lists, toolbars and text fields; every decision (order,
@@ -174,9 +175,40 @@ def Mob.strs(xs: List<&2, String>) -> List<&2, J.Json>:
     case x <> t:
       J.Json.str(x) <> Mob.strs(t)
 
+# a choice of a menu: what it says, the value it sends, whether it is on
+def Mob.choice(label: String, value: String, on: Bool) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"value", J.Json.str(value)}, J.KV{"on", J.Json.bool(on)}])
+
+# a model's name in the menu: the CLI's label for it ("Opus 5.5 ·
+# claude-opus-5-5"), else its name
+def Mob.model_name(+info: String, +provider: String, +m: String) -> String:
+  Bool.pick(String, String.is_empty(U.Models.label_of(info, provider, m)), Bool.pick(String, String.is_empty(m), "default", m), U.Models.label_of(info, provider, m))
+
+def Mob.models(ms: List<&2, String>, +info: String, +provider: String, +cur: String) -> List<&2, J.Json>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      Mob.choice(Mob.model_name(info, provider, m), m, String.eq(m, cur)) <> Mob.models(t, info, provider, cur)
+
+def Mob.efforts(es: List<&2, String>, +cur: String) -> List<&2, J.Json>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      Mob.choice(U.Effort.name(e), e, String.eq(e, cur)) <> Mob.efforts(t, cur)
+
+# the composer's model chip and its menu: the thread's provider's models
+# (its default first; "model" sends one) and the efforts that model takes
+# ("effort")
+def Mob.picker(+info: String, +provider: String, +model: String, +effort: String) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(U.Effort.label(U.Models.label(provider, model), effort))},
+    J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.list(info, provider), info, provider, model))},
+    J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort))}])
+
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Json:
   match u t:
-    case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, _, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, _, _, _, _, _, _}:
+    case U.Ui{+st, +sel, drafts, +live, _, _, _, _, _, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, _, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"branch", J.Json.str(branch)},
         J.KV{"state", J.Json.str(Mob.state(turn))},
         J.KV{"tools", J.Json.arr(List.append(&2, J.Json, Mob.stop(V.View.running(turn)), [Mob.pin(pinned), Mob.settle(o, Nat.is_gt(sa, ua)), Mob.tool("Archive", "archive", False{})]))},
@@ -187,6 +219,7 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json) -> J.Js
         J.KV{"working", J.Json.str(Mob.live(String.is_empty(U.Str.get(live, id)), V.View.running(turn)))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},
         J.KV{"send", J.Json.str(Bool.pick(String, V.View.running(turn), "Queue", "Send"))},
+        J.KV{"picker", Mob.picker(U.Str.get(nf, "models"), pr, mo, U.Effort.of(st, sel))},
         J.KV{"viewer", vw}])
 
 def Mob.main(none: Bool, +u: U.Ui, +sel: String) -> J.Json:
@@ -226,5 +259,6 @@ def Mob.screen(+u: U.Ui) -> J.Json:
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
         J.KV{"projects", J.Json.arr(Mob.projects(U.Side.rows(st, now), o, st, now))},
         J.KV{"deleting", Mob.deleting(u)},
+        J.KV{"folders", PK.MPick.json(u)},
         J.KV{"island", N.Note.island(U.Ui.threads(st), U.Ui.entries(st))},
         J.KV{"thread", Mob.main(String.is_empty(sel), u, sel)}])

@@ -545,7 +545,7 @@ def Ui.actions() -> List<&2, String>:
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
    "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
-   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "look", "look-set"]
+   "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "look", "look-set"]
 
 # Reading the client state
 # ------------------------
@@ -1287,7 +1287,7 @@ def Palette.actions(+pid: String) -> List<&2, PItem>:
    PItem{"Settle thread", "settle", ""}, PItem{"Pin thread", "pin", ""}, PItem{"Archive thread", "archive", ""}, PItem{"Unarchive thread", "unarchive", ""}, PItem{"Delete thread", "delete", ""},
    PItem{"Snooze 1 hour", "snooze", "1h"}, PItem{"Snooze until tomorrow 9:00", "snooze", "tomorrow"}, PItem{"Snooze 1 week", "snooze", "1w"}, PItem{"Unsnooze", "snooze", "off"},
    PItem{"Search threads", "key:search", ""}, PItem{"Find file", "key:files", ""},
-   PItem{"Viewer", "panel", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
+   PItem{"Viewer", "panel", ""}, PItem{"Open in KiCad", "kicad-open", ""}, PItem{"Settings", "flag", "settings"}, PItem{"Update Backplane", "update", ""}]
 
 def Palette.words(ws: List<&2, String>, +l: String) -> Bool:
   match ws:
@@ -2111,6 +2111,17 @@ def Ui.delete(+u: Ui) -> Act:
 def Ui.on_row(u: Ui, +id: String, m: String) -> Act:
   Ui.rpc(u, m, [J.KV{"thread", J.Str{id}}])
 
+# a right-click on a sidebar row settles it, or brings a settled one back
+def Ui.row_toggle.m(sh: M.Shelf) -> String:
+  match sh:
+    case M.Settled{}:
+      "thread.unsettle"
+    case _:
+      "thread.settle"
+
+def Ui.row_toggle(+u: Ui, +id: String) -> Act:
+  Ui.on_row(u, id, Ui.row_toggle.m(M.Shelf.of(Ui.thread(Ui.state(u), id))))
+
 def Ui.row_snooze.k(u: Ui, s: Sect) -> Act:
   match s:
     case Sect{id, t}:
@@ -2259,8 +2270,12 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 63n:
       Act{Ui.tool_fold(u, value), Nil{}}
     case 64n:
-      Act{Ui.look(u, value), Nil{}}
+      Ui.row_toggle(u, value)
     case 65n:
+      Ui.on_thread(u, "kicad.open")
+    case 66n:
+      Act{Ui.look(u, value), Nil{}}
+    case 67n:
       Ui.setting(u, value)
     case _:
       Act{u, Nil{}}

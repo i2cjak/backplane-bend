@@ -1,5 +1,6 @@
 // xpoke: send synthetic input to the Backplane window (tests only).
 //   xpoke click X Y        left click
+//   xpoke rclick X Y       right click
 //   xpoke type TEXT        type characters (ASCII)
 //   xpoke key NAME         press a named key (Return, BackSpace, Escape...)
 //   xpoke ctrl KEY         ctrl+key (an upper-case letter adds shift)
@@ -69,6 +70,8 @@ int main(int argc, char** argv) {
   if (!w) { fprintf(stderr, "no Backplane window\n"); return 1; }
   if (!strcmp(argv[1], "click") && argc == 4) {
     button(d, w, atoi(argv[2]), atoi(argv[3]), 1);
+  } else if (!strcmp(argv[1], "rclick") && argc == 4) {
+    button(d, w, atoi(argv[2]), atoi(argv[3]), 3);
   } else if (!strcmp(argv[1], "drag") && argc == 6) {
     drag(d, w, atoi(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]));
   } else if (!strcmp(argv[1], "wheel") && argc == 5) {

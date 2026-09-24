@@ -25,6 +25,12 @@ data class Project(
 // a delete a row asked for, waiting for yes ("row-delete" id) or no
 data class Deleting(val id: String, val title: String, val body: String, val yes: String, val no: String)
 
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+data class FolderRow(val label: String, val action: String, val value: String, val kind: String)
+
+data class Folders(val text: String, val hint: String, val error: String, val items: List<FolderRow>)
+
 data class Tool(val label: String, val action: String, val on: Boolean)
 
 sealed interface Block {
@@ -55,11 +61,15 @@ data class Viewer(
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
 )
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+data class ModelPicker(val label: String, val models: List<Choice>, val efforts: List<Choice>)
+
 data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
-    val sending: List<String>, val queued: String, val viewer: Viewer,
+    val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -69,7 +79,7 @@ data class Island(val running: Int, val headline: String, val lines: List<Island
 data class Screen(
     val online: Boolean, val version: String, val error: String, val note: String,
     val sel: String, val empty: String, val projects: List<Project>, val thread: ThreadView?,
-    val island: Island, val deleting: Deleting?,
+    val island: Island, val deleting: Deleting?, val folders: Folders?,
 )
 
 data class Cmd(
@@ -109,8 +119,14 @@ private fun thread(o: JSONObject) = ThreadView(
             it.optString("label"), blocks(it.optJSONArray("blocks")))
     },
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"), viewer(o.optJSONObject("viewer") ?: JSONObject()),
+    strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
+    viewer(o.optJSONObject("viewer") ?: JSONObject()),
 )
+
+private fun choices(a: JSONArray?) = a.map { Choice(it.optString("label"), it.optString("value"), it.optBoolean("on")) }
+
+private fun picker(o: JSONObject) =
+    ModelPicker(o.optString("label"), choices(o.optJSONArray("models")), choices(o.optJSONArray("efforts")))
 
 private fun ints(a: JSONArray?): IntArray = if (a == null) IntArray(0) else IntArray(a.length()) { a.optInt(it) }
 
@@ -146,6 +162,10 @@ fun parseScreen(o: JSONObject) = Screen(
     island(o.optJSONObject("island")),
     o.optJSONObject("deleting")?.let {
         Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
+    },
+    o.optJSONObject("folders")?.let { p ->
+        Folders(p.optString("text"), p.optString("hint"), p.optString("error"),
+            p.optJSONArray("items").map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) })
     },
 )
 

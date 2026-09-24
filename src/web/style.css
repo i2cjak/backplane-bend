@@ -97,7 +97,7 @@ button.fold:hover { color: var(--text); }
 button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .working { color: var(--faint); font-size: 12px; }
 .composer { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 16px 14px; border-top: 1px solid var(--line); }
-.composer textarea { resize: none; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; min-height: 60px; max-height: 40vh; }
+.composer textarea { resize: none; background: var(--panel); border: 1px solid var(--line); padding: 8px 10px; min-height: 60px; max-height: 40vh; field-sizing: content; overflow-y: auto; }
 .composer-foot { display: flex; justify-content: space-between; align-items: center; }
 .model-chip { background: none; border-color: transparent; color: var(--dim); padding-left: 0; }
 .shade { position: fixed; inset: 0; z-index: 30; }

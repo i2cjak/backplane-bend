@@ -24,6 +24,7 @@ import ./src/core/gh.bend as GH
 import ./src/core/fold.bend as FO
 import ./src/core/plot.bend as PL
 import ./src/mobile/view.bend as MV
+import ./src/mobile/picker.bend as MP
 import ./src/core/client.bend as U
 import ./src/core/menu.bend as MN
 
@@ -2321,6 +2322,21 @@ def Laws.delete_asks_first(u):
 def Laws.row_delete_asks_first(u, id):
   {==}
 
+def Laws.row_toggle_unsettles(t, at, h):
+  %Equal.sym(M.Shelf, M.Shelf.of(M.Thread.settled(True{}, at, t)), M.Settled{}, Laws.merge_settles(t, at, h)) : {U.Ui.row_toggle.m(_) == "thread.unsettle" : String}
+  {==}
+
+def Laws.row_toggle_settles(at, t):
+  match t:
+    case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, True{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, True{}, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, True{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+    case M.Thread{id, p, ti, c, a, tu, pe, False{}, o, sa, ua, False{}, en, br, wt, pr, mo, rm, im, se, False{}}:
+      {==}
+
 def Laws.picker_drops_stale(u, o):
   {==}
 
@@ -3011,6 +3027,9 @@ def Laws.menu_label_clear(name_x, widest, w):
 def Laws.menu_press_first(n, x, y):
   {==}
 
+def Laws.menu_right_press_first(n, x, y):
+  {==}
+
 def Laws.menu_press_nothing():
   {==}
 
@@ -3078,4 +3097,18 @@ def Laws.badge_default_icon():
   {==}
 
 def Laws.badge_unknown_icon():
+  {==}
+
+def Laws.mpick_closed_draws_nothing(u, h):
+  %Equal.sym(Bool, U.Ui.flag(u, "proj"), False{}, h) : {MP.MPick.json.k(_, u) == J.Null{} : J.Json}
+  {==}
+
+def Laws.mpick_filter_asks_nothing(u, text, h):
+  %Equal.sym(Bool, String.eq(MP.MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")), True{}, h) : {MP.MPick.list.k(_, U.Ui.scratch_set(u, "@mpick", text), MP.MPick.dir(text)) == U.Act{U.Ui.scratch_set(u, "@mpick", text), Nil{}} : U.Act}
+  {==}
+
+def Laws.mpick_opens_home():
+  {==}
+
+def Laws.mpick_tilde():
   {==}

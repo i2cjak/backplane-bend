@@ -84,6 +84,13 @@ struct Viewer: Decodable {
     let card: Card?
 }
 
+// the composer's model chip: its label, the models ("model" sends one)
+// and the efforts the current one takes ("effort")
+struct ModelPicker: Decodable {
+    let label: String
+    let models, efforts: [Choice]
+}
+
 struct ThreadView: Decodable {
     let id, title, branch, state: String
     let tools: [Tool]
@@ -93,6 +100,7 @@ struct ThreadView: Decodable {
     let queued: String
     let live: [Block]
     let working, draft, send: String
+    let picker: ModelPicker
     let viewer: Viewer
 }
 
@@ -101,11 +109,23 @@ struct Deleting: Decodable, Equatable {
     let id, title, body, yes, no: String
 }
 
+// the project picker: its path field, the field's hint, an error, and the
+// rows (a tap sends action with value; one with no action is only shown)
+struct FolderRow: Decodable, Hashable {
+    let label, action, value, kind: String
+}
+
+struct Folders: Decodable {
+    let text, hint, error: String
+    let items: [FolderRow]
+}
+
 struct Screen: Decodable {
     let online: Bool
     let version, error, note, sel, empty: String
     let projects: [Project]
     let deleting: Deleting?
+    let folders: Folders?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
 }

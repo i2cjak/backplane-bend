@@ -30,6 +30,8 @@ import ./src/core/menu.bend as MN
 import ./src/app/win.bend as W
 import ./src/core/badge.bend as BG
 
+import ./src/mobile/picker.bend as MP
+
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
 # one without the user's explicit consent.
@@ -886,6 +888,19 @@ law row_delete_asks_first:
   for +id: String
   {U.Act.cmds(U.Ui.row_delete.k(False{}, u, id)) == Nil{} : List<&2, U.Cmd>}
 
+# a right-click on a row the user settled brings it back
+law row_toggle_unsettles:
+  for t: M.Thread
+  for +at: Nat
+  for h: {M.Thread.hidden(t) == False{} : Bool}
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.settled(True{}, at, t))) == "thread.unsettle" : String}
+
+# and on a row the user brought back it settles it again
+law row_toggle_settles:
+  for +at: Nat
+  for t: M.Thread
+  {U.Ui.row_toggle.m(M.Shelf.of(M.Thread.unsettled(at, t))) == "thread.settle" : String}
+
 # an answer to anything but the project picker's newest request leaves the
 # client as it was (a late listing never replaces a newer one)
 law picker_drops_stale:
@@ -1133,6 +1148,13 @@ law menu_press_first:
   for +y: U32
   {N.Nui.event(n, W.WButton{x, y, 1, True{}}) == N.Nui.press(N.Nui.in_viewer(n, x), N.Menu.press(N.Hit.find(N.Nui.hits(n), x, y), n), x, y) : N.Step}
 
+# a right-click too
+law menu_right_press_first:
+  for +n: N.Nui
+  for +x: U32
+  for +y: U32
+  {N.Nui.event(n, W.WButton{x, y, 3, True{}}) == N.Row.menu(N.Hit.find(N.Nui.hits(n), x, y), N.Menu.press(N.Hit.find(N.Nui.hits(n), x, y), n), x) : N.Step}
+
 # a press on nothing is outside
 law menu_press_nothing:
   {N.Menu.inside(None{}) == False{} : Bool}
@@ -1201,3 +1223,27 @@ law badge_default_icon:
 
 law badge_unknown_icon:
   {BG.Badge.icon.of("rocket-ship") == "folder" : String}
+
+# The project picker on a phone
+# ------------------------------
+
+# a closed picker draws nothing
+law mpick_closed_draws_nothing:
+  for +u: U.Ui
+  for h: {U.Ui.flag(u, "proj") == False{} : Bool}
+  {MP.MPick.json(u) == J.Null{} : J.Json}
+
+# typing within the folder already asked for only filters: the hub is
+# asked nothing
+law mpick_filter_asks_nothing:
+  for +u: U.Ui
+  for +text: String
+  for h: {String.eq(MP.MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")) == True{} : Bool}
+  {MP.MPick.type(u, text) == U.Act{U.Ui.scratch_set(u, "@mpick", text), Nil{}} : U.Act}
+
+# it opens at home, and a folder under home shows as ~
+law mpick_opens_home:
+  {MP.MPick.dir("~/") == "~/" : String}
+
+law mpick_tilde:
+  {MP.MPick.field("/home/h", "/home/h/docs") == "~/docs/" : String}
