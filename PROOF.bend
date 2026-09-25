@@ -4427,6 +4427,12 @@ def Laws.bot_hop_step(ok, n, h):
 def Laws.bot_hop_bounded(h):
   Laws.bot_hop_step(Nat.is_le(1n+h, BOT.Hop.max()), 1n+h, {==})
 
+def Laws.bot_room_no_takeover(i, n, c, s, pid):
+  {==}
+
+def Laws.bot_room_deleted_stays(i, n, ms, c, s, pid):
+  {==}
+
 def Laws.bot_mood_wait(talked, idle):
   {==}
 

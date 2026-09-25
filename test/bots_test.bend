@@ -134,6 +134,26 @@ def Maybe.is.k(m: Maybe<&2, BT.Bot>) -> Bool:
     case None{}:
       False{}
 
+def fx.body(os: List<&2, B.Out>) -> String:
+  match os:
+    case Nil{}:
+      ""
+    case B.BotFx{_, _, _, c} <> _:
+      c
+    case _ <> t:
+      fx.body(t)
+
+def st.body(st: B.Step) -> String:
+  match st:
+    case B.Step{_, os}:
+      fx.body(os)
+
+def json(+t: String) -> J.Json:
+  Maybe.default(&2, J.Json, J.Json.parse(t), J.Null{})
+
+def room.of(+s: M.State, +name: String) -> BT.Room:
+  Maybe.default(&2, BT.Room, BT.World.find_room(M.State.bots(s), name), BT.Room.blank(""))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +s : M.State = two()
@@ -193,6 +213,33 @@ def main() -> IO(Unit):
     C.Check.str("remote no peer", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\"}"), "no linked machine")), "yes")
     +p : M.State = run(s, B.Step{[M.PeerSet{"p1", "laptop", "http://laptop:3787", False{}, 1000n}], Nil{}})
     C.Check.str("remote send", st.tags(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\"}")), "RoomPosted | fx:send ")
+    # shared rooms: a room with members on a linked machine
+    +sr : M.State = run(p, call.step(p, 1006n, th.of(p, "Miso"), "room_create", "{\"name\":\"team\",\"members\":\"Tofu, Nori@laptop\"}"))
+    C.Check.str("shared post", st.tags(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")),
+      "RoomPosted BotWoke MessagePosted TurnChanged | fx:send out out ")
+    C.Check.str("shared tos", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"tos\":[\"Nori\"]")), "yes")
+    C.Check.str("shared members", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"members\":[\"Miso@\",\"Tofu@\",\"Nori\"]")), "yes")
+    C.Check.str("shared room id", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"room\":\"" ++ BT.Room.id(room.of(sr, "team")) ++ "\"")), "yes")
+    # the other machine: it keeps the room, and its bots can post back
+    +q : M.State = run(s, B.Step{[M.PeerSet{"p9", "desk", "http://desk:3787", False{}, 1000n}], Nil{}})
+    +post : String = "{\"from\":\"Nori\",\"to\":\"miso\",\"tos\":[\"miso\"],\"members\":[\"Nori@\",\"miso\",\"Ghost@far\"],\"room\":\"r5-0\",\"roomName\":\"team\",\"text\":\"hi\",\"hop\":1}"
+    C.Check.str("shared in", st.tags(BH.Bots.incoming(q, 1010n, "desk", json(post))), "RoomSet RoomPosted BotWoke MessagePosted TurnChanged | out out out ")
+    +q2 : M.State = run(q, BH.Bots.incoming(q, 1010n, "desk", json(post)))
+    C.Check.str("shared kept", BT.Room.members.show(BT.Room.members(room.of(q2, "team"))), "Nori@desk\n" ++ id.of(q2, "Miso") ++ "\nGhost@far")
+    # Miso is still on the first one: the second waits, and the room is unchanged
+    C.Check.str("shared again", st.tags(BH.Bots.incoming(q2, 1011n, "desk", json(post))), "RoomPosted BotWoke MessagePosted TurnQueued | ")
+    C.Check.str("shared read", yes(String.contains(call(q2, 1012n, th.of(q2, "Miso"), "room_read", "{\"room\":\"team\"}"), "Nori@desk")), "yes")
+    C.Check.str("shared back", st.tags(call.step(q2, 1012n, th.of(q2, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"on it\"}")), "RoomPosted | fx:send ")
+    C.Check.str("shared back members", yes(String.contains(st.body(call.step(q2, 1012n, th.of(q2, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"on it\"}")),
+      "\"members\":[\"Nori\",\"Miso@\",\"Ghost@far\"]")), "yes")
+    C.Check.str("shared not a member", st.tags(BH.Bots.incoming(q, 1010n, "desk", json("{\"from\":\"Nori\",\"tos\":[\"tofu\"],\"members\":[\"Nori@\",\"miso\"],\"room\":\"r5-0\",\"roomName\":\"team\",\"text\":\"hi\",\"hop\":1}"))),
+      "RoomSet RoomPosted | ")
+    C.Check.str("shared too deep", st.tags(BH.Bots.incoming(q, 1010n, "desk", json("{\"from\":\"Nori\",\"tos\":[\"miso\"],\"members\":[\"Nori@\",\"miso\"],\"room\":\"r5-0\",\"roomName\":\"team\",\"text\":\"hi\",\"hop\":9}"))), "| ")
+    +lr : M.State = run(q, call.step(q, 1006n, th.of(q, "Miso"), "room_create", "{\"name\":\"ours\",\"members\":\"Tofu\"}"))
+    C.Check.str("shared no takeover", st.tags(BH.Bots.incoming(lr, 1010n, "desk", json("{\"from\":\"Nori\",\"tos\":[\"miso\"],\"members\":[\"Nori@\",\"miso\"],\"room\":\"" ++ BT.Room.id(room.of(lr, "ours")) ++ "\",\"roomName\":\"ours\",\"text\":\"hi\",\"hop\":1}"))), "| ")
+    C.Check.str("shared deleted stays", st.tags(BH.Bots.incoming(run(q2, B.Step{[M.RoomDeleted{"r5-0", 1011n}], Nil{}}), 1012n, "desk", json(post))), "| ")
+    C.Check.str("dm still dm", st.tags(BH.Bots.incoming(q, 1010n, "desk", json("{\"from\":\"Nori\",\"to\":\"miso\",\"room\":\"dm:a:b\",\"members\":[],\"text\":\"yo\",\"hop\":1}"))),
+      "RoomPosted BotWoke MessagePosted TurnChanged | out out out ")
     # tools list: a bot sees its own tools, a thread does not
     C.Check.str("tools bot", yes(String.contains(out.reply(BH.Bots.mcp(s, 1n, th.of(s, "Miso"), J.Null{}, "t", J.Json.arr(Nil{}), Nil{}, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}")), "memory_save")), "yes")
     C.Check.str("tools thread", yes(String.contains(out.reply(BH.Bots.mcp(s, 1n, "t9", J.Null{}, "t", J.Json.arr(Nil{}), Nil{}, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}")), "memory_save")), "no")

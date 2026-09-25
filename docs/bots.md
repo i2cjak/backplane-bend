@@ -76,6 +76,24 @@ than the hop of the turn that sent it. A bot never sends past
 - Delivery to a local bot goes through the thread inbox (`Hub.inbox`): it
   queues behind a running turn, never interrupts.
 
+### Shared rooms
+
+A room's members can be on other machines (`name@machine`). A post goes to
+each linked machine once (`Bots.remotes`), with the room's id, name, the
+bots there it is for (`tos`), and its members as that machine names them:
+a bare name is a bot there, `name@` a bot on the sender, `name@machine` a
+bot on a third machine. The receiving machine keeps the room under the
+same id (a `RoomSet` when it is new or its members changed), logs the post
+once, and wakes the bots it is for (`Bots.shared`), so its bots and person
+see the room and can post back. A machine sends its own posts to every
+other and never passes on one it received, so nothing loops; a member on a
+machine the poster is not linked to does not hear that post.
+
+A linked machine may post in a room here only when the room is new here or
+has a member on that machine (law `bot_room_no_takeover`), and never opens
+a room the person deleted (law `bot_room_deleted_stays`). The other
+machine learns of a room at its first post.
+
 ## Machines and people
 
 A peer is another hub, linked by an invite: the inviting hub makes

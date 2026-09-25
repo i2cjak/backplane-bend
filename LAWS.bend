@@ -2251,6 +2251,25 @@ law bot_hop_bounded:
   for +h: Nat
   {BOT.Hop.bound(BOT.Hop.next(h)) == True{} : Bool}
 
+# a linked machine never takes over a live room here with no member on it
+law bot_room_no_takeover:
+  for +i: String
+  for +n: String
+  for +c: Nat
+  for +s: M.State
+  for +pid: String
+  {BHS.Bots.room.open(BOT.Room{i, n, Nil{}, 1n+c, False{}}, s, pid) == False{} : Bool}
+
+# nor opens a room the person deleted
+law bot_room_deleted_stays:
+  for +i: String
+  for +n: String
+  for +ms: List<&2, String>
+  for +c: Nat
+  for +s: M.State
+  for +pid: String
+  {BHS.Bots.room.open(BOT.Room{i, n, ms, 1n+c, True{}}, s, pid) == False{} : Bool}
+
 # a cat waits for you (ears up) whenever its thread needs an approval
 law bot_mood_wait:
   for talked: Bool
