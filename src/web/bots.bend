@@ -315,7 +315,8 @@ def WB.hook(h: BT.Hook, +now: Nat, +origin: String) -> D.Node:
       D.El{"div", "hk:" ++ id, [D.At{"class", "item"}], [
         WB.div("item-main", [D.Dom.span("item-key", name), D.Dom.span("item-url", origin ++ "/hook/" ++ id)]),
         D.Dom.span("ago", WB.calls(count, WB.ago(now, last))),
-        WB.div("item-btns", [D.Dom.copy(origin ++ "/hook/" ++ id), D.Dom.button("", "hook-revoke", id, "Revoke this webhook", "Revoke")])]}
+        WB.div("item-btns", [D.Dom.copy(origin ++ "/hook/" ++ id), D.Dom.button("", "hook-token", id, "A bearer token, for senders that cannot sign (a Pebble Index ring)", "Token"),
+          D.Dom.button("", "hook-revoke", id, "Revoke this webhook", "Revoke")])]}
 
 def WB.hooks.go(hs: List<&2, BT.Hook>, +now: Nat, +origin: String) -> List<&2, D.Node>:
   match hs:
@@ -344,8 +345,40 @@ def WB.secret.k(show: Bool, +url: String, +secret: String) -> List<&2, D.Node>:
     case False{}:
       Nil{}
 
+def WB.line(+s: String) -> D.Node:
+  WB.div("secret-line", [D.El{"code", "", Nil{}, [D.Txt{s}]}, D.Dom.copy(s)])
+
+def WB.token.curl(+url: String, +tok: String) -> String:
+  "curl -X POST " ++ url ++ " -H \"Authorization: Bearer " ++ tok ++ "\" -F transcription=hello -F recordedAt=$(date +%s000)"
+
+# a phone wants HTTPS: say how to get it when the hub has none
+def WB.token.warn(+url: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, String.starts_with(url, "http://"),
+    [D.Dom.span("secret-label", "Plain HTTP: the ring's app wants HTTPS. Give the hub an HTTPS port on the tailnet (tailscale serve --bg --https=<free port> http://127.0.0.1:<the hub's port>) and open this again.")],
+    Nil{})
+
+# a webhook's bearer token and where to post, shown until hidden
+def WB.token.k(show: Bool, +url: String, +tok: String, +hid: String) -> List<&2, D.Node>:
+  match show:
+    case True{}:
+      [WB.div("secret", List.concat(&2, D.Node, [
+        [D.Dom.span("secret-label", "URL to post to"), WB.line(url),
+         D.Dom.span("secret-label", "Header"), WB.line("Authorization: Bearer " ++ tok),
+         D.Dom.span("secret-label", "Token"), WB.line(tok)],
+        WB.token.warn(url),
+        [WB.div("codeblock", [D.Dom.copy(WB.token.curl(url, tok)), D.El{"pre", "", Nil{}, [D.El{"code", "", Nil{}, [D.Txt{WB.token.curl(url, tok)}]}]}]),
+         D.Dom.span("secret-label", "Pebble app: Index 01 settings, Webhook: this URL, a header Authorization with the value Bearer and the token, send Transcription. The bot reads what arrives as untrusted data."),
+         WB.btns([D.Dom.button("", "hook-retoken", hid, "Make a new token: the old one stops working", "New token"),
+           D.Dom.button("", "hook-untoken", hid, "Turn bearer tokens off for this webhook", "Turn off"),
+           D.Dom.button("", "hook-done", "", "Hide the token", "Done")])]]))]
+    case False{}:
+      Nil{}
+
 def WB.hooks(+u: U.Ui, +b: BT.Bot) -> D.Node:
   WB.div("bot-list", List.concat(&2, D.Node, [
+    WB.token.k(Bool.and(Bool.not(String.is_empty(U.Ui.scratch(u, "@hook.token"))),
+        String.eq(BT.Hook.bot(BT.World.hook(M.State.bots(U.Ui.state(u)), U.Ui.scratch(u, "@hook.tokfor"))), BT.Bot.id(b))),
+      U.Ui.scratch(u, "@hook.tokurl"), U.Ui.scratch(u, "@hook.token"), U.Ui.scratch(u, "@hook.tokfor")),
     WB.secret.k(Bool.and(Bool.not(String.is_empty(U.Ui.scratch(u, "@hook.secret"))),
         String.eq(BT.Hook.bot(BT.World.hook(M.State.bots(U.Ui.state(u)), U.Ui.scratch(u, "@hook.id"))), BT.Bot.id(b))),
       WB.page(u) ++ "/hook/" ++ U.Ui.scratch(u, "@hook.id"), U.Ui.scratch(u, "@hook.secret")),

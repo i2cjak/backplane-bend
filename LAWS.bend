@@ -50,6 +50,7 @@ import ./src/core/hier.bend as HI
 import ./src/core/boot.bend as BT
 import ./src/core/store.bend as ST
 import ./src/core/sign.bend as SG
+import ./src/core/ring.bend as RG
 import ./src/core/cron.bend as CR
 import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
@@ -2267,6 +2268,24 @@ law index_stale_rejected:
   for sig: String
   for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
   {SG.Sign.index(secret, now, ts, delivery, trigger, test, body, sig) == False{} : Bool}
+
+# a webhook with no bearer token lets no bearer in, whatever is sent
+law bearer_needs_token:
+  for +given: String
+  {SG.Sign.bearer("", given) == False{} : Bool}
+
+# a form under a bearer token reaches the bot as JSON: its words, and a
+# note in place of the recording (a fuller example, with recordedAt and
+# client, is in test/bots_test.bend: normalizing it here takes too long)
+law ring_form_json:
+  {RG.Ring.form("--b\r\nContent-Disposition: form-data; name=\"transcription\"\r\n\r\nhi\r\n--b\r\nContent-Disposition: form-data; name=\"audio\"\r\n\r\nxx\r\n--b--\r\n", "2")
+    == "{\"source\":\"form-data\",\"transcription\":\"hi\",\"audio\":\"omitted, 2 bytes\"}" : String}
+
+# a phone reaches the hub's webhooks at the HTTPS address `tailscale
+# serve` gives the hub's own port, not another service's
+law tailnet_serve_https:
+  {TN.Tailnet.serve("{\"Web\":{\"a.ts.net:443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:3773\"}}},\"a.ts.net:8443\":{\"Handlers\":{\"/\":{\"Proxy\":\"http://127.0.0.1:3787\"}}}}}", "3787")
+    == "https://a.ts.net:8443" : String}
 
 # the step behind bot_spawn_bounded
 law bot_spawn_step:

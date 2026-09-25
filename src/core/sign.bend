@@ -80,6 +80,13 @@ def Sign.index.k(fresh: Bool, secret: String, ts: Nat, delivery: String, trigger
 def Sign.index(secret: String, +now: Nat, +ts: Nat, delivery: String, trigger: String, test: Bool, body: String, sig: String) -> Bool:
   Sign.index.k(Sign.fresh(now, ts), secret, ts, delivery, trigger, test, body, sig)
 
+# A webhook's bearer token (Authorization: Bearer <token>), for senders
+# that cannot sign, like the Pebble Index ring's app: the token sent
+# against the one kept, compared in constant time. A hook with no token
+# lets no bearer in.
+def Sign.bearer(+kept: String, +given: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(kept)), S.Ct.eq(Sign.utf8(given), Sign.utf8(kept)))
+
 # Replay cache
 # ------------
 

@@ -4182,6 +4182,15 @@ def Laws.index_stale_rejected(secret, now, ts, delivery, trigger, test, body, si
   %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.index.k(_, secret, ts, delivery, trigger, test, body, sig) == False{} : Bool}
   {==}
 
+def Laws.bearer_needs_token(given):
+  {==}
+
+def Laws.ring_form_json():
+  {==}
+
+def Laws.tailnet_serve_https():
+  {==}
+
 def Laws.bot_spawn_step(ok, n, h):
   match ok:
     case True{}:
