@@ -699,7 +699,7 @@ def Ui.actions() -> List<&2, String>:
    "pin", "unpin", "archive", "interrupt", "toggle-settled", "copy", "panel", "dismiss", "delete", "update",
    "flag", "setting", "model", "kicad-install", "answer", "git", "diff", "revert", "proj-open", "proj-cd", "proj-add", "proj-mkdir", "proj-q", "proj-close", "proj-enter",
    "effort", "skill", "snooze", "unarchive", "reorder", "move", "mention", "files",
-   "delete-no", "proj-new", "-43", "-44", "-45", "-46", "-47", "-48", "drop-hover",
+   "delete-no", "proj-new", "proj-find", "proj-remove", "proj-go", "proj-find-q", "proj-keep", "-48", "drop-hover",
    "attach", "attach-file", "detach", "term-toggle", "term-key", "term-paste", "key", "update-check", "machine",
    "row-settle", "row-unsettle", "row-snooze", "row-delete", "fold", "row-toggle", "kicad-open", "reorder-project", "look", "look-set",
    "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back",
@@ -1020,6 +1020,38 @@ def Side.rows.go(ps: List<&2, M.Project>, +ts: List<&2, M.Thread>, +navs: Map<&2
 def Side.rows(+st: M.State, +now: Nat) -> List<&2, SRow>:
   PSlot.rows(List.sort(~PSlot, ~PSlot.before, Side.rows.go(Ui.projects(st), Kids.keep(Ui.threads(st), Kids.set(st)), M.State.navs(st), now)))
 
+# Finding a project: while the sidebar's search is open (the "psearch"
+# flag) it shows only the projects whose name fuzzy-matches the query, form
+# field "pq" ("@f.pq"); an empty query keeps them all (law find_empty_keeps)
+def Find.keep(keep: Bool, r: SRow, rest: List<&2, SRow>) -> List<&2, SRow>:
+  match keep:
+    case True{}:
+      r <> rest
+    case False{}:
+      rest
+
+def Find.rows(rs: List<&2, SRow>, +q: String) -> List<&2, SRow>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case SRow{r, M.Project{id, +ti, ro, c, rm}, sh} <> t:
+      Find.keep(Nat.is_gt(FZ.Fuzzy.score(ti, q), 0n), SRow{r, M.Project{id, ti, ro, c, rm}, sh}, Find.rows(t, q))
+
+# the query in force: "" while the search is shut
+def Find.q.k(on: Bool, +dr: Map<&2, String>) -> String:
+  match on:
+    case True{}:
+      Str.get(dr, "@f.pq")
+    case False{}:
+      ""
+
+def Find.q(+op: Map<&2, Bool>, +dr: Map<&2, String>) -> String:
+  Find.q.k(Flag.get(op, "psearch"), dr)
+
+# the projects the sidebar shows, in order
+def Side.shown(+st: M.State, +now: Nat, +q: String) -> List<&2, SRow>:
+  Find.rows(Side.rows(st, now), q)
+
 def Side.ids(ts: List<&2, M.Thread>) -> List<&2, String>:
   match ts:
     case Nil{}:
@@ -1045,8 +1077,8 @@ def Side.visible.go(rs: List<&2, SRow>, +open: Map<&2, Bool>) -> List<&2, String
 # the threads the sidebar shows, top to bottom (collapsed shelves left out)
 def Side.visible(u: Ui) -> List<&2, String>:
   match u:
-    case Ui{+st, _, _, _, +op, _, +now, _, _, _, _, _, _, _, _, _, _}:
-      Side.visible.go(Side.rows(st, now), op)
+    case Ui{+st, _, +dr, _, +op, _, +now, _, _, _, _, _, _, _, _, _, _}:
+      Side.visible.go(Side.shown(st, now, Find.q(op, dr)), op)
 
 def Side.nth(xs: List<&2, String>, i: Nat) -> String:
   match xs i:
@@ -1126,8 +1158,8 @@ def Side.pids(rs: List<&2, SRow>) -> List<&2, String>:
 # the sidebar's projects, top to bottom
 def Side.projects(u: Ui) -> List<&2, String>:
   match u:
-    case Ui{+st, _, _, _, _, _, +now, _, _, _, _, _, _, _, _, _, _}:
-      Side.pids(Side.rows(st, now))
+    case Ui{+st, _, +dr, _, +op, _, +now, _, _, _, _, _, _, _, _, _, _}:
+      Side.pids(Side.shown(st, now, Find.q(op, dr)))
 
 def Side.only.k(keep: Bool, r: SRow, rest: List<&2, SRow>) -> List<&2, SRow>:
   match keep:
@@ -1812,7 +1844,50 @@ def Ui.scratch_set(u: Ui, +k: String, v: String) -> Ui:
 # one (or for ""); "look-set" sets project.color.<id> or project.icon.<id>
 # ("key=value") and leaves it open.
 def Ui.look(+u: Ui, +id: String) -> Ui:
-  Ui.scratch_set(u, "@look", Bool.pick(String, String.eq(Ui.scratch(u, "@look"), id), "", id))
+  Ui.scratch_set(Ui.scratch_set(u, "@rm", ""), "@look", Bool.pick(String, String.eq(Ui.scratch(u, "@look"), id), "", id))
+
+# "proj-remove" from the badge editor takes two clicks: the first arms it
+# ("@rm" is the project), the second removes the project. A removed
+# project leaves the sidebar with its threads kept; adding its folder
+# again brings it back as it was (Hub.project_add)
+def Ui.remove_project.k(armed: Bool, +u: Ui, +id: String) -> Act:
+  match armed:
+    case True{}:
+      Ui.rpc(Ui.scratch_set(Ui.scratch_set(u, "@rm", ""), "@look", ""), "project.remove", [J.KV{"project", J.Str{id}}])
+    case False{}:
+      Act{Ui.scratch_set(u, "@rm", id), Nil{}}
+
+def Ui.remove_project(+u: Ui, +id: String) -> Act:
+  Ui.remove_project.k(Bool.and(Bool.not(String.is_empty(id)), String.eq(Ui.scratch(u, "@rm"), id)), u, id)
+
+# "proj-find" opens the sidebar's search, focused and empty, or shuts it
+# ("on" and "off" say which; "" flips it). "proj-find-q" sets its query (the
+# phones' field), "proj-keep" disarms a remove
+def Find.toggle.k(open: Bool, +u: Ui) -> Act:
+  match open:
+    case True{}:
+      Act{Ui.scratch_set(Ui.flag_off(u, "psearch"), "@f.pq", ""), Nil{}}
+    case False{}:
+      Act{Ui.scratch_set(Ui.flag_on(u, "psearch"), "@f.pq", ""), [Focus{"proj-find"}]}
+
+def Find.toggle(+u: Ui, +v: String) -> Act:
+  Find.toggle.k(Bool.pick(Bool, String.is_empty(v), Ui.flag(u, "psearch"), String.eq(v, "off")), u)
+
+# Enter in the search goes to the first project shown, or to project v
+# when it names one (a phone names it: its list spans hubs), to its top
+# thread (or a new thread when it has none), and shuts the search
+def Find.go.k(none: Bool, +u: Ui, +pid: String, +home: String) -> Act:
+  match none:
+    case True{}:
+      Ui.new_thread(u, pid)
+    case False{}:
+      Ui.select(u, home)
+
+def Find.go.p(+u: Ui, +pid: String) -> Act:
+  Bool.pick(Act, String.is_empty(pid), Act{u, Nil{}}, Find.go.k(String.is_empty(Side.home(u, pid)), u, pid, Side.home(u, pid)))
+
+def Find.go(+u: Ui, +v: String) -> Act:
+  Find.go.p(Ui.scratch_set(Ui.flag_off(u, "psearch"), "@f.pq", ""), Bool.pick(String, String.is_empty(v), Side.first(Side.projects(u)), v))
 
 def Ui.info_set(u: Ui, +k: String, +v: String) -> Ui:
   match u:
@@ -3263,6 +3338,16 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Act{Ui.scratch_set(u, "@del", ""), Nil{}}
     case 42n:
       Proj.run.k(3n, u, value)
+    case 43n:
+      Find.toggle(u, value)
+    case 44n:
+      Ui.remove_project(u, value)
+    case 45n:
+      Find.go(u, value)
+    case 46n:
+      Act{Ui.scratch_set(u, "@f.pq", value), Nil{}}
+    case 47n:
+      Act{Ui.scratch_set(u, "@rm", ""), Nil{}}
     case 49n:
       Act{Ui.drop_hover(u, value), Nil{}}
     case 50n:

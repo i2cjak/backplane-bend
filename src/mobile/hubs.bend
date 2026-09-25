@@ -404,21 +404,23 @@ def Hubs.register(hs: Hubs, p: String, t: String, k: String, th: String, e: Stri
 
 # actions whose value names a row, a project, a bot or room, or (opening
 # the project picker or a bot or room form, adding a project) a hub: they
-# go to the hub it names; the first eight also bring it into focus, so the
+# go to the hub it names; the first nine also bring it into focus, so the
 # picker's, the bot's and the forms' own actions follow it
 def Hubs.routed(+action: String) -> Nat:
-  C.Codec.pos(["select", "new-thread", "picker-open", "bot", "room", "remote", "bot-new", "room-new",
-    "row-settle", "row-unsettle", "row-snooze", "row-delete", "toggle-settled", "add-project"], action)
+  C.Codec.pos(["select", "new-thread", "picker-open", "bot", "room", "remote", "bot-new", "room-new", "proj-go",
+    "row-settle", "row-unsettle", "row-snooze", "row-delete", "toggle-settled", "add-project", "proj-remove"], action)
 
 def Hubs.moves() -> Nat:
-  8n
+  9n
 
 def Hubs.routes() -> Nat:
-  14n
+  16n
 
-# answers to what any hub may be showing (its error, a delete to confirm)
+# answers to what any hub may be showing (its error, a delete or remove
+# to confirm); the project search is every hub's at once, since the list
+# it filters spans them all ("proj-find", "proj-find-q", unrouted, go to all)
 def Hubs.everywhere(+action: String) -> Bool:
-  Nat.is_lt(C.Codec.pos(["dismiss", "delete-no"], action), 2n)
+  Nat.is_lt(C.Codec.pos(["dismiss", "delete-no", "proj-keep", "proj-find", "proj-find-q"], action), 5n)
 
 # of what the hub let go says, only what it sends (its viewer's watch
 # ends); its focus and scroll are for a screen no longer shown
@@ -483,8 +485,27 @@ def Hubs.act.r(routed: Bool, +hs: Hubs, +action: String, +value: String) -> HAct
     case False{}:
       Hubs.act.k(hs, Hubs.cur(hs), False{}, action, value)
 
-def Hubs.act(+hs: Hubs, +action: String, +value: String) -> HAct:
+def Hubs.act.one(+hs: Hubs, +action: String, +value: String) -> HAct:
   Hubs.act.r(Nat.is_lt(Hubs.routed(action), Hubs.routes()), hs, action, value)
+
+def Hubs.act.then(a: HAct, b: HAct) -> HAct:
+  match a b:
+    case HAct{_, cs, als} HAct{h, cs2, als2}:
+      HAct{h, List.append(&2, HCmd, cs, cs2), List.append(&2, J.Json, als, als2)}
+
+def Hubs.act.go.after(+a: HAct, +action: String, +value: String) -> HAct:
+  Hubs.act.then(a, Hubs.act.one(Hubs.after(a), action, value))
+
+def Hubs.act.go.k(go: Bool, +hs: Hubs, +action: String, +value: String) -> HAct:
+  match go:
+    case True{}:
+      Hubs.act.go.after(Hubs.act.one(hs, "proj-find", "off"), action, value)
+    case False{}:
+      Hubs.act.one(hs, action, value)
+
+# going to a found project shuts the search on every hub, then goes
+def Hubs.act(+hs: Hubs, +action: String, +value: String) -> HAct:
+  Hubs.act.go.k(String.eq(action, "proj-go"), hs, action, value)
 
 def Hubs.self(+u: U.Ui) -> String:
   J.Json.get_str(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "machines")), J.Null{}), "self"), "name", "")
@@ -639,16 +660,19 @@ def Hubs.keys(hs: List<&2, Hub>) -> List<&2, String>:
 def Hubs.found(+hs: List<&2, Hub>) -> List<&2, J.Json>:
   Hubs.peers(Hubs.peer_lists(hs), Hubs.keys(hs))
 
-def Hubs.empty(n: Nat, +m: Nat) -> String:
-  Bool.pick(String, Nat.is_eq(m, 0n), "Pair with a hub to start.", S.Mob.empty(n))
+def Hubs.empty(+n: Nat, +m: Nat, +finding: Bool) -> String:
+  Bool.pick(String, Nat.is_eq(m, 0n), "Pair with a hub to start.",
+    Bool.pick(String, Bool.and(finding, Nat.is_eq(n, 0n)), "No project matches.", S.Mob.empty(n)))
 
 def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J.Json:
   J.Json.obj([J.KV{"online", J.Json.bool(Hubs.all_on(ss))}, J.KV{"version", J.Json.str(J.Json.get_str(Hubs.of(ss, cur), "version", ""))},
     J.KV{"error", J.Json.str(Hubs.said(ss, "error"))}, J.KV{"note", J.Json.str(Hubs.said(ss, "note"))},
     J.KV{"sel", J.Json.str(J.Json.get_str(Hubs.of(ss, cur), "sel", ""))},
-    J.KV{"empty", J.Json.str(Hubs.empty(List.length(&2, J.Json, Hubs.projects(ss, False{})), List.length(&2, Shown, ss)))},
+    J.KV{"empty", J.Json.str(Hubs.empty(List.length(&2, J.Json, Hubs.projects(ss, False{})), List.length(&2, Shown, ss), J.Json.get_bool(Hubs.first_obj(ss, "search"), "open", False{})))},
     J.KV{"projects", J.Json.arr(Hubs.projects(ss, Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
     J.KV{"deleting", Hubs.first_obj(ss, "deleting")},
+    J.KV{"removing", Hubs.first_obj(ss, "removing")},
+    J.KV{"search", Hubs.first_obj(ss, "search")},
     J.KV{"folders", J.Json.get_obj(Hubs.of(ss, cur), "folders")},
     J.KV{"settings", J.Json.get_obj(Hubs.of(ss, cur), "settings")},
     J.KV{"find", J.Json.get_obj(Hubs.of(ss, cur), "find")},

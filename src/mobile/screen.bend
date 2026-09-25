@@ -637,6 +637,23 @@ def Mob.deleting.k(none: Bool, +st: M.State, +id: String) -> J.Json:
 def Mob.deleting(+u: U.Ui) -> J.Json:
   Mob.deleting.k(String.is_empty(U.Ui.row_deleting(u)), Mob.st(u), U.Ui.row_deleting(u))
 
+# a project remove to confirm ("proj-remove" armed it; "proj-remove" with
+# id removes it, "proj-keep" cancels): the phones' second click
+def Mob.removing.k(none: Bool, +st: M.State, +id: String) -> J.Json:
+  match none:
+    case True{}:
+      J.Null{}
+    case False{}:
+      J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str("Remove " ++ U.Ui.project_title(st, id) ++ "?")},
+        J.KV{"body", J.Json.str("Its threads are kept. Adding its folder again brings it back.")}, J.KV{"yes", J.Json.str("Remove")}, J.KV{"no", J.Json.str("Cancel")}])
+
+def Mob.removing(+u: U.Ui) -> J.Json:
+  Mob.removing.k(String.is_empty(U.Ui.scratch(u, "@rm")), Mob.st(u), U.Ui.scratch(u, "@rm"))
+
+# the project search: open ("proj-find" on/off), its query ("proj-find-q")
+def Mob.search(+u: U.Ui) -> J.Json:
+  J.Json.obj([J.KV{"open", J.Json.bool(U.Ui.flag(u, "psearch"))}, J.KV{"query", J.Json.str(U.Ui.scratch(u, "@f.pq"))}, J.KV{"hint", J.Json.str("Find a project")}])
+
 # Settings, as the web's: rows of a label, a note and buttons, each sending
 # its action with its value ("on" marks the current choice)
 def Mob.set.btn(+label: String, +action: String, +value: String, on: Bool) -> J.Json:
@@ -705,12 +722,14 @@ def Mob.find(open: Bool, +u: U.Ui) -> J.Json:
 # the whole screen
 def Mob.screen(+u: U.Ui) -> J.Json:
   match u:
-    case U.Ui{+st, +sel, _, _, +o, +on, +now, _, _, +v, _, _, +e, +note, _, _, _}:
+    case U.Ui{+st, +sel, +dr, _, +o, +on, +now, _, _, +v, _, _, +e, +note, _, _, _}:
       J.Json.obj([J.KV{"online", J.Json.bool(on)}, J.KV{"version", J.Json.str(v)}, J.KV{"error", J.Json.str(e)},
         J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.str(sel)},
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
-        J.KV{"projects", J.Json.arr(Mob.projects(U.Side.rows(st, now), o, st, now))},
+        J.KV{"projects", J.Json.arr(Mob.projects(U.Side.shown(st, now, U.Find.q(o, dr)), o, st, now))},
+        J.KV{"search", Mob.search(u)},
         J.KV{"deleting", Mob.deleting(u)},
+        J.KV{"removing", Mob.removing(u)},
         J.KV{"settings", Mob.settings(U.Ui.flag(u, "settings"), u)},
         J.KV{"find", Mob.find(U.Ui.flag(u, "palette"), u)},
         J.KV{"folders", PK.MPick.json(u)},

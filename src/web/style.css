@@ -42,6 +42,9 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .conn.on { background: var(--ok); }
 .add { display: flex; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .add input { flex: 1; min-width: 0; background: var(--bg); border: 1px solid var(--line); padding: 3px 6px; }
+.find { padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.find input { width: 100%; box-sizing: border-box; background: var(--bg); border: 1px solid var(--line); padding: 3px 6px; }
+.brand .icon.on { color: var(--text); }
 .project { padding: 8px 0 4px; }
 .project-head { cursor: grab; display: flex; align-items: center; padding: 2px 8px 4px 12px; color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
 .project-head .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -121,6 +124,7 @@ button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowra
 .look .swatch.on { outline: 2px solid var(--text); outline-offset: 1px; }
 .look .glyph { width: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; color: var(--dim); }
 .look .glyph.on { color: var(--tint); border-color: var(--tint); background: var(--sel, var(--raise)); }
+.look .remove { align-self: flex-start; color: var(--bad); }
 .composer .skills { position: absolute; bottom: 100%; left: 16px; right: 16px; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); padding: 4px; }
 .composer .skills button { display: flex; gap: 10px; text-align: left; border-color: transparent; background: none; }
 .composer .skills button:first-child { background: var(--raise); }

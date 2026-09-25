@@ -29,6 +29,9 @@ data class Project(
 // a delete a row asked for, waiting for yes ("row-delete" id) or no
 data class Deleting(val id: String, val title: String, val body: String, val yes: String, val no: String)
 
+// the project search over the list: open, its query ("proj-find-q"), the hint
+data class Search(val open: Boolean, val query: String, val hint: String)
+
 // the project picker: its path field, the field's hint, an error, and the
 // rows (a tap sends action with value; one with no action is only shown)
 data class FolderRow(val label: String, val action: String, val value: String, val kind: String)
@@ -216,6 +219,8 @@ data class Screen(
     val bots: List<BotRow> = emptyList(), val rooms: List<RoomRow> = emptyList(),
     val newBot: NewBot? = null, val newRoom: NewRoom? = null, val bot: BotView? = null,
     val settings: Settings? = null, val find: Find? = null,
+    // a project remove to confirm ("proj-remove" id, or "proj-keep")
+    val removing: Deleting? = null, val search: Search? = null,
 )
 
 data class Cmd(
@@ -414,6 +419,10 @@ fun parseScreen(o: JSONObject) = Screen(
         })
     },
     o.optJSONObject("find")?.let { Find(it.optString("mode"), it.optString("query"), folderRows(it.optJSONArray("rows"))) },
+    o.optJSONObject("removing")?.let {
+        Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
+    },
+    o.optJSONObject("search")?.let { Search(it.optBoolean("open"), it.optString("query"), it.optString("hint")) },
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =

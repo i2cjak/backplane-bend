@@ -84,6 +84,11 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.AddCircleOutline
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Folder
@@ -137,8 +142,38 @@ fun App(m: AppModel) {
         },
         dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
     )
+    val r = s.removing
+    // likewise the remove just answered
+    var removed by remember(r?.id) { mutableStateOf(false) }
+    if (r != null && !removed) AlertDialog(
+        onDismissRequest = { removed = true; m.act("proj-keep") },
+        title = { Text(r.title) },
+        text = { Text(r.body) },
+        confirmButton = {
+            TextButton(onClick = { removed = true; m.act("proj-remove", r.id) }) {
+                Text(r.yes, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = { removed = true; m.act("proj-keep") }) { Text(r.no) } },
+    )
     s.settings?.let { SettingsSheet(m, it) }
     s.find?.let { FindSheet(m, it) }
+}
+
+// the project search's field: typing filters the list ("proj-find-q"),
+// Go goes to the first project shown ("proj-go"), the x shuts it
+@Composable
+private fun SearchField(m: AppModel, f: Search, first: String?) {
+    var text by remember { mutableStateOf(f.query) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    OutlinedTextField(text, { t -> text = t; if (t != f.query) m.act("proj-find-q", t) },
+        Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focus),
+        singleLine = true, placeholder = { Text(f.hint) },
+        leadingIcon = { Icon(Icons.Filled.Search, null) },
+        trailingIcon = { IconButton(onClick = { m.act("proj-find", "off") }) { Icon(Icons.Filled.Close, "Close search") } },
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.None, autoCorrectEnabled = false, imeAction = ImeAction.Go),
+        keyboardActions = KeyboardActions(onGo = { first?.let { m.act("proj-go", it) } }))
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -333,6 +368,9 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                             })
                         }
                     }
+                    IconButton(onClick = { m.act("proj-find", if (s.search?.open == true) "off" else "on") }) {
+                        Icon(Icons.Filled.Search, "Find a project")
+                    }
                     IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Hubs") }
                     Box {
                         IconButton(onClick = { more = true }) { Icon(Icons.Filled.MoreVert, "More") }
@@ -354,8 +392,12 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
             }
         }
         LazyColumn(Modifier.fillMaxSize(), contentPadding = pad) {
+            s.search?.takeIf { it.open }?.let { f -> item(key = "find") { SearchField(m, f, s.projects.firstOrNull()?.id) } }
             for (p in s.projects) {
                 item(key = "p:" + p.id) {
+                    // a long press offers to remove the project
+                    var menu by remember { mutableStateOf(false) }
+                    Box {
                     ListItem(
                         headlineContent = { Text(p.title, style = MaterialTheme.typography.titleMedium) },
                         supportingContent = {
@@ -365,7 +407,13 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                         trailingContent = {
                             IconButton(onClick = { m.act("new-thread", p.id) }) { Icon(Icons.Filled.Add, "New thread") }
                         },
+                        modifier = Modifier.combinedClickableCompat(onLong = { menu = true }) {},
                     )
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("Remove project") }, leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                            onClick = { menu = false; m.act("proj-remove", p.id) })
+                    }
+                    }
                 }
                 items(p.threads, key = { "t:" + it.id }) { ThreadRow(m, it) }
                 if (p.snoozed.isNotEmpty()) {

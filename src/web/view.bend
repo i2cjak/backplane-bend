@@ -117,35 +117,46 @@ def View.glyphs(ns: List<&2, String>, +cur: String, +id: String) -> List<&2, D.N
     case +n <> t:
       WI.WIcon.button(Bool.pick(String, String.eq(n, cur), "glyph on", "glyph"), "look-set", BG.Badge.icon_key(id) ++ "=" ++ n, n, n, 16, "") <> View.glyphs(t, cur, id)
 
-def View.look(open: Bool, +st: M.State, +id: String) -> List<&2, D.Node>:
+# its last row removes the project (two clicks: client.bend's
+# Ui.remove_project)
+def View.look(open: Bool, +st: M.State, +id: String, +rm: Bool) -> List<&2, D.Node>:
   match open:
     case True{}:
       [D.El{"div", "", [D.At{"class", "shade"}, D.At{"data-value", ""}, D.On{"click", "look"}], Nil{}},
        D.El{"div", "", [D.At{"class", "look"}], [
          D.El{"div", "", [D.At{"class", "swatches"}], View.swatches(BG.Badge.colors(), BG.Badge.color(st, id), id)},
-         D.El{"div", "", [D.At{"class", "glyphs"}], View.glyphs(BG.Badge.icons(), BG.Badge.icon(st, id), id)}]}]
+         D.El{"div", "", [D.At{"class", "glyphs"}], View.glyphs(BG.Badge.icons(), BG.Badge.icon(st, id), id)},
+         D.Dom.button("remove", "proj-remove", id, "Remove from the sidebar (adding its folder again brings it back)", Bool.pick(String, rm, "Click again to remove", "Remove project"))]}]
     case False{}:
       Nil{}
 
-def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String) -> D.Node:
+def View.project(r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +rm: String) -> D.Node:
   match r:
     case U.SRow{_, M.Project{+id, title, root, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
       D.El{"section", id, [D.At{"class", "project"}, D.At{"style", "--tint:" ++ BG.Badge.css_of(st, id)}, D.At{"data-drag-to", id}, D.At{"data-drag-act", "reorder-project"}],
         List.concat(&2, D.Node, [[D.El{"div", "", [D.At{"class", "project-head"}, D.At{"title", root}, D.At{"draggable", "true"}, D.At{"data-drag", id}, D.At{"data-drag-act", "reorder-project"}],
             [WI.WIcon.button("badge", "look", id, "Colour and icon", BG.Badge.icon(st, id), 14, ""), D.Dom.span("name", title), WI.WIcon.button("icon", "new-thread", id, "New thread", "plus", 16, "")]}],
-          View.look(String.eq(look, id), st, id),
+          View.look(String.eq(look, id), st, id, String.eq(rm, id)),
           View.rows_in(pinned, st, sel, now, True{}, False{}),
           View.rows_in(active, st, sel, now, True{}, False{}),
           View.snoozed(snoozed, st, sel, now),
           View.shelf(U.Flag.get(open, id), id, "Settled", settled, st, sel, now),
           View.shelf(U.Flag.get(open, "arch:" ++ id), "arch:" ++ id, "Archived", M.Archive.of(hidden), st, sel, now)])}
 
-def View.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String) -> List<&2, D.Node>:
+def View.projects(rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +rm: String) -> List<&2, D.Node>:
   match rs:
     case Nil{}:
       Nil{}
     case r <> t:
-      View.project(r, open, st, sel, now, look) <> View.projects(t, open, st, sel, now, look)
+      View.project(r, open, st, sel, now, look, rm) <> View.projects(t, open, st, sel, now, look, rm)
+
+# the project search, while open ("proj-find" opens and shuts it)
+def View.find(find: Bool, +q: String) -> List<&2, D.Node>:
+  match find:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "find"}], [WB.WB.input("proj-find", "pq", q, "Find a project", "proj-go")]}]
+    case False{}:
+      Nil{}
 
 def View.add(adding: Bool) -> List<&2, D.Node>:
   match adding:
@@ -172,20 +183,21 @@ def View.machines(many: Bool, rs: List<&2, U.MRow>) -> List<&2, D.Node>:
     case False{}:
       Nil{}
 
-def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String, +look: String, bots: List<&2, D.Node>) -> D.Node:
+def View.sidebar.k(+ms: List<&2, U.MRow>, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, adding: Bool, v: String, +look: String, +rm: String, +q: String, bots: List<&2, D.Node>) -> D.Node:
   D.El{"aside", "sidebar", [D.At{"class", "sidebar"}],
         D.Dom.cat([D.El{"div", "", [D.At{"class", "brand"}], [
             D.Dom.span(Bool.pick(String, on, "conn on", "conn"), ""),
             D.Dom.span("name", "Backplane"), D.Dom.span("ver", v),
+            WI.WIcon.button(Bool.pick(String, U.Flag.get(open, "psearch"), "icon on", "icon"), "proj-find", "", "Find a project", "search", 16, ""),
             WI.WIcon.button("icon", "proj-open", "", "Add project", "plus", 16, "")]}],
-          D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding),
-            D.Dom.cat(View.projects(U.Side.rows(st, now), open, st, sel, now, look), D.Dom.cat(bots,
-            [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")])))))}
+          D.Dom.cat(View.machines(Nat.is_gt(List.length(&2, U.MRow, ms), 1n), ms), D.Dom.cat(View.add(adding), D.Dom.cat(View.find(U.Flag.get(open, "psearch"), q),
+            D.Dom.cat(View.projects(U.Side.shown(st, now, q), open, st, sel, now, look, rm), D.Dom.cat(bots,
+            [WI.WIcon.button("settings-link", "flag", "settings", "Settings", "settings", 16, "Settings")]))))))}
 
 def View.sidebar.u(bots: List<&2, D.Node>, u: U.Ui) -> D.Node:
   match u:
     case U.Ui{+st, +sel, +d, l, +open, +on, +now, +adding, pa, +v, r, w, e, note, nf, ob, tr}:
-      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v, U.Str.get(d, "@look"), bots)
+      View.sidebar.k(U.Machines.rows(U.Ui{st, sel, d, l, open, on, now, adding, pa, v, r, w, e, note, nf, ob, tr}), st, sel, open, on, now, adding, v, U.Str.get(d, "@look"), U.Str.get(d, "@rm"), U.Find.q(open, d), bots)
 
 # the sidebar: the projects, then the bots and rooms (bots.bend)
 def View.sidebar(+u: U.Ui) -> D.Node:
