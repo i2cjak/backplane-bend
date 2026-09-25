@@ -2376,6 +2376,53 @@ law bot_spawn_bounded:
   for +d: Nat
   {BHS.Spawn.bound(BHS.Spawn.next(d)) == True{} : Bool}
 
+# the step behind bot_request_in_room
+law bot_request_keep:
+  for dm: Bool
+  for r: BOT.Room
+  for +i: String
+  for +n: String
+  for +ms: List<&2, String>
+  for +now: Nat
+  for h: {String.starts_with(i, "dm:") == False{} : Bool}
+  for e: {BOT.Room.is_dm(r) == dm : Bool}
+  {BHS.Req.ok(Some{BHS.Req.target(BHS.Req.keep.k(dm, r), i, n, ms, now)}) == True{} : Bool}
+
+# a request from one bot to another is posted in a room, never a direct
+# message, so the person can follow it: a room found is used only when it
+# is not a dm: one, and a new one's id (bot_request_fresh_id) is not either
+law bot_request_in_room:
+  for m: Maybe<&2, BOT.Room>
+  for +i: String
+  for +n: String
+  for +ms: List<&2, String>
+  for +now: Nat
+  for h: {String.starts_with(i, "dm:") == False{} : Bool}
+  {BHS.Req.ok(Some{BHS.Req.target(BHS.Req.keep(m), i, n, ms, now)}) == True{} : Bool}
+
+# a new request room's id is never a direct message's
+law bot_request_fresh_id:
+  for +now: Nat
+  for +seq: Nat
+  {String.starts_with(H.Hub.id("r", now, seq), "dm:") == False{} : Bool}
+
+# a bot that names no project may not delegate: its work would run where
+# the person cannot see it
+law bot_delegate_needs_project:
+  for +s: M.State
+  for +now: Nat
+  for +t: String
+  for +proj: String
+  for +p: J.Json
+  {MC.Res.good(MC.Mcp.delegate.b(True{}, True{}, s, now, t, proj, p)) == False{} : Bool}
+
+# a bot's delegated child is never hidden under the bot: it shows in the
+# sidebar of the project it runs in
+law kids_bot_child_shown:
+  for m: Map<&2, Bool>
+  for +c: String
+  {U.Kids.add(True{}, m, c) == m : Map<&2, Bool>}
+
 # a cat at rest (ready) holds still in the window: resting bots never keep
 # the window drawing frames
 law bot_mood_idle_still:

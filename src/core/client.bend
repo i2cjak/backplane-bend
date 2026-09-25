@@ -797,21 +797,33 @@ def Ui.root(u: Ui) -> String:
 
 # Views both clients share
 # ------------------------
-# Delegated child threads live under their parent, not in the sidebar; a
-# thread lists the tasks it delegated; the model list comes from the
-# machine's info ({"provider": [model, ...]}).
+# Delegated child threads live under their parent, not in the sidebar,
+# except a bot's: a bot's delegated work is a thread of its own in the
+# project it named, where the person can follow it (law
+# kids_bot_child_shown); a thread lists the tasks it delegated; the model
+# list comes from the machine's info ({"provider": [model, ...]}).
 
-def Kids.of(ts: List<&2, M.Task>, m: Map<&2, Bool>) -> Map<&2, Bool>:
+def Kids.add(bot: Bool, m: Map<&2, Bool>, +child: String) -> Map<&2, Bool>:
+  match bot:
+    case True{}:
+      m
+    case False{}:
+      Map.set(&2, Bool, m, child, True{})
+
+def Kids.of(ts: List<&2, M.Task>, +w: BT.World, m: Map<&2, Bool>) -> Map<&2, Bool>:
   match ts:
     case Nil{}:
       m
-    case M.Task{_, _, child, _, _, _, _, _, _} <> t:
-      Kids.of(t, Map.set(&2, Bool, m, child, True{}))
+    case M.Task{_, +parent, +child, _, _, _, _, _, _} <> t:
+      Kids.of(t, w, Kids.add(BT.World.is_bot_thread(w, parent), m, child))
 
-def Kids.set(s: M.State) -> Map<&2, Bool>:
+def Kids.set.k(s: M.State, +w: BT.World) -> Map<&2, Bool>:
   match s:
     case M.State{_, _, _, _, tk, _, _, _, _, _, _}:
-      Kids.of(Map.values(&2, M.Task, tk), Map.new(&2, Bool))
+      Kids.of(Map.values(&2, M.Task, tk), w, Map.new(&2, Bool))
+
+def Kids.set(+s: M.State) -> Map<&2, Bool>:
+  Kids.set.k(s, M.State.bots(s))
 
 def Kids.keep.k(kid: Bool, t: M.Thread, rest: List<&2, M.Thread>) -> List<&2, M.Thread>:
   match kid:

@@ -28,6 +28,15 @@ and `thread_interrupt` take any of them, and `thread_launch` needs a
 `project` (a name or id from `project_list`). The new thread shows in that
 project like the person's own, its first message naming the bot.
 
+New work gets a visible thread. A bot starts it with `thread_launch` and
+its `project`, and `delegate_task` from a bot needs a `project` too (law
+`bot_delegate_needs_project`): the child runs in that project's folder,
+its first message names the bot, and unlike a thread's delegated child it
+is not hidden under its parent (`Kids.set` in client.bend skips children
+of bot threads, law `kids_bot_child_shown`), so the person sees it in that
+project's sidebar. Its result still comes back to the bot as a message,
+and the delegation depth limit applies as before.
+
 `bot_create` makes a sub-bot for a lasting role. Its maker is kept as the
 setting `bot.parent.<id>`. Sub-bots go at most two levels below a bot a
 person made (law `bot_spawn_bounded`), and a bot keeps at most eight.
@@ -69,10 +78,23 @@ than the hop of the turn that sent it. A bot never sends past
 
 ## Rooms and messages
 
-- `bot_send(to, text)`: `to` is a bot name here, or `name@peer` elsewhere.
+- `bot_send(to, text, topic)`: `to` is a bot name here, or `name@peer`
+  elsewhere. A request between bots goes in a room, not a private
+  message, so the person and other bots can follow it: the live room whose
+  members are exactly the two bots and whose name is the topic (any case;
+  with no topic, the two names sorted, `miso + tofu`), else a new one
+  (`RoomSet`, then the post). Asking again, or answering, with the same
+  topic lands in the same room, whichever bot sends and on either machine
+  (members compare as a bot's id here, or its lower-case name and the
+  peer id). A bot on another machine is a member like any other
+  (`name@machine`), so the post travels as a shared room post (below).
+  `Req.*` in bothub.bend; law `bot_request_in_room` (a request is never
+  posted to a `dm:` room) with `bot_request_fresh_id`.
+- `bot_send` with `direct: true` is a private message, for when the person
+  asks for one: room `dm:<a>:<b>`, names sorted, as before.
 - `room_post(room, text)`: every other member gets it in their inbox.
-- Both are logged as `RoomPosted` (direct messages in room `dm:<a>:<b>`,
-  names sorted), so people can read every conversation.
+- All are logged as `RoomPosted`, so people can read every conversation.
+- The hop bound covers all of them alike.
 - Delivery to a local bot goes through the thread inbox (`Hub.inbox`): it
   queues behind a running turn, never interrupts.
 

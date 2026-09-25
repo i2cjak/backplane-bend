@@ -4653,6 +4653,32 @@ def Laws.bot_spawn_step(ok, n, h):
 def Laws.bot_spawn_bounded(d):
   Laws.bot_spawn_step(Nat.is_le(1n+d, BHS.Spawn.max()), 1n+d, {==})
 
+def Laws.bot_request_keep(dm, r, i, n, ms, now, h, e):
+  match dm:
+    case True{}:
+      %Equal.sym(Bool, String.starts_with(i, "dm:"), False{}, h) : {Bool.not(_) == True{} : Bool}
+      {==}
+    case False{}:
+      %Equal.sym(Bool, BOT.Room.is_dm(r), False{}, e) : {Bool.not(_) == True{} : Bool}
+      {==}
+
+def Laws.bot_request_in_room(m, i, n, ms, now, h):
+  match m:
+    case Some{+r}:
+      Laws.bot_request_keep(BOT.Room.is_dm(r), r, i, n, ms, now, h, {==})
+    case None{}:
+      %Equal.sym(Bool, String.starts_with(i, "dm:"), False{}, h) : {Bool.not(_) == True{} : Bool}
+      {==}
+
+def Laws.bot_request_fresh_id(now, seq):
+  {==}
+
+def Laws.bot_delegate_needs_project(s, now, t, proj, p):
+  {==}
+
+def Laws.kids_bot_child_shown(m, c):
+  {==}
+
 def Laws.bot_mood_idle_still():
   {==}
 def Laws.perf_errors_always_logged(th):
