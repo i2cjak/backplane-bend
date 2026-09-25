@@ -129,3 +129,7 @@ push.apns.team   <Team ID>
 ```
 
 (settings via `setting.set`; only the path is stored, never the key).
+Until all three are set (and the key file exists) the hub logs `backplane:
+push: phones are registered but ...` at each turn end instead of pushing.
+The key must belong to the team that owns the app's bundle id, or APNs
+answers `TopicDisallowed`.
