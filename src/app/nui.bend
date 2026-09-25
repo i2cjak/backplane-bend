@@ -1927,10 +1927,39 @@ def Fld.paste(on: Bool, +n: Nui, +m: Nat, +text: String) -> Step:
     case False{}:
       Step{n, Nil{}, False{}}
 
+# Up and Down in the composer, and a press or drag in it, ask layout to
+# place the caret by the lines it shows ("@cq", layout.bend's Comp.pend)
+def Cq.ask(+n: Nui, +q: String) -> Step:
+  Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@cq", q)), Nil{}, True{}}
+
+def Cq.vert(+code: U32, +mods: U32) -> String:
+  Bool.pick(String, U32.is_eq(code, Key.up()), "u", "d") ++ Bool.pick(String, U32.is_ne(U32.and(mods, 1), 0), "1", "0")
+
+def Cq.is_vert(+code: U32, +mods: U32) -> Bool:
+  Bool.and(Bool.or(U32.is_eq(code, Key.up()), U32.is_eq(code, Key.down())), U32.is_eq(U32.and(mods, 6), 0))
+
+def Cq.at(+k: String, +x: U32, +y: U32) -> String:
+  k ++ "," ++ U32.show(x) ++ "," ++ U32.show(y)
+
+# a press in the composer focuses it, puts the caret there and starts a
+# drag ("@cdrag") that selects until the button comes up
+def Cq.press(+n: Nui, +x: U32, +y: U32) -> Step:
+  Cq.ask(Nui.with_ui(Nui.with_focus(n, "composer"), U.Ui.scratch_set(Nui.ui(n), "@cdrag", "1")), Cq.at("p", x, y))
+
+def Cq.dragging(+n: Nui) -> Bool:
+  String.eq(U.Ui.scratch(Nui.ui(n), "@cdrag"), "1")
+
+def Nui.composer.key(vert: Bool, n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
+  match vert n:
+    case True{} +n2:
+      Cq.ask(n2, Cq.vert(code, mods))
+    case False{} Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
+      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, U32.is_ne(U32.and(mods, 2), 0))
+
 def Nui.field.k(comp: Bool, path: Bool, n: Nui, +m: Nat, +code: U32, +text: U32, +mods: U32) -> Step:
   match comp path n:
-    case True{} _ Nui{+u, w, h, mx, my, sd, sc, +ca, fo, pa, hi, ms, vw}:
-      Nui.composer.s(Nui.skills_on(u), code, Ed.key(code, text, mods, U.Ui.draft_text(u), ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, U32.is_ne(U32.and(mods, 2), 0))
+    case True{} _ +n2:
+      Nui.composer.key(Cq.is_vert(code, mods), n2, m, code, text, mods)
     case False{} True{} Nui{u, w, h, mx, my, sd, sc, +ca, fo, +pa, hi, ms, vw}:
       Nui.path.k(Ed.key(code, text, mods, pa, ca, m), Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw})
     case _ _ +n2:
@@ -2259,13 +2288,20 @@ def Nui.move.s(sel: Bool, drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> 
     case False{}:
       Nui.move.k(drag, n, x, y, mods)
 
+def Nui.move.c(comp: Bool, drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
+  match comp:
+    case True{}:
+      Cq.ask(n, Cq.at("m", x, y))
+    case False{}:
+      Nui.move.s(Sel.on(n), drag, n, x, y, mods)
+
 def Nui.move(drag: Bool, +n: Nui, +x: U32, +y: U32, +mods: U32) -> Step:
-  Nui.move.s(Sel.on(n), drag, n, x, y, mods)
+  Nui.move.c(Cq.dragging(n), drag, n, x, y, mods)
 
 def Sel.end(s: Step) -> Step:
   match s:
     case Step{+n, cs, d}:
-      Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@ts.on", "")), cs, d}
+      Step{Nui.with_ui(n, U.Ui.scratch_set(U.Ui.scratch_set(Nui.ui(n), "@ts.on", ""), "@cdrag", "")), cs, d}
 
 def Sel.text.go(hs: List<&2, Hit>) -> String:
   match hs:
@@ -2299,10 +2335,17 @@ def Row.press.a(line: Bool, +n: Nui, +action: String, +value: String, +x: U32, +
       Row.press.k(Bool.and(Bool.or(String.eq(action, "select"), String.eq(action, "project")), U32.is_lt(x, 264)), Nui.click.act(String.eq(action, "focus"), n, action, value),
         Bool.pick(String, String.eq(action, "project"), "project:" ++ value, value), y)
 
+def Row.press.c(comp: Bool, +n: Nui, +action: String, +value: String, +x: U32, +y: U32) -> Step:
+  match comp:
+    case True{}:
+      Cq.press(n, x, y)
+    case False{}:
+      Row.press.a(String.eq(action, "tl-line"), n, action, value, x, y)
+
 def Row.press(m: Maybe<&2, Hit>, +n: Nui, +x: U32, +y: U32) -> Step:
   match m:
     case Some{Hit{_, _, _, _, +action, +value}}:
-      Row.press.a(String.eq(action, "tl-line"), n, action, value, x, y)
+      Row.press.c(Bool.and(String.eq(action, "focus"), String.eq(value, "composer")), n, action, value, x, y)
     case None{}:
       Step{Sel.put(n, "", ""), Nil{}, True{}}
 
