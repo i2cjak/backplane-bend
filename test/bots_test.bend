@@ -8,6 +8,7 @@ import ../src/core/bot.bend as BT
 import ../src/core/bothub.bend as BH
 import ../src/core/mcp.bend as MC
 import ../src/core/ring.bend as RG
+import ../src/core/client.bend as U
 
 def yes(b: Bool) -> String:
   match b:
@@ -154,6 +155,10 @@ def json(+t: String) -> J.Json:
 def room.of(+s: M.State, +name: String) -> BT.Room:
   Maybe.default(&2, BT.Room, BT.World.find_room(M.State.bots(s), name), BT.Room.blank(""))
 
+# how many threads the sidebar leaves out as delegated children
+def hidden(+s: M.State) -> Nat:
+  Nat.sub(List.length(&2, M.Thread, U.Ui.threads(s)), List.length(&2, M.Thread, U.Kids.keep(U.Ui.threads(s), U.Kids.set(s))))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +s : M.State = two()
@@ -163,7 +168,22 @@ def main() -> IO(Unit):
     C.Check.str("bad name", st.tags(ask(s, 1002n, "bots.create", "{\"name\":\"has space\"}")), "| send:reply ")
     C.Check.str("bot thread", yes(BT.World.is_bot_thread(M.State.bots(s), th.of(s, "Tofu"))), "yes")
     C.Check.str("say", st.tags(ask(s, 1003n, "bots.say", "{\"bot\":\"" ++ id.of(s, "Miso") ++ "\",\"text\":\"hello\"}")), "BotWoke MessagePosted TurnChanged | send:reply out out out ")
-    C.Check.str("send", st.tags(call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"tofu\",\"text\":\"hi\"}")), "RoomPosted BotWoke MessagePosted TurnChanged | out out ")
+    C.Check.str("send", st.tags(call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"tofu\",\"text\":\"hi\"}")), "RoomSet RoomPosted BotWoke MessagePosted TurnChanged | out out ")
+    # a request between bots goes in a room of the two, named for its topic
+    +rq : M.State = run(s, call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"topic\":\"BOM review\",\"text\":\"check U3\"}"))
+    C.Check.str("request room", BT.Room.members.show(BT.Room.members(room.of(rq, "BOM review"))), id.of(s, "Miso") ++ "\n" ++ id.of(s, "Tofu"))
+    C.Check.str("request room not dm", yes(BT.Room.is_dm(room.of(rq, "BOM review"))), "no")
+    C.Check.str("request readable", yes(String.contains(call(rq, 1005n, th.of(rq, "Tofu"), "room_read", "{\"room\":\"BOM review\"}"), "check U3")), "yes")
+    C.Check.str("request note", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"topic\":\"BOM review\",\"text\":\"x\"}"), "#BOM review")), "yes")
+    C.Check.str("request room reused", yes(String.starts_with(st.tags(call.step(rq, 1005n, th.of(rq, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"topic\":\"BOM review\",\"text\":\"and U4\"}")), "RoomPosted ")), "yes")
+    C.Check.str("reply in the same room", yes(String.starts_with(st.tags(call.step(rq, 1005n, th.of(rq, "Tofu"), "bot_send", "{\"to\":\"Miso\",\"topic\":\"bom review\",\"text\":\"done\"}")), "RoomPosted ")), "yes")
+    C.Check.str("new topic new room", yes(String.starts_with(st.tags(call.step(rq, 1005n, th.of(rq, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"topic\":\"stencil\",\"text\":\"order\"}")), "RoomSet ")), "yes")
+    C.Check.str("no topic: both names", yes(BT.Room.live(room.of(run(s, call.step(s, 1004n, th.of(s, "Tofu"), "bot_send", "{\"to\":\"Miso\",\"text\":\"hi\"}")), "miso + tofu"))), "yes")
+    C.Check.str("person's post reaches both", (st.tags(ask(rq, 1006n, "bots.post", "{\"room\":\"" ++ BT.Room.id(room.of(rq, "BOM review")) ++ "\",\"text\":\"thanks\"}"))), "RoomPosted BotWoke MessagePosted TurnChanged BotWoke MessagePosted TurnQueued | send:reply out out out ")
+    # a private message only when asked for
+    C.Check.str("send direct", st.tags(call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"text\":\"psst\",\"direct\":true}")), "RoomPosted BotWoke MessagePosted TurnChanged | out out ")
+    C.Check.str("direct is dm", yes(String.contains(changes.show(tags.cs(call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"text\":\"psst\",\"direct\":true}"))), "\"dm:Miso:Tofu\"")), "yes")
+    C.Check.str("request not dm", yes(String.contains(changes.show(tags.cs(call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"text\":\"hi\"}"))), "dm:")), "no")
     C.Check.str("send hop", woke(run(s, call.step(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Tofu\",\"text\":\"hi\"}")), "Tofu"), "1")
     C.Check.str("send self", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Miso\",\"text\":\"hi\"}"), "that is you")), "yes")
     C.Check.str("send nobody", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Nope\",\"text\":\"hi\"}"), "no bot by that name")), "yes")
@@ -172,8 +192,8 @@ def main() -> IO(Unit):
     C.Check.str("hop bound", yes(String.contains(call(run(s, B.Step{[M.BotWoke{id.of(s, "Miso"), 6n, 1005n}], Nil{}}), 1005n, th.of(s, "Miso"), "bot_send",
       "{\"to\":\"Tofu\",\"text\":\"hi\"}"), "stops here")), "yes")
     C.Check.str("hop 5 ok", yes(String.contains(call(run(s, B.Step{[M.BotWoke{id.of(s, "Miso"), 5n, 1005n}], Nil{}}), 1005n, th.of(s, "Miso"), "bot_send",
-      "{\"to\":\"Tofu\",\"text\":\"hi\"}"), "sent to")), "yes")
-    C.Check.str("posts logged", Nat.show(List.length(&2, BT.Post, BT.World.posts(M.State.bots(hops(3n, s)), BT.Room.dm("Miso", "Tofu"), 10n))), "3")
+      "{\"to\":\"Tofu\",\"text\":\"hi\"}"), "posted in")), "yes")
+    C.Check.str("posts logged", Nat.show(List.length(&2, BT.Post, BT.World.posts(M.State.bots(hops(3n, s)), BT.Room.id(room.of(hops(3n, s), "miso + tofu")), 10n))), "3")
     C.Check.str("room create", st.tags(call.step(s, 1006n, th.of(s, "Miso"), "room_create", "{\"name\":\"team\",\"members\":\"Tofu, ghost@elsewhere\"}")), "RoomSet | ")
     +r : M.State = run(s, call.step(s, 1006n, th.of(s, "Miso"), "room_create", "{\"name\":\"team\",\"members\":\"Tofu\"}"))
     C.Check.str("room post", st.tags(call.step(r, 1007n, th.of(r, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "RoomPosted BotWoke MessagePosted TurnChanged | out out ")
@@ -212,7 +232,10 @@ def main() -> IO(Unit):
     C.Check.str("incoming too deep", st.tags(BH.Bots.incoming(s, 1010n, "laptop", Maybe.default(&2, J.Json, J.Json.parse("{\"from\":\"Nori\",\"to\":\"miso\",\"text\":\"yo\",\"hop\":9}"), J.Null{}))), "| ")
     C.Check.str("remote no peer", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\"}"), "no linked machine")), "yes")
     +p : M.State = run(s, B.Step{[M.PeerSet{"p1", "laptop", "http://laptop:3787", False{}, 1000n}], Nil{}})
-    C.Check.str("remote send", st.tags(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\"}")), "RoomPosted | fx:send ")
+    C.Check.str("remote send", st.tags(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\"}")), "RoomSet RoomPosted | fx:send ")
+    C.Check.str("remote request shared", yes(String.contains(st.body(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"topic\":\"fab\",\"text\":\"hi\"}")), "\"members\":[\"Miso@\",\"Nori\"]")), "yes")
+    C.Check.str("remote request tos", yes(String.contains(st.body(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"topic\":\"fab\",\"text\":\"hi\"}")), "\"tos\":[\"Nori\"]")), "yes")
+    C.Check.str("remote direct", st.tags(call.step(p, 1004n, th.of(p, "Miso"), "bot_send", "{\"to\":\"Nori@laptop\",\"text\":\"hi\",\"direct\":true}")), "RoomPosted | fx:send ")
     # shared rooms: a room with members on a linked machine
     +sr : M.State = run(p, call.step(p, 1006n, th.of(p, "Miso"), "room_create", "{\"name\":\"team\",\"members\":\"Tofu, Nori@laptop\"}"))
     C.Check.str("shared post", st.tags(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")),
@@ -235,6 +258,10 @@ def main() -> IO(Unit):
     # Miso is still on the first one: the second waits, and the room is unchanged
     C.Check.str("shared again", st.tags(BH.Bots.incoming(q2, 1011n, "desk", json(post))), "RoomPosted BotWoke MessagePosted TurnQueued | ")
     C.Check.str("shared read", yes(String.contains(call(q2, 1012n, th.of(q2, "Miso"), "room_read", "{\"room\":\"team\"}"), "Nori@desk")), "yes")
+    # a request from the other machine: answering it goes back to its room
+    +fq : M.State = run(q, BH.Bots.incoming(q, 1010n, "desk", json("{\"from\":\"Nori\",\"to\":\"miso\",\"tos\":[\"miso\"],\"members\":[\"Nori@\",\"miso\"],\"room\":\"r7-0\",\"roomName\":\"fab\",\"text\":\"quote?\",\"hop\":1}")))
+    C.Check.str("remote reply reuses", st.tags(call.step(fq, 1012n, th.of(fq, "Miso"), "bot_send", "{\"to\":\"Nori@desk\",\"topic\":\"fab\",\"text\":\"on it\"}")), "RoomPosted | fx:send ")
+    C.Check.str("remote reply same id", yes(String.contains(st.body(call.step(fq, 1012n, th.of(fq, "Miso"), "bot_send", "{\"to\":\"Nori@desk\",\"topic\":\"fab\",\"text\":\"on it\"}")), "\"room\":\"r7-0\"")), "yes")
     C.Check.str("shared back", st.tags(call.step(q2, 1012n, th.of(q2, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"on it\"}")), "RoomPosted | fx:send ")
     C.Check.str("shared back members", yes(String.contains(st.body(call.step(q2, 1012n, th.of(q2, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"on it\"}")),
       "\"members\":[\"Nori\",\"Miso@\",\"Ghost@far\"]")), "yes")
@@ -250,6 +277,14 @@ def main() -> IO(Unit):
     C.Check.str("tools bot", yes(String.contains(out.reply(BH.Bots.mcp(s, 1n, th.of(s, "Miso"), J.Null{}, "t", J.Json.arr(Nil{}), Nil{}, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}")), "memory_save")), "yes")
     C.Check.str("tools thread", yes(String.contains(out.reply(BH.Bots.mcp(s, 1n, "t9", J.Null{}, "t", J.Json.arr(Nil{}), Nil{}, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}")), "memory_save")), "no")
     C.Check.str("prompt", yes(String.contains(BH.Bots.prompt(s, th.of(s, "Miso"), "/h"), "You are Miso")), "yes")
+    C.Check.str("prompt rooms", yes(String.contains(BH.Bots.prompt(s, th.of(s, "Miso"), "/h"), "it goes in a room of the two of you")), "yes")
+    C.Check.str("prompt threads", yes(String.contains(BH.Bots.prompt(s, th.of(s, "Miso"), "/h"), "New work gets its own visible thread: start it with thread_launch and its `project`")), "yes")
+    # the schemas a bot sees name every parameter the server takes
+    +tl : String = out.reply(BH.Bots.mcp(s, 1n, th.of(s, "Miso"), J.Null{}, "t", J.Json.arr(Nil{}), Nil{}, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"))
+    C.Check.str("launch schema project", yes(String.contains(tl, "\"project\":{\"type\":\"string\",\"description\":\"The project's name or id (default: this thread's; bots must give one).\"}")), "yes")
+    C.Check.str("send schema topic", yes(String.contains(tl, "\"topic\":{\"type\":\"string\"")), "yes")
+    C.Check.str("send schema direct", yes(String.contains(tl, "\"direct\":{\"type\":\"boolean\"")), "yes")
+    C.Check.str("delegate schema project", yes(String.contains(tl, "\"project\":{\"type\":\"string\",\"description\":\"Bots only")), "yes")
     C.Check.str("space", st.tags(call.step(s, 1004n, th.of(s, "Miso"), "space_set", "{\"spec\":\"{\\\"title\\\":\\\"hi\\\"}\"}")), "SpaceSet | ")
     C.Check.str("space bad", yes(String.contains(call(s, 1004n, th.of(s, "Miso"), "space_set", "{\"spec\":\"{nope\"}"), "not valid JSON")), "yes")
     C.Check.str("space press", yes(String.contains(tags(Maybe.default(&2, List<&2, M.Change>, None{}, Nil{})), "")), "yes")
@@ -302,3 +337,14 @@ def main() -> IO(Unit):
     C.Check.str("launched message names the bot", yes(String.contains(changes.show(tags.cs(call.step(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"project\":\"p1\",\"prompt\":\"check the LDO\"}"))), "t:" ++ th.of(pj, "Miso"))), "yes")
     C.Check.str("bot must name a project", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"prompt\":\"x\"}"), "name an existing project")), "yes")
     C.Check.str("bot reads a project thread", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_read", "{\"threadId\":\"t-pb\"}"), "not in this project")), "no")
+    # a bot's delegated work: a visible thread in the project it names
+    C.Check.str("bot delegate needs a project", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "delegate_task", "{\"prompt\":\"x\"}"), "name a project")), "yes")
+    C.Check.str("bot delegate unknown project", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "delegate_task", "{\"prompt\":\"x\",\"project\":\"nope\"}"), "name a project")), "yes")
+    +dg : B.Step = call.step(pj, 1600n, th.of(pj, "Miso"), "delegate_task", "{\"prompt\":\"check the LDO\",\"project\":\"Power board\"}")
+    C.Check.str("bot delegates", st.tags(dg), "ThreadCreated ModesSet TaskDelegated TaskStateSet MessagePosted TurnChanged | out out ")
+    C.Check.str("bot delegate in the project", yes(String.contains(changes.show(tags.cs(dg)), "\"project\":\"p1\"")), "yes")
+    C.Check.str("bot delegate names the bot", yes(String.contains(changes.show(tags.cs(dg)), "t:" ++ th.of(pj, "Miso"))), "yes")
+    +dj : M.State = run(pj, dg)
+    C.Check.str("bot delegate shown", Nat.show(hidden(dj)), "0")
+    +tj : M.State = run(pj, call.step(pj, 1600n, "t-pb", "delegate_task", "{\"prompt\":\"x\"}"))
+    C.Check.str("thread delegate still under it", Nat.show(hidden(tj)), "1")

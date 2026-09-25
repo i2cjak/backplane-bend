@@ -86,7 +86,8 @@ def Mcp.tools() -> J.Json:
       [Tool.prop("prompt", "string", "The complete task for the child, with every detail it needs."),
        Tool.prop("provider", "string", "claude, codex or grok (default: this thread's)."),
        Tool.prop("model", "string", "Model for the child (default: this thread's)."),
-       Tool.prop("title", "string", "Short title for the child thread.")], ["prompt"]),
+       Tool.prop("title", "string", "Short title for the child thread."),
+       Tool.prop("project", "string", "Bots only, and required for them: the project's name or id (project_list); the child is a thread of its own there that the person can follow.")], ["prompt"]),
     Tool.def("task_status", "Read a delegated task: state (queued, running, done, failed, cancelled), the child's thread, and its result summary once finished.",
       [Tool.prop("taskId", "string", "The task id delegate_task returned.")], ["taskId"]),
     Tool.def("task_cancel", "Cancel a running delegated task (stops its child agent). Finished tasks keep their result.",
@@ -188,37 +189,6 @@ def Mcp.cancel(m: Maybe<&2, M.Task>, +now: Nat) -> Res:
 def Mcp.or(+v: String, +d: String) -> String:
   Bool.pick(String, String.is_empty(v), d, v)
 
-def Mcp.delegate.go(+s: M.State, +now: Nat, +parent: String, +project: String, env: M.EnvMode, +branch: String, +wt: String, +provider: String, +model: String,
-    +rm: M.RuntimeMode, im: M.InteractionMode, +prompt: String, +title: String) -> Res:
-  +seq = {B.Hub.seq(s) : Nat}
-  +task = {B.Hub.id("k", now, seq) : String}
-  +child = {B.Hub.id("t", now, 1n+seq) : String}
-  +depth = {1n+B.Task.depth(s, parent) : Nat}
-  +name = {Mcp.or(title, B.Hub.title.of(prompt)) : String}
-  +cwd = {Bool.pick(String, String.is_empty(wt), B.Hub.project.root(B.Hub.project(s, project)), wt) : String}
-  Res{True{}, J.Json.obj([J.KV{"taskId", J.Str{task}}, J.KV{"childThreadId", J.Str{child}}, J.KV{"state", J.Str{"running"}},
-      J.KV{"provider", J.Str{provider}}, J.KV{"model", J.Str{model}}, J.KV{"depth", C.Codec.nat(depth)},
-      J.KV{"note", J.Str{"The result will arrive in this thread as a message when the child finishes. End your turn instead of polling."}}]),
-    B.Step{[M.ThreadCreated{child, project, name, env, branch, wt, provider, model, now},
-        M.ModesSet{child, rm, im, model, now},
-        M.TaskDelegated{task, parent, child, depth, provider, model, now},
-        M.TaskStateSet{task, M.TaskRunning{}, "", now},
-        M.MessagePosted{child, B.Hub.id("m", now, 2n+seq), M.User{}, prompt, now},
-        M.TurnChanged{child, M.Running{}, now}],
-      B.Hub.run(M.Thread{child, project, name, now, now, M.Running{}, 0n, False{}, M.NoOverride{}, 0n, 0n, False{}, M.Local{}, branch, wt, provider, model, rm, M.DefaultMode{}, "", False{}}, cwd, prompt)}}
-
-def Mcp.delegate.k(ok: Bool, t: M.Thread, +s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
-  match ok t:
-    case False{} _:
-      Res.fail("delegation depth limit reached: finish this task yourself")
-    case True{} M.Thread{_, +project, _, _, _, _, _, _, _, _, _, _, env, +branch, +wt, +provider, +model, rm, im, _, _}:
-      Mcp.delegate.go(s, now, thread, project, env, branch, wt, Mcp.or(J.Json.get_str(p, "provider", ""), provider),
-        Mcp.or(J.Json.get_str(p, "model", ""), Bool.pick(String, String.eq(J.Json.get_str(p, "provider", provider), provider), model, "")),
-        rm, im, J.Json.get_str(p, "prompt", ""), J.Json.get_str(p, "title", ""))
-
-def Mcp.delegate(+s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
-  Mcp.delegate.k(M.Task.may_delegate(B.Task.depth(s, thread)), B.Hub.thread(s, thread), s, now, thread, p)
-
 def Mcp.project_of(t: M.Thread) -> String:
   match t:
     case M.Thread{_, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
@@ -319,6 +289,45 @@ def Mcp.proj(+s: M.State, +thread: String) -> String:
 def Mcp.from.id(+from: String, +msg: String) -> String:
   Bool.pick(String, String.is_empty(from), msg, M.Link.id(from, msg))
 
+def Mcp.delegate.go(+s: M.State, +now: Nat, +parent: String, +project: String, env: M.EnvMode, +branch: String, +wt: String, +provider: String, +model: String,
+    +rm: M.RuntimeMode, im: M.InteractionMode, +prompt: String, +title: String) -> Res:
+  +seq = {B.Hub.seq(s) : Nat}
+  +task = {B.Hub.id("k", now, seq) : String}
+  +child = {B.Hub.id("t", now, 1n+seq) : String}
+  +depth = {1n+B.Task.depth(s, parent) : Nat}
+  +name = {Mcp.or(title, B.Hub.title.of(prompt)) : String}
+  +cwd = {Bool.pick(String, String.is_empty(wt), B.Hub.project.root(B.Hub.project(s, project)), wt) : String}
+  Res{True{}, J.Json.obj([J.KV{"taskId", J.Str{task}}, J.KV{"childThreadId", J.Str{child}}, J.KV{"state", J.Str{"running"}},
+      J.KV{"provider", J.Str{provider}}, J.KV{"model", J.Str{model}}, J.KV{"depth", C.Codec.nat(depth)},
+      J.KV{"note", J.Str{"The result will arrive in this thread as a message when the child finishes. End your turn instead of polling."}}]),
+    B.Step{[M.ThreadCreated{child, project, name, env, branch, wt, provider, model, now},
+        M.ModesSet{child, rm, im, model, now},
+        M.TaskDelegated{task, parent, child, depth, provider, model, now},
+        M.TaskStateSet{task, M.TaskRunning{}, "", now},
+        M.MessagePosted{child, Mcp.from.id(Bool.pick(String, Mcp.bot(s, parent), parent, ""), B.Hub.id("m", now, 2n+seq)), M.User{}, prompt, now},
+        M.TurnChanged{child, M.Running{}, now}],
+      B.Hub.run(M.Thread{child, project, name, now, now, M.Running{}, 0n, False{}, M.NoOverride{}, 0n, 0n, False{}, M.Local{}, branch, wt, provider, model, rm, M.DefaultMode{}, "", False{}}, cwd, prompt)}}
+
+def Mcp.delegate.k(ok: Bool, t: M.Thread, +s: M.State, +now: Nat, +thread: String, +bot: Bool, +proj: String, +p: J.Json) -> Res:
+  match ok t:
+    case False{} _:
+      Res.fail("delegation depth limit reached: finish this task yourself")
+    case True{} M.Thread{_, +project, _, _, _, _, _, _, _, _, _, _, +env, +branch, +wt, +provider, +model, rm, im, _, _}:
+      Mcp.delegate.go(s, now, thread, Bool.pick(String, bot, proj, project), Bool.pick(M.EnvMode, bot, M.Local{}, env), Bool.pick(String, bot, "", branch), Bool.pick(String, bot, "", wt),
+        Mcp.or(J.Json.get_str(p, "provider", ""), provider),
+        Mcp.or(J.Json.get_str(p, "model", ""), Bool.pick(String, String.eq(J.Json.get_str(p, "provider", provider), provider), model, "")),
+        rm, im, J.Json.get_str(p, "prompt", ""), J.Json.get_str(p, "title", ""))
+
+# a bot's delegated work runs in the project it names, where the person
+# sees it as a thread of its own; a bot that names none is refused (law
+# bot_delegate_needs_project)
+def Mcp.delegate.b(bot: Bool, none: Bool, +s: M.State, +now: Nat, +thread: String, +proj: String, +p: J.Json) -> Res:
+  match bot none:
+    case True{} True{}:
+      Res.fail("name a project (project_list shows them): a bot's delegated work runs as a thread there that the person can follow")
+    case _ _:
+      Mcp.delegate.k(M.Task.may_delegate(B.Task.depth(s, thread)), B.Hub.thread(s, thread), s, now, thread, bot, proj, p)
+
 # a new top-level thread with its first message (it waits for its
 # worktree like any new thread)
 def Mcp.launch.go(+s: M.State, +now: Nat, +th: String, +from: String, +project: String, +env: String, +provider: String, +model: String, +title: String, +prompt: String) -> Res:
@@ -350,6 +359,10 @@ def Mcp.project.find(+s: M.State, +name: String) -> String:
   match s:
     case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Mcp.project.go(Map.values(&2, M.Project, ps), String.trim(name))
+
+def Mcp.delegate(+s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
+  Mcp.delegate.b(Mcp.bot(s, thread), String.is_empty(Mcp.project.find(s, J.Json.get_str(p, "project", ""))), s, now, thread,
+    Mcp.project.find(s, J.Json.get_str(p, "project", "")), p)
 
 # where a new thread goes: the caller's project, or for a bot the one it
 # names (it has none of its own)
