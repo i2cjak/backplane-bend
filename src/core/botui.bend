@@ -4,6 +4,7 @@ import ./model.bend as M
 import ./client.bend as U
 import ./bot.bend as BT
 import ./space.bend as SP
+import ./once.bend as O
 
 # What the bots' screens show, for every client (the window, the web and
 # the phones draw from these; docs/bots.md). The sidebar's cats with their
@@ -72,8 +73,10 @@ def Mood.talk() -> Nat:
 # Sidebar
 # -------
 
+# a cat in the list: a bot here, or one on a linked machine (remote), whose
+# peer is its machine as shown and link that machine's id
 type BRow is Data:
-  BRow{id: String, name: String, thread: String, look: Nat, mood: String, note: String, sel: Bool, remote: Bool, peer: String}
+  BRow{id: String, name: String, thread: String, look: Nat, mood: String, note: String, sel: Bool, remote: Bool, peer: String, link: String}
 
 type RRow is Data:
   RRow{id: String, name: String, members: Nat, sel: Bool}
@@ -88,25 +91,103 @@ def BU.remote.sel(+u: U.Ui) -> String:
   U.Ui.scratch(u, "@remote")
 
 def BU.row.m(+mood: String, i: String, n: String, th: String, lk: Nat, sel: Bool) -> BRow:
-  BRow{i, n, th, lk, mood, Mood.note(mood), sel, False{}, ""}
+  BRow{i, n, th, lk, mood, Mood.note(mood), sel, False{}, "", ""}
 
-def BU.far.k(+id: String, +o: J.Json, +sel: String) -> BRow:
+# Each bot once
+# -------------
+# Every list of bots keys each one by what it stands for and keeps the
+# first of each key (once.bend; laws bot_rows_once, bot_picks_once,
+# hubs_bots_once). A bot here is its id. A bot elsewhere is its name (any
+# case, as its hub finds it) at its machine's id (BT.Member.far): the same
+# bot reported twice is one, and bots on two machines that share a name
+# stay two. Where a label could mean two bots it carries the machine's id
+# (a machine) or the bot's id (two bots here with one name).
+
+def BU.key.k(remote: Bool, +i: String, +n: String, +l: String) -> String:
+  match remote:
+    case True{}:
+      BT.Member.far(n, l)
+    case False{}:
+      i
+
+def BU.key(r: BRow) -> String:
+  match r:
+    case BRow{+i, +n, _, _, _, _, _, rem, _, +l}:
+      BU.key.k(rem, i, n, l)
+
+def BU.ky(+r: BRow) -> O.Ky<BRow>:
+  O.Ky{BU.key(r), r}
+
+def BU.kys(rs: List<&2, BRow>) -> List<&2, O.Ky<BRow>>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case +r <> t:
+      BU.ky(r) <> BU.kys(t)
+
+def BU.named(bs: List<&2, BT.Bot>, +name: String) -> Nat:
+  match bs:
+    case Nil{}:
+      0n
+    case +b <> t:
+      Nat.add(Bool.pick(Nat, BT.Bot.named.k(b, name), 1n, 0n), BU.named(t, name))
+
+# a bot's name, with its id when another bot here has the same name
+def BU.label(clash: Bool, +n: String, +i: String) -> String:
+  match clash:
+    case True{}:
+      n ++ " (" ++ i ++ ")"
+    case False{}:
+      n
+
+# a machine in a bot's id: its name, or its id when the name could mean
+# another machine (BT.Peer.clash)
+def BU.far.at(clash: Bool, +link: String, +pname: String) -> String:
+  match clash:
+    case True{}:
+      link
+    case False{}:
+      pname
+
+# and as shown: its name, with its id when the name could mean another
+def BU.far.label(clash: Bool, +link: String, +pname: String) -> String:
+  match clash:
+    case True{}:
+      Bool.pick(String, String.is_empty(pname), link, pname ++ " (" ++ link ++ ")")
+    case False{}:
+      pname
+
+def BU.far.row(+id: String, +o: J.Json, +peer: String, +link: String, +sel: String) -> BRow:
   BRow{id, J.Json.get_str(o, "name", ""), "", J.Json.get_nat(o, "look", 0n), Mood.of.name(J.Json.get_str(o, "state", "")),
-    Mood.note(Mood.of.name(J.Json.get_str(o, "state", ""))), String.eq(id, sel), True{}, J.Json.get_str(o, "peerName", J.Json.get_str(o, "peer", ""))}
+    Mood.note(Mood.of.name(J.Json.get_str(o, "state", ""))), String.eq(id, sel), True{}, peer, link}
+
+def BU.far.k(+clash: Bool, +o: J.Json, +link: String, +pname: String, +sel: String) -> BRow:
+  BU.far.row(J.Json.get_str(o, "name", "") ++ "@" ++ BU.far.at(clash, link, pname), o, BU.far.label(clash, link, pname), link, sel)
+
+def BU.far.name(+o: J.Json) -> String:
+  J.Json.get_str(o, "peerName", J.Json.get_str(o, "peer", ""))
 
 # one bot reported by a linked machine
-def BU.far(+o: J.Json, +sel: String) -> BRow:
-  BU.far.k(J.Json.get_str(o, "name", "") ++ "@" ++ J.Json.get_str(o, "peerName", J.Json.get_str(o, "peer", "")), o, sel)
+def BU.far(+ps: List<&2, BT.Peer>, +o: J.Json, +sel: String) -> BRow:
+  BU.far.k(BT.Peer.clash(ps, J.Json.get_str(o, "peer", ""), BU.far.name(o)), o, J.Json.get_str(o, "peer", ""), BU.far.name(o), sel)
 
-def BU.fars(os: List<&2, J.Json>, +sel: String) -> List<&2, BRow>:
+def BU.fars(os: List<&2, J.Json>, +ps: List<&2, BT.Peer>, +sel: String) -> List<&2, BRow>:
   match os:
     case Nil{}:
       Nil{}
     case +o <> t:
-      BU.far(o, sel) <> BU.fars(t, sel)
+      BU.far(ps, o, sel) <> BU.fars(t, ps, sel)
 
-def BU.remote(+u: U.Ui) -> List<&2, BRow>:
-  BU.fars(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "bots.remote")), J.Json.arr(Nil{}))), BU.remote.sel(u))
+def BU.peers.of(+u: U.Ui) -> List<&2, BT.Peer>:
+  U.Bots.peers(u)
+
+# every bot the linked machines report, as they report them
+def BU.remote.all(+u: U.Ui) -> List<&2, BRow>:
+  BU.fars(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "bots.remote")), J.Json.arr(Nil{}))), BU.peers.of(u), BU.remote.sel(u))
+
+# the bots on linked machines, each once
+def BU.remote(+u: U.Ui) -> List<&2, BRow> :
+  O.Once.vals(BRow, O.Once.of(BRow, BU.kys(BU.remote.all(u))))
 
 # Each room once
 # --------------
@@ -195,7 +276,7 @@ def BU.rooms(+u: U.Ui) -> List<&2, RRow>:
 
 def BRow.moving(r: BRow) -> Bool:
   match r:
-    case BRow{_, _, _, _, +m, _, _, _, _}:
+    case BRow{_, _, _, _, +m, _, _, _, _, _}:
       Mood.moving(m)
 
 def BU.moving.go(rs: List<&2, BRow>) -> Bool:
@@ -305,46 +386,46 @@ def BU.talk(+u: U.Ui, b: BT.Bot) -> List<&2, BT.Post>:
 type Pick is Data:
   Pick{id: String, name: String, on: Bool}
 
-def BU.picks.go(bs: List<&2, BT.Bot>, +ms: List<&2, String>) -> List<&2, Pick>:
+def BU.picks.go(bs: List<&2, BT.Bot>, +ps: List<&2, BT.Peer>, +ms: List<&2, String>, +all: List<&2, BT.Bot>) -> List<&2, O.Ky<Pick>>:
   match bs:
     case Nil{}:
       Nil{}
-    case BT.Bot{+i, n, _, _, _, _, _} <> t:
-      Pick{i, n, BT.Room.has(ms, i)} <> BU.picks.go(t, ms)
+    case BT.Bot{+i, +n, _, _, _, _, _} <> t:
+      O.Ky{i, Pick{i, BU.label(Nat.is_gt(BU.named(all, n), 1n), n, i), BT.Member.has(ms, ps, i)}} <> BU.picks.go(t, ps, ms, all)
 
 # bots on linked machines, by the name@machine rooms and bot_send take
-def BU.picks.far(rs: List<&2, BRow>, +ms: List<&2, String>) -> List<&2, Pick>:
+def BU.picks.far(rs: List<&2, BRow>, +ps: List<&2, BT.Peer>, +ms: List<&2, String>) -> List<&2, O.Ky<Pick>>:
   match rs:
     case Nil{}:
       Nil{}
-    case BRow{+i, _, _, _, _, _, _, _, _} <> t:
-      Pick{i, i, BT.Room.has(ms, i)} <> BU.picks.far(t, ms)
+    case BRow{+i, +n, _, _, _, _, _, _, +pe, +l} <> t:
+      O.Ky{BT.Member.far(n, l), Pick{i, n ++ "@" ++ pe, BT.Member.has(ms, ps, BT.Member.far(n, l))}} <> BU.picks.far(t, ps, ms)
 
-def BU.picks.ids(ps: List<&2, Pick>) -> List<&2, String>:
-  match ps:
-    case Nil{}:
-      Nil{}
-    case Pick{i, _, _} <> t:
-      i <> BU.picks.ids(t)
-
-# members elsewhere no linked machine lists now (one offline or unlinked),
-# kept picked so they can be dropped
-def BU.picks.gone(ms: List<&2, String>, +ids: List<&2, String>) -> List<&2, Pick>:
+# members elsewhere, kept picked so they can be dropped: those no linked
+# machine lists now (one offline or unlinked) stay; the rest are the bots
+# listed above, and go
+def BU.picks.gone(ms: List<&2, String>, +ps: List<&2, BT.Peer>) -> List<&2, O.Ky<Pick>>:
   match ms:
     case Nil{}:
       Nil{}
     case +m <> t:
-      BT.Post.keep(Pick, Bool.and(String.contains(m, "@"), Bool.not(BT.Room.has(ids, m))), Pick{m, m, True{}}, BU.picks.gone(t, ids))
+      BT.Post.keep(O.Ky<Pick>, String.contains(m, "@"), O.Ky{BT.Member.key(ps, m), Pick{m, m, True{}}}, BU.picks.gone(t, ps))
 
-def BU.picks.all(+ps: List<&2, Pick>, +ms: List<&2, String>) -> List<&2, Pick>:
-  List.append(&2, Pick, ps, BU.picks.gone(ms, BU.picks.ids(ps)))
+# this machine's bots, then those on linked machines ("name@machine"),
+# then members elsewhere no machine lists, before each is kept once
+def BU.picks.all(+u: U.Ui, +ms: List<&2, String>) -> List<&2, O.Ky<Pick>>:
+  List.append(&2, O.Ky<Pick>, BU.picks.go(BT.World.bots(M.State.bots(U.Ui.state(u))), BU.peers.of(u), ms, BT.World.bots(M.State.bots(U.Ui.state(u)))),
+    List.append(&2, O.Ky<Pick>, BU.picks.far(BU.remote.all(u), BU.peers.of(u), ms), BU.picks.gone(ms, BU.peers.of(u))))
 
-# this machine's bots, then those on linked machines ("name@machine")
-def BU.picks.of(+u: U.Ui, +ms: List<&2, String>) -> List<&2, Pick>:
-  BU.picks.all(List.append(&2, Pick, BU.picks.go(BT.World.bots(M.State.bots(U.Ui.state(u))), ms), BU.picks.far(BU.remote(u), ms)), ms)
+def BU.picks.src(+u: U.Ui) -> List<&2, O.Ky<Pick>>:
+  BU.picks.all(u, BT.Room.members.of(U.Ui.scratch(u, "@f.rmembers")))
 
+def BU.picks.keyed(+u: U.Ui) -> List<&2, O.Ky<Pick>>:
+  O.Once.of(Pick, BU.picks.src(u))
+
+# the bots a room form can pick from, each once (law bot_picks_once)
 def BU.picks(+u: U.Ui) -> List<&2, Pick>:
-  BU.picks.of(u, BT.Room.members.of(U.Ui.scratch(u, "@f.rmembers")))
+  O.Once.vals(Pick, BU.picks.keyed(u))
 
 # a member's name as people read it (a bot id here becomes its name)
 def BU.member.k(m: Maybe<&2, BT.Bot>, +x: String) -> String:
@@ -388,21 +469,32 @@ def Mood.bot(+st: M.State, +now: Nat, b: BT.Bot) -> String:
     case BT.Bot{+i, _, +th, _, _, _, _}:
       Mood.bot.t(U.Ui.thread(st, th), st, now, BT.World.talked_at(M.State.bots(st), i))
 
-def BU.row(+st: M.State, +now: Nat, +sel: String, b: BT.Bot) -> BRow:
+def BU.row(+st: M.State, +now: Nat, +sel: String, +all: List<&2, BT.Bot>, b: BT.Bot) -> BRow:
   match b:
     case BT.Bot{+i, +n, +th, +lk, pe, c, d}:
-      BU.row.m(Mood.bot(st, now, BT.Bot{i, n, th, lk, pe, c, d}), i, n, th, lk, String.eq(i, sel))
+      BU.row.m(Mood.bot(st, now, BT.Bot{i, n, th, lk, pe, c, d}), i, BU.label(Nat.is_gt(BU.named(all, n), 1n), n, i), th, lk, String.eq(i, sel))
 
-def BU.rows.go(bs: List<&2, BT.Bot>, +st: M.State, +now: Nat, +sel: String) -> List<&2, BRow>:
+def BU.rows.go(bs: List<&2, BT.Bot>, +st: M.State, +now: Nat, +sel: String, +all: List<&2, BT.Bot>) -> List<&2, BRow>:
   match bs:
     case Nil{}:
       Nil{}
     case b <> t:
-      BU.row(st, now, sel, b) <> BU.rows.go(t, st, now, sel)
+      BU.row(st, now, sel, all, b) <> BU.rows.go(t, st, now, sel, all)
 
-# the sidebar's cats: this machine's bots (oldest first), then linked ones
+def BU.rows.here(+u: U.Ui, +bs: List<&2, BT.Bot>) -> List<&2, BRow>:
+  BU.rows.go(bs, U.Ui.state(u), U.Side.now(u), BU.bot.sel(u), bs)
+
+# the sidebar's cats before each is kept once: this machine's bots (oldest
+# first), then those the linked machines report
+def BU.rows.all(+u: U.Ui) -> List<&2, O.Ky<BRow>>:
+  List.append(&2, O.Ky<BRow>, BU.kys(BU.rows.here(u, BT.World.bots(M.State.bots(U.Ui.state(u))))), BU.kys(BU.remote.all(u)))
+
+def BU.rows.keyed(+u: U.Ui) -> List<&2, O.Ky<BRow>>:
+  O.Once.of(BRow, BU.rows.all(u))
+
+# the sidebar's cats, each bot once (law bot_rows_once)
 def BU.rows(+u: U.Ui) -> List<&2, BRow>:
-  List.append(&2, BRow, BU.rows.go(BT.World.bots(M.State.bots(U.Ui.state(u))), U.Ui.state(u), U.Side.now(u), BU.bot.sel(u)), BU.remote(u))
+  O.Once.vals(BRow, BU.rows.keyed(u))
 
 # whether any cat in the sidebar moves (the window keeps drawing frames
 # only while one does)

@@ -50,6 +50,7 @@ import ./src/core/cron.bend as CR
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/voice.bend as VO
+import ./src/core/once.bend as ON
 
 # Lemmas
 # ------
@@ -4905,3 +4906,258 @@ def Laws.voice_unsure_bounded(ds, ig, text):
 
 def Laws.voice_keywords_bounded(ds):
   voice_cap_le(String, 100n, ds)
+
+# Each bot once
+# -------------
+# Once.go keeps a key only when it is not among those seen, and adds it:
+# so what it keeps is fresh against what it had seen and has no key twice;
+# and a list with no key twice, fresh against nothing, comes back whole.
+
+# fresh against k <> s means nothing in R equals k
+law once_fresh_dup.k:
+  for b: Bool
+  for c: Bool
+  for t: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h: {Bool.and(Bool.not(Bool.or(b, c)), ON.Once.fresh(t, k <> s)) == True{} : Bool}
+  for ih: {ON.Once.fresh(t, k <> s) == True{} : Bool} -> {ON.Once.dup(t, k) == False{} : Bool}
+  {Bool.or(b, ON.Once.dup(t, k)) == False{} : Bool}
+
+def once_fresh_dup.k(b, c, t, s, k, h, ih):
+  match b c:
+    case True{} _:
+      Empty.absurd({Bool.or(True{}, ON.Once.dup(t, k)) == False{} : Bool}, false_ne_true(h))
+    case False{} True{}:
+      Empty.absurd({Bool.or(False{}, ON.Once.dup(t, k)) == False{} : Bool}, false_ne_true(h))
+    case False{} False{}:
+      ih(h)
+
+law once_fresh_dup:
+  for r: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h: {ON.Once.fresh(r, k <> s) == True{} : Bool}
+  {ON.Once.dup(r, k) == False{} : Bool}
+
+def once_fresh_dup(r, s, k, h):
+  match r:
+    case Nil{}:
+      {==}
+    case +y <> +t:
+      once_fresh_dup.k(String.eq(y, k), ON.Once.in(s, y), t, s, k, h, x => once_fresh_dup(t, s, k, x))
+
+# fresh against k <> s is fresh against s
+law once_fresh_tail.k:
+  for b: Bool
+  for c: Bool
+  for t: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h: {Bool.and(Bool.not(Bool.or(b, c)), ON.Once.fresh(t, k <> s)) == True{} : Bool}
+  for ih: {ON.Once.fresh(t, k <> s) == True{} : Bool} -> {ON.Once.fresh(t, s) == True{} : Bool}
+  {Bool.and(Bool.not(c), ON.Once.fresh(t, s)) == True{} : Bool}
+
+def once_fresh_tail.k(b, c, t, s, k, h, ih):
+  match b c:
+    case True{} _:
+      Empty.absurd({Bool.and(Bool.not(c), ON.Once.fresh(t, s)) == True{} : Bool}, false_ne_true(h))
+    case False{} True{}:
+      Empty.absurd({Bool.and(Bool.not(True{}), ON.Once.fresh(t, s)) == True{} : Bool}, false_ne_true(h))
+    case False{} False{}:
+      ih(h)
+
+law once_fresh_tail:
+  for r: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h: {ON.Once.fresh(r, k <> s) == True{} : Bool}
+  {ON.Once.fresh(r, s) == True{} : Bool}
+
+def once_fresh_tail(r, s, k, h):
+  match r:
+    case Nil{}:
+      {==}
+    case +y <> +t:
+      once_fresh_tail.k(String.eq(y, k), ON.Once.in(s, y), t, s, k, h, x => once_fresh_tail(t, s, k, x))
+
+# fresh against s, and without k, is fresh against k <> s
+law once_fresh_add.k:
+  for b: Bool
+  for c: Bool
+  for t: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h1: {Bool.and(Bool.not(c), ON.Once.fresh(t, s)) == True{} : Bool}
+  for h2: {Bool.or(b, ON.Once.dup(t, k)) == False{} : Bool}
+  for ih: {ON.Once.fresh(t, s) == True{} : Bool} -> {ON.Once.dup(t, k) == False{} : Bool} -> {ON.Once.fresh(t, k <> s) == True{} : Bool}
+  {Bool.and(Bool.not(Bool.or(b, c)), ON.Once.fresh(t, k <> s)) == True{} : Bool}
+
+def once_fresh_add.k(b, c, t, s, k, h1, h2, ih):
+  match b c:
+    case _ True{}:
+      Empty.absurd({Bool.and(Bool.not(Bool.or(b, True{})), ON.Once.fresh(t, k <> s)) == True{} : Bool}, false_ne_true(h1))
+    case True{} False{}:
+      Empty.absurd({Bool.and(Bool.not(Bool.or(True{}, False{})), ON.Once.fresh(t, k <> s)) == True{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h2)))
+    case False{} False{}:
+      ih(h1)(h2)
+
+law once_fresh_add:
+  for r: List<&2, String>
+  for +s: List<&2, String>
+  for +k: String
+  for h1: {ON.Once.fresh(r, s) == True{} : Bool}
+  for h2: {ON.Once.dup(r, k) == False{} : Bool}
+  {ON.Once.fresh(r, k <> s) == True{} : Bool}
+
+def once_fresh_add(r, s, k, h1, h2):
+  match r:
+    case Nil{}:
+      {==}
+    case +y <> +t:
+      once_fresh_add.k(String.eq(y, k), ON.Once.in(s, y), t, s, k, h1, h2, x => z => once_fresh_add(t, s, k, x, z))
+
+# what Once.go keeps is fresh against what it had seen
+law once_go_fresh.k:
+  for -A: Data
+  for c: Bool
+  for +k: String
+  for v: A
+  for r: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  for hc: {ON.Once.in(seen, k) == c : Bool}
+  for ih: {ON.Once.fresh(ON.Once.keys(A, r), k <> seen) == True{} : Bool}
+  {ON.Once.fresh(ON.Once.keys(A, ON.Once.step(A, c, k, v, r)), seen) == True{} : Bool}
+
+def once_go_fresh.k(A, c, k, v, r, seen, hc, ih):
+  match c:
+    case True{}:
+      once_fresh_tail(ON.Once.keys(A, r), seen, k, ih)
+    case False{}:
+      %Equal.sym(Bool, ON.Once.in(seen, k), False{}, hc) : {Bool.and(Bool.not(_), ON.Once.fresh(ON.Once.keys(A, r), seen)) == True{} : Bool}
+      once_fresh_tail(ON.Once.keys(A, r), seen, k, ih)
+
+law once_go_fresh:
+  for -A: Data
+  for xs: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  {ON.Once.fresh(ON.Once.keys(A, ON.Once.go(A, xs, seen)), seen) == True{} : Bool}
+
+def once_go_fresh(A, xs, seen):
+  match xs:
+    case Nil{}:
+      {==}
+    case ON.Ky{+k, +v} <> +t:
+      once_go_fresh.k(A, ON.Once.in(seen, k), k, v, ON.Once.go(A, t, k <> seen), seen, {==}, once_go_fresh(A, t, k <> seen))
+
+# what Once.go keeps has no key twice
+law once_go_distinct.k:
+  for -A: Data
+  for c: Bool
+  for +k: String
+  for v: A
+  for +r: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  for ihd: {ON.Once.distinct(ON.Once.keys(A, r)) == True{} : Bool}
+  for ihf: {ON.Once.fresh(ON.Once.keys(A, r), k <> seen) == True{} : Bool}
+  {ON.Once.distinct(ON.Once.keys(A, ON.Once.step(A, c, k, v, r))) == True{} : Bool}
+
+def once_go_distinct.k(A, c, k, v, r, seen, ihd, ihf):
+  match c:
+    case True{}:
+      ihd
+    case False{}:
+      %Equal.sym(Bool, ON.Once.dup(ON.Once.keys(A, r), k), False{}, once_fresh_dup(ON.Once.keys(A, r), seen, k, ihf))
+        : {Bool.and(Bool.not(_), ON.Once.distinct(ON.Once.keys(A, r))) == True{} : Bool}
+      ihd
+
+law once_go_distinct:
+  for -A: Data
+  for xs: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  {ON.Once.distinct(ON.Once.keys(A, ON.Once.go(A, xs, seen))) == True{} : Bool}
+
+def once_go_distinct(A, xs, seen):
+  match xs:
+    case Nil{}:
+      {==}
+    case ON.Ky{+k, +v} <> +t:
+      once_go_distinct.k(A, ON.Once.in(seen, k), k, v, ON.Once.go(A, t, k <> seen), seen, once_go_distinct(A, t, k <> seen), once_go_fresh(A, t, k <> seen))
+
+def Laws.once_distinct(A, xs):
+  once_go_distinct(A, xs, Nil{})
+
+# a list whose keys are distinct and unseen comes back whole
+law once_go_keeps.k:
+  for -A: Data
+  for c: Bool
+  for d: Bool
+  for +k: String
+  for +v: A
+  for +t: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  for hd: {ON.Once.dup(ON.Once.keys(A, t), k) == d : Bool}
+  for hf: {Bool.and(Bool.not(c), ON.Once.fresh(ON.Once.keys(A, t), seen)) == True{} : Bool}
+  for hx: {Bool.and(Bool.not(d), ON.Once.distinct(ON.Once.keys(A, t))) == True{} : Bool}
+  for ih: {ON.Once.fresh(ON.Once.keys(A, t), k <> seen) == True{} : Bool} -> {ON.Once.distinct(ON.Once.keys(A, t)) == True{} : Bool} -> {ON.Once.go(A, t, k <> seen) == t : List<&2, ON.Ky<A>>}
+  {ON.Once.step(A, c, k, v, ON.Once.go(A, t, k <> seen)) == ON.Ky{k, v} <> t : List<&2, ON.Ky<A>>}
+
+def once_go_keeps.k(A, c, d, k, v, t, seen, hd, hf, hx, ih):
+  match c d:
+    case True{} _:
+      Empty.absurd({ON.Once.step(A, True{}, k, v, ON.Once.go(A, t, k <> seen)) == ON.Ky{k, v} <> t : List<&2, ON.Ky<A>>}, false_ne_true(hf))
+    case False{} True{}:
+      Empty.absurd({ON.Once.step(A, False{}, k, v, ON.Once.go(A, t, k <> seen)) == ON.Ky{k, v} <> t : List<&2, ON.Ky<A>>}, false_ne_true(hx))
+    case False{} False{}:
+      Equal.cong(List<&2, ON.Ky<A>>, List<&2, ON.Ky<A>>, x => ON.Ky{k, v} <> x, ON.Once.go(A, t, k <> seen), t,
+        ih(once_fresh_add(ON.Once.keys(A, t), seen, k, hf, hd))(hx))
+
+law once_go_keeps:
+  for -A: Data
+  for xs: List<&2, ON.Ky<A>>
+  for +seen: List<&2, String>
+  for hf: {ON.Once.fresh(ON.Once.keys(A, xs), seen) == True{} : Bool}
+  for hx: {ON.Once.distinct(ON.Once.keys(A, xs)) == True{} : Bool}
+  {ON.Once.go(A, xs, seen) == xs : List<&2, ON.Ky<A>>}
+
+def once_go_keeps(A, xs, seen, hf, hx):
+  match xs:
+    case Nil{}:
+      {==}
+    case ON.Ky{+k, +v} <> +t:
+      once_go_keeps.k(A, ON.Once.in(seen, k), ON.Once.dup(ON.Once.keys(A, t), k), k, v, t, seen, {==}, hf, hx, x => z => once_go_keeps(A, t, k <> seen, x, z))
+
+law once_fresh_nil:
+  for r: List<&2, String>
+  {ON.Once.fresh(r, Nil{}) == True{} : Bool}
+
+def once_fresh_nil(r):
+  match r:
+    case Nil{}:
+      {==}
+    case +y <> +t:
+      once_fresh_nil(t)
+
+def Laws.once_keeps(A, xs, hx):
+  once_go_keeps(A, xs, Nil{}, once_fresh_nil(ON.Once.keys(A, xs)), hx)
+
+def Laws.bot_rows_once(u):
+  Laws.once_distinct(BU.BRow, BU.BU.rows.all(u))
+
+def Laws.bot_rows_shown(u):
+  {==}
+
+def Laws.bot_rows_keep(u, hx):
+  Laws.once_keeps(BU.BRow, BU.BU.rows.all(u), hx)
+
+def Laws.bot_picks_once(u):
+  Laws.once_distinct(BU.Pick, BU.BU.picks.src(u))
+
+def Laws.bot_picks_shown(u):
+  {==}
+
+def Laws.hubs_bots_once(ss, hs, many):
+  Laws.once_distinct(J.Json, Hb.Hubs.bots.src(ss, hs, many))
+
+def Laws.hubs_bots_shown(ss, hs, many):
+  {==}

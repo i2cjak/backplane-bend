@@ -2726,23 +2726,48 @@ def Bots.edit(+u: Ui) -> Act:
 def Bots.look(+u: Ui, +v: String) -> Act:
   Ui.rpc(u, "bots.edit", [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"look", J.Num{v}}])
 
-def Bots.drop(ms: List<&2, String>, +id: String) -> List<&2, String>:
+def Bots.dir.peer(+o: J.Json) -> BT.Peer:
+  BT.Peer{J.Json.get_str(o, "peer", ""), J.Json.get_str(o, "peerName", J.Json.get_str(o, "peer", "")), "", 0n, False{}}
+
+def Bots.dir.peers(os: List<&2, J.Json>, +known: List<&2, BT.Peer>) -> List<&2, BT.Peer>:
+  match os:
+    case Nil{}:
+      Nil{}
+    case +o <> t:
+      BT.Post.keep(BT.Peer, Bool.not(BT.Maybe.is(BT.Peer, BT.Peer.by.id(known, J.Json.get_str(o, "peer", "")))), Bots.dir.peer(o),
+        Bots.dir.peers(t, Bots.dir.peer(o) <> known))
+
+def Bots.peers.k(+ps: List<&2, BT.Peer>, +u: Ui) -> List<&2, BT.Peer>:
+  List.append(&2, BT.Peer, ps, Bots.dir.peers(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(Ui.info(u, "bots.remote")), J.Json.arr(Nil{}))), ps))
+
+# the linked machines, then any the linked machines' bots list names that
+# the log holds no record of (so their bots are still told apart by id)
+def Bots.peers(+u: Ui) -> List<&2, BT.Peer>:
+  Bots.peers.k(BT.World.peers(M.State.bots(Ui.state.of(u))), u)
+
+# the members that are not the bot k stands for (BT.Member.key: "Kit@box"
+# and "Kit@<box's id>" are one bot)
+def Bots.drop(ms: List<&2, String>, +ps: List<&2, BT.Peer>, +k: String) -> List<&2, String>:
   match ms:
     case Nil{}:
       Nil{}
     case +m <> +t:
-      Bool.pick(List<&2, String>, String.eq(m, id), Bots.drop(t, id), m <> Bots.drop(t, id))
+      Bool.pick(List<&2, String>, String.eq(BT.Member.key(ps, m), k), Bots.drop(t, ps, k), m <> Bots.drop(t, ps, k))
 
-# the room form's members: bot ids, one per line; picking one again drops it
-def Bots.pick.k(has: Bool, +ms: List<&2, String>, +id: String) -> List<&2, String>:
+# the room form's members: bot ids, one per line; picking one again drops
+# it, however the member was spelled
+def Bots.pick.k(has: Bool, +ms: List<&2, String>, +ps: List<&2, BT.Peer>, +id: String) -> List<&2, String>:
   match has:
     case True{}:
-      List.filter(~String, ~(x => Bool.not(String.is_empty(x))), Bots.drop(ms, id))
+      List.filter(~String, ~(x => Bool.not(String.is_empty(x))), Bots.drop(ms, ps, BT.Member.key(ps, id)))
     case False{}:
       List.append(&2, String, ms, [id])
 
+def Bots.pick.of(+u: Ui, +ms: List<&2, String>, +ps: List<&2, BT.Peer>, +id: String) -> Ui:
+  Ui.scratch_set(u, "@f.rmembers", String.join(Bots.pick.k(BT.Member.has(ms, ps, BT.Member.key(ps, id)), ms, ps, id), "\n"))
+
 def Bots.pick(+u: Ui, +id: String) -> Ui:
-  Ui.scratch_set(u, "@f.rmembers", String.join(Bots.pick.k(BT.Room.has(BT.Room.members.of(Bots.field(u, "rmembers")), id), BT.Room.members.of(Bots.field(u, "rmembers")), id), "\n"))
+  Bots.pick.of(u, BT.Room.members.of(Bots.field(u, "rmembers")), Bots.peers(u), id)
 
 def Bots.room.save(+u: Ui) -> Act:
   Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@rnew", ""), ["rname", "rmembers", "rid"]), "bots.room",

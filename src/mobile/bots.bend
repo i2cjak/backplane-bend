@@ -36,10 +36,11 @@ def MBots.ago(none: Bool, +now: Nat, +at: Nat) -> String:
 
 def MBots.row(r: B.BRow) -> J.Json:
   match r:
-    case B.BRow{i, n, _, +lk, +m, note, sel, rem, peer}:
+    case B.BRow{+i, +n, _, +lk, +m, note, sel, +rem, peer, +l}:
       J.Json.obj([J.KV{"id", J.Json.str(i)}, J.KV{"name", J.Json.str(n)}, J.KV{"look", J.Json.nat(lk)},
         J.KV{"mood", J.Json.str(m)}, J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.bool(sel)},
-        J.KV{"remote", J.Json.bool(rem)}, J.KV{"peer", J.Json.str(peer)}, J.KV{"cat", MBots.cat(lk, m)}])
+        J.KV{"remote", J.Json.bool(rem)}, J.KV{"peer", J.Json.str(peer)}, J.KV{"cat", MBots.cat(lk, m)},
+        J.KV{"key", J.Json.str(B.BU.key.k(rem, i, n, l))}, J.KV{"link", J.Json.str(l)}])
 
 def MBots.rows(rs: List<&2, B.BRow>) -> List<&2, J.Json>:
   match rs:
@@ -266,14 +267,14 @@ def MBots.far.o(+u: U.Ui, +id: String, name: String, +mood: String, note: String
 
 def MBots.far.m(m: Maybe<&2, B.BRow>, +u: U.Ui, +id: String) -> J.Json:
   match m:
-    case Some{B.BRow{_, n, _, lk, mo, note, _, _, peer}}:
+    case Some{B.BRow{_, n, _, lk, mo, note, _, _, peer, _}}:
       MBots.far.o(u, id, n, mo, note, lk, peer)
     case None{}:
       MBots.far.o(u, id, id, "away", B.Mood.note("away"), 0n, "")
 
 def MBots.rid(r: B.BRow) -> String:
   match r:
-    case B.BRow{i, _, _, _, _, _, _, _, _}:
+    case B.BRow{i, _, _, _, _, _, _, _, _, _}:
       i
 
 def MBots.far.find(rs: List<&2, B.BRow>, +id: String) -> Maybe<&2, B.BRow>:

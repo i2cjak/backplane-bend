@@ -8,6 +8,8 @@ import ./notify.bend as N
 import ./view.bend as VW
 import ./picker.bend as PK
 import ../core/botui.bend as BU
+import ../core/bot.bend as BT
+import ../core/once.bend as O
 
 # The phone keeps every hub it paired with connected at once, each with
 # its own client (Ui). A hub's key is its socket's host:port, which the
@@ -528,6 +530,24 @@ def Hubs.shown(hs: List<&2, Hub>) -> List<&2, Shown>:
     case Hub{+k, +u} <> t:
       Shown{k, Hubs.name(k, u), Q.all(S.Mob.screen(u), k)} <> Hubs.shown(t)
 
+def Hubs.named(ss: List<&2, Shown>, +n: String) -> Nat:
+  match ss:
+    case Nil{}:
+      0n
+    case Shown{_, +m, _} <> t:
+      Nat.add(Bool.pick(Nat, String.eq(String.to_lower(m), String.to_lower(n)), 1n, 0n), Hubs.named(t, n))
+
+def Hubs.relabel.go(ss: List<&2, Shown>, +all: List<&2, Shown>) -> List<&2, Shown>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Shown{+k, +n, j} <> t:
+      Shown{k, Bool.pick(String, Nat.is_gt(Hubs.named(all, n), 1n), n ++ " (" ++ k ++ ")", n), j} <> Hubs.relabel.go(t, all)
+
+# two paired machines with one name (any case) are told apart by their key
+def Hubs.relabel(+ss: List<&2, Shown>) -> List<&2, Shown>:
+  Hubs.relabel.go(ss, ss)
+
 def Shown.j(s: Shown) -> J.Json:
   match s:
     case Shown{_, _, j}:
@@ -635,6 +655,106 @@ def Hubs.auth(+url: String) -> String:
     Maybe.default(&2, String, List.get(&2, String, String.split(url, '/'), 2n), ""),
     Maybe.default(&2, String, List.head(&2, String, String.split(url, '/')), ""))
 
+# Bots over every paired hub
+# --------------------------
+# A hub lists its own bots and those of the machines it is linked to, so a
+# phone paired with two linked hubs would list each bot twice: from its own
+# hub, and as name@machine from the other. Each bot is keyed by what it
+# stands for and kept once (law hubs_bots_once): a hub's own bot as
+# "key|id"; a bot elsewhere, when another paired hub holds that link (or is
+# the machine at its url) and has a bot of that name, as that hub's own
+# bot; else by its machine's host:port and its name, so two hubs reporting
+# the same machine agree. Every hub's own bots come first, so a bot shows
+# as its own hub's.
+
+def Hubs.state(h: Hub) -> M.State:
+  U.Ui.state(Hub.ui(h))
+
+def Hubs.bot.id(m: Maybe<&2, BT.Bot>) -> String:
+  match m:
+    case Some{b}:
+      BT.Bot.id(b)
+    case None{}:
+      ""
+
+def Hubs.peer.url(m: Maybe<&2, BT.Peer>) -> String:
+  match m:
+    case Some{BT.Peer{_, _, u, _, _}}:
+      u
+    case None{}:
+      ""
+
+def Hubs.twin.k(hit: Bool, +k: String, +id: String, +rest: String) -> String:
+  Bool.pick(String, Bool.and(hit, Bool.not(String.is_empty(id))), k ++ "|" ++ id, rest)
+
+# whether hub k (not `from`) is the machine a link or an url leads to
+def Hubs.twin.is(+k: String, +st: M.State, +from: String, +link: String, +at: String) -> Bool:
+  Bool.and(Bool.not(String.eq(k, from)),
+    Bool.or(Bool.and(Bool.not(String.is_empty(link)), BT.Maybe.is(BT.Peer, BT.Peer.by.id(BT.World.peers(M.State.bots(st)), link))),
+      Bool.and(Bool.not(String.is_empty(at)), String.eq(k, at))))
+
+# that hub's own bot of the name, as "key|id" ("" when no paired hub is it)
+def Hubs.twin(hs: List<&2, Hub>, +from: String, +link: String, +at: String, +name: String) -> String:
+  match hs:
+    case Nil{}:
+      ""
+    case +h <> t:
+      Hubs.twin.k(Hubs.twin.is(Hub.key(h), Hubs.state(h), from, link, at), Hub.key(h),
+        Hubs.bot.id(BT.World.find(M.State.bots(Hubs.state(h)), name)), Hubs.twin(t, from, link, at, name))
+
+def Hubs.of.key(hs: List<&2, Hub>, +k: String) -> M.State:
+  match hs:
+    case Nil{}:
+      M.State.empty()
+    case +h <> t:
+      Bool.pick(M.State, String.eq(Hub.key(h), k), Hubs.state(h), Hubs.of.key(t, k))
+
+def Hubs.far.k(+twin: String, +at: String, +own: String, +name: String) -> String:
+  Bool.pick(String, String.is_empty(twin), Bool.pick(String, String.is_empty(at), own, "@" ++ at ++ "|" ++ String.to_lower(name)), twin)
+
+def Hubs.far.at(+st: M.State, +link: String) -> String:
+  Bool.pick(String, String.is_empty(Hubs.peer.url(BT.Peer.by.id(BT.World.peers(M.State.bots(st)), link))), "",
+    Hubs.auth(Hubs.peer.url(BT.Peer.by.id(BT.World.peers(M.State.bots(st)), link))))
+
+def Hubs.far.key(+hs: List<&2, Hub>, +from: String, +at: String, +r: J.Json) -> String:
+  Hubs.far.k(Hubs.twin(hs, from, J.Json.get_str(r, "link", ""), at, J.Json.get_str(r, "name", "")), at,
+    from ++ "|" ++ J.Json.get_str(r, "key", ""), J.Json.get_str(r, "name", ""))
+
+# what a row of hub `from` stands for
+def Hubs.bot.key(+hs: List<&2, Hub>, +from: String, +r: J.Json) -> String:
+  Bool.pick(String, J.Json.get_bool(r, "remote", False{}),
+    Hubs.far.key(hs, from, Hubs.far.at(Hubs.of.key(hs, from), J.Json.get_str(r, "link", "")), r),
+    from ++ "|" ++ J.Json.get_str(r, "key", ""))
+
+def Hubs.bot.keep(+far: Bool, +want: Bool, +hs: List<&2, Hub>, +from: String, +r: J.Json, rest: List<&2, O.Ky<J.Json>>) -> List<&2, O.Ky<J.Json>>:
+  BT.Post.keep(O.Ky<J.Json>, Bool.pick(Bool, want, far, Bool.not(far)), O.Ky{Hubs.bot.key(hs, from, r), r}, rest)
+
+def Hubs.bot.rows(rs: List<&2, J.Json>, +want: Bool, +hs: List<&2, Hub>, +from: String) -> List<&2, O.Ky<J.Json>>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case +r <> t:
+      Hubs.bot.keep(J.Json.get_bool(r, "remote", False{}), want, hs, from, r, Hubs.bot.rows(t, want, hs, from))
+
+# every hub's own bots (want False) or those elsewhere (want True), keyed
+def Hubs.bots.of(ss: List<&2, Shown>, +want: Bool, +hs: List<&2, Hub>, +many: Bool) -> List<&2, O.Ky<J.Json>>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case Shown{+k, +n, +j} <> t:
+      List.append(&2, O.Ky<J.Json>, Hubs.bot.rows(Hubs.machines(J.Json.elems(J.Json.get_obj(j, "bots")), Bool.pick(String, many, n, "")), want, hs, k),
+        Hubs.bots.of(t, want, hs, many))
+
+def Hubs.bots.src(+ss: List<&2, Shown>, +hs: List<&2, Hub>, +many: Bool) -> List<&2, O.Ky<J.Json>>:
+  List.append(&2, O.Ky<J.Json>, Hubs.bots.of(ss, False{}, hs, many), Hubs.bots.of(ss, True{}, hs, many))
+
+def Hubs.bots.keyed(+ss: List<&2, Shown>, +hs: List<&2, Hub>, +many: Bool) -> List<&2, O.Ky<J.Json>>:
+  O.Once.of(J.Json, Hubs.bots.src(ss, hs, many))
+
+# the cats of every paired hub, each bot once
+def Hubs.bots(+ss: List<&2, Shown>, +hs: List<&2, Hub>, +many: Bool) -> List<&2, J.Json>:
+  O.Once.vals(J.Json, Hubs.bots.keyed(ss, hs, many))
+
 def Hubs.peer(skip: Bool, +p: J.Json, rest: List<&2, J.Json>) -> List<&2, J.Json>:
   match skip:
     case True{}:
@@ -695,7 +815,7 @@ def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J
     J.KV{"find", J.Json.get_obj(Hubs.of(ss, cur), "find")},
     J.KV{"island", N.Note.island.k(Hubs.lines(ss))},
     J.KV{"thread", J.Json.get_obj(Hubs.of(ss, cur), "thread")},
-    J.KV{"bots", J.Json.arr(Hubs.all(ss, "bots", Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
+    J.KV{"bots", J.Json.arr(Hubs.bots(ss, list, Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
     J.KV{"rooms", J.Json.arr(Hubs.rooms(ss, Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
     J.KV{"newBot", J.Json.get_obj(Hubs.of(ss, cur), "newBot")},
     J.KV{"newRoom", J.Json.get_obj(Hubs.of(ss, cur), "newRoom")},
@@ -708,4 +828,4 @@ def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J
 def Hubs.screen(hs: Hubs) -> J.Json:
   match hs:
     case Hubs{_, _, +cur, +list}:
-      Hubs.screen.k(Hubs.shown(list), cur, list)
+      Hubs.screen.k(Hubs.relabel(Hubs.shown(list)), cur, list)
