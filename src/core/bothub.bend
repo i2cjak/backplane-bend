@@ -62,21 +62,10 @@ def Bots.at.name(+m: String) -> String:
 def Bots.at.peer(+m: String) -> String:
   Maybe.default(&2, String, List.last(&2, String, Bots.at.split(m)), "")
 
-# the peer a name or id stands for
-def Bots.peer.k(p: BT.Peer, +name: String) -> Bool:
-  match p:
-    case BT.Peer{i, n, _, _, _}:
-      Bool.or(String.eq(i, name), String.eq(String.to_lower(n), String.to_lower(name)))
-
-def Bots.peer.go(ps: List<&2, BT.Peer>, +name: String) -> Maybe<&2, BT.Peer>:
-  match ps:
-    case Nil{}:
-      None{}
-    case +p <> t:
-      BT.Pick.first(BT.Peer, Bots.peer.k(p, name), p, Bots.peer.go(t, name))
-
+# the peer an id or a name stands for: an id first, so "name@<id>" reaches
+# the right machine when two share a name (bot.bend's Peer.of)
 def Bots.peer(+s: M.State, +name: String) -> Maybe<&2, BT.Peer>:
-  Bots.peer.go(BT.World.peers(M.State.bots(s)), name)
+  BT.Peer.of(BT.World.peers(M.State.bots(s)), name)
 
 def Bots.peer.id(p: BT.Peer) -> String:
   match p:

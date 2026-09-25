@@ -575,6 +575,111 @@ def World.peers(+w: World) -> List<&2, Peer>:
     case World{_, _, _, _, _, _, pe, _, _, _}:
       List.filter(~Peer, ~Peer.live, Map.values(&2, Peer, pe))
 
+# Linked machines by name
+# -----------------------
+# A bot elsewhere is "name@machine", where machine is a linked machine's id
+# or its name. Names may clash (two machines called "laptop", ignoring
+# case); ids never do. So an id is matched first, then the first name, the
+# way the hub routes (bothub.bend's Bots.peer).
+
+def Peer.id(p: Peer) -> String:
+  match p:
+    case Peer{i, _, _, _, _}:
+      i
+
+def Peer.name(p: Peer) -> String:
+  match p:
+    case Peer{_, n, _, _, _}:
+      n
+
+def Peer.by.id(ps: List<&2, Peer>, +x: String) -> Maybe<&2, Peer>:
+  match ps:
+    case Nil{}:
+      None{}
+    case +p <> t:
+      Pick.first(Peer, String.eq(Peer.id(p), x), p, Peer.by.id(t, x))
+
+def Peer.by.name(ps: List<&2, Peer>, +x: String) -> Maybe<&2, Peer>:
+  match ps:
+    case Nil{}:
+      None{}
+    case +p <> t:
+      Pick.first(Peer, String.eq(String.to_lower(Peer.name(p)), String.to_lower(x)), p, Peer.by.name(t, x))
+
+def Peer.of.k(m: Maybe<&2, Peer>, +ps: List<&2, Peer>, +x: String) -> Maybe<&2, Peer>:
+  match m:
+    case Some{p}:
+      Some{p}
+    case None{}:
+      Peer.by.name(ps, x)
+
+# the linked machine an id or a name stands for
+def Peer.of(+ps: List<&2, Peer>, +x: String) -> Maybe<&2, Peer>:
+  Peer.of.k(Peer.by.id(ps, x), ps, x)
+
+def Peer.named(ps: List<&2, Peer>, +x: String) -> Nat:
+  match ps:
+    case Nil{}:
+      0n
+    case +p <> t:
+      Nat.add(Bool.pick(Nat, String.eq(String.to_lower(Peer.name(p)), String.to_lower(x)), 1n, 0n), Peer.named(t, x))
+
+def Peer.of.id(m: Maybe<&2, Peer>) -> String:
+  match m:
+    case Some{p}:
+      Peer.id(p)
+    case None{}:
+      ""
+
+def Peer.other(+got: String, +id: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(got)), Bool.not(String.eq(got, id)))
+
+# whether "name@<machine name>" could mean another machine than the one
+# with this id: it is blank, two machines have it (any case), or it is
+# another machine's id
+def Peer.clash(+ps: List<&2, Peer>, +id: String, +name: String) -> Bool:
+  Bool.or(Bool.or(String.is_empty(name), Nat.is_gt(Peer.named(ps, name), 1n)), Peer.other(Peer.of.id(Peer.of(ps, name)), id))
+
+def Member.at(+m: String) -> List<&2, String>:
+  String.split(m, '@')
+
+def Member.name(+m: String) -> String:
+  Maybe.default(&2, String, List.head(&2, String, Member.at(m)), "")
+
+def Member.machine(+m: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, Member.at(m)), "")
+
+def Member.link.k(m: Maybe<&2, Peer>, +machine: String) -> String:
+  match m:
+    case Some{p}:
+      Peer.id(p)
+    case None{}:
+      String.to_lower(machine)
+
+# a bot elsewhere as one key: its name (any case, as its hub finds it) at
+# its machine's id
+def Member.far(+name: String, +link: String) -> String:
+  String.to_lower(name) ++ "@" ++ link
+
+def Member.key.k(far: Bool, +ps: List<&2, Peer>, +m: String) -> String:
+  match far:
+    case True{}:
+      Member.far(Member.name(m), Member.link.k(Peer.of(ps, Member.machine(m)), Member.machine(m)))
+    case False{}:
+      m
+
+# what a room member stands for: a bot here by its id, a bot elsewhere by
+# Member.far, so "Kit@box", "kit@BOX" and "Kit@<box's id>" are one bot
+def Member.key(+ps: List<&2, Peer>, +m: String) -> String:
+  Member.key.k(String.contains(m, "@"), ps, m)
+
+def Member.has(ms: List<&2, String>, +ps: List<&2, Peer>, +k: String) -> Bool:
+  match ms:
+    case Nil{}:
+      False{}
+    case +m <> t:
+      Bool.or(String.eq(Member.key(ps, m), k), Member.has(t, ps, k))
+
 # Conversation depth
 # ------------------
 # A human, a routine, a webhook or a space button wakes a bot at hop 0; a

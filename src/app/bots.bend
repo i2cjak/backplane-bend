@@ -40,7 +40,7 @@ def Bv.note.color(+mood: String) -> U32:
 # a cat's row: the cat, its name, and its mood
 def Bv.row(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +ms: Nat, r: BU.BRow, +c: D.Clip, +y: U32) -> L.Out:
   match r:
-    case BU.BRow{+id, +name, _, +look, +mood, +note, +sel, +remote, +peer}:
+    case BU.BRow{+id, +name, _, +look, +mood, +note, +sel, +remote, +peer, _}:
       +nw = L.Ty.width(ty, 2n, note)
       L.Out{List.concat(&2, R.Op, [
           Bool.pick(List<&2, R.Op>, sel, [D.Draw.rect(c, 6, (y + 1 : U32), 252, 34, T.Th.raise(), 255), D.Draw.rect(c, 6, (y + 1 : U32), 2, 34, T.Th.accent(), 255)], Nil{}),
@@ -158,7 +158,7 @@ def Bv.warm.go(rs: List<&2, BU.BRow>, c: Map<&2, CA.CatF>, +clock: Nat) -> Map<&
   match rs:
     case Nil{}:
       c
-    case BU.BRow{_, _, _, +look, +mood, _, sel, +remote, _} <> t:
+    case BU.BRow{_, _, _, +look, +mood, _, sel, +remote, _, _} <> t:
       Bv.warm.go(t, Bv.warm.sel(sel, CA.Cats.warm(c, look, mood, 28, clock), look, mood, remote, clock), clock)
 
 def Bv.warm(+u: U.Ui, c: Map<&2, CA.CatF>, +clock: Nat) -> Map<&2, CA.CatF>:
@@ -632,12 +632,12 @@ def Bv.far.find(rs: List<&2, BU.BRow>, +id: String) -> Maybe<&2, BU.BRow>:
   match rs:
     case Nil{}:
       None{}
-    case BU.BRow{+i, +na, +th, +lk, +mo, +no, +se, +re, +pe} <> t:
-      Bool.pick(Maybe<&2, BU.BRow>, String.eq(i, id), Some{BU.BRow{i, na, th, lk, mo, no, se, re, pe}}, Bv.far.find(t, id))
+    case BU.BRow{+i, +na, +th, +lk, +mo, +no, +se, +re, +pe, +l} <> t:
+      Bool.pick(Maybe<&2, BU.BRow>, String.eq(i, id), Some{BU.BRow{i, na, th, lk, mo, no, se, re, pe, l}}, Bv.far.find(t, id))
 
 def Bv.far.cat(m: Maybe<&2, BU.BRow>, +cats: Map<&2, CA.CatF>, +ms: Nat, +x0: U32) -> L.Out:
   match m:
-    case Some{BU.BRow{_, _, _, +look, +mood, +note, _, _, _}}:
+    case Some{BU.BRow{_, _, _, +look, +mood, +note, _, _, _, _}}:
       L.Out.ops(List.append(&2, R.Op, CA.Cats.draw(cats, look, mood, ms, D.Clip.all(), (x0 + 16 : U32), 8, 36), []))
     case None{}:
       L.Out.none()

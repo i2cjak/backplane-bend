@@ -297,3 +297,14 @@ Every minute the hub runs due routines (`date +%z` for the time zone)
 and asks each linked machine for its bots; the merged list is the info
 key `bots.remote` (a machine that does not answer keeps its bots, away).
 `test/tools/bots_e2e.ts` runs two hubs against each other.
+
+Each bot is listed once (`src/core/once.bend`; laws `bot_rows_once`,
+`bot_picks_once`, `hubs_bots_once`). A bot here is keyed by its id, a bot
+elsewhere by its name (any case) at its machine's link id, so one bot
+reported twice, or named `Kit@box` in one room and `Kit@<box's id>` in
+another, is one entry, and bots with one name on two machines stay two.
+`name@machine` finds a machine by its id first, then the first by name;
+when a name could mean two machines (two called `laptop`, any case), the
+bot is `name@<id>` and shown as `laptop (<id>)`. Two bots here with one
+name show their ids. A phone paired with two linked hubs shows a bot once,
+as its own hub's.

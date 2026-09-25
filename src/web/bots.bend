@@ -82,7 +82,7 @@ def WB.rname(remote: Bool, name: String, +peer: String) -> String:
 # a bot: its cat, its name and its mood; a bot elsewhere shows its machine
 def WB.row(r: BI.BRow) -> D.Node:
   match r:
-    case BI.BRow{+id, name, _, +look, +mood, note, sel, +remote, peer}:
+    case BI.BRow{+id, name, _, +look, +mood, note, sel, +remote, peer, _}:
       D.El{"div", "bot:" ++ id, [D.At{"class", Bool.pick(String, sel, "bot-row on", "bot-row")}, D.At{"title", id}, D.At{"data-value", id}, D.On{"click", Bool.pick(String, remote, "remote", "bot")}],
         [WC.WCat.img(look, mood, 28), WB.div("bot-text", [D.Dom.span("bot-name", WB.rname(remote, name, peer)), D.Dom.span(WB.mood.cls(mood), note)])]}
 
@@ -556,26 +556,26 @@ def WB.far.find(rs: List<&2, BI.BRow>, +id: String) -> Maybe<&2, BI.BRow>:
   match rs:
     case Nil{}:
       None{}
-    case BI.BRow{+i, n, th, lk, mo, no, s, re, pe} <> t:
-      BT.Pick.first(BI.BRow, String.eq(i, id), BI.BRow{i, n, th, lk, mo, no, s, re, pe}, WB.far.find(t, id))
+    case BI.BRow{+i, n, th, lk, mo, no, s, re, pe, l} <> t:
+      BT.Pick.first(BI.BRow, String.eq(i, id), BI.BRow{i, n, th, lk, mo, no, s, re, pe, l}, WB.far.find(t, id))
 
 def WB.far.look(m: Maybe<&2, BI.BRow>) -> Nat:
   match m:
-    case Some{BI.BRow{_, _, _, lk, _, _, _, _, _}}:
+    case Some{BI.BRow{_, _, _, lk, _, _, _, _, _, _}}:
       lk
     case None{}:
       0n
 
 def WB.far.mood(m: Maybe<&2, BI.BRow>) -> String:
   match m:
-    case Some{BI.BRow{_, _, _, _, mo, _, _, _, _}}:
+    case Some{BI.BRow{_, _, _, _, mo, _, _, _, _, _}}:
       mo
     case None{}:
       "away"
 
 def WB.far.head(m: Maybe<&2, BI.BRow>, +id: String) -> List<&2, D.Node>:
   match m:
-    case Some{BI.BRow{_, _, _, +look, +mood, note, _, _, _}}:
+    case Some{BI.BRow{_, _, _, +look, +mood, note, _, _, _, _}}:
       [WC.WCat.img(look, mood, 48), WB.div("bot-id", [D.Dom.span("bot-title", id), D.Dom.span(WB.mood.cls(mood), note)])]
     case None{}:
       [WC.WCat.img(0n, "away", 48), WB.div("bot-id", [D.Dom.span("bot-title", id), D.Dom.span("mood away", "away")])]

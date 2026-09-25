@@ -57,6 +57,7 @@ import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/perf.bend as PF
 import ./src/core/voice.bend as VO
+import ./src/core/once.bend as ON
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2537,3 +2538,64 @@ law voice_unsure_bounded:
 law voice_keywords_bounded:
   for +ds: List<&2, String>
   {Nat.is_le(List.length(&2, String, VO.Voice.keywords(ds)), VO.Voice.max_keywords()) == True{} : Bool}
+
+# Each bot once
+# -------------
+# Every list of bots keys each bot by what it stands for (a bot here by its
+# id, a bot elsewhere by its name, any case, at its machine's link id) and
+# keeps the first of each key (src/core/once.bend).
+
+# a list kept once holds no key twice
+law once_distinct:
+  for -A: Data
+  for xs: List<&2, ON.Ky<A>>
+  {ON.Once.distinct(ON.Once.keys(A, ON.Once.of(A, xs))) == True{} : Bool}
+
+# and when no key repeats it keeps everything, in order: two things with
+# different keys are never merged
+law once_keeps:
+  for -A: Data
+  for +xs: List<&2, ON.Ky<A>>
+  for hx: {ON.Once.distinct(ON.Once.keys(A, xs)) == True{} : Bool}
+  {ON.Once.of(A, xs) == xs : List<&2, ON.Ky<A>>}
+
+# each bot appears once in the bot list: this machine's bots and those the
+# linked machines report (bots.remote), however often one is reported
+law bot_rows_once:
+  for +u: U.Ui
+  {ON.Once.distinct(ON.Once.keys(BU.BRow, BU.BU.rows.keyed(u))) == True{} : Bool}
+
+# the list shown is exactly that keyed list
+law bot_rows_shown:
+  for +u: U.Ui
+  {BU.BU.rows(u) == ON.Once.vals(BU.BRow, BU.BU.rows.keyed(u)) : List<&2, BU.BRow>}
+
+# distinct bots all stay listed
+law bot_rows_keep:
+  for +u: U.Ui
+  for hx: {ON.Once.distinct(ON.Once.keys(BU.BRow, BU.BU.rows.all(u))) == True{} : Bool}
+  {BU.BU.rows.keyed(u) == BU.BU.rows.all(u) : List<&2, ON.Ky<BU.BRow>>}
+
+# the room picker lists each bot once too, here or elsewhere, however a
+# member names it
+law bot_picks_once:
+  for +u: U.Ui
+  {ON.Once.distinct(ON.Once.keys(BU.Pick, BU.BU.picks.keyed(u))) == True{} : Bool}
+
+law bot_picks_shown:
+  for +u: U.Ui
+  {BU.BU.picks(u) == ON.Once.vals(BU.Pick, BU.BU.picks.keyed(u)) : List<&2, BU.Pick>}
+
+# a phone paired with several hubs lists each bot once, though linked hubs
+# each report the other's bots
+law hubs_bots_once:
+  for +ss: List<&2, Hb.Shown>
+  for +hs: List<&2, Hb.Hub>
+  for +many: Bool
+  {ON.Once.distinct(ON.Once.keys(J.Json, Hb.Hubs.bots.keyed(ss, hs, many))) == True{} : Bool}
+
+law hubs_bots_shown:
+  for +ss: List<&2, Hb.Shown>
+  for +hs: List<&2, Hb.Hub>
+  for +many: Bool
+  {Hb.Hubs.bots(ss, hs, many) == ON.Once.vals(J.Json, Hb.Hubs.bots.keyed(ss, hs, many)) : List<&2, J.Json>}
