@@ -32,6 +32,8 @@ import ../core/lightbox.bend as LBX
 import ../core/model.bend as M
 import ./bots.bend as BV
 import ./cats.bend as CA
+import ../server/perf.bend as PS
+import ../core/perf.bend as PF
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -1421,12 +1423,24 @@ def Aux.with_cats(a: Aux, cs: Map<&2, CA.CatF>) -> Aux:
 def Shell.anim(+n: N.Nui, +ms: Nat) -> Bool:
   Bool.or(Bool.or(Bool.and(N.Nui.panel(n), Shell.busy(N.Nui.vw(n), ms)), N.Hover.busy(n, ms)), N.Lbx.busy(n, ms))
 
-# present the frame's tiles and keep them for the next frame
-def Shell.present(+tiles: TI.Tiles, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+# a frame is on screen: it ends the frame's span (begun at t0) and the
+# input and hub messages waiting for it (docs/perf.md)
+def Shell.timed(+t0: U32) -> IO(Unit):
+  do IO<Unit>:
+    t : U32 <- PS.Perf.lap("ui.frame", t0)
+    PS.Perf.done("ui.input")
+    PS.Perf.done("ui.hub")
+
+# present the frame's tiles (drawn since t2) and keep them for the next frame
+def Shell.present(+tiles: TI.Tiles, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
   match o:
     case L.Out{_, +hs}:
-      IO.bind(Window & Image, Shell, W.Win.present(w, TI.Tiles.image(tiles)),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms))
+      do IO<Shell>:
+        t3 : U32 <- PS.Perf.lap("ui.raster", t2)
+        r : Window & Image <- W.Win.present(w, TI.Tiles.image(tiles))
+        t4 : U32 <- PS.Perf.lap("ui.present", t3)
+        Shell.timed(t0)
+        Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms)
 
 # The lightbox (nui.bend's Lbx, core/lightbox.bend's Lb): the picture
 # alone on a dark window, zoomed and panned, its full decode once there
@@ -1466,30 +1480,51 @@ def Lbv.draw(+n: N.Nui, +pics: Map<&2, BM.Bitmap>, +ms: Nat) -> Image:
 # the frame: the lightbox while it is up, else the window's tiles. The
 # lightbox is drawn whole and leaves the kept tiles alone: they still hold
 # the window's last frame, which is what shows again when it closes
-def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
   match on:
     case True{}:
-      IO.bind(Window & Image, Shell, W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms)),
-        r => Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms))
+      do IO<Shell>:
+        r : Window & Image <- W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms))
+        t3 : U32 <- PS.Perf.lap("ui.lightbox", t2)
+        Shell.timed(t0)
+        Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms)
     case False{}:
       Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
-        L.Out{ops, hs}, n, w, q, i, wa, epoch, ms)
+        L.Out{ops, hs}, n, w, q, i, wa, epoch, ms, t0, t2)
 
-def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
+def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
   match o:
     case L.Out{+ops, +hs}:
-      Lbv.paint(N.Lbx.on(n), ops, hs, oh, n, w, q, i, wa, epoch, ms)
+      Lbv.paint(N.Lbx.on(n), ops, hs, oh, n, w, q, i, wa, epoch, ms, t0, t2)
 
-# the timeline's memo is brought up to this frame first; layout draws from it
-# the cats the frame shows are posed into the cache first
-def Shell.paint.c(+cats: Map<&2, CA.CatF>, +memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.out(BV.Bv.frame(Aux.ty(wa), L.TL.memos.now(memos), cats, n), oh, n, w, q, i, Aux.with_cats(Aux.with_memos(wa, memos), cats), epoch, ms)
+# how many ops a layout made (counting them also finishes the layout)
+def Lay.nops(o: L.Out) -> Nat:
+  match o:
+    case L.Out{os, _}:
+      List.length(&2, R.Op, os)
 
-def Shell.paint.m(+memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.c(BV.Bv.warm(N.Nui.ui(n), Aux.cats(wa), BV.Bv.clock.of(n)), memos, oh, n, w, q, i, wa, epoch, ms)
+# the cats the frame shows are posed into the cache first; the layout is
+# timed from t1 (ui.layout, with the ops it made as ui.ops)
+def Shell.paint.c(+cats: Map<&2, CA.CatF>, +memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t1: U32) -> IO(Shell):
+  do IO<Shell>:
+    +o : L.Out = BV.Bv.frame(Aux.ty(wa), L.TL.memos.now(memos), cats, n)
+    +k : Nat = Lay.nops(o)
+    +t2 : U32 <- PS.Perf.lap("ui.layout", t1)
+    PS.Perf.add("ui.ops", U32.from_nat(k))
+    Shell.paint.out(o, oh, n, w, q, i, Aux.with_cats(Aux.with_memos(wa, memos), cats), epoch, ms, t0, t2)
 
+def Shell.paint.m(+memos: List<&2, L.TLMemo>, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t1: U32) -> IO(Shell):
+  Shell.paint.c(BV.Bv.warm(N.Nui.ui(n), Aux.cats(wa), BV.Bv.clock.of(n)), memos, oh, n, w, q, i, wa, epoch, ms, t0, t1)
+
+# the timeline's memo is brought up to this frame first; layout draws from
+# it. Each step is timed: ui.memo, ui.layout, then ui.raster and
+# ui.present as the frame goes out
 def Shell.paint.go(+oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
-  Shell.paint.m(L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa)), oh, n, w, q, i, wa, epoch, ms)
+  do IO<Shell>:
+    +t0 : U32 <- PS.Perf.us()
+    +memos : List<&2, L.TLMemo> = L.Lay.memos(Aux.ty(wa), n, Aux.memos(wa))
+    +t1 : U32 <- PS.Perf.lap("ui.memo", t0)
+    Shell.paint.m(memos, oh, n, w, q, i, wa, epoch, ms, t0, t1)
 
 def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   match n0:
@@ -1508,14 +1543,29 @@ def Shell.stamp(+n: N.Nui, +ms: Nat) -> N.Nui:
 def Shell.paint(+n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, +epoch: Nat, +ms: Nat) -> IO(Shell):
   Shell.paint.k(Shell.stamp(n, ms), w, q, i, wa, epoch, ms)
 
+# The performance overlay (ctrl+shift+h): each frame drawn while it is up
+# reads the numbers first (timed as ui.hud) and gives N.Hud.feed the text
+def Hud.feed(on: Bool, +n: N.Nui, +ms: Nat) -> IO(N.Nui):
+  match on:
+    case True{}:
+      do IO<N.Nui>:
+        t0 : U32 <- PS.Perf.us()
+        cur : String <- PS.Perf.take()
+        +n2 : N.Nui = N.Hud.feed(n, cur, ms)
+        t1 : U32 <- PS.Perf.span("ui.hud", t0)
+        return n2
+    case False{}:
+      IO.pure(N.Nui, n)
+
 # draw now if anything changed since the last frame
 def Shell.frame(a: Shell) -> IO(Shell):
   match a:
     case Shell{+n, w, True{}, _, q, i, wa}:
       do IO<Shell>:
         t : U32 <- H.Clock.epoch()
-        ms : Nat <- IO.now()
-        Shell.paint(n, w, q, i, wa, U32.to_nat(t), ms)
+        +ms : Nat <- IO.now()
+        n2 : N.Nui <- Hud.feed(U.Ui.flag(N.Nui.ui(n), "perf"), n, ms)
+        Shell.paint(n2, w, q, i, wa, U32.to_nat(t), ms)
     case Shell{n, w, False{}, _, q, i, wa}:
       IO.pure(Shell, Shell{n, w, False{}, False{}, q, i, wa})
 
@@ -1552,10 +1602,69 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
     case PicErr{tag, path, why}:
       Shell.tagged(a, PicErr{tag, path, why})
 
+def ShellMsg.kind(m: ShellMsg) -> String:
+  match m:
+    case FromWin{_}:
+      "win"
+    case FromHub{_, _}:
+      "hub"
+    case FromHubSt{_, _, _}:
+      "hub_state"
+    case Frame{}:
+      "frame"
+    case Gone{_}:
+      "gone"
+    case Retry{_}:
+      "retry"
+    case Board{_, _}:
+      "board"
+    case Mesh3{_, _}:
+      "mesh"
+    case Status{_, _}:
+      "status"
+    case Parts3{_, _, _}:
+      "parts"
+    case Sheets{_, _}:
+      "sheets"
+    case Shot{_, _}:
+      "shot"
+    case PicOk{_, _, _, _, _}:
+      "pic"
+    case PicErr{_, _, _}:
+      "pic_err"
+    case Blink{}:
+      "blink"
+
+# the span a message that leaves a frame to draw starts: input to pixels,
+# hub message to pixels
+def ShellMsg.waits(m: ShellMsg) -> String:
+  match m:
+    case FromWin{_}:
+      "ui.input"
+    case FromHub{_, _}:
+      "ui.hub"
+    case FromHubSt{_, _, _}:
+      "ui.hub"
+    case _:
+      ""
+
+def Shell.mark(a: Shell, +name: String) -> IO(Shell):
+  match a:
+    case Shell{n, w, True{}, qd, q, i, wa}:
+      IO.bind(Unit, Shell, Bool.pick(IO(Unit), String.is_empty(name), IO.pure(Unit, Unit{}), PS.Perf.mark(name)), u => IO.pure(Shell, Shell{n, w, True{}, qd, q, i, wa}))
+    case Shell{n, w, False{}, qd, q, i, wa}:
+      IO.pure(Shell, Shell{n, w, False{}, qd, q, i, wa})
+
+# each message's handling is timed as ui.msg.<kind> (docs/perf.md)
 def Shell.got(m: Maybe<&1, ShellMsg>, a: Shell, k: Shell -> IO(Unit)) -> IO(Unit):
   match m:
-    case Some{msg}:
-      IO.bind(Shell, Unit, IO.bind(Shell, Shell, Shell.handle(a, msg), Shell.watch), k)
+    case Some{+msg}:
+      do IO<Unit>:
+        t0 : U32 <- PS.Perf.us()
+        a2 : Shell <- IO.bind(Shell, Shell, Shell.handle(a, msg), Shell.watch)
+        t1 : U32 <- PS.Perf.lap("ui.msg." ++ ShellMsg.kind(msg), t0)
+        a3 : Shell <- Shell.mark(a2, ShellMsg.waits(msg))
+        k(a3)
     case None{}:
       IO.pure(Unit, Unit{})
 

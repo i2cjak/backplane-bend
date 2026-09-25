@@ -4203,3 +4203,27 @@ def Laws.bot_spawn_bounded(d):
 
 def Laws.bot_mood_idle_still():
   {==}
+def Laws.perf_errors_always_logged(th):
+  {==}
+
+def Laws.perf_debug_quiet_by_default():
+  {==}
+
+def Laws.perf_gauge_window_is_reading(name, n, sum, max, last, bs, old):
+  {==}
+
+def Laws.perf_pct_empty(name, per):
+  {==}
+
+def Laws.perf_pct_bucket_top():
+  {==}
+
+def Laws.perf_pct_capped_by_max():
+  {==}
+
+def Laws.perf_hud_first_frame(cur, at, now):
+  {==}
+
+def Laws.perf_hud_off_draws_nothing(ty, text, w):
+  {==}
+
