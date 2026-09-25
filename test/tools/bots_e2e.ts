@@ -1,7 +1,7 @@
 // End to end: bots on two headless hubs (docs/bots.md). Starts two hubs on
 // temporary homes and free ports, then checks webhooks (signed, GitHub's,
 // wrong, replayed, stale, too big; bearer tokens and forms), linking the hubs with an invite, a
-// person on one hub writing to a bot on the other, the signed bot
+// person on one hub writing to a bot on the other, a room shared by both, the signed bot
 // directory, and (on the minute tick) a routine and the linked machine's
 // bots in the hub info. Agents never answer: `claude`, `codex` and `grok`
 // are stand-ins that exit at once. Prints "ok ..." / "FAIL ..." lines.
@@ -247,6 +247,27 @@ try {
   const posted = await change(a, "RoomPosted", (c) => c.text === "hello from beta");
   check("alpha logs the message as RoomPosted", !!posted, a.seen.filter((c) => c.$ === "RoomPosted"));
   check("from the person on beta", String(posted?.from ?? "").endsWith("@beta"), posted);
+
+  // a room shared by both machines: alpha's person makes it with a bot on
+  // each; beta learns it from the first post, and its side can post back
+  const kelp = await rpc(b, "bots.create", { name: "kelp" });
+  const mk = await rpc(a, "bots.room", { room: "r-shared", name: "both", members: `${miso?.bot}\nkelp@beta` });
+  check("a room with a bot on beta", kelp?.ok && mk?.ok, [kelp, mk]);
+  const sp = await rpc(a, "bots.post", { room: "r-shared", text: "hello both machines" });
+  check("a person posts in it", sp?.ok, sp);
+  const bset = await change(b, "RoomSet", (c) => c.id === "r-shared");
+  check("beta keeps the room", !!bset && bset.name === "both", b.seen.filter((c) => c.$ === "RoomSet"));
+  const bmem = String(bset?.members ?? "").split("\n").sort();
+  check("as beta names its members", bmem.join() === [kelp?.bot, "miso@alpha"].sort().join(), bset);
+  const bpost = await change(b, "RoomPosted", (c) => c.room === "r-shared" && c.text === "hello both machines");
+  check("beta logs the post in the room", !!bpost && bpost.from === "you@alpha", bpost);
+  check("the bot on beta hears it", !!(await change(b, "BotWoke", (c) => c.bot === kelp?.bot)), b.seen.filter((c) => c.$ === "BotWoke"));
+  const back = await rpc(b, "bots.post", { room: "r-shared", text: "hello back" });
+  check("beta's person posts back", back?.ok, back);
+  const apost = await change(a, "RoomPosted", (c) => c.room === "r-shared" && c.text === "hello back");
+  check("alpha logs it in the same room", !!apost && apost.from === "you@beta", a.seen.filter((c) => c.$ === "RoomPosted"));
+  check("the bot on alpha hears it", !!(await change(a, "MessagePosted", (c) => JSON.stringify(c).includes("hello back"))));
+  check("alpha's room is unchanged", !a.seen.some((c) => c.$ === "RoomSet" && c.id === "r-shared" && c.members !== `${miso?.bot}\nkelp@beta`), a.seen.filter((c) => c.$ === "RoomSet"));
 
   // the bot directory, signed
   const dts = now();

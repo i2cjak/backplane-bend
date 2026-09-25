@@ -88,12 +88,93 @@ def Bots.remote.body(+from: String, +to: String, +room: String, +rname: String, 
   J.Json.show(J.Json.obj([J.KV{"from", J.Str{from}}, J.KV{"to", J.Str{to}}, J.KV{"room", J.Str{room}}, J.KV{"roomName", J.Str{rname}},
     J.KV{"text", J.Str{text}}, J.KV{"hop", J.Json.nat(hop)}]))
 
-def Bots.remote.out(m: Maybe<&2, BT.Peer>, +from: String, +to: String, +room: String, +rname: String, +text: String, +hop: Nat) -> List<&2, B.Out>:
+# Shared rooms: a room may have members on other machines. A post goes to
+# each linked machine once, naming the room, its members as that machine
+# should read them, and which of its bots hear it ("tos"); the machine
+# keeps the room too, so its bots can post back. Each machine sends its own
+# posts to every other: a machine never passes on a post it received.
+
+def Bots.peer.idm(m: Maybe<&2, BT.Peer>) -> String:
   match m:
     case Some{p}:
-      [B.BotFx{"send", Bots.peer.id(p), "/bots/deliver", Bots.remote.body(from, Bots.at.name(to), room, rname, text, hop)}]
+      Bots.peer.id(p)
     case None{}:
+      ""
+
+def Bots.peer.namem(m: Maybe<&2, BT.Peer>, +d: String) -> String:
+  match m:
+    case Some{BT.Peer{_, +n, _, _, _}}:
+      Bool.pick(String, String.is_empty(n), d, n)
+    case None{}:
+      d
+
+def Bots.member.peer.k(remote: Bool, +s: M.State, +m: String) -> String:
+  match remote:
+    case True{}:
+      Bots.peer.idm(Bots.peer(s, Bots.at.peer(m)))
+    case False{}:
+      ""
+
+# the linked machine a member is on: its peer id, or "" for a bot here or
+# on a machine not linked
+def Bots.member.peer(+s: M.State, +m: String) -> String:
+  Bots.member.peer.k(Bots.remote(m), s, m)
+
+def Bots.peers.add(+p: String, +acc: List<&2, String>) -> List<&2, String>:
+  Bool.pick(List<&2, String>, Bool.or(String.is_empty(p), BT.Room.has(acc, p)), acc, p <> acc)
+
+# the linked machines a room's members are on, each once
+def Bots.peers.of(ms: List<&2, String>, +s: M.State, acc: List<&2, String>) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      acc
+    case +m <> t:
+      Bots.peers.of(t, s, Bots.peers.add(Bots.member.peer(s, m), acc))
+
+# the names of a room's members on the machine p
+def Bots.on.peer(ms: List<&2, String>, +s: M.State, +p: String) -> List<&2, String>:
+  match ms:
+    case Nil{}:
       Nil{}
+    case +m <> t:
+      BT.Post.keep(String, String.eq(Bots.member.peer(s, m), p), Bots.at.name(m), Bots.on.peer(t, s, p))
+
+def Bots.member.for.k(remote: Bool, there: Bool, +s: M.State, +m: String) -> String:
+  match remote there:
+    case True{} True{}:
+      Bots.at.name(m)
+    case True{} False{}:
+      Bots.at.name(m) ++ "@" ++ Bots.peer.namem(Bots.peer(s, Bots.at.peer(m)), Bots.at.peer(m))
+    case False{} _:
+      BT.Bot.name(Bots.bot(s, m)) ++ "@"
+
+# a member as the machine p reads it: a bot there by its bare name, a bot
+# here as "name@" (the sender's machine), a bot elsewhere as "name@machine"
+def Bots.member.for(+s: M.State, +p: String, +m: String) -> String:
+  Bots.member.for.k(Bots.remote(m), String.eq(Bots.member.peer(s, m), p), s, m)
+
+def Bots.members.for(ms: List<&2, String>, +s: M.State, +p: String) -> List<&2, String>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      Bots.member.for(s, p, m) <> Bots.members.for(t, s, p)
+
+# a room post for a linked machine; "to" is the first bot for machines that
+# read only that
+def Bots.shared.body(+from: String, +tos: List<&2, String>, +ms: List<&2, String>, +room: String, +rname: String, +text: String, +hop: Nat) -> String:
+  J.Json.show(J.Json.obj([J.KV{"from", J.Str{from}}, J.KV{"to", J.Str{Maybe.default(&2, String, List.head(&2, String, tos), "")}},
+    J.KV{"tos", J.Json.arr(MC.Tool.strs(tos))}, J.KV{"members", J.Json.arr(MC.Tool.strs(ms))}, J.KV{"room", J.Str{room}}, J.KV{"roomName", J.Str{rname}},
+    J.KV{"text", J.Str{text}}, J.KV{"hop", J.Json.nat(hop)}]))
+
+# one delivery for each linked machine a room's members are on
+def Bots.remotes(ps: List<&2, String>, +s: M.State, +ms: List<&2, String>, +from: String, +room: String, +rname: String, +text: String, +hop: Nat) -> List<&2, B.Out>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case +p <> t:
+      B.BotFx{"send", p, "/bots/deliver", Bots.shared.body(from, Bots.on.peer(ms, s, p), Bots.members.for(ms, s, p), room, rname, text, hop)} <>
+        Bots.remotes(t, s, ms, from, room, rname, text, hop)
 
 def Bots.member.local(b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +seq: Nat, +i: Nat, +from: String, +fname: String, +room: String, +rname: String, +text: String, +hop: Nat) -> B.Step:
   match b:
@@ -102,11 +183,12 @@ def Bots.member.local(b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +seq: Nat, +
     case None{}:
       B.Step.none()
 
-# one member of a room hears a post (never its sender)
+# one member of a room here hears a post (never its sender; members
+# elsewhere hear it through Bots.remotes)
 def Bots.member.k(remote: Bool, +s: M.State, +now: Nat, +seq: Nat, +i: Nat, +from: String, +fname: String, +room: String, +rname: String, +text: String, +hop: Nat, +m: String) -> B.Step:
   match remote:
     case True{}:
-      B.Step.outs(Bots.remote.out(Bots.peer(s, Bots.at.peer(m)), fname, m, room, rname, text, hop))
+      B.Step.none()
     case False{}:
       Bots.member.local(BT.World.find.id(Bots.bot(s, m)), s, now, seq, i, from, fname, room, rname, text, hop)
 
@@ -132,7 +214,8 @@ def Bots.fan(ms: List<&2, String>, +i: Nat, +s: M.State, +now: Nat, +seq: Nat, +
 def Bots.post(+s: M.State, +now: Nat, +from: String, +fname: String, +self: String, r: BT.Room, +text: String, +hop: Nat) -> B.Step:
   match r:
     case BT.Room{+room, +rname, +ms, _, _}:
-      B.Step.before([M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), room, fname, text, hop, now}], Nil{},
+      B.Step.before([M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), room, fname, text, hop, now}],
+        Bots.remotes(Bots.peers.of(ms, s, Nil{}), s, ms, fname, room, rname, text, hop),
         Bots.fan(ms, 0n, s, now, B.Hub.seq(s), from, fname, self, room, rname, text, hop))
 
 # a direct message from a bot (or a person) to one bot, here or elsewhere
@@ -464,10 +547,78 @@ def Bots.ring.k(h: BT.Hook, test: Bool, +s: M.State, +now: Nat, +text: String) -
 def Bots.ring(+s: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
   Bots.ring.k(BT.World.hook(M.State.bots(s), hook), RG.Ring.test(body), s, now, RG.Ring.text(body))
 
-# a message from a bot on a linked machine to a bot here
-def Bots.incoming(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
+# a direct message from a bot on a linked machine to a bot here
+def Bots.incoming.dm(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
   Bots.incoming.k(BT.World.find(M.State.bots(s), J.Json.get_str(o, "to", "")), s, now, peer, J.Json.get_str(o, "from", "") ++ "@" ++ peer,
     J.Json.get_str(o, "roomName", ""), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "hop", 0n))
+
+def Bots.named(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case +x <> t:
+      BT.Post.keep(String, Bool.not(String.is_empty(Bots.at.name(x))), x, Bots.named(t))
+
+def Bots.room.cap() -> Nat:
+  64n
+
+def Bots.strs(xs: List<&2, J.Json>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      J.Json.as_str(Some{x}, "") <> Bots.strs(t)
+
+def Bots.tos.k(xs: List<&2, String>, +to: String) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      [to]
+    case x <> t:
+      x <> t
+
+# the bots here a post is for ("tos", else "to")
+def Bots.tos(+o: J.Json) -> List<&2, String>:
+  Bots.tos.k(Bots.strs(List.take(&2, J.Json, J.Json.elems(J.Json.get_obj(o, "tos")), Bots.room.cap())), J.Json.get_str(o, "to", ""))
+
+def Bots.on.any(ms: List<&2, String>, +s: M.State, +pid: String) -> Bool:
+  match ms:
+    case Nil{}:
+      False{}
+    case +m <> t:
+      Bool.or(String.eq(Bots.member.peer(s, m), pid), Bots.on.any(t, s, pid))
+
+# may a linked machine post in (and set the members of) the room here with
+# this id: a room new here, or a live one with a member on that machine. A
+# machine never takes over a room it has no member in, nor opens one the
+# person deleted
+def Bots.room.open(r: BT.Room, +s: M.State, +pid: String) -> Bool:
+  match r:
+    case BT.Room{_, _, +ms, +c, d}:
+      Bool.or(Nat.is_eq(c, 0n), Bool.and(Bool.not(d), Bool.and(Bots.on.any(ms, s, pid), Bool.not(String.is_empty(pid)))))
+
+def Bots.room.same(r: BT.Room, +rname: String, +shown: String) -> Bool:
+  match r:
+    case BT.Room{_, n, ms, _, d}:
+      Bool.and(Bool.not(d), Bool.and(String.eq(n, rname), String.eq(BT.Room.members.show(ms), shown)))
+
+def Bots.shared.one(ok: Bool, b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +i: Nat, +from: String, +room: String, +rname: String, +text: String, +hop: Nat) -> B.Step:
+  match ok b:
+    case True{} Some{+bot}:
+      Bots.wake(s, now, "", bot, Bots.msg(now, B.Hub.seq(s), i), Bots.note(from, room, rname, text), hop)
+    case _ _:
+      B.Step.none()
+
+def Bots.shared.set(same: Bool, +room: String, +rname: String, +shown: String, +now: Nat) -> List<&2, M.Change>:
+  match same:
+    case True{}:
+      Nil{}
+    case False{}:
+      [M.RoomSet{room, rname, shown, now}]
+
+# a room post names a room that is not a direct one, with its members
+def Bots.shared.is(+o: J.Json) -> Bool:
+  Bool.and(Bool.not(String.is_empty(J.Json.get_str(o, "room", ""))),
+    Bool.and(Bool.not(String.starts_with(J.Json.get_str(o, "room", ""), "dm:")), BT.Maybe.is(J.Json, J.Json.get(o, "members"))))
 
 # Routines
 # --------
@@ -663,6 +814,72 @@ def Bots.member.of.k(remote: Bool, m: Maybe<&2, BT.Bot>, +x: String) -> String:
 # stays; the maker is always in
 def Bots.member.of(+s: M.State, +x: String) -> String:
   Bots.member.of.k(Bots.remote(x), BT.World.find(M.State.bots(s), x), x)
+
+def Bots.member.in.k(remote: Bool, sender: Bool, +s: M.State, +peer: String, +x: String) -> String:
+  match remote sender:
+    case False{} _:
+      Bots.member.of(s, x)
+    case True{} True{}:
+      Bots.at.name(x) ++ "@" ++ peer
+    case True{} False{}:
+      x
+
+# a member as the machine `peer` named it, as this machine names it: a bare
+# name is a bot here (its id, "" when there is none), "name@" a bot on
+# `peer`, "name@machine" a bot elsewhere
+def Bots.member.in(+s: M.State, +peer: String, +x: String) -> String:
+  Bots.member.in.k(Bots.remote(x), String.is_empty(Bots.at.peer(x)), s, peer, x)
+
+def Bots.members.in(xs: List<&2, J.Json>, +s: M.State, +peer: String) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      Bots.member.in(s, peer, J.Json.as_str(Some{x}, "")) <> Bots.members.in(t, s, peer)
+
+# the members a linked machine names, as ids and name@machine here; at most
+# Bots.room.cap()
+def Bots.shared.members(+s: M.State, +peer: String, +o: J.Json) -> List<&2, String>:
+  Bots.named(Bots.members.in(List.take(&2, J.Json, J.Json.elems(J.Json.get_obj(o, "members")), Bots.room.cap()), s, peer))
+
+# the bots here a post is for hear it, when they are members
+def Bots.shared.wake(tos: List<&2, String>, +i: Nat, +s: M.State, +now: Nat, +ms: List<&2, String>, +from: String, +room: String, +rname: String, +text: String, +hop: Nat) -> B.Step:
+  match tos:
+    case Nil{}:
+      B.Step.none()
+    case +x <> t:
+      Step.cat(Bots.shared.one(BT.Room.has(ms, Bots.member.of(s, x)), BT.World.find(M.State.bots(s), x), s, now, i, from, room, rname, text, hop),
+        Bots.shared.wake(t, 1n+i, s, now, ms, from, room, rname, text, hop))
+
+def Bots.shared.go(ok: Bool, +s: M.State, +now: Nat, +room: String, +rname: String, +ms: List<&2, String>, +from: String, +tos: List<&2, String>, +text: String, +hop: Nat) -> B.Step:
+  match ok:
+    case True{}:
+      B.Step.before(List.append(&2, M.Change, Bots.shared.set(Bots.room.same(BT.World.room(M.State.bots(s), room), rname, BT.Room.members.show(ms)), room, rname, BT.Room.members.show(ms), now),
+          [M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), room, from, text, hop, now}]), Nil{},
+        Bots.shared.wake(tos, 0n, s, now, ms, from, room, rname, text, hop))
+    case False{}:
+      B.Step.none()
+
+# a post in a shared room from a linked machine: the room is kept here with
+# its members as this machine names them, the post logged once, and the
+# bots here it is for hear it. Nothing is passed on.
+def Bots.shared(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
+  Bots.shared.go(Bool.and(Nat.is_le(J.Json.get_nat(o, "hop", 0n), BT.Hop.max()),
+      Bots.room.open(BT.World.room(M.State.bots(s), J.Json.get_str(o, "room", "")), s, Bots.peer.idm(Bots.peer(s, peer)))),
+    s, now, J.Json.get_str(o, "room", ""), J.Json.get_str(o, "roomName", "room"), Bots.shared.members(s, peer, o),
+    J.Json.get_str(o, "from", "") ++ "@" ++ peer, Bots.tos(o), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "hop", 0n))
+
+def Bots.incoming.by(shared: Bool, +s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
+  match shared:
+    case True{}:
+      Bots.shared(s, now, peer, o)
+    case False{}:
+      Bots.incoming.dm(s, now, peer, o)
+
+# a message from a bot on a linked machine: in a shared room, or to one bot
+# here
+def Bots.incoming(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
+  Bots.incoming.by(Bots.shared.is(o), s, now, peer, o)
 
 def Bots.members.go(xs: List<&2, String>, +s: M.State) -> List<&2, String>:
   match xs:
