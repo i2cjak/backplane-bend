@@ -34,6 +34,7 @@ import ./bots.bend as BV
 import ./cats.bend as CA
 import ../server/perf.bend as PS
 import ../core/perf.bend as PF
+import ../gfx/fresh.bend as FR
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -1325,8 +1326,10 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
       BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{w, h, d, t, 0, 0, 0, 0}, (x0 + U32.shr((pw - fw : U32)) : U32), (52 + U32.shr((ph - fh : U32)) : U32), fw, fh),
         R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, 526603, 255)], T.Th.bg()))
 
-# the viewer's settled scene, drawn once per scene/view (the frame's base):
-# a 3D model rendered into the panel, or the board/schematic's items
+# the viewer's settled scene, drawn once per scene/view (the frame's base,
+# plain background left of the panel, so frames compare it unchanged):
+# a 3D model rendered into the panel, or the board/schematic's items drawn
+# as tiles over every core
 # half a frame's size, rounded up (a frame half as big spans one level
 # less of the quadtree, so its image serves as the full frame's, each
 # pixel four)
@@ -1345,11 +1348,11 @@ def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
-      Shell.base3(drag, ww, hh, x0, ts, c, now)
+      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now))
     case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
       Shell.shot.base(ww, hh, x0, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
-      R.Frame.render(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
+      FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
         <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), T.Th.bg())
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
@@ -1385,7 +1388,7 @@ def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U3
       TI.Frame.plan(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
-        Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev, dy)
+        Pics.over(hs, pics, Nil{}, ww, hh, b), prev, dy)
 
 # the frame: UI ops over the fading items over the base. dy is how far
 # the thread scrolled since the last frame: tiles it moved are taken from

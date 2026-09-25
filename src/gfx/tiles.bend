@@ -90,14 +90,31 @@ def Eq.ops.go(xs: List<&2, R.Op>, ys: List<&2, R.Op>, ok: Bool) -> Bool:
 def Eq.ops(xs: List<&2, R.Op>, ys: List<&2, R.Op>) -> Bool:
   Eq.ops.go(xs, ys, True{})
 
-def Eq.image(a: Image, b: Image) -> Bool:
-  match a b:
-    case Pix{x} Pix{y}:
+# ok: the quadrants so far were equal; once one is not, the rest are not
+# walked (a viewer's base that moved differs in its first pixels)
+def Eq.image.go(a: Image, b: Image, ok: Bool) -> Bool:
+  match a b ok:
+    case Pix{x} Pix{y} True{}:
       U32.is_eq(x, y)
-    case Qua{a0, a1, a2, a3} Qua{b0, b1, b2, b3}:
-      Bool.and(Eq.image(a0, b0), Bool.and(Eq.image(a1, b1), Bool.and(Eq.image(a2, b2), Eq.image(a3, b3))))
-    case _ _:
+    case Qua{a0, a1, a2, a3} Qua{b0, b1, b2, b3} True{}:
+      Eq.image.go(a3, b3, Eq.image.go(a2, b2, Eq.image.go(a1, b1, Eq.image.go(a0, b0, True{}))))
+    case _ _ _:
       False{}
+
+def Eq.image(a: Image, b: Image) -> Bool:
+  Eq.image.go(a, b, True{})
+
+def Eq.tile.k(same: Bool, a: Image, b: Image) -> Bool:
+  match same:
+    case True{}:
+      Eq.image(a, b)
+    case False{}:
+      False{}
+
+# the same ops over the same base; the bases (big, for a viewer's) are
+# compared only when the ops are the same
+def Eq.tile(xs: List<&2, R.Op>, ys: List<&2, R.Op>, a: Image, b: Image) -> Bool:
+  Eq.tile.k(Eq.ops(xs, ys), a, b)
 
 # Tiles
 # -----
@@ -229,7 +246,7 @@ def Tiles.seek.k(same: Bool, img: Image, +e: Nat, +l: List<&2, R.Op>, +base: Ima
 def Tiles.seek.leaf(t: Tile, +e: Nat, +l: List<&2, R.Op>, +base: Image) -> Image:
   match t:
     case Tile{_, +o, +b, i}:
-      Tiles.seek.k(Bool.and(Eq.ops(o, l), Eq.image(b, base)), i, e, l, base)
+      Tiles.seek.k(Eq.tile(o, l, b, base), i, e, l, base)
 
 # the image of a tile of local ops l over base: the one the old tile at
 # (x, y) holds when it drew the same, else drawn (law seek_made)
@@ -270,7 +287,7 @@ def Tile.again.k(same: Bool, +e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Til
 def Tile.again(+e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Tile, p: Past, +rx: U32, +ry: U32, +n: U32) -> Tile:
   match t:
     case Tile{+o, l, +b, i}:
-      Tile.again.k(Bool.and(Eq.ops(ops, o), Eq.image(base, b)), e, ops, base, Tile{o, l, b, i}, p, rx, ry, n)
+      Tile.again.k(Eq.tile(ops, o, base, b), e, ops, base, Tile{o, l, b, i}, p, rx, ry, n)
 
 # the n x n region at (rx, ry) as tiles k levels down; each tile is 2^e
 # wide. ops reach each child as Region.keep cuts them (the parent's
@@ -291,7 +308,7 @@ def Tiles.same(+ops: List<&2, R.Op>, +base: Image, t: Tiles) -> Bool:
     case TLeaf{_}:
       False{}
     case TNode{o, b, _, _, _, _}:
-      Bool.and(Eq.ops(ops, o), Eq.image(base, b))
+      Eq.tile(ops, o, base, b)
 
 # the next frame over the last one's tiles: an unchanged node is kept
 # whole (same: Tiles.same of it), an unchanged tile is kept, the rest is
@@ -412,7 +429,7 @@ def Tiles.find.k(same: Bool, img: Image) -> Maybe<&2, Image>:
 def Tiles.find.leaf(t: Tile, +l: List<&2, R.Op>, +base: Image) -> Maybe<&2, Image>:
   match t:
     case Tile{_, +o, +b, i}:
-      Tiles.find.k(Bool.and(Eq.ops(o, l), Eq.image(b, base)), i)
+      Tiles.find.k(Eq.tile(o, l, b, base), i)
 
 def Tiles.find(k: Nat, t: Tiles, +x: U32, +y: U32, +rx: U32, +ry: U32, +n: U32, +l: List<&2, R.Op>, +base: Image) -> Maybe<&2, Image>:
   match k t:
@@ -456,7 +473,7 @@ def Tile.plan.k(same: Bool, +e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Tile
 def Tile.plan(+e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Tile, p: Past, +rx: U32, +ry: U32, +n: U32) -> Plan:
   match t:
     case Tile{+o, l, +b, i}:
-      Tile.plan.k(Bool.and(Eq.ops(ops, o), Eq.image(base, b)), e, ops, base, Tile{o, l, b, i}, p, rx, ry, n)
+      Tile.plan.k(Eq.tile(ops, o, base, b), e, ops, base, Tile{o, l, b, i}, p, rx, ry, n)
 
 # Tiles.make's plan: every tile to draw
 def Tiles.plan.make(k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, +rx: U32, +ry: U32, +n: U32) -> Plan:
@@ -581,7 +598,7 @@ def Drawn.take(same: Bool, img: Image, +e: Nat, +l: List<&2, R.Op>, +base: Image
 def Drawn.get(t: Drawn, path: List<&2, Bool>, +e: Nat, +l: List<&2, R.Op>, +base: Image) -> Image:
   match t path:
     case DOne{+l2, +b2, img} _:
-      Drawn.take(Bool.and(Eq.ops(l, l2), Eq.image(base, b2)), img, e, l, base)
+      Drawn.take(Eq.tile(l, l2, base, b2), img, e, l, base)
     case DTwo{a, _} False{} <> r:
       Drawn.get(a, r, e, l, base)
     case DTwo{_, b} True{} <> r:
@@ -632,3 +649,4 @@ def Frame.plan(+w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, prev: Frame
 # Frame.again, its drawing spread over the cores (law frame_par_exact)
 def Frame.par(+w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, prev: Frames, +dy: U32) -> Tiles:
   Plan.run(Frame.plan(w, h, ops, base, prev, dy), Frame.edge(w, h))
+

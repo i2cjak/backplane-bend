@@ -158,6 +158,34 @@ def Cross.v(es: List<&2, Edge>, +x: F32, +ya: F32, +yb: F32, acc: Bool) -> Bool:
 def Cross.walk(+es: List<&2, Edge>, inside: Bool, +px: F32, +py: F32, +qx: F32, +qy: F32) -> Bool:
   Cross.h(es, qy, px, qx, Cross.v(es, px, py, qy, inside))
 
+# distance from p to the edge ab
+def Cov.edist(e: Edge, +px: F32, +py: F32) -> F32:
+  match e:
+    case Edge{+ax, +ay, +bx, +by}:
+      +dx = F32.sub(bx, ax)
+      +dy = F32.sub(by, ay)
+      +ll = F32.add(F32.mul(dx, dx), F32.mul(dy, dy))
+      +t = Bool.pick(F32, F32.is_le(ll, 0.0), 0.0, F32.clamp(F32.div(F32.add(F32.mul(F32.sub(px, ax), dx), F32.mul(F32.sub(py, ay), dy)), ll), 0.0, 1.0))
+      F32.hypot(F32.sub(px, F32.add(ax, F32.mul(t, dx))), F32.sub(py, F32.add(ay, F32.mul(t, dy))))
+
+# the distance from p to the nearest of the edges, at most d
+def Cov.near(es: List<&2, Edge>, +px: F32, +py: F32, +d: F32) -> F32:
+  match es:
+    case Nil{}:
+      d
+    case e <> t:
+      Cov.near(t, px, py, F32.min(d, Cov.edist(e, px, py)))
+
+# a polygon's coverage of a pixel whose centre is inside it or not, d from
+# its nearest edge: half at the edge, a pixel's ramp across it (only the
+# pixels an edge reaches have any edges left, so the rest stay whole)
+def Cov.poly(inside: Bool, +d: F32) -> U32:
+  match inside:
+    case True{}:
+      Cov.clamp(F32.add(0.5, d))
+    case False{}:
+      Cov.clamp(F32.sub(0.5, d))
+
 def Cov.at(s: Shape, +x: U32, +y: U32, +px: F32, +py: F32) -> U32:
   match s:
     case SRect{}:
@@ -173,7 +201,7 @@ def Cov.at(s: Shape, +x: U32, +y: U32, +px: F32, +py: F32) -> U32:
     case SMask{gx, gy, w, d, m}:
       Cov.mask(gx, gy, w, d, m, x, y)
     case SPoly{inside, +es}:
-      Bool.pick(U32, Cross.walk(es, inside, U32.to_f32(x), U32.to_f32(y), px, py), 255, 0)
+      Cov.poly(Cross.walk(es, inside, U32.to_f32(x), U32.to_f32(y), px, py), Cov.near(es, px, py, 1.0))
 
 def Cross.meets(e: Edge, +x0: F32, +y0: F32, +x1: F32, +y1: F32) -> Bool:
   match e:
