@@ -415,12 +415,23 @@ def Push.send(+home: String, +st: M.State, +thread: String, +state: String, +key
       Island.state(others), List.is_empty(&2, M.Thread, others)}
     Push.gate(String.is_empty(jwt), Push.devices(st), job, prefix)
 
-def Push.ready(ok: Bool, +home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
+# phones are registered but the hub cannot push to them: say so, or a
+# phone asleep never hears of a turn and nothing shows why
+def Push.skip(phones: Bool) -> IO(List<&2, String>):
+  match phones:
+    case True{}:
+      do IO<List<&2, String>>:
+        IO.print_err("backplane: push: phones are registered but push.apns.key, push.apns.keyid and push.apns.team are not all set, or the key file is missing")
+        return Nil{}
+    case False{}:
+      IO.pure(List<&2, String>, Nil{})
+
+def Push.ready(ok: Bool, phones: Bool, +home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
   match ok:
     case True{}:
       Push.send(home, st, thread, state, key, kid, team)
     case False{}:
-      IO.pure(List<&2, String>, Nil{})
+      Push.skip(phones)
 
 def Push.any(ds: List<&2, M.Device>) -> Bool:
   Bool.not(List.is_empty(&2, M.Device, ds))
@@ -428,8 +439,9 @@ def Push.any(ds: List<&2, M.Device>) -> Bool:
 def Push.start(+home: String, +st: M.State, +thread: String, +state: String, +key: String, +kid: String, +team: String) -> IO(List<&2, String>):
   do IO<List<&2, String>>:
     has : Bool <- Push.exists(key)
-    Push.ready(Bool.and(has, Bool.and(Push.any(Push.devices(st)), Bool.not(Bool.or(String.is_empty(key), Bool.or(String.is_empty(kid), String.is_empty(team)))))),
-      home, st, thread, state, key, kid, team)
+    +phones : Bool = Push.any(Push.devices(st))
+    Push.ready(Bool.and(has, Bool.and(phones, Bool.not(Bool.or(String.is_empty(key), Bool.or(String.is_empty(kid), String.is_empty(team)))))),
+      phones, home, st, thread, state, key, kid, team)
 
 # every push for a turn that ended; answers the tokens APNs reported dead
 def Push.turn_ended.dead(+home: String, +st: M.State, +thread: String, +state: String) -> IO(List<&2, String>):
