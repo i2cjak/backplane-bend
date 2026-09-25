@@ -167,9 +167,7 @@ data class Cmd(
 
 // an answer from the engine: its screen (none from a quiet call, or when a
 // newer one follows) and its commands
-// keep: what the app keeps of the frame that brought it (Backplane.recv):
-// "reset", "append" or "" (LogStore)
-data class Reply(val screen: Screen?, val cmds: List<Cmd>, val keep: String = "")
+data class Reply(val screen: Screen?, val cmds: List<Cmd>)
 
 private fun <T> JSONArray?.map(f: (JSONObject) -> T): List<T> =
     if (this == null) emptyList() else (0 until length()).map { f(getJSONObject(it)) }

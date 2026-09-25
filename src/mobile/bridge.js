@@ -204,15 +204,22 @@ globalThis.Backplane = {
   },
   // a binary frame from hub k, as base64
   recv(k, data) {
-    const j = cbor(bytes(data));
-    const r = step(App.recv(hubs, k, j));
-    // the native side keeps "reset"/"append" frames per hub (replay())
-    return r.slice(0, -1) + ',"keep":"' + App.keep(j) + '"}';
+    return step(App.recv(hubs, k, cbor(bytes(data))));
   },
-  // kept frames of hub k replayed at launch, before the socket opens: the
-  // screen shows the log at once and resume() then asks only for the rest
-  replay(k, frames) {
-    for (const f of frames) hubs = App.recv(hubs, k, cbor(bytes(f))).hubs;
+  // The whole client state as text, kept by the app when it leaves the
+  // foreground: the next launch load()s it instead of folding every event
+  // again (on QuickJS a few thousand took seconds), and resume() then asks
+  // each hub only for what came since. The state is plain data (objects,
+  // strings, booleans, BigInt naturals, written as {"\u0000n": "<digits>"}).
+  save() {
+    return JSON.stringify(hubs, (_, v) => (typeof v === "bigint" ? { "\u0000n": v.toString() } : v));
+  },
+  load(text) {
+    try {
+      hubs = JSON.parse(text, (_, v) => (v && typeof v === "object" && "\u0000n" in v ? BigInt(v["\u0000n"]) : v));
+    } catch {
+      return "";
+    }
     return out(null);
   },
   register(platform, token, kind, thread, env, bundle) {

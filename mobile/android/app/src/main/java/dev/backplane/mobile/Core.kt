@@ -31,8 +31,10 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
     private val prefs = app.getSharedPreferences("backplane", Context.MODE_PRIVATE)
     private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid(), prefs.getString("drafts", "{}") ?: "{}")
     private val hubs = mutableMapOf<String, Hub>()
-    // each hub's event frames, replayed at launch (LogStore)
-    private val logs = LogStore(app.filesDir)
+    // the client's state, kept for the next launch (StateStore)
+    private val kept = StateStore(app.filesDir, app.assets.open("bridge.js").bufferedReader().readText())
+    // something changed since the state was last kept
+    private var dirty = false
     // the hub whose plots are drawn: frames from any other are dropped
     private var shownHub = ""
 
@@ -57,14 +59,42 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
 
     init {
         app.registerActivityLifecycleCallbacks(this)
-        scope.launch { apply(engine.screen()) }
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        fun since() = android.os.SystemClock.elapsedRealtime() - t0
+        scope.launch {
+            apply(engine.screen())
+            android.util.Log.i("Backplane", "engine ready ${since()} ms")
+        }
         scope.launch {
             while (true) {
                 delay(30_000)
                 if (foreground) apply(engine.tick(System.currentTimeMillis() / 1000))
+                keep()
             }
         }
-        connect()
+        // the state kept at the last launch first: the screen shows at once,
+        // and each hub then sends only what came since
+        scope.launch {
+            val text = withContext(Dispatchers.IO) { kept.load() }
+            android.util.Log.i("Backplane", "state read ${since()} ms (${text?.length ?: 0} chars)")
+            if (text != null) {
+                apply(engine.load(text))
+                android.util.Log.i("Backplane", "state loaded ${since()} ms")
+                for (l in links) Pairing.key(l)?.let { apply(engine.online(it, false)) }
+            }
+            connect()
+        }
+    }
+
+    // the state written down when it changed (the app may be stopped at any
+    // time once in the background)
+    private fun keep() {
+        if (!dirty) return
+        dirty = false
+        scope.launch {
+            val text = engine.save()
+            withContext(Dispatchers.IO) { kept.save(text) }
+        }
     }
 
     // this install's client id: 8 hex digits, made once
@@ -96,7 +126,6 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
 
     fun unpair(key: String) {
         links = links.filter { Pairing.key(it) != key }
-        logs.forget(key)
         save()
         connect()
     }
@@ -108,12 +137,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         for (k in hubs.keys.toList()) if (k !in keyed) hubs.remove(k)?.stop()
         scope.launch {
             apply(engine.hubs(keyed.keys.toList()))
-            for ((k, l) in keyed) if (k !in hubs) {
-                // what this phone already holds, shown before the socket opens
-                val kept = withContext(Dispatchers.IO) { logs.load(k) }
-                if (kept.isNotEmpty()) apply(engine.replay(k, kept))
-                open(k, l)
-            }
+            for ((k, l) in keyed) if (k !in hubs) open(k, l)
         }
     }
 
@@ -130,10 +154,8 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             onMessage = { b ->
                 if (PlotStore.isPlot(b)) { if (shownHub == key) plots.receive(b) }
                 else scope.launch {
-                    val f = Base64.encodeToString(b, Base64.NO_WRAP)
-                    val r = engine.recv(key, f)
-                    if (r.keep.isNotEmpty()) withContext(Dispatchers.IO) { logs.keep(key, r.keep, f) }
-                    apply(r)
+                    dirty = true
+                    apply(engine.recv(key, Base64.encodeToString(b, Base64.NO_WRAP)))
                 }
             },
             onClose = { scope.launch { apply(engine.online(key, false)) } },
@@ -222,6 +244,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
 
     override fun onActivityStopped(activity: Activity) {
         started = maxOf(0, started - 1)
+        if (started == 0) keep()
     }
 
     override fun onActivityCreated(activity: Activity, state: Bundle?) {}

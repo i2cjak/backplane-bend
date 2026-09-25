@@ -203,7 +203,7 @@ def Mob.entry.k(mine: Bool, e: M.Entry, +st: M.State, recent: Bool) -> List<&2, 
       Nil{}
 
 def Mob.entry(+e: M.Entry, +st: M.State, +sel: String, +left: Nat) -> List<&2, J.Json>:
-  Mob.entry.k(String.eq(V.View.entry_thread(e), sel), e, st, Nat.is_le(left, 40n))
+  Mob.entry.k(String.eq(V.View.entry_thread(e), sel), e, st, Nat.is_le(left, 240n))
 
 # a run of tool calls as one row; "fold" with its value opens or shuts it
 def Mob.fold(+id: String, +label: String, +open: Bool) -> J.Json:
@@ -246,9 +246,9 @@ def Mob.entries.go(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +
       Mob.entries.go(t, Nil{}, st, sel, Nat.sub(left, 1n), Mob.onto(Mob.entry(e, st, sel, left), acc))
 
 # oldest first, runs of tool calls folded (the last stays open while its
-# turn runs). Only the newest 40 entries look for images: finding them
-# walks a reply's text char by char, which on a phone cost more than the
-# rest of the screen
+# turn runs). Entries look for images (finding them walks a reply's text
+# char by char) only on the pages shown, which are 60 at a time
+# (core's Page), up to four pages back
 def Mob.entries(+es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
   List.reverse(&2, J.Json, Mob.entries.go(es, FO.Fold.roles(es, info, running), st, sel, List.length(&2, M.Entry, es), Nil{}))
 

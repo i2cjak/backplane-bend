@@ -74,17 +74,6 @@ def shot(hit: Bool, +o: J.Json) -> J.Json:
 def recv(+hs: H.Hubs, +key: String, +o: J.Json) -> H.HAct:
   H.Hubs.recv(hs, key, shot(String.eq(J.Json.get_str(o, "t", ""), "shot"), o))
 
-# what the phone keeps of a frame, so the next launch shows the log at
-# once and asks only for what is new: a full log starts the kept frames
-# over ("reset"), more changes add to them ("append"), anything else
-# (streamed text, replies, info) is not kept ("none")
-def keep.k(+t: String, +since: Nat) -> String:
-  Bool.pick(String, String.eq(t, "changes"), "append",
-    Bool.pick(String, String.eq(t, "log"), Bool.pick(String, Nat.is_eq(since, 0n), "reset", "append"), "none"))
-
-def keep(+o: J.Json) -> String:
-  keep.k(J.Json.get_str(o, "t", ""), J.Json.get_nat(o, "since", 0n))
-
 # a cat's rig as JSON text, for the key the screen names it by
 # ("look:mood"); the apps ask once per key and keep it
 def cat(+look: Nat, +mood: String) -> String:
