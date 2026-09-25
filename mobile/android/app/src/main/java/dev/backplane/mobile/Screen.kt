@@ -227,8 +227,10 @@ data class Cmd(
     val type: String, val text: String,
     // a "send": the CBOR frame, as base64, for the hub keyed hub
     val data: String = "", val hub: String = "",
-    // a "notify": the thread whose turn ended, its title, "done"/"fail", and what to say
+    // a "notify": the thread whose turn ended, its title, "done"/"fail", what to say, and the
+    // key alerts about the same item share
     val thread: String = "", val title: String = "", val kind: String = "", val body: String = "",
+    val key: String = "",
 )
 
 // an answer from the engine: its screen (none from a quiet call, or when a
@@ -428,5 +430,5 @@ fun parseScreen(o: JSONObject) = Screen(
 fun parseCmds(o: JSONObject): List<Cmd> =
     o.optJSONArray("cmds").map {
         Cmd(it.optString("type"), it.optString("text"), it.optString("data"), it.optString("hub"),
-            it.optString("thread"), it.optString("title"), it.optString("kind"), it.optString("body"))
+            it.optString("thread"), it.optString("title"), it.optString("kind"), it.optString("body"), it.optString("key"))
     }

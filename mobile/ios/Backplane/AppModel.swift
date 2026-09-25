@@ -367,7 +367,7 @@ final class AppModel {
             case "scroll": scrolls += 1
             case "keep": Self.keep(c.thread ?? "", c.text ?? "")
             // while asleep the hub's push carries the alert instead
-            case "notify": if active { notifier.post(thread: c.thread ?? "", title: c.title ?? "", body: c.body ?? "") }
+            case "notify": if active { notifier.post(thread: c.thread ?? "", key: c.key ?? "", title: c.title ?? "", body: c.body ?? "") }
             default: break
             }
         }

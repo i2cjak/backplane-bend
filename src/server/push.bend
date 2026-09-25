@@ -4,6 +4,7 @@ import ../core/json.bend as J
 import ../core/hub.bend as B
 import ../core/sha1.bend as S
 import ../core/utf8.bend as U
+import ../core/notice.bend as NO
 import ./host.bend as H
 import ./proc.bend as P
 
@@ -183,13 +184,14 @@ def Push.body(failed: Bool, +line: String) -> String:
     case False{}:
       Bool.pick(String, String.is_empty(line), "Finished", line)
 
-def Push.alert(+thread: String, title: String, body: String) -> String:
+# thread-id groups by the notice's key, so a room's alerts stack together
+def Push.alert(+thread: String, +key: String, title: String, body: String) -> String:
   J.Json.show(J.Json.obj([
     J.KV{"aps", J.Json.obj([
       J.KV{"alert", J.Json.obj([J.KV{"title", J.Str{title}}, J.KV{"body", J.Str{body}}])},
       J.KV{"sound", J.Str{"default"}},
-      J.KV{"thread-id", J.Str{thread}}])},
-    J.KV{"thread", J.Str{thread}}]))
+      J.KV{"thread-id", J.Str{key}}])},
+    J.KV{"thread", J.Str{thread}}, J.KV{"key", J.Str{key}}]))
 
 # the island: every thread still running once this one has ended
 def Island.keep(+thread: String, t: M.Thread) -> Bool:
@@ -268,9 +270,10 @@ def Island.payload(ends: Bool, +now: Nat, cs: J.Json) -> String:
 # Sending
 # -------
 
-# everything one turn's pushes share
+# everything one turn's pushes share; key is the alert's collapse id, ""
+# when the turn raises no alert (core/notice.bend), only the island's update
 type Job is Data:
-  Job{dir: String, base: String, jwt: String, now: Nat, thread: String, alert: String, island: J.Json, idle: Bool}
+  Job{dir: String, base: String, jwt: String, now: Nat, thread: String, alert: String, island: J.Json, idle: Bool, key: String}
 
 # a value for a curl config file: quoted, \ and " escaped, controls dropped
 def Curl.q.k(ctl: Bool, esc: Bool, +c: U32, rest: String) -> String:
@@ -345,13 +348,25 @@ def Push.url(+base: String, +env: String, +token: String) -> String:
 def Push.kind(+platform: String, +kind: String) -> Nat:
   Bool.pick(Nat, String.eq(platform, "ios"), Bool.pick(Nat, String.eq(kind, "alert"), 1n, Bool.pick(Nat, String.eq(kind, "activity"), 2n, 0n)), 0n)
 
-def Push.one.k(i: Nat, j: Job, +name: String, +token: String, +dthread: String, +env: String, +bundle: String) -> IO(Bool):
-  match i j:
-    case 1n Job{+dir, +base, +jwt, _, +thread, +alert, _, _}:
+def Push.one.alert(quiet: Bool, j: Job, +name: String, +token: String, +env: String, +bundle: String) -> IO(Bool):
+  match quiet j:
+    case True{} _:
+      IO.pure(Bool, False{})
+    case False{} Job{+dir, +base, +jwt, _, _, +alert, _, _, +key}:
       Push.post(dir, name, Push.url(base, env, token),
-        ["authorization: bearer " ++ jwt, "apns-topic: " ++ bundle, "apns-push-type: alert", "apns-priority: 10", "apns-collapse-id: turn-" ++ thread],
+        ["authorization: bearer " ++ jwt, "apns-topic: " ++ bundle, "apns-push-type: alert", "apns-priority: 10", "apns-collapse-id: " ++ key],
         alert, "alert")
-    case 2n Job{+dir, +base, +jwt, +now, +thread, _, +island, +idle}:
+
+def Job.key(j: Job) -> String:
+  match j:
+    case Job{_, _, _, _, _, _, _, _, k}:
+      k
+
+def Push.one.k(i: Nat, +j: Job, +name: String, +token: String, +dthread: String, +env: String, +bundle: String) -> IO(Bool):
+  match i j:
+    case 1n _:
+      Push.one.alert(String.is_empty(Job.key(j)), j, name, token, env, bundle)
+    case 2n Job{+dir, +base, +jwt, +now, +thread, _, +island, +idle, _}:
       Push.post(dir, name, Push.url(base, env, token),
         ["authorization: bearer " ++ jwt, "apns-topic: " ++ bundle ++ ".push-type.liveactivity", "apns-push-type: liveactivity", "apns-priority: 10"],
         Island.payload(Bool.or(idle, String.eq(dthread, thread)), now, island), "activity")
@@ -390,6 +405,21 @@ def Push.all(ds: List<&2, M.Device>, +j: Job, +prefix: String, +i: Nat) -> IO(Li
 def Push.devices(s: M.State) -> List<&2, M.Device>:
   Map.values(&2, M.Device, M.State.devices(s))
 
+# the alert's collapse id, or "" when the turn raises no alert
+def Push.key(+n: NO.Notice) -> String:
+  Bool.pick(String, String.is_empty(NO.Notice.kind(n)), "", NO.Notice.key(n))
+
+# a turn that alerts no one says so in the log (the island still updates)
+def Push.held.k(none: Bool, +thread: String) -> IO(Unit):
+  match none:
+    case True{}:
+      IO.print_err("backplane: push alert held for " ++ thread ++ " (a room exchange already told the person)")
+    case False{}:
+      IO.pure(Unit, Unit{})
+
+def Push.held(+key: String, +thread: String) -> IO(Unit):
+  Push.held.k(String.is_empty(key), thread)
+
 def Push.gate(no: Bool, ds: List<&2, M.Device>, +j: Job, +prefix: String) -> IO(List<&2, String>):
   match no:
     case True{}:
@@ -410,9 +440,12 @@ def Push.send(+home: String, +st: M.State, +thread: String, +state: String, +key
     +jwt : String <- Jwt.sign(key, dir, prefix, Jwt.input(kid, team, now))
     base : String <- Push.env("BACKPLANE_APNS_URL")
     +others : List<&2, M.Thread> = Island.others(st, thread)
+    +note : NO.Notice = NO.Notice.of(st, thread, String.eq(state, "failed"), True{})
+    +key : String = Push.key(note)
+    Push.held(key, thread)
     +job : Job = Job{dir, base, jwt, now, thread,
-      Push.alert(thread, Push.title(B.Hub.thread(st, thread)), Push.body(String.eq(state, "failed"), Push.first(B.Task.last(st, thread)))),
-      Island.state(others), List.is_empty(&2, M.Thread, others)}
+      Push.alert(thread, key, Push.title(B.Hub.thread(st, thread)), Push.body(String.eq(state, "failed"), Push.first(B.Task.last(st, thread)))),
+      Island.state(others), List.is_empty(&2, M.Thread, others), key}
     Push.gate(String.is_empty(jwt), Push.devices(st), job, prefix)
 
 # phones are registered but the hub cannot push to them: say so, or a

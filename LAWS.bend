@@ -16,6 +16,7 @@ import ./src/core/agent.bend as AG
 import ./src/core/tailnet.bend as TN
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
+import ./src/core/notice.bend as NO
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
@@ -703,8 +704,66 @@ law alert_not_on_stop:
 # threads and finished turns the log holds
 law alert_none_on_connect:
   for ts: List<&2, M.Thread>
+  for +st: M.State
   for +es: List<&2, M.Entry>
-  {Nt.Note.alerts(ts, [], es) == [] : List<&2, J.Json>}
+  {Nt.Note.alerts(ts, [], st, es) == [] : List<&2, J.Json>}
+
+# One item, one alert (core/notice.bend). Notice.decide(failed, bot,
+# asking, posted, first, msg): 0 no alert, 1 an alert, 2 a failure.
+
+# a failed turn always alerts, as a failure
+law notice_fail_always:
+  for bot: Bool
+  for asking: Bool
+  for posted: Bool
+  for first: Bool
+  for msg: Bool
+  {NO.Notice.decide(True{}, bot, asking, posted, first, msg) == 2n : Nat}
+
+# a thread that is not a bot's alerts when it finishes: work the person started
+law notice_thread_kept:
+  for asking: Bool
+  for posted: Bool
+  for first: Bool
+  for msg: Bool
+  {NO.Notice.decide(False{}, False{}, asking, posted, first, msg) == 1n : Nat}
+
+# a bot waiting on the person alerts, whatever else its turn did
+law notice_ask_kept:
+  for posted: Bool
+  for first: Bool
+  for msg: Bool
+  {NO.Notice.decide(False{}, True{}, True{}, posted, first, msg) == 1n : Nat}
+
+# a room exchange alerts once: a bot post after the exchange's first is quiet
+law notice_room_once:
+  for msg: Bool
+  {NO.Notice.decide(False{}, True{}, False{}, True{}, False{}, msg) == 0n : Nat}
+
+# a bot woken by a room or bot message that posted nothing is quiet
+law notice_chatter_quiet:
+  for first: Bool
+  {NO.Notice.decide(False{}, True{}, False{}, False{}, first, True{}) == 0n : Nat}
+
+# an earlier bot post in the same room (not the person's, not this turn's)
+# means the exchange already alerted
+law notice_earlier_bot_quiet:
+  {NO.Vd.room(True{}, False{}, False{}, True{}) == NO.VNo{} : NO.Vd}
+
+# a person's post starts a new exchange
+law notice_person_opens:
+  for own: Bool
+  for bot: Bool
+  {NO.Vd.room(True{}, True{}, own, bot) == NO.VYes{} : NO.Vd}
+
+# past the window, older posts no longer hold an alert back
+law notice_window_opens:
+  for +room: String
+  for +name: String
+  for +start: Nat
+  for local: Bool
+  for p: BOT.Post
+  {NO.Vd.post(True{}, room, name, start, local, p) == NO.VYes{} : NO.Vd}
 
 # a phone paired with several hubs names every thread and project by its
 # hub ("key|id"), but "nothing selected" stays nothing, on any hub

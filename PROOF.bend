@@ -16,6 +16,7 @@ import ./src/core/handoff.bend as HD
 import ./src/core/agent.bend as AG
 import ./src/core/fuzzy.bend as FZ
 import ./src/mobile/notify.bend as Nt
+import ./src/core/notice.bend as NO
 import ./src/core/codec.bend as C
 import ./src/core/json.bend as J
 import ./src/core/attach.bend as AT
@@ -797,12 +798,36 @@ def Laws.alert_not_on_stop(b):
     case False{}:
       {==}
 
-def Laws.alert_none_on_connect(ts, es):
+def Laws.alert_none_on_connect(ts, st, es):
   match ts:
     case Nil{}:
       {==}
     case M.Thread{id, p, ti, c, a, tu, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de} <> t:
-      Laws.alert_none_on_connect(t, es)
+      Laws.alert_none_on_connect(t, st, es)
+
+def Laws.notice_fail_always(bot, asking, posted, first, msg):
+  {==}
+
+def Laws.notice_thread_kept(asking, posted, first, msg):
+  {==}
+
+def Laws.notice_ask_kept(posted, first, msg):
+  {==}
+
+def Laws.notice_room_once(msg):
+  {==}
+
+def Laws.notice_chatter_quiet(first):
+  {==}
+
+def Laws.notice_earlier_bot_quiet():
+  {==}
+
+def Laws.notice_person_opens(own, bot):
+  {==}
+
+def Laws.notice_window_opens(room, name, start, local, p):
+  {==}
 
 def Laws.hubs_no_id(k):
   {==}
