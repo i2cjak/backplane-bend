@@ -36,6 +36,7 @@ import ../core/sign.bend as SG
 import ./google.bend as GS
 import ../core/google.bend as GG
 import ../core/ring.bend as RG
+import ./voice.bend as VO
 import ./perf.bend as PS
 import ../core/perf.bend as PF
 
@@ -92,7 +93,9 @@ type Msg is Data:
   BotsFound{dir: String}
   # a request for bots' routes (a webhook, a linked machine, a bot's
   # screen, Google's sign-in redirect); the reply is the whole response
-  BotHttp{kind: String, arg: String, peer: String, ts: String, sig: String, gh: String, delivery: String, body: String, reply: Chan(List<&2, U32>)}
+  # (`ct` its content type; `raw` its bytes, kept only for a form with a
+  # recording, which is not text)
+  BotHttp{kind: String, arg: String, peer: String, ts: String, sig: String, gh: String, delivery: String, body: String, ct: String, raw: List<&2, U32>, reply: Chan(List<&2, U32>)}
   # the same, its signature checked off the hub: `key` is its replay key
   # ("" when it is not genuine); `me` is this machine's name
   BotVerified{kind: String, arg: String, key: String, body: String, me: String, reply: Chan(List<&2, U32>)}
@@ -3448,8 +3451,92 @@ def BotJob.token(+op: Nat, +inbox: Chan(Msg), +home: String, +tailnet: Bool, +ho
     +url : String <- Bot.hook.base(tailnet, host, port)
     BotJob.token.done(Bool.and(String.is_empty(tok), Nat.is_lt(op, 2n)), tok, url, inbox, client, id, hook)
 
+# Dictation (server/voice.bend): the key, the dictionary, and live sessions
+# of this machine's microphone, whose messages go to the client that
+# started them. "add" also comes from a bot's voice_dictionary_add (client
+# 0: no one hears the answer).
+
+# the key (masked), the dictionary and the microphones
+def VoiceJob.status(+inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    kvs : List<&2, J.KV> <- VO.Vo.status(home)
+    +d : String <- VO.Vo.devices()
+    BotJob.reply(inbox, client, id, True{}, List.append(&2, J.KV, kvs, [J.KV{"voiceDevices", J.Str{d}}]))
+
+# "" when done (then the status goes back), else "error: why"
+def VoiceJob.done(+err: String, +inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(err), VoiceJob.status(inbox, home, client, id), BotJob.fail(inbox, client, id, String.drop(err, 7n)))
+
+def VoiceJob.fwd.k(end: Bool, k: Unit -> IO(Unit)) -> IO(Unit):
+  match end:
+    case True{}:
+      IO.pure(Unit, Unit{})
+    case False{}:
+      k(Unit{})
+
+def VoiceJob.fwd(m: Maybe<&1, String>, +inbox: Chan(Msg), +client: U32, k: Unit -> IO(Unit)) -> IO(Unit):
+  match m:
+    case Some{+text}:
+      do IO<Unit>:
+        sent : Bool <- Chan.send(Msg, inbox, Push{client, text})
+        VoiceJob.fwd.k(String.contains(text, "\"ev\":\"idle\""), k)
+    case None{}:
+      IO.pure(Unit, Unit{})
+
+# a session's messages to its client, until idle
+def VoiceJob.forward(fuel: Nat, +out: Chan(String), +inbox: Chan(Msg), +client: U32) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      IO.bind(Maybe<&1, String>, Unit, Chan.recv(String, out), m => VoiceJob.fwd(m, inbox, client, u => VoiceJob.forward(f, out, inbox, client)))
+
+def VoiceJob.live(+inbox: Chan(Msg), +home: String, +client: U32, +id: String, +thread: String, +device: String) -> IO(Unit):
+  do IO<Unit>:
+    BotJob.reply(inbox, client, id, True{}, Nil{})
+    +out : Chan(String) <- Chan.new(String, 256)
+    IO.spawn(Unit, VO.Vo.live(home, thread, device, out))
+    VoiceJob.forward(Fuel.forever(), out, inbox, client)
+
+def VoiceJob.stopped(on: Bool, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String) -> IO(Unit):
+  match on:
+    case True{}:
+      BotJob.reply(inbox, client, id, True{}, Nil{})
+    case False{}:
+      do IO<Unit>:
+        BotJob.reply(inbox, client, id, True{}, Nil{})
+        sent : Bool <- Chan.send(Msg, inbox, Push{client, VO.Vo.msg(thread, "idle", Nil{})})
+        return Unit{}
+
+def VoiceJob.op(i: Nat, +inbox: Chan(Msg), +home: String, +p: J.Json, +client: U32, +id: String) -> IO(Unit):
+  match i:
+    case 0n:
+      VoiceJob.status(inbox, home, client, id)
+    case 1n:
+      IO.bind(String, Unit, VO.Vo.set_key(home, J.Json.get_str(p, "key", "")), e => VoiceJob.done(e, inbox, home, client, id))
+    case 2n:
+      IO.bind(String, Unit, VO.Vo.unkey(home), e => VoiceJob.done(e, inbox, home, client, id))
+    case 3n:
+      IO.bind(String, Unit, VO.Vo.set_dict(home, J.Json.get_str(p, "dict", "")), e => VoiceJob.done(e, inbox, home, client, id))
+    case 4n:
+      IO.bind(String, Unit, VO.Vo.add(home, J.Json.get_str(p, "term", "")), e => VoiceJob.done(e, inbox, home, client, id))
+    case 5n:
+      VoiceJob.live(inbox, home, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "device", ""))
+    case 6n:
+      IO.bind(Bool, Unit, VO.Vo.stop(home), on => VoiceJob.stopped(on, inbox, client, id, J.Json.get_str(p, "thread", "")))
+    case 7n:
+      IO.bind(String, Unit, VO.Vo.devices(), d => BotJob.reply(inbox, client, id, True{}, [J.KV{"voiceDevices", J.Str{d}}]))
+    case _:
+      BotJob.fail(inbox, client, id, "unknown voice request")
+
+def VoiceJob.go(+p: J.Json, +inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
+  VoiceJob.op(C.Codec.pos(["status", "key", "unkey", "dict", "add", "start", "stop", "devices"], J.Json.get_str(p, "op", "")), inbox, home, p, client, id)
+
+def VoiceJob.run(+inbox: Chan(Msg), +home: String, +params: String, +client: U32, +id: String) -> IO(Unit):
+  VoiceJob.go(Maybe.default(&2, J.Json, J.Json.parse(params), J.Null{}), inbox, home, client, id)
+
 # one B.BotFx: home, gone, hook, unhook, send, invite, join, unpeer, google,
-# token, retoken, untoken
+# token, retoken, untoken, voice
 def Bot.fx(i: Nat, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +a: String, +b: String, +c: String) -> IO(Unit):
   match i:
     case 0n:
@@ -3476,6 +3563,8 @@ def Bot.fx(i: Nat, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +a: String, +b: S
       IO.spawn(Unit, BotJob.token(1n, inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
     case 11n:
       IO.spawn(Unit, BotJob.token(2n, inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 12n:
+      IO.spawn(Unit, VoiceJob.run(inbox, Cfg.home(cfg), a, BotJob.client(b), BotJob.id(c)))
     case _:
       IO.pure(Unit, Unit{})
 
@@ -3552,7 +3641,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.BotFx{+kind, +a, +b, +c}:
       do IO<Hub>:
-        Bot.fx(C.Codec.pos(["home", "gone", "hook", "unhook", "send", "invite", "join", "unpeer", "google", "token", "retoken", "untoken"], kind), st, inbox, cfg, a, b, c)
+        Bot.fx(C.Codec.pos(["home", "gone", "hook", "unhook", "send", "invite", "join", "unpeer", "google", "token", "retoken", "untoken", "voice"], kind), st, inbox, cfg, a, b, c)
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
@@ -3695,6 +3784,14 @@ def Hub.bots_found(h: Hub, +d: String) -> IO(Hub):
 def Bot.cap() -> Nat:
   262144n
 
+# a form may carry a recording (a Pebble ring's voice note, M4A): 2 MB,
+# a few minutes of it
+def Bot.cap.form() -> Nat:
+  2097152n
+
+def Bot.cap.of(+ct: String) -> Nat:
+  Bool.pick(Nat, RG.Ring.is_form(ct), Bot.cap.form(), Bot.cap())
+
 def Bot.answer(+reply: Chan(List<&2, U32>), bs: List<&2, U32>) -> IO(Unit):
   do IO<Unit>:
     ok : Bool <- Chan.send(List<&2, U32>, reply, bs)
@@ -3733,15 +3830,6 @@ def Bot.me(+link: Bool) -> IO(String):
 
 # the secret of the hook or the peer, the signature against it, and the
 # replay key (or "") back to the hub
-def Bot.verify(+hook: Bool, +home: String, +kind: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
-    +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
-  do IO<Unit>:
-    +secret : String <- BN.Bn.secret.of(hook, home, id)
-    +me : String <- Bot.me(String.eq(kind, "link"))
-    +key : String = BN.Bn.check(hook, secret, now, kind ++ ":" ++ id, ts, sig, gh, dl, body)
-    ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, body, Bool.pick(String, String.contains(key, ":i:"), "ring", me), reply})
-    return Unit{}
-
 def Bot.refuse(+id: String, +key: String, body: String, +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     ok : Bool <- Chan.send(Msg, inbox, BotVerified{"hook", id, key, body, "", reply})
@@ -3756,21 +3844,75 @@ def Bot.bearer.body(form: Bool, +body: String, +size: String) -> String:
     case False{}:
       body
 
-def Bot.bearer.k(+kept: String, +nonce: String, +tok: String, +ct: String, +size: String, +id: String, +body: String,
+# A ring's recording, let in, is heard here before the bot gets the form
+# (VO.Vo.ring: GPT-Live-Transcribe with the dictionary): the phone gets its
+# 202 at once, and the form, with the words heard, goes on when they are
+# (the hub's own answer then goes nowhere). A form under a bearer token
+# becomes JSON as usual.
+def Bot.heard(+home: String, +kind: String, +id: String, +key: String, +ct: String, +body: String, raw: List<&2, U32>, +me: String, form: Bool, +size: String,
     +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
-  Bot.refuse(id, BN.Bn.bearer(kept, tok, "hook:" ++ id, nonce),
-    Bot.bearer.body(Bool.and(Bool.not(BN.Bn.refused(BN.Bn.bearer(kept, tok, "hook:" ++ id, nonce))), RG.Ring.is_form(ct)), body, size), reply, inbox)
+  do IO<Unit>:
+    Bot.answer(reply, W.Http.text("202 Accepted", "accepted"))
+    +nonce : String <- BN.Bn.random(6n)
+    +heard : String <- VO.Vo.ring(home, nonce, ct, body, raw)
+    +none : Chan(List<&2, U32>) <- Chan.new(List<&2, U32>, 1)
+    ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, Bot.bearer.body(form, heard, size), me, none})
+    return Unit{}
+
+def Bot.verify.go(heard: Bool, +home: String, +kind: String, +id: String, +key: String, +ct: String, +body: String, raw: List<&2, U32>, +me: String,
+    +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
+  match heard:
+    case True{}:
+      Bot.heard(home, kind, id, key, ct, body, raw, me, False{}, "", reply, inbox)
+    case False{}:
+      do IO<Unit>:
+        ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, body, me, reply})
+        return Unit{}
+
+# the replay key: a form with a recording is checked over its bytes (the
+# ring signs those; the recording is not text)
+def Bot.verify.key(text: Bool, +hook: Bool, +secret: String, +now: Nat, +key: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    raw: List<&2, U32>) -> String:
+  match text:
+    case True{}:
+      BN.Bn.check(hook, secret, now, key, ts, sig, gh, dl, body)
+    case False{}:
+      BN.Bn.check.raw(secret, now, key, gh, raw)
+
+# the secret of the hook or the peer, the signature against it, and the
+# replay key (or "") back to the hub
+def Bot.verify(+hook: Bool, +home: String, +kind: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +ct: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    +secret : String <- BN.Bn.secret.of(hook, home, id)
+    +me : String <- Bot.me(String.eq(kind, "link"))
+    +key : String = Bot.verify.key(List.is_empty(&2, U32, raw), hook, secret, now, kind ++ ":" ++ id, ts, sig, gh, dl, body, raw)
+    Bot.verify.go(Bool.and(Bool.not(List.is_empty(&2, U32, raw)), Bool.not(String.is_empty(key))), home, kind, id, key, ct, body, raw,
+      Bool.pick(String, String.contains(key, ":i:"), "ring", me), reply, inbox)
+
+def Bot.bearer.go(heard: Bool, form: Bool, +home: String, +key: String, +ct: String, +size: String, +id: String, +body: String, raw: List<&2, U32>,
+    +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
+  match heard:
+    case True{}:
+      Bot.heard(home, "hook", id, key, ct, body, raw, "", True{}, size, reply, inbox)
+    case False{}:
+      Bot.refuse(id, key, Bot.bearer.body(form, body, size), reply, inbox)
+
+def Bot.bearer.k(+home: String, +key: String, +ct: String, +size: String, +id: String, +body: String, +raw: List<&2, U32>,
+    +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
+  Bot.bearer.go(Bool.and(Bool.and(Bool.not(BN.Bn.refused(key)), RG.Ring.is_form(ct)), Bool.not(List.is_empty(&2, U32, raw))),
+    Bool.and(Bool.not(BN.Bn.refused(key)), RG.Ring.is_form(ct)), home, key, ct, size, id, body, raw, reply, inbox)
 
 # a webhook called with a bearer token (packed by Bot.gh as
 # "bearer\n<token>\n<content type>\n<X-Audio-Size>"): the token compared
 # with the hook's own off the hub
-def Bot.bearer(fs: List<&2, String>, +home: String, +id: String, +body: String, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+def Bot.bearer(fs: List<&2, String>, +home: String, +id: String, +body: String, +full: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
   match fs:
     case _ <> +tok <> +ct <> +size <> _:
       do IO<Unit>:
         +kept : String <- BN.Bn.token.of(home, id)
         +nonce : String <- BN.Bn.random(2n)
-        Bot.bearer.k(kept, Nat.show(now) ++ "." ++ nonce, tok, ct, size, id, body, reply, inbox)
+        Bot.bearer.k(home, BN.Bn.bearer(kept, tok, "hook:" ++ id, Nat.show(now) ++ "." ++ nonce), Bool.pick(String, String.is_empty(full), ct, full), size, id, body, raw, reply, inbox)
     case _:
       Bot.refuse(id, "!bearer", body, reply, inbox)
 
@@ -3780,34 +3922,34 @@ def Bot.hook.how(+sig: String, +gh: String) -> Nat:
   Bool.pick(Nat, Bool.not(String.is_empty(sig)), 2n,
     Bool.pick(Nat, String.starts_with(gh, "bearer\n"), 1n, Bool.pick(Nat, String.is_empty(gh), 0n, 2n)))
 
-def Bot.hook.in(i: Nat, +home: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+def Bot.hook.in(i: Nat, +home: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String, +ct: String, +raw: List<&2, U32>,
     +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
   match i:
     case 0n:
       Bot.refuse(id, "!none", body, reply, inbox)
     case 1n:
-      Bot.bearer(String.split(gh, '\n'), home, id, body, reply, now, inbox)
+      Bot.bearer(String.split(gh, '\n'), home, id, body, ct, raw, reply, now, inbox)
     case _:
-      Bot.verify(True{}, home, "hook", id, ts, sig, gh, dl, body, reply, now, inbox)
+      Bot.verify(True{}, home, "hook", id, ts, sig, gh, dl, body, ct, raw, reply, now, inbox)
 
 def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String,
-    +body: String, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+    +body: String, +ct: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
   match i:
     case 0n:
       Bot.shot(home, arg, reply)
     case 1n:
       Bot.oauth(home, port, arg, reply)
     case 2n:
-      Bot.hook.in(Bot.hook.how(sig, gh), home, arg, ts, sig, gh, dl, body, reply, now, inbox)
+      Bot.hook.in(Bot.hook.how(sig, gh), home, arg, ts, sig, gh, dl, body, ct, raw, reply, now, inbox)
     case _:
-      Bot.verify(False{}, home, kind, peer, ts, sig, gh, dl, body, reply, now, inbox)
+      Bot.verify(False{}, home, kind, peer, ts, sig, gh, dl, body, "", Nil{}, reply, now, inbox)
 
 def Hub.bot_http(h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
-    +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+    +ct: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match h:
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note}:
       do IO<Hub>:
-        IO.spawn(Unit, Bot.http.job(C.Codec.pos(["shot", "oauth", "hook"], kind), Cfg.home(cfg), Cfg.port(cfg), kind, arg, peer, ts, sig, gh, dl, body, reply, now, inbox))
+        IO.spawn(Unit, Bot.http.job(C.Codec.pos(["shot", "oauth", "hook"], kind), Cfg.home(cfg), Cfg.port(cfg), kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply, now, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Bot.hook.live.k(hk: BO.Hook, +st: M.State) -> Bool:
@@ -3935,38 +4077,42 @@ def Conn.bot.answer(m: Maybe<&1, List<&2, U32>>, s: Socket) -> IO(Unit):
       Conn.finish(s, W.Http.text("503 Service Unavailable", "the hub is gone"))
 
 # the hub answers the whole response on a channel made for this request
-def Conn.bot.ask(s: Socket, rq: BotReq, body: String, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.bot.ask(s: Socket, rq: BotReq, body: String, +ct: String, raw: List<&2, U32>, +inbox: Chan(Msg)) -> IO(Unit):
   match rq:
     case BotReq{k, a, p, t, sg, g, d}:
       do IO<Unit>:
         +reply : Chan(List<&2, U32>) <- Chan.new(List<&2, U32>, 1)
-        ok : Bool <- Chan.send(Msg, inbox, BotHttp{k, a, p, t, sg, g, d, body, reply})
+        ok : Bool <- Chan.send(Msg, inbox, BotHttp{k, a, p, t, sg, g, d, body, ct, raw, reply})
         m : Maybe<&1, List<&2, U32>> <- Chan.recv(List<&2, U32>, reply)
         Conn.bot.answer(m, s)
 
-def Conn.bot.body.k(full: Bool, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
+# the body as text, and its bytes too when it is a form with a recording
+def Conn.bot.bytes(s: Socket, +rq: BotReq, +bs: List<&2, U32>, +text: String, +ct: String, +inbox: Chan(Msg)) -> IO(Unit):
+  Conn.bot.ask(s, rq, text, ct, Bool.pick(List<&2, U32>, Bool.and(RG.Ring.is_form(ct), String.contains(text, "name=\"audio\"")), bs, Nil{}), inbox)
+
+def Conn.bot.body.k(full: Bool, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +ct: String, +inbox: Chan(Msg), k: Socket -> List<&2, U32> -> IO(Unit)) -> IO(Unit):
   match full:
     case True{}:
-      Conn.bot.ask(s, rq, U.Utf8.decode(List.take(&2, U32, buf, len)), inbox)
+      Conn.bot.bytes(s, rq, List.take(&2, U32, buf, len), U.Utf8.decode(List.take(&2, U32, buf, len)), ct, inbox)
     case False{}:
       IO.bind(Socket & Result<&1, &1, U32 & String, List<&2, U32>>, Unit, H.Sock.recv_bytes(s, 65536), r => Mcp.got(r, buf, k))
 
 # read the body (Content-Length bytes, capped before reading)
-def Conn.bot.body(fuel: Nat, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.bot.body(fuel: Nat, s: Socket, +buf: List<&2, U32>, +len: Nat, +rq: BotReq, +ct: String, +inbox: Chan(Msg)) -> IO(Unit):
   match fuel:
     case 0n:
       Conn.finish(s, W.Http.text("408 Request Timeout", "the body did not arrive"))
     case 1n+f:
-      Conn.bot.body.k(Nat.is_ge(List.length(&2, U32, buf), len), s, buf, len, rq, inbox, s2 => b2 => Conn.bot.body(f, s2, b2, len, rq, inbox))
+      Conn.bot.body.k(Nat.is_ge(List.length(&2, U32, buf), len), s, buf, len, rq, ct, inbox, s2 => b2 => Conn.bot.body(f, s2, b2, len, rq, ct, inbox))
 
-def Conn.bot.signed.k(ok: Bool, big: Bool, s: Socket, rest: List<&2, U32>, +len: Nat, +rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
+def Conn.bot.signed.k(ok: Bool, big: Bool, s: Socket, rest: List<&2, U32>, +len: Nat, +rq: BotReq, +ct: String, +inbox: Chan(Msg)) -> IO(Unit):
   match ok big:
     case False{} _:
       Conn.finish(s, W.Http.text("401 Unauthorized", "unknown sender"))
     case True{} True{}:
-      Conn.finish(s, W.Http.text("413 Payload Too Large", "at most 256 KB"))
+      Conn.finish(s, W.Http.text("413 Payload Too Large", "at most 256 KB, or 2 MB for a form"))
     case True{} False{}:
-      Conn.bot.body(4096n, s, rest, len, rq, inbox)
+      Conn.bot.body(4096n, s, rest, len, rq, ct, inbox)
 
 def Conn.bot.len(+hs: List<&2, W.Header>) -> Nat:
   Maybe.default(&2, Nat, Nat.read(W.Http.header_of(hs, "content-length")), 0n)
@@ -4000,16 +4146,16 @@ def Bot.gh(+hs: List<&2, W.Header>) -> String:
 
 # a signed request (no token: webhooks come from outside; peers sign)
 def Conn.bot.signed(+kind: String, +arg: String, s: Socket, +hs: List<&2, W.Header>, rest: List<&2, U32>, +inbox: Chan(Msg)) -> IO(Unit):
-  Conn.bot.signed.k(BN.Bn.safe(arg), Nat.is_gt(Conn.bot.len(hs), Bot.cap()), s, rest, Conn.bot.len(hs),
+  Conn.bot.signed.k(BN.Bn.safe(arg), Nat.is_gt(Conn.bot.len(hs), Bot.cap.of(W.Http.header_of(hs, "content-type"))), s, rest, Conn.bot.len(hs),
     BotReq{kind, arg, W.Http.header_of(hs, "x-backplane-peer"), W.Http.header_of(hs, "x-backplane-timestamp"), W.Http.header_of(hs, "x-backplane-signature"),
-      Bot.gh(hs), W.Http.header_of(hs, "x-github-delivery")}, inbox)
+      Bot.gh(hs), W.Http.header_of(hs, "x-github-delivery")}, W.Http.header_of(hs, "content-type"), inbox)
 
 # a client's own route (a bot's screen, Google's redirect): the same
 # authorisation as the websocket's
 def Conn.bot.own(ok: Bool, s: Socket, rq: BotReq, +inbox: Chan(Msg)) -> IO(Unit):
   match ok:
     case True{}:
-      Conn.bot.ask(s, rq, "", inbox)
+      Conn.bot.ask(s, rq, "", "", Nil{}, inbox)
     case False{}:
       Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
 
@@ -4257,7 +4403,7 @@ def Msg.kind(m: Msg) -> String:
       "bot_tick"
     case BotsFound{_}:
       "bots_found"
-    case BotHttp{_, _, _, _, _, _, _, _, _}:
+    case BotHttp{_, _, _, _, _, _, _, _, _, _, _}:
       "bot_http"
     case BotVerified{_, _, _, _, _, _}:
       "bot_verified"
@@ -4310,8 +4456,8 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
       Hub.bot_tick(h, tz, now)
     case BotsFound{d}:
       Hub.bots_found(h, d)
-    case BotHttp{kind, arg, peer, ts, sig, gh, dl, body, reply}:
-      Hub.bot_http(h, kind, arg, peer, ts, sig, gh, dl, body, reply, now)
+    case BotHttp{kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply}:
+      Hub.bot_http(h, kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply, now)
     case BotVerified{kind, arg, key, body, me, reply}:
       Hub.bot_verified(h, kind, arg, key, body, me, reply, now)
     case Shot{text}:

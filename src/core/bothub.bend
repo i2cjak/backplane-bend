@@ -289,7 +289,7 @@ def Bots.fire(+s: M.State, +now: Nat, +i: Nat, r: BT.Routine) -> B.Step:
 def Bots.methods() -> List<&2, String>:
   ["bots.create", "bots.edit", "bots.delete", "bots.say", "bots.room", "bots.room_delete", "bots.post", "bots.routine", "bots.routine_delete",
    "bots.routine_run", "bots.hook", "bots.hook_revoke", "bots.forget", "bots.remember", "bots.space", "bots.invite", "bots.join", "bots.unpeer",
-   "bots.google", "bots.tell", "bots.hook_token"]
+   "bots.google", "bots.tell", "bots.hook_token", "bots.voice"]
 
 def Bots.is(+m: String) -> Bool:
   String.starts_with(m, "bots.")
@@ -389,6 +389,8 @@ def Bots.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p
       Bots.tell(Bots.remote(J.Json.get_str(p, "to", "")), s, now, client, id, J.Json.get_str(p, "to", ""), J.Json.get_str(p, "text", ""))
     case 20n:
       Bots.token(s, client, id, p)
+    case 21n:
+      B.Step.outs([B.BotFx{"voice", J.Json.show(p), U32.show(client), id}])
     case _:
       Bots.err(client, id, "unknown bots request")
 
@@ -441,28 +443,33 @@ def Bots.incoming.k(b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +peer: String,
 
 def Bots.ring.note(+text: String) -> String:
   Bool.pick(String, String.is_empty(text),
-    "[voice note from your Pebble ring] It came without words: set the ring's webhook to send the transcription.",
+    "[voice note from your Pebble ring] It came without words: set the ring's webhook to send the transcription, or the recording with an OpenAI key in Settings, Voice.",
     "[voice note from your Pebble ring]\n" ++ text)
+
+# the words Backplane's transcription was unsure of, for the bot to ask
+# about (the person adds a term to the dictionary with voice_dictionary_add)
+def Bots.ring.unsure(+text: String, +unsure: String) -> String:
+  Bool.pick(String, String.is_empty(unsure), Bots.ring.note(text), Bots.ring.note(text) ++ "\n\n[" ++ unsure ++ "]")
 
 def Bots.ring.go(ok: Bool, test: Bool, +s: M.State, +now: Nat, +hid: String, +bot: String, +text: String) -> B.Step:
   match ok test:
     case True{} False{}:
-      B.Step.before([M.HookHit{hid, now}], Nil{}, Bots.wake(s, now, "", Bots.bot(s, bot), B.Hub.id("m", now, B.Hub.seq(s)), Bots.ring.note(text), 0n))
+      B.Step.before([M.HookHit{hid, now}], Nil{}, Bots.wake(s, now, "", Bots.bot(s, bot), B.Hub.id("m", now, B.Hub.seq(s)), text, 0n))
     case True{} True{}:
       B.Step{[M.HookHit{hid, now}], Nil{}}
     case False{} _:
       B.Step.none()
 
-def Bots.ring.k(h: BT.Hook, test: Bool, +s: M.State, +now: Nat, +text: String) -> B.Step:
+def Bots.ring.k(h: BT.Hook, test: Bool, +s: M.State, +now: Nat, +text: String, +unsure: String) -> B.Step:
   match h:
     case BT.Hook{+hid, +bot, _, _, revoked, _, _}:
-      Bots.ring.go(Bool.and(Bool.not(revoked), Bots.live(s, bot)), test, s, now, hid, bot, text)
+      Bots.ring.go(Bool.and(Bool.not(revoked), Bots.live(s, bot)), test, s, now, hid, bot, Bots.ring.unsure(text, unsure))
 
 # a verified voice note from the person's Pebble Index ring (its signature
 # proves it came from their phone): the bot hears it as the person's own
 # words, at hop 0; the app's test button is logged and wakes no one
 def Bots.ring(+s: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
-  Bots.ring.k(BT.World.hook(M.State.bots(s), hook), RG.Ring.test(body), s, now, RG.Ring.text(body))
+  Bots.ring.k(BT.World.hook(M.State.bots(s), hook), RG.Ring.test(body), s, now, RG.Ring.text(body), RG.Ring.unsure(body))
 
 # a message from a bot on a linked machine to a bot here
 def Bots.incoming(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
@@ -538,11 +545,13 @@ def Bots.tools() -> List<&2, J.Json>:
    MC.Tool.def("project_list", "List the person's projects (id, name, folder). Start work in one with thread_launch and its `project`; thread_list, thread_read, thread_send and thread_wait reach threads in any of them.", Nil{}, Nil{}),
    MC.Tool.def("bot_create", "Make a sub-bot: a new persistent bot (its own cat, memory and thread) for a lasting role you want to hand off, like watching a queue or owning an area. You are its maker. Bots made by bots go at most two levels deep, and each bot keeps at most eight. For one-off work use delegate_task or thread_launch instead.",
      [MC.Tool.prop("name", "string", "Its name: 1 to 24 letters, digits, - or _."), MC.Tool.prop("persona", "string", "Who it is and what it does, in a few sentences."),
-      MC.Tool.prop("provider", "string", "claude, codex or grok (default: yours)."), MC.Tool.prop("model", "string", "Its model (default: the provider's).")], ["name", "persona"])]
+      MC.Tool.prop("provider", "string", "claude, codex or grok (default: yours)."), MC.Tool.prop("model", "string", "Its model (default: the provider's).")], ["name", "persona"]),
+   MC.Tool.def("voice_dictionary_add", "Add a term (a name, part number, word) to the person's voice dictionary, which Backplane's transcription (their desktop microphone and Pebble ring) takes as hints. Use it when a voice note marks words as possibly misheard and the person tells you the right spelling.",
+     [MC.Tool.prop("term", "string", "The term, spelled as it should be written.")], ["term"])]
 
 def Bots.names() -> List<&2, String>:
   ["bot_whoami", "bot_list", "bot_send", "room_list", "room_create", "room_post", "room_read", "memory_save", "memory_recall", "memory_forget",
-   "memory_list", "space_set", "space_get", "routine_list", "routine_set", "routine_delete", "project_list", "bot_create"]
+   "memory_list", "space_set", "space_get", "routine_list", "routine_set", "routine_delete", "project_list", "bot_create", "voice_dictionary_add"]
 
 def Bots.tool.is(+name: String) -> Bool:
   Nat.is_lt(C.Codec.pos(Bots.names(), name), List.length(&2, String, Bots.names()))
@@ -919,6 +928,11 @@ def Bots.spawn.b(b: BT.Bot, +s: M.State, +now: Nat, +a: J.Json, +name: String) -
 def Bots.spawn(+s: M.State, +now: Nat, b: BT.Bot, +a: J.Json) -> MC.Res:
   Bots.spawn.b(b, s, now, a, String.trim(J.Json.get_str(a, "name", "")))
 
+# a term for the voice dictionary: the server writes it (server/voice.bend)
+def Bots.dict.add(+term: String) -> MC.Res:
+  Bool.pick(MC.Res, Bool.or(String.is_empty(term), Nat.is_gt(String.length(term), 80n)), MR.fail("a term is 1 to 80 characters"),
+    MR.step(MR.said("added " ++ term ++ " to the voice dictionary"), B.Step.outs([B.BotFx{"voice", J.Json.show(J.Json.obj([J.KV{"op", J.Str{"add"}}, J.KV{"term", J.Str{term}}])), "0", "0"}])))
+
 def Bots.call.k(i: Nat, +s: M.State, +now: Nat, +dir: J.Json, +b: BT.Bot, +a: J.Json) -> MC.Res:
   match i:
     case 0n:
@@ -959,6 +973,8 @@ def Bots.call.k(i: Nat, +s: M.State, +now: Nat, +dir: J.Json, +b: BT.Bot, +a: J.
       MR.ok(J.Json.arr(Bots.projects.json(s)))
     case 17n:
       Bots.spawn(s, now, b, a)
+    case 18n:
+      Bots.dict.add(String.trim(J.Json.get_str(a, "term", "")))
     case _:
       MR.fail("unknown tool")
 

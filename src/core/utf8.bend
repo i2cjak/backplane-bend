@@ -38,10 +38,16 @@ def Utf8.start(acc: String, l: Lead) -> Dec:
     case Lead{b, 1n+m}:
       Dec{acc, b, 1n+m}
 
+# a decoded code point, or U+FFFD when it is no character (a surrogate, or
+# past U+10FFFF: a 4-byte lead can spell up to U+1FFFFF), so no String
+# holds a value a client cannot encode (a binary webhook body, say)
+def Utf8.scalar(+cp: U32) -> U32:
+  Bool.pick(U32, Bool.or(U32.is_gt(cp, 1114111), Bool.and(U32.is_ge(cp, 55296), U32.is_le(cp, 57343))), 65533, cp)
+
 def Utf8.cont.k(ok: Bool, acc: String, +cp: U32, owe: Nat, +x: U32) -> Dec:
   match ok owe:
     case True{} 1n+0n:
-      Dec{Utf8.emit(acc, U32.or(U32.shln(cp, 6n), U32.and(x, 63))), 0, 0n}
+      Dec{Utf8.emit(acc, Utf8.scalar(U32.or(U32.shln(cp, 6n), U32.and(x, 63)))), 0, 0n}
     case True{} 1n+m:
       Dec{acc, U32.or(U32.shln(cp, 6n), U32.and(x, 63)), m}
     case True{} 0n:

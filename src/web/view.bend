@@ -13,6 +13,7 @@ import ../core/todo.bend as TD
 import ../core/bot.bend as BT
 import ../core/botui.bend as BI
 import ./bots.bend as WB
+import ../core/voice.bend as VC
 
 # Ui -> Node. Every decision (order, shelf, status) comes from core defs
 # with laws behind them; this file only lays them out.
@@ -480,13 +481,42 @@ def View.fork(+fork: String) -> List<&2, D.Node>:
   Bool.pick(List<&2, D.Node>, String.is_empty(fork), [D.Dom.button("primary", "kicad-install", "", "Install Backplane KiCad", "Install Backplane KiCad")],
     [D.Dom.span("ok", "Backplane KiCad " ++ fork)])
 
+# Voice: the OpenAI key (only ever shown masked), the microphone, the
+# dictionary (× takes a term out), as in the native window
+def View.devs(ds: List<&2, U.VDev>, +cur: String) -> List<&2, D.Node>:
+  match ds:
+    case Nil{}:
+      Nil{}
+    case U.VDev{+name, +label} <> t:
+      D.Dom.button(Bool.pick(String, String.eq(name, cur), "on", ""), "setting", "voice.device=" ++ name, name, label) <> View.devs(t, cur)
+
+def View.terms(ts: List<&2, String>) -> List<&2, D.Node>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> r:
+      D.Dom.button("chip", "voice-unterm", t, "Take it out of the dictionary", t ++ " ×") <> View.terms(r)
+
+def View.voice.set(+u: U.Ui, +st: M.State) -> List<&2, D.Node>:
+  [View.setrow("OpenAI API key", Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@voice.key")), "For GPT-Live-Transcribe. Kept in this machine's secrets; never shown again.",
+      "Saved: " ++ U.Ui.scratch(u, "@voice.key") ++ ". Paste a new one to replace it."),
+     [WB.WB.secret("voice-key", "vkey", U.Ui.scratch(u, "@f.vkey"), "sk-…"), D.Dom.button("primary", "voice-key", "", "Keep this key", "Save"),
+      D.Dom.button("", "voice-unkey", "", "Forget the key", "Remove")]),
+   View.setrow("Microphone", "The mic button in the composer records the hub machine's " ++
+      Bool.pick(String, String.is_empty(M.Setting.get(st, "voice.device", "")), "default microphone, " ++ U.Voice.label(u, U.Voice.default(u)), U.Voice.label(u, M.Setting.get(st, "voice.device", ""))) ++ ".",
+     D.Dom.button(Bool.pick(String, String.is_empty(M.Setting.get(st, "voice.device", "")), "on", ""), "setting", "voice.device=", "The default microphone", "Default") <>
+       View.devs(U.Voice.devices(u), M.Setting.get(st, "voice.device", ""))),
+   View.setrow("Dictionary", "Names and terms to expect. Words you clarify after dictating join it. Pebble ring: set its webhook to send the recording.",
+     List.append(&2, D.Node, View.terms(U.Voice.dict(u)), [WB.WB.input("voice-term", "vterm", U.Ui.scratch(u, "@f.vterm"), "Add a term", "voice-term"),
+       D.Dom.button("", "voice-term", "", "Add it to the dictionary", "Add")]))]
+
 # the same settings as the native window
-def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String) -> D.Node:
+def View.settings(+u: U.Ui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String) -> D.Node:
   +prov = M.Setting.get(st, "agent.provider", "claude")
   +ipc = M.Setting.get(st, "kicad.ipc", "on")
   D.El{"main", "settings", [D.At{"class", "settings-view"}], [
     D.El{"header", "", [D.At{"class", "thread-head"}], [D.Dom.span("title", "Settings"), D.Dom.span("meta", ""), D.Dom.button("", "flag", "settings", "Close settings", "Close")]},
-    D.El{"div", "", [D.At{"class", "settings"}], [
+    D.El{"div", "", [D.At{"class", "settings"}], List.append(&2, D.Node, [
       View.setrow("Settle after", "Threads idle this long move to Settled. They stay saved.", View.days(M.Setting.get(st, "settle.days", "3"))),
       View.setrow("Follow-ups while a turn runs", "Queue waits for the turn to end; steer sends into it. Ctrl+Enter does the other. Default: Claude steers, Codex and Grok queue.",
         View.chips(["", "queue", "steer"], M.Setting.get(st, "followup", ""), "followup")),
@@ -501,7 +531,7 @@ def View.settings(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String)
       View.setrow("Update channel", "Stable takes releases; nightly also takes the daily builds.", View.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
       View.setrow("Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note),
         Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")],
-          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")]))]}]}
+          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")]))], View.voice.set(u, st))}]}
 
 def View.empty(n: Nat) -> D.Node:
   D.El{"main", "empty", [D.At{"class", "empty"}], [D.Txt{Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")}]}
@@ -765,17 +795,88 @@ def View.attaching(+ps: List<&2, String>, +up: String) -> List<&2, D.Node>:
     [D.El{"div", "", [D.At{"class", "chips"}], D.Dom.cat(View.pending(ps),
       Bool.pick(List<&2, D.Node>, String.is_empty(up), Nil{}, [D.Dom.span("chip up", up ++ " …")]))}])
 
+# Voice: dictation into the composer (client.bend's Voice). The mic is red
+# while it records; above the composer, what is being heard, a note when
+# nothing comes in or something failed, and the words to clarify, one at
+# a time.
+def View.mic(+state: String) -> D.Node:
+  WI.WIcon.button(Bool.pick(String, String.is_empty(state), "mic", "mic " ++ state), "voice", "",
+    Bool.pick(String, String.is_empty(state), "Dictate with the hub machine's microphone", "Stop dictating"), "mic", 16, "")
+
+def View.vhint(+h: String, +dev: String) -> String:
+  +d = Bool.pick(String, String.is_empty(dev), "the microphone", dev)
+  Bool.pick(String, String.eq(h, "no-audio"), "Nothing received from " ++ d ++ " yet. Is it plugged in? Pick another in Settings, Voice.",
+    Bool.pick(String, String.eq(h, "silent"), "Only silence from " ++ d ++ " so far. Is it muted, or the wrong one?", h))
+
+def View.vstrip(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match on:
+    case True{}:
+      +state = U.Ui.scratch(u, "@voice")
+      [D.El{"div", "", [D.At{"class", "voice-strip"}], [D.Dom.span("rec", ""),
+        D.Dom.span("voice-head", Bool.pick(String, String.eq(state, "starting"), "Starting the microphone…", Bool.pick(String, String.eq(state, "stopping"), "Finishing…",
+          "Listening" ++ Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@voice.dev")), "", " · " ++ U.Ui.scratch(u, "@voice.dev"))))),
+        D.El{"span", "", [D.At{"class", "meter"}], [D.El{"span", "", [D.At{"style", "width:" ++ Nat.show(Maybe.default(&2, Nat, Nat.read(U.Ui.scratch(u, "@voice.lv")), 0n)) ++ "%"}], Nil{}}]},
+        D.Dom.span("voice-part", U.Ui.scratch(u, "@voice.part")),
+        D.Dom.button("stop", "voice", "", "Stop dictating", "Stop")]}]
+    case False{}:
+      Nil{}
+
+def View.vnote(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match on:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@voice.err")), "voice-note warn", "voice-note bad")}], [
+        D.Dom.span("", Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@voice.err")), View.vhint(U.Ui.scratch(u, "@voice.hint"), U.Ui.scratch(u, "@voice.dev")),
+          "Dictation: " ++ U.Ui.scratch(u, "@voice.err"))),
+        WI.WIcon.button("", "voice-err", "", "Close", "x", 14, "")]}]
+    case False{}:
+      Nil{}
+
+def View.vask.k(x: VC.Unsure, +n: Nat) -> List<&2, D.Node>:
+  match x:
+    case VC.Unsure{+w, +g}:
+      [D.El{"div", "", [D.At{"class", "voice-ask"}], List.append(&2, D.Node,
+        [D.Dom.span("", "Heard \u{201c}" ++ w ++ "\u{201d}" ++ Bool.pick(String, Nat.is_gt(n, 1n), " (1 of " ++ Nat.show(n) ++ ")", ""))],
+        List.append(&2, D.Node, Bool.pick(List<&2, D.Node>, String.is_empty(g), Nil{}, [D.Dom.button("primary", "voice-use", "0", "Use the guess", "Use " ++ g)]),
+          [D.Dom.button("", "voice-fix", "0", "Type the right spelling", "Fix…"), D.Dom.button("", "voice-add", "0", "Add it to the dictionary as heard", "Add to dictionary"),
+           D.Dom.button("", "voice-skip", "0", "Leave it", "Skip")]))}]
+
+def View.vask.go(fixing: Bool, +u: U.Ui, +us: List<&2, VC.Unsure>) -> List<&2, D.Node>:
+  match fixing:
+    case True{}:
+      [D.El{"div", "", [D.At{"class", "voice-ask"}], [WB.WB.input("voice-fix", "vfix", U.Ui.scratch(u, "@f.vfix"), "The right spelling (it joins the dictionary)", "voice-fixed"),
+        D.Dom.button("primary", "voice-fixed", "", "Replace the word and add it to the dictionary", "Save"), D.Dom.button("", "form-close", "@voice.fix", "Cancel", "Cancel")]}]
+    case False{}:
+      View.vask.k(Maybe.default(&2, VC.Unsure, List.head(&2, VC.Unsure, us), VC.Unsure{"", ""}), List.length(&2, VC.Unsure, us))
+
+def View.vask(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match on:
+    case True{}:
+      View.vask.go(Bool.not(String.is_empty(U.Ui.scratch(u, "@voice.fix"))), u, U.Voice.unsure(u))
+    case False{}:
+      Nil{}
+
+# what sits over the composer for dictation, and the mic's state
+def View.voice(+u: U.Ui, +sel: String) -> List<&2, D.Node>:
+  +here = Bool.or(String.eq(U.Ui.scratch(u, "@voice.th"), sel), String.is_empty(U.Ui.scratch(u, "@voice.th")))
+  D.Dom.cat(View.vnote(Bool.and(here, Bool.or(Bool.not(String.is_empty(U.Ui.scratch(u, "@voice.err"))), Bool.and(U.Voice.on(u), Bool.not(String.is_empty(U.Ui.scratch(u, "@voice.hint")))))), u),
+    D.Dom.cat(View.vstrip(Bool.and(here, U.Voice.on(u)), u),
+      View.vask(Bool.and(String.eq(U.Ui.scratch(u, "@voice.uth"), sel), Bool.not(List.is_empty(&2, VC.Unsure, U.Voice.unsure(u)))), u)))
+
+def View.mic.of(+u: U.Ui, +sel: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(U.Ui.scratch(u, "@voice.th"), sel), String.is_empty(U.Ui.scratch(u, "@voice.th"))), U.Ui.scratch(u, "@voice"), "")
+
 def View.composer(+draft: String, +send: String, +label: String, +ctx: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
-    +atts: List<&2, String>, +up: String) -> D.Node:
+    +atts: List<&2, String>, +up: String, vo: List<&2, D.Node>, +mic: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
-    View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(View.attaching(atts, up), [
+    View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(vo, D.Dom.cat(View.attaching(atts, up), [
     D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
       D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-enter-alt", "send-alt"}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
       WI.WIcon.after("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort) ++ ctx, "chevron-down", 14),
       D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [WI.WIcon.svg("paperclip", 16),
         D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
-      D.Dom.button("primary", "send", "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send)]}])))}
+      D.El{"span", "", [D.At{"class", "foot-end"}], [View.mic(mic),
+        D.Dom.button("primary", "send", "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send)]}]}]))))}
 
 # the thread's header, or the one given (a bot's)
 def View.top(hd: List<&2, D.Node>, t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> List<&2, D.Node>:
@@ -785,7 +886,7 @@ def View.top(hd: List<&2, D.Node>, t: M.Thread, +st: M.State, +panel: Bool, snoo
     case h <> r:
       h <> r
 
-def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool, hd: List<&2, D.Node>) -> D.Node:
+def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool, hd: List<&2, D.Node>, vo: List<&2, D.Node>, +mic: String) -> D.Node:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
@@ -799,11 +900,11 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         View.todos(U.Todos.shown(st, id, View.running(turn))),
         View.queued(M.Queue.items(st, id), View.running(turn)),
         View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
-          U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up)]),
+          U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up, vo, mic)]),
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
 def View.thread.h(+u: U.Ui, t: M.Thread, hd: List<&2, D.Node>) -> D.Node:
-  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"), hd)
+  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"), hd, View.voice(u, U.Ui.sel(u)), View.mic.of(u, U.Ui.sel(u)))
 
 def View.thread(+u: U.Ui, t: M.Thread) -> D.Node:
   View.thread.h(u, t, Nil{})
@@ -821,8 +922,8 @@ def View.bot(+u: U.Ui, +b: BT.Bot) -> D.Node:
 
 def View.main.s(settings: Bool, none: Bool, u: U.Ui, +sel: String, +n: Nat) -> D.Node:
   match settings none u:
-    case True{} _ U.Ui{+st, _, _, _, _, _, _, _, _, +v, _, _, _, +note, +nf, +ob, +tr}:
-      View.settings(st, nf, v, note)
+    case True{} _ U.Ui{+st, s2, d, l, o, on, now, ad, pa, +v, r, w, e, +note, +nf, ob, tr}:
+      View.settings(U.Ui{st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, st, nf, v, note)
     case False{} True{} _:
       View.empty(n)
     case False{} False{} U.Ui{+st, s2, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}:

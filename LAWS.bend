@@ -56,6 +56,7 @@ import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/perf.bend as PF
+import ./src/core/voice.bend as VO
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2398,3 +2399,42 @@ law perf_hud_off_draws_nothing:
   for +w: U32
   {L.Lay.perf.if(False{}, ty, text, w) == L.Out.none() : L.Out}
 
+# Dictation
+# ---------
+
+# a term already in the dictionary adds nothing
+law voice_add_idem:
+  for +ds: List<&2, String>
+  for +term: String
+  for h: {VO.Voice.dict.has(ds, term) == True{} : Bool}
+  {VO.Voice.dict.add(ds, term) == ds : List<&2, String>}
+
+# a term that is not blank, once added, is in the dictionary
+law voice_add_has:
+  for +ds: List<&2, String>
+  for +term: String
+  for h: {String.is_empty(String.trim(term)) == False{} : Bool}
+  {VO.Voice.dict.has(VO.Voice.dict.add(ds, term), term) == True{} : Bool}
+
+# replacing a word with itself, or an empty word, leaves the text as it is
+law voice_fix_same:
+  for +t: String
+  for +w: String
+  {VO.Voice.fix(t, w, w) == t : String}
+
+law voice_fix_empty:
+  for +t: String
+  for +r: String
+  {VO.Voice.fix(t, "", r) == t : String}
+
+# never more than five words to ask about, nor more keywords than the
+# transcriber takes
+law voice_unsure_bounded:
+  for +ds: List<&2, String>
+  for +ig: List<&2, String>
+  for +text: String
+  {Nat.is_le(List.length(&2, VO.Unsure, VO.Voice.unsure(ds, ig, text)), VO.Voice.max_unsure()) == True{} : Bool}
+
+law voice_keywords_bounded:
+  for +ds: List<&2, String>
+  {Nat.is_le(List.length(&2, String, VO.Voice.keywords(ds)), VO.Voice.max_keywords()) == True{} : Bool}

@@ -3,7 +3,8 @@
 #   dist/backplane        the app: native window + hub + web server
 #   dist/backplane-serve  hub + web server only (no X11 needed)
 #   dist/web/             the web client (for other devices)
-#   dist/backplane-browser, dist/backplane-step2glb   host helpers (with bun)
+#   dist/backplane-browser, dist/backplane-step2glb, dist/backplane-voice
+#                         host helpers (with bun)
 # X11 headers: /usr/include (libx11-dev), or BACKPLANE_X11=<prefix> holding
 # include/ and lib/libX11.so (see AGENTS.md).
 # System fonts (src/gfx/effects/font.c) need no headers and no link flags:
@@ -46,12 +47,13 @@ else
   scripts/build-app.sh src/app/main.bend dist/backplane
 fi
 cp dist/backplane build/backplane
-# the host helpers (Bun): the agents' browser and STEP -> GLB for the 3D
-# viewer; the app runs without them, so a machine without bun skips them
+# the host helpers (Bun): the agents' browser, STEP -> GLB for the 3D
+# viewer and speech to text for dictation; the app runs without them, so a machine without bun skips them
 if command -v bun >/dev/null 2>&1 || [ -x "$HOME/.bun/bin/bun" ]; then
   PATH="$HOME/.bun/bin:$PATH" scripts/build-browser.sh
   PATH="$HOME/.bun/bin:$PATH" scripts/build-step2glb.sh
+  PATH="$HOME/.bun/bin:$PATH" scripts/build-voice.sh
 else
-  echo "bun not found: skipping backplane-browser and backplane-step2glb"
+  echo "bun not found: skipping backplane-browser, backplane-step2glb and backplane-voice"
 fi
 ls -la dist

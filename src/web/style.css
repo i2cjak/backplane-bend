@@ -372,3 +372,22 @@ textarea.field { resize: vertical; min-height: 56px; }
 
 .earlier { display: flex; justify-content: center; padding: 6px 0 12px; }
 .earlier-btn { font-size: 12px; opacity: 0.8; }
+
+/* dictation (View.voice) */
+.foot-end { display: flex; align-items: center; gap: 6px; }
+button.mic { padding: 4px 6px; display: inline-flex; color: var(--dim); }
+button.mic.live { background: var(--bad); border-color: var(--bad); color: var(--bg); animation: pulse 1.2s ease-in-out infinite; }
+button.mic.starting, button.mic.stopping { border-color: var(--bad); color: var(--bad); }
+.voice-strip, .voice-note, .voice-ask { display: flex; align-items: center; gap: 10px; padding: 4px 8px; background: var(--panel); border: 1px solid var(--line); min-width: 0; }
+.voice-strip { border-color: var(--bad); }
+.voice-strip .rec { width: 10px; height: 10px; background: var(--bad); flex: none; animation: pulse 1.2s ease-in-out infinite; }
+.voice-strip .voice-head { white-space: nowrap; }
+.voice-strip .meter { width: 64px; height: 6px; background: var(--raise); flex: none; }
+.voice-strip .meter span { display: block; height: 100%; background: var(--ok); }
+.voice-strip .voice-part { flex: 1; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.voice-strip .stop { color: var(--bad); }
+.voice-note span { flex: 1; }
+.voice-note.warn { border-color: var(--warn); }
+.voice-note.bad { border-color: var(--bad); }
+.voice-ask { border-color: var(--warn); flex-wrap: wrap; }
+.voice-ask .field { flex: 1; min-width: 12em; }

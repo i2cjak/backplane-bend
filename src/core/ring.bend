@@ -77,6 +77,15 @@ def Ring.part(+body: String, +name: String) -> String:
 def Ring.text(+body: String) -> String:
   String.trim(Ring.part(body, "transcription"))
 
+# the words to clarify, when Backplane transcribed the recording itself
+# (server/voice.bend puts an `unsure` part first)
+def Ring.unsure(+body: String) -> String:
+  String.trim(Ring.part(body, "unsure"))
+
+# the model that heard the recording ("" when the ring's own words came)
+def Ring.heard(+body: String) -> String:
+  String.trim(Ring.part(body, "heard"))
+
 # the app's "Send test event"
 def Ring.test(+body: String) -> Bool:
   String.eq(String.trim(Ring.part(body, "test")), "true")
@@ -121,4 +130,5 @@ def Ring.form(+body: String, +size: String) -> String:
       Ring.num("recordedAt", String.trim(Ring.part(body, "recordedAt")),
         Ring.kv("client", String.trim(Ring.part(body, "client")),
           Ring.kv("test", Bool.pick(String, Ring.test(body), "true", ""),
-            Ring.kv("audio", Ring.audio(String.contains(body, "name=\"audio\""), String.trim(size)), Nil{})))))))
+            Ring.kv("heardBy", Ring.heard(body), Ring.kv("unsure", Ring.unsure(body),
+              Ring.kv("audio", Ring.audio(String.contains(body, "name=\"audio\""), String.trim(size)), Nil{})))))))))

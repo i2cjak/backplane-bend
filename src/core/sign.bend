@@ -80,6 +80,18 @@ def Sign.index.k(fresh: Bool, secret: String, ts: Nat, delivery: String, trigger
 def Sign.index(secret: String, +now: Nat, +ts: Nat, delivery: String, trigger: String, test: Bool, body: String, sig: String) -> Bool:
   Sign.index.k(Sign.fresh(now, ts), secret, ts, delivery, trigger, test, body, sig)
 
+# the same over a body's bytes (a form with a recording, which is not text)
+def Sign.index.raw.k(fresh: Bool, secret: String, ts: Nat, delivery: String, trigger: String, test: Bool, body: List<&2, U32>, sig: String) -> Bool:
+  match fresh:
+    case False{}:
+      False{}
+    case True{}:
+      S.Ct.eq(Sign.utf8(sig), Sign.utf8(S.Hex.encode(S.Hmac.sha256(Sign.utf8(secret),
+        List.append(&2, U32, Sign.utf8("v1\n" ++ Nat.show(ts) ++ "\n" ++ delivery ++ "\n" ++ trigger ++ "\n" ++ Bool.pick(String, test, "1", "0") ++ "\n"), body)))))
+
+def Sign.index.raw(secret: String, +now: Nat, +ts: Nat, delivery: String, trigger: String, test: Bool, body: List<&2, U32>, sig: String) -> Bool:
+  Sign.index.raw.k(Sign.fresh(now, ts), secret, ts, delivery, trigger, test, body, sig)
+
 # A webhook's bearer token (Authorization: Bearer <token>), for senders
 # that cannot sign, like the Pebble Index ring's app: the token sent
 # against the one kept, compared in constant time. A hook with no token

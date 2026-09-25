@@ -9,7 +9,9 @@ import ../../src/gfx/draw.bend as D
 import ../../src/app/theme.bend as T
 
 # A frame of the window from an event log and an info message, as a PPM,
-# with no window: `ui_snap EVENTS INFO THREAD FLAGS OUT` (FLAGS is a
+# with no window: `ui_snap EVENTS INFO THREAD FLAGS OUT` (the INFO file may hold
+# more messages, a line each, received in order: voice messages, say;
+# FLAGS is a
 # comma-separated list of Ui flags to open, e.g. "models" or "-"; then
 # optionally the window's width and height)
 
@@ -53,9 +55,16 @@ def flags(fs: List<&2, String>, u: U.Ui) -> U.Ui:
     case +f <> t:
       flags(t, flag(String.eq(f, "-"), u, f))
 
+def recv_all(ls: List<&2, String>, +u: U.Ui) -> U.Ui:
+  match ls:
+    case Nil{}:
+      u
+    case l <> t:
+      recv_all(t, U.Ui.recv(u, Maybe.default(&2, J.Json, J.Json.parse(l), J.Null{})))
+
 def ui_of(bs: List<&2, U32>, +info: String, +sel: String, +fl: String) -> U.Ui:
-  flags(String.split(fl, ','), act.k(U.Ui.act(U.Ui.recv(U.Ui.recv(U.Ui.init(U32.to_nat(1790180000)), J.Json.obj([J.KV{"t", J.Str{"log"}}, J.KV{"version", J.Str{"0.1.0"}},
-    J.KV{"items", J.Json.arr(items(lines(U8.Lines.feed(U8.Lines.new(), bs))))}])), Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{})), "select", sel)))
+  flags(String.split(fl, ','), act.k(U.Ui.act(recv_all(String.lines(info), U.Ui.recv(U.Ui.init(U32.to_nat(1790180000)), J.Json.obj([J.KV{"t", J.Str{"log"}}, J.KV{"version", J.Str{"0.1.0"}},
+    J.KV{"items", J.Json.arr(items(lines(U8.Lines.feed(U8.Lines.new(), bs))))}]))), "select", sel)))
 
 def ops(o: L.Out) -> List<&2, R.Op>:
   match o:

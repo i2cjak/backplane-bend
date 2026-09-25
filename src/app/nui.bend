@@ -142,7 +142,8 @@ def Fld.alias(+id: String) -> String:
     Bool.pick(String, String.eq(id, "room-name"), Fld.id("rname", "room-save", ""),
       Bool.pick(String, String.eq(id, "room-post"), Fld.id("rpost", "room-post", ""),
         Bool.pick(String, String.eq(id, "remote-send"), Fld.id("rtext", "remote-send", ""),
-          Bool.pick(String, String.eq(id, "routine-name"), Fld.id("oname", "routine-save", ""), id)))))
+          Bool.pick(String, String.eq(id, "routine-name"), Fld.id("oname", "routine-save", ""),
+            Bool.pick(String, String.eq(id, "voice-fix"), Fld.id("vfix", "voice-fixed", ""), id))))))
 
 # Focus and scroll requests from the client state apply here
 def Nui.effects(cs: List<&2, U.Cmd>, n: Nui) -> Nui:
