@@ -1,4 +1,5 @@
 import Base
+import ./src/core/bothub.bend as BHS
 import ./src/core/bot.bend as BOT
 import ./src/core/botui.bend as BU
 import ./src/core/model.bend as M
@@ -2266,3 +2267,16 @@ law index_stale_rejected:
   for sig: String
   for h: {SG.Sign.fresh(now, ts) == False{} : Bool}
   {SG.Sign.index(secret, now, ts, delivery, trigger, test, body, sig) == False{} : Bool}
+
+# the step behind bot_spawn_bounded
+law bot_spawn_step:
+  for ok: Bool
+  for +n: Nat
+  for h: {Nat.is_le(n, BHS.Spawn.max()) == ok : Bool}
+  {BHS.Spawn.bound(BOT.Hop.send.k(ok, n)) == True{} : Bool}
+
+# a sub-bot is never made deeper than the bound below a person's bot, so
+# bots cannot make bots without end
+law bot_spawn_bounded:
+  for +d: Nat
+  {BHS.Spawn.bound(BHS.Spawn.next(d)) == True{} : Bool}

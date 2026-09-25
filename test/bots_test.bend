@@ -121,6 +121,19 @@ def changes.show(cs: List<&2, M.Change>) -> String:
     case c <> t:
       J.Json.show(CD.Change.encode(c)) ++ changes.show(t)
 
+def proj() -> M.State:
+  run(two(), B.Step{[M.ProjectCreated{"p1", "Power board", "/tmp/power", 1000n}, M.ThreadCreated{"t-pb", "p1", "Rev C review", M.Local{}, "", "", "claude", "", 1000n}], Nil{}})
+
+def spawned(+s: M.State, +maker: String, +name: String) -> M.State:
+  run(s, call.step(s, 1500n, th.of(s, maker), "bot_create", "{\"name\":\"" ++ name ++ "\",\"persona\":\"helps\"}"))
+
+def Maybe.is.k(m: Maybe<&2, BT.Bot>) -> Bool:
+  match m:
+    case Some{_}:
+      True{}
+    case None{}:
+      False{}
+
 def main() -> IO(Unit):
   do IO<Unit>:
     +s : M.State = two()
@@ -200,3 +213,25 @@ def main() -> IO(Unit):
     C.Check.str("ring words reach the bot", yes(String.contains(changes.show(tags.cs(BH.Bots.ring(h, 1010n, hook.of(h), ring.body()))), "[voice note from your Pebble ring]\\nremind me to order stencils")), "yes")
     C.Check.str("ring test wakes no one", st.tags(BH.Bots.ring(h, 1010n, hook.of(h), ring.test())), "HookHit | ")
     C.Check.str("ring revoked", st.tags(BH.Bots.ring(made(h, 1011n, "bots.hook_revoke", "{\"hook\":\"" ++ hook.of(h) ++ "\"}"), 1012n, hook.of(h), ring.body())), "| ")
+    # sub-bots
+    C.Check.str("bot_create", st.tags(call.step(s, 1500n, th.of(s, "Miso"), "bot_create", "{\"name\":\"Kit\",\"persona\":\"watches CI\"}")), "ThreadCreated BotSet SettingSet | fx:home ")
+    +k1 : M.State = spawned(s, "Miso", "Kit")
+    C.Check.str("sub-bot is a bot", Nat.show(List.length(&2, BT.Bot, BT.World.bots(M.State.bots(k1)))), "3")
+    C.Check.str("sub-bot knows its maker", M.Setting.get(k1, "bot.parent." ++ id.of(k1, "Kit"), ""), id.of(k1, "Miso"))
+    +k2 : M.State = spawned(k1, "Kit", "Kitten")
+    C.Check.str("two levels", yes(Maybe.is.k(BT.World.find(M.State.bots(k2), "Kitten"))), "yes")
+    C.Check.str("three levels refused", yes(String.contains(call(k2, 1600n, th.of(k2, "Kitten"), "bot_create", "{\"name\":\"Speck\",\"persona\":\"x\"}"), "levels deep")), "yes")
+    C.Check.str("name taken", yes(String.contains(call(k2, 1600n, th.of(k2, "Miso"), "bot_create", "{\"name\":\"kit\",\"persona\":\"x\"}"), "already exists")), "yes")
+    C.Check.str("bad name", yes(String.contains(call(k2, 1600n, th.of(k2, "Miso"), "bot_create", "{\"name\":\"a b\",\"persona\":\"x\"}"), "letters, digits")), "yes")
+    C.Check.str("spawn bound", yes(BH.Spawn.bound(BH.Spawn.next(5n))), "yes")
+    # projects
+    +pj : M.State = proj()
+    C.Check.str("project_list", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "project_list", "{}"), "Power board")), "yes")
+    C.Check.str("bot sees project threads", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_list", "{}"), "Rev C review")), "yes")
+    C.Check.str("bot list hides bot threads", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_list", "{}"), th.of(pj, "Tofu"))), "no")
+    C.Check.str("bot launches in a project", st.tags(call.step(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"project\":\"power board\",\"prompt\":\"check the LDO\"}")),
+      "ThreadCreated MessagePosted TurnQueued | out ")
+    C.Check.str("launched thread is in the project", yes(String.contains(changes.show(tags.cs(call.step(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"project\":\"p1\",\"prompt\":\"check the LDO\"}"))), "\"project\":\"p1\"")), "yes")
+    C.Check.str("launched message names the bot", yes(String.contains(changes.show(tags.cs(call.step(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"project\":\"p1\",\"prompt\":\"check the LDO\"}"))), "t:" ++ th.of(pj, "Miso"))), "yes")
+    C.Check.str("bot must name a project", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_launch", "{\"prompt\":\"x\"}"), "name an existing project")), "yes")
+    C.Check.str("bot reads a project thread", yes(String.contains(call(pj, 1600n, th.of(pj, "Miso"), "thread_read", "{\"threadId\":\"t-pb\"}"), "not in this project")), "no")

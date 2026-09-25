@@ -1,4 +1,5 @@
 import Base
+import ./src/core/bothub.bend as BHS
 import ./src/core/bot.bend as BOT
 import ./src/core/botui.bend as BU
 import ./LAWS.bend as Laws
@@ -4180,3 +4181,13 @@ def Laws.cat_look_total(s):
 def Laws.index_stale_rejected(secret, now, ts, delivery, trigger, test, body, sig, h):
   %Equal.sym(Bool, SG.Sign.fresh(now, ts), False{}, h) : {SG.Sign.index.k(_, secret, ts, delivery, trigger, test, body, sig) == False{} : Bool}
   {==}
+
+def Laws.bot_spawn_step(ok, n, h):
+  match ok:
+    case True{}:
+      h
+    case False{}:
+      {==}
+
+def Laws.bot_spawn_bounded(d):
+  Laws.bot_spawn_step(Nat.is_le(1n+d, BHS.Spawn.max()), 1n+d, {==})
