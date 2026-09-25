@@ -40,6 +40,7 @@
   X(XCreateImage, XImage*, (Display*, Visual*, unsigned, int, int, char*, unsigned, unsigned, int, int)) \
   X(XPutImage, int, (Display*, Drawable, GC, XImage*, int, int, int, int, unsigned, unsigned)) \
   X(XSetSelectionOwner, int, (Display*, Atom, Window, Time)) \
+  X(XGetSelectionOwner, Window, (Display*, Atom)) \
   X(XConvertSelection, int, (Display*, Atom, Atom, Atom, Window, Time)) \
   X(XGetWindowProperty, int, (Display*, Window, Atom, long, long, Bool, Atom, Atom*, int*, unsigned long*, unsigned long*, unsigned char**)) \
   X(XChangeProperty, int, (Display*, Window, Atom, Atom, int, int, const unsigned char*, int)) \
@@ -71,7 +72,7 @@ static int win_load(void) {
 typedef struct {
   Display*  dpy;
   Window    win;
-  Atom      del, clip, utf8, targets, prop;
+  Atom      del, clip, utf8, targets, prop, incr;
   XImage*   img;
   u32       w, h;
   // present: the blocks (64 px) a fill changed, and whether the next
@@ -88,6 +89,8 @@ typedef struct {
   u64       copy_len;
   char*     paste;
   u64       paste_len;
+  // a paste too big for one property arrives in pieces (INCR)
+  int       paste_incr;
   // drag and drop (XDND)
   Atom      dnd_aware, dnd_enter, dnd_position, dnd_status, dnd_leave, dnd_drop,
             dnd_finished, dnd_sel, dnd_copy, dnd_uri, dnd_types, dnd_prop;
@@ -154,6 +157,14 @@ static void win_answer(AppWin* a, XSelectionRequestEvent* rq) {
   x_XSendEvent(a->dpy, rq->requestor, False, 0, &ev);
 }
 
+static void win_paste_add(AppWin* a, unsigned char* data, unsigned long n) {
+  a->paste = io_mem(realloc(a->paste, a->paste_len + n + 1));
+  memcpy(a->paste + a->paste_len, data, n);
+  a->paste_len += n;
+}
+
+// the clipboard's answer: the text whole, or the start of an INCR
+// transfer whose pieces follow as PropertyNotify (win_paste_piece)
 static void win_pasted(AppWin* a) {
   Atom type;
   int fmt;
@@ -162,11 +173,35 @@ static void win_pasted(AppWin* a) {
   if (x_XGetWindowProperty(a->dpy, a->win, a->prop, 0, 1 << 24, True,
     AnyPropertyType, &type, &fmt, &n, &left, &data) == Success && data) {
     free(a->paste);
-    a->paste = io_mem(malloc(n + 1));
-    memcpy(a->paste, data, n);
-    a->paste_len = n;
+    a->paste = NULL;
+    a->paste_len = 0;
+    a->paste_incr = type == a->incr;
+    if (!a->paste_incr) {
+      win_paste_add(a, data, n);
+      win_push(a, 7, 0, 0, 0, 0);
+    }
     x_XFree(data);
+  }
+}
+
+// one piece of an INCR paste; the empty piece ends it
+static void win_paste_piece(AppWin* a) {
+  Atom type;
+  int fmt;
+  unsigned long n = 0, left = 0;
+  unsigned char* data = NULL;
+  if (x_XGetWindowProperty(a->dpy, a->win, a->prop, 0, 1 << 24, True,
+    AnyPropertyType, &type, &fmt, &n, &left, &data) != Success) {
+    return;
+  }
+  if (n > 0 && data) {
+    win_paste_add(a, data, n);
+  } else {
+    a->paste_incr = 0;
     win_push(a, 7, 0, 0, 0, 0);
+  }
+  if (data) {
+    x_XFree(data);
   }
 }
 
@@ -331,11 +366,28 @@ static void win_pump(AppWin* a) {
       case SelectionRequest:
         win_answer(a, &ev.xselectionrequest);
         break;
+      case SelectionClear:
+        // another program owns the clipboard now: pastes ask it
+        if (ev.xselectionclear.selection == a->clip) {
+          free(a->copy);
+          a->copy = NULL;
+          a->copy_len = 0;
+        }
+        break;
       case SelectionNotify:
         if (ev.xselection.selection == a->dnd_sel) {
           win_dropped(a, ev.xselection.property);
         } else if (ev.xselection.property != None) {
           win_pasted(a);
+        } else if (ev.xselection.target == a->utf8) {
+          // an owner without UTF8_STRING may still have plain STRING
+          x_XConvertSelection(a->dpy, a->clip, XA_STRING, a->prop, a->win, CurrentTime);
+        }
+        break;
+      case PropertyNotify:
+        if (a->paste_incr && ev.xproperty.atom == a->prop
+          && ev.xproperty.state == PropertyNewValue) {
+          win_paste_piece(a);
         }
         break;
     }
@@ -406,6 +458,7 @@ Term win_open_run(Env e, Term* f, IoWork* w) {
     a->utf8    = x_XInternAtom(dpy, "UTF8_STRING", False);
     a->targets = x_XInternAtom(dpy, "TARGETS", False);
     a->prop    = x_XInternAtom(dpy, "BACKPLANE_PASTE", False);
+    a->incr    = x_XInternAtom(dpy, "INCR", False);
     x_XSetWMProtocols(dpy, a->win, &a->del, 1);
     a->dnd_aware    = x_XInternAtom(dpy, "XdndAware", False);
     a->dnd_enter    = x_XInternAtom(dpy, "XdndEnter", False);
@@ -425,7 +478,7 @@ Term win_open_run(Env e, Term* f, IoWork* w) {
     x_XStoreName(dpy, a->win, title);
     x_XSelectInput(dpy, a->win, KeyPressMask | KeyReleaseMask | ButtonPressMask
       | ButtonReleaseMask | PointerMotionMask | StructureNotifyMask | ExposureMask
-      | FocusChangeMask);
+      | FocusChangeMask | PropertyChangeMask);
     x_XMapRaised(dpy, a->win);
     x_XFlush(dpy);
   }
@@ -677,10 +730,12 @@ static void __attribute__((constructor)) win_copy_use(void) {
 
 #ifdef CID_WIN_PASTE
 
-// ask for the clipboard; it arrives later as WPaste
+// ask for the clipboard; it arrives later as WPaste. Only while this
+// window still owns it is the last copy pasted directly; otherwise the
+// owner (another program) is asked.
 Term win_paste_run(Env e, Term* f, IoWork* w) {
   AppWin* a = (AppWin*)io_hand_v(f[0]);
-  if (a->copy != NULL) {
+  if (a->copy != NULL && x_XGetSelectionOwner(a->dpy, a->clip) == a->win) {
     free(a->paste);
     a->paste = io_mem(malloc(a->copy_len + 1));
     memcpy(a->paste, a->copy, a->copy_len);
