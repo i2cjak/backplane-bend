@@ -108,15 +108,90 @@ def BU.fars(os: List<&2, J.Json>, +sel: String) -> List<&2, BRow>:
 def BU.remote(+u: U.Ui) -> List<&2, BRow>:
   BU.fars(J.Json.elems(Maybe.default(&2, J.Json, J.Json.parse(U.Ui.info(u, "bots.remote")), J.Json.arr(Nil{}))), BU.remote.sel(u))
 
-def BU.rooms.go(rs: List<&2, BT.Room>, +sel: String) -> List<&2, RRow>:
+# Each room once
+# --------------
+# A room list keys each room by its id. A room shared with a linked machine
+# is kept on both under one id, so two sources can report it (two paired
+# hubs on a phone): it is listed once, the last report kept (laws
+# rooms_listed_once, hubs_rooms_listed_once). Rooms are never merged by
+# name: two rooms with one name both show, each named with its id.
+
+type RK<-A: Data> is Data:
+  RK{key: String, val: A}
+
+# whether key k is among xs
+def BU.once.has(-A: Data, xs: List<&2, RK<A>>, +k: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case RK{+x, _} <> t:
+      Bool.or(String.eq(x, k), BU.once.has(A, t, k))
+
+# no key comes twice
+def BU.once.distinct(-A: Data, xs: List<&2, RK<A>>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case RK{+k, _} <> +t:
+      Bool.and(Bool.not(BU.once.has(A, t, k)), BU.once.distinct(A, t))
+
+def BU.once.step(-A: Data, seen: Bool, +k: String, v: A, rest: List<&2, RK<A>>) -> List<&2, RK<A>>:
+  match seen:
+    case True{}:
+      rest
+    case False{}:
+      RK{k, v} <> rest
+
+# each key once: an item whose key comes again later is dropped
+def BU.once.of(-A: Data, xs: List<&2, RK<A>>) -> List<&2, RK<A>>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case RK{+k, v} <> +t:
+      BU.once.step(A, BU.once.has(A, t, k), k, v, BU.once.of(A, t))
+
+def BU.once.vals(-A: Data, xs: List<&2, RK<A>>) -> List<&2, A>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case RK{_, v} <> t:
+      v <> BU.once.vals(A, t)
+
+# how many of ns are n, in any case
+def BU.rooms.count(ns: List<&2, String>, +n: String) -> Nat:
+  match ns:
+    case Nil{}:
+      0n
+    case +x <> t:
+      Nat.add(Bool.pick(Nat, String.eq(x, n), 1n, 0n), BU.rooms.count(t, n))
+
+def BU.rooms.names(rs: List<&2, BT.Room>) -> List<&2, String>:
   match rs:
     case Nil{}:
       Nil{}
-    case BT.Room{+i, n, m, _, _} <> t:
-      RRow{i, n, List.length(&2, String, m), String.eq(i, sel)} <> BU.rooms.go(t, sel)
+    case BT.Room{_, +n, _, _, _} <> t:
+      String.to_lower(n) <> BU.rooms.names(t)
+
+# a room's name, with its id when another room has the same name
+def BU.rooms.label(+ns: List<&2, String>, +n: String, +i: String) -> String:
+  Bool.pick(String, Nat.is_gt(BU.rooms.count(ns, String.to_lower(n)), 1n), n ++ " · " ++ i, n)
+
+def BU.rooms.go(rs: List<&2, BT.Room>, +ns: List<&2, String>, +sel: String) -> List<&2, RK<RRow>>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case BT.Room{+i, +n, m, _, _} <> t:
+      RK{i, RRow{i, BU.rooms.label(ns, n, i), List.length(&2, String, m), String.eq(i, sel)}} <> BU.rooms.go(t, ns, sel)
+
+def BU.rooms.of(+rs: List<&2, BT.Room>, +sel: String) -> List<&2, RK<RRow>>:
+  BU.once.of(RRow, BU.rooms.go(rs, BU.rooms.names(rs), sel))
+
+# the rooms here, keyed by id, each once
+def BU.rooms.keyed(+u: U.Ui) -> List<&2, RK<RRow>>:
+  BU.rooms.of(BT.World.rooms(M.State.bots(U.Ui.state(u))), BU.room.sel(u))
 
 def BU.rooms(+u: U.Ui) -> List<&2, RRow>:
-  BU.rooms.go(BT.World.rooms(M.State.bots(U.Ui.state(u))), BU.room.sel(u))
+  BU.once.vals(RRow, BU.rooms.keyed(u))
 
 def BRow.moving(r: BRow) -> Bool:
   match r:

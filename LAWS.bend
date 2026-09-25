@@ -2283,6 +2283,27 @@ law bot_room_deleted_stays:
   for +pid: String
   {BHS.Bots.room.open(BOT.Room{i, n, ms, 1n+c, True{}}, s, pid) == False{} : Bool}
 
+# each room is listed once: the rooms here (the window's sidebar, the web,
+# each hub's list on a phone) never name one room id twice
+law rooms_listed_once:
+  for +u: U.Ui
+  {BU.BU.once.distinct(BU.RRow, BU.BU.rooms.keyed(u)) == True{} : Bool}
+
+# nor does a phone's one list over every paired hub, where a room shared
+# by two machines is reported by both
+law hubs_rooms_listed_once:
+  for ss: List<&2, Hb.Shown>
+  for +many: Bool
+  {BU.BU.once.distinct(J.Json, Hb.Hubs.rooms.keyed(ss, many)) == True{} : Bool}
+
+# one room reported twice is listed once; two rooms are two, whatever
+# their names
+law rooms_same_id_once:
+  {BU.BU.once.of(String, [BU.RK{"r1", "den"}, BU.RK{"r1", "den"}]) == [BU.RK{"r1", "den"}] : List<&2, BU.RK<String>>}
+
+law rooms_same_name_both:
+  {BU.BU.once.of(String, [BU.RK{"r1", "den"}, BU.RK{"r2", "den"}]) == [BU.RK{"r1", "den"}, BU.RK{"r2", "den"}] : List<&2, BU.RK<String>>}
+
 # a cat waits for you (ears up) whenever its thread needs an approval
 law bot_mood_wait:
   for talked: Bool
