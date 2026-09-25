@@ -237,8 +237,39 @@ def BU.picks.go(bs: List<&2, BT.Bot>, +ms: List<&2, String>) -> List<&2, Pick>:
     case BT.Bot{+i, n, _, _, _, _, _} <> t:
       Pick{i, n, BT.Room.has(ms, i)} <> BU.picks.go(t, ms)
 
+# bots on linked machines, by the name@machine rooms and bot_send take
+def BU.picks.far(rs: List<&2, BRow>, +ms: List<&2, String>) -> List<&2, Pick>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case BRow{+i, _, _, _, _, _, _, _, _} <> t:
+      Pick{i, i, BT.Room.has(ms, i)} <> BU.picks.far(t, ms)
+
+def BU.picks.ids(ps: List<&2, Pick>) -> List<&2, String>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case Pick{i, _, _} <> t:
+      i <> BU.picks.ids(t)
+
+# members elsewhere no linked machine lists now (one offline or unlinked),
+# kept picked so they can be dropped
+def BU.picks.gone(ms: List<&2, String>, +ids: List<&2, String>) -> List<&2, Pick>:
+  match ms:
+    case Nil{}:
+      Nil{}
+    case +m <> t:
+      BT.Post.keep(Pick, Bool.and(String.contains(m, "@"), Bool.not(BT.Room.has(ids, m))), Pick{m, m, True{}}, BU.picks.gone(t, ids))
+
+def BU.picks.all(+ps: List<&2, Pick>, +ms: List<&2, String>) -> List<&2, Pick>:
+  List.append(&2, Pick, ps, BU.picks.gone(ms, BU.picks.ids(ps)))
+
+# this machine's bots, then those on linked machines ("name@machine")
+def BU.picks.of(+u: U.Ui, +ms: List<&2, String>) -> List<&2, Pick>:
+  BU.picks.all(List.append(&2, Pick, BU.picks.go(BT.World.bots(M.State.bots(U.Ui.state(u))), ms), BU.picks.far(BU.remote(u), ms)), ms)
+
 def BU.picks(+u: U.Ui) -> List<&2, Pick>:
-  BU.picks.go(BT.World.bots(M.State.bots(U.Ui.state(u))), BT.Room.members.of(U.Ui.scratch(u, "@f.rmembers")))
+  BU.picks.of(u, BT.Room.members.of(U.Ui.scratch(u, "@f.rmembers")))
 
 # a member's name as people read it (a bot id here becomes its name)
 def BU.member.k(m: Maybe<&2, BT.Bot>, +x: String) -> String:

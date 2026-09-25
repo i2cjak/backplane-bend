@@ -71,6 +71,21 @@ def cmds(cs: List<&2, H.HCmd>) -> String:
 def shot() -> J.Json:
   J.Json.obj([J.KV{"t", J.Json.str("shot")}, J.KV{"bot", J.Json.str("b1")}, J.KV{"n", J.Json.nat(4n)}])
 
+# box also lists a bot on a linked machine
+def far() -> H.Hubs:
+  H.Hubs.after(A.recv(two(), "box:3787", J.Json.obj([J.KV{"t", J.Json.str("info")},
+    J.KV{"info", J.Json.obj([J.KV{"bots.remote", J.Json.str("[{\"name\":\"Nori\",\"peer\":\"p1\",\"peerName\":\"laptop\",\"look\":3,\"state\":\"ready\"}]")}])}])))
+
+def picks(+h: H.Hubs) -> List<&2, J.Json>:
+  J.Json.elems(J.Json.get_obj(J.Json.get_obj(H.Hubs.screen(h), "newRoom"), "picks"))
+
+def ons(js: List<&2, J.Json>) -> List<&2, J.Json>:
+  match js:
+    case Nil{}:
+      Nil{}
+    case j <> t:
+      J.Json.get_obj(j, "on") <> ons(t)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("cats of every hub, ids qualified", list(two(), "bots", "id"), "box:3787|b1;")
@@ -107,3 +122,7 @@ def main() -> IO(Unit):
     C.Check.str("the routine form opens blank", J.Json.show(J.Json.get_obj(J.Json.get_obj(bot(go(go(shown(), "bot-tab", "routines"), "routine-edit", "")), "routine"), "open")), "true")
     C.Check.str("and closes", J.Json.show(J.Json.get_obj(J.Json.get_obj(bot(go(go(go(shown(), "bot-tab", "routines"), "routine-edit", ""), "form-close", "@onew")), "routine"), "open")), "false")
     C.Check.str("the room form's picks", strs(J.Json.elems(J.Json.get_obj(J.Json.get_obj(H.Hubs.screen(go(two(), "room-new", "box:3787|")), "newRoom"), "picks")), "id"), "b1;")
+    C.Check.str("bots elsewhere can be picked", strs(picks(go(far(), "room-new", "box:3787|")), "id"), "b1;Nori@laptop;")
+    C.Check.str("named with their machine", strs(picks(go(far(), "room-new", "box:3787|")), "name"), "Kit;Nori@laptop;")
+    C.Check.str("picked on", J.Json.show(J.Json.arr(ons(picks(go(go(far(), "room-new", "box:3787|"), "room-pick", "Nori@laptop"))))), "[false,true]")
+    C.Check.str("a member no machine lists stays", strs(picks(go(go(two(), "room-new", "box:3787|"), "bfield", "rmembers\u{1f}Ghost@far")), "id"), "b1;Ghost@far;")

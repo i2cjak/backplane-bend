@@ -220,6 +220,12 @@ def main() -> IO(Unit):
     C.Check.str("shared tos", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"tos\":[\"Nori\"]")), "yes")
     C.Check.str("shared members", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"members\":[\"Miso@\",\"Tofu@\",\"Nori\"]")), "yes")
     C.Check.str("shared room id", yes(String.contains(st.body(call.step(sr, 1007n, th.of(sr, "Miso"), "room_post", "{\"room\":\"team\",\"text\":\"standup\"}")), "\"room\":\"" ++ BT.Room.id(room.of(sr, "team")) ++ "\"")), "yes")
+    # a room a person makes in the app, with a bot on a linked machine picked
+    +pr : M.State = made(p, 1008n, "bots.room", "{\"name\":\"crew\",\"members\":\"" ++ id.of(p, "Tofu") ++ "\\nNori@laptop\"}")
+    C.Check.str("picked remote kept", BT.Room.members.show(BT.Room.members(room.of(pr, "crew"))), id.of(p, "Tofu") ++ "\nNori@laptop")
+    C.Check.str("person post reaches it", st.tags(ask(pr, 1009n, "bots.post", "{\"room\":\"" ++ BT.Room.id(room.of(pr, "crew")) ++ "\",\"text\":\"hey\"}")),
+      "RoomPosted BotWoke MessagePosted TurnChanged | send:reply fx:send out out ")
+    C.Check.str("person post tos", yes(String.contains(st.body(ask(pr, 1009n, "bots.post", "{\"room\":\"" ++ BT.Room.id(room.of(pr, "crew")) ++ "\",\"text\":\"hey\"}")), "\"tos\":[\"Nori\"]")), "yes")
     # the other machine: it keeps the room, and its bots can post back
     +q : M.State = run(s, B.Step{[M.PeerSet{"p9", "desk", "http://desk:3787", False{}, 1000n}], Nil{}})
     +post : String = "{\"from\":\"Nori\",\"to\":\"miso\",\"tos\":[\"miso\"],\"members\":[\"Nori@\",\"miso\",\"Ghost@far\"],\"room\":\"r5-0\",\"roomName\":\"team\",\"text\":\"hi\",\"hop\":1}"
