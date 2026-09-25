@@ -81,8 +81,9 @@ final class Engine: @unchecked Sendable {
     }
     func screen() async -> Out? { await out("screen", []) }
     func recv(_ key: String, _ text: String) async -> Out? { await out("recv", [key, text]) }
-    // hub key's kept frames (base64), replayed at launch before its socket
-    func replay(_ key: String, _ frames: [String]) async -> Out? { await out("replay", [key, frames]) }
+    // the whole client state as text (StateStore), and the state loaded back
+    func save() async -> String { await call("save", []) { $0 } }
+    func load(_ text: String) async -> Out? { await out("load", [text]) }
     func act(_ action: String, _ value: String) async -> Out? { await out("act", [action, value]) }
     func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
     func online(_ key: String, _ b: Bool) async -> Out? { await out("online", [key, b]) }
