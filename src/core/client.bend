@@ -312,6 +312,30 @@ def Viewer.put(+nf: Map<&2, String>, +th: String, +kind: String, +path: String) 
 def Viewer.of(+th: String, +sel: String) -> String:
   Bool.pick(String, String.is_empty(th), sel, th)
 
+# Each thread's panel is open or shut on its own: "panel:t" is "1" while
+# thread t's is open. The panel field is the selected thread's; it is put
+# away and the next thread's brought back whenever the selection changes.
+
+def Viewer.flag(b: Bool) -> String:
+  match b:
+    case True{}:
+      "1"
+    case False{}:
+      ""
+
+def Ui.reselect.go(u: Ui, +old: String) -> Ui:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, String.eq(Str.get(nf, "panel:" ++ sel), "1"), v, rid, w, er, note,
+        Map.set(&2, String, nf, "panel:" ++ old, Viewer.flag(pa)), ob, tr}
+
+def Ui.reselect.k(same: Bool, u: Ui, +old: String) -> Ui:
+  match same:
+    case True{}:
+      u
+    case False{}:
+      Ui.reselect.go(u, old)
+
 # whether the viewer panel is open
 def Ui.panel(u: Ui) -> Bool:
   match u:
@@ -324,11 +348,12 @@ def Ui.view_pick(u: Ui, +kind: String) -> Ui:
     case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Viewer.put(nf, sel, kind, ""), ob, tr}
 
+# a diff opens its thread's viewer on it (on screen when that thread is)
 def Ui.diff.k(u: Ui, +th: String, +r: J.Json) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
-      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note,
-        Viewer.put(Map.set(&2, String, nf, "diff:" ++ th, J.Json.get_str(r, "diff", "")), th, "diff", ""), ob, tr}
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, Bool.or(pa, String.eq(th, sel)), v, rid, w, er, note,
+        Viewer.put(Map.set(&2, String, Map.set(&2, String, nf, "diff:" ++ th, J.Json.get_str(r, "diff", "")), "panel:" ++ th, "1"), th, "diff", ""), ob, tr}
 
 def Files.strs(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
@@ -366,13 +391,13 @@ def Ui.update(u: Ui, +o: J.Json) -> Ui:
         J.Json.get_str(o, "error", ""), Ui.update.note(J.Json.get_str(o, "version", ""), J.Json.get_str(o, "state", "")), nf, ob, tr}
 
 # an agent asked to show a file: its thread's viewer shows it, and opens
-# when that thread is the one on screen (another thread's request waits
-# for the user to go there)
+# when that thread is the one on screen (another thread's request waits,
+# open, for the user to go there)
 def Ui.view.k(u: Ui, +th: String, +o: J.Json) -> Ui:
   match u:
     case Ui{st, +sel, dr, live, op, on, now, ad, +pa, v, rid, w, er, note, +nf, ob, tr}:
       Ui{st, sel, dr, live, op, on, now, ad, Bool.or(pa, String.eq(th, sel)), v, rid, w, er, note,
-        Viewer.put(nf, th, J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "path", "")), ob, tr}
+        Viewer.put(Map.set(&2, String, nf, "panel:" ++ th, "1"), th, J.Json.get_str(o, "kind", ""), J.Json.get_str(o, "path", "")), ob, tr}
 
 def Out.resend.k(skip: Bool, x: String, rest: List<&2, Cmd>) -> List<&2, Cmd>:
   match skip:
@@ -472,10 +497,10 @@ def Ui.on_thread(u: Ui, m: String) -> Act:
     case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Ui.rpc(Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, m, [J.KV{"thread", J.Str{sel}}])
 
-def Ui.select(u: Ui, +id: String) -> Act:
+def Ui.select.k(u: Ui, +id: String) -> Ui:
   match u:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Act{Ui{st, id, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@del", ""), "@bot", ""), "@room", ""), "@remote", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, [Focus{"composer"}, Scroll{}]}
+      Ui{st, id, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@del", ""), "@bot", ""), "@room", ""), "@remote", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
 # Drafts kept
 # -----------
@@ -689,6 +714,19 @@ def Ui.sel(u: Ui) -> String:
   match u:
     case Ui{_, sel, _, _, _, _, _, _, _, _, _, _, _, _, nf, ob, tr}:
       sel
+
+# the panel after the selection may have moved on from thread `old`
+def Ui.reselect(+old: String, +u: Ui) -> Ui:
+  Ui.reselect.k(String.eq(old, Ui.sel(u)), u, old)
+
+# (Ui.act brings the thread's own panel)
+def Ui.select(u: Ui, +id: String) -> Act:
+  Act{Ui.select.k(u, id), [Focus{"composer"}, Scroll{}]}
+
+def Ui.reselect.act(+old: String, a: Act) -> Act:
+  match a:
+    case Act{u, cs}:
+      Act{Ui.reselect(old, u), cs}
 
 # the selected thread's view: its kind, path, change count and diff
 def Ui.view_get(+u: Ui, +k: String) -> String:
@@ -1479,6 +1517,11 @@ def Ui.state(u: Ui) -> M.State:
   match u:
     case Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
       st
+
+# the browser page the selected thread's agent drives (BT.World.page): a
+# bot's own, else the thread's; its frames arrive as "shot.<page>"
+def Ui.page(+u: Ui) -> String:
+  BT.World.page(M.State.bots(Ui.state(u)), Ui.sel(u))
 
 # the ui with flag k on
 def Ui.flag_on(u: Ui, +k: String) -> Ui:
@@ -2750,8 +2793,8 @@ def Bots.wanted(+u: Ui) -> Ui:
   Bots.wanted.k(String.is_empty(Ui.scratch(u, "@bot.want")), u)
 
 # a message from the server
-def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o))
+def Ui.recv(+u: Ui, +o: J.Json) -> Ui:
+  Ui.reselect(Ui.sel(u), Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)))
 
 # a message from the server, with what to send: a (re)connection (the
 # server's log arrives first on each) sends the outbox again, so nothing
@@ -3009,8 +3052,8 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
       Bots.act(Nat.sub(i, 77n), u, value)
 
 # a user action with its value
-def Ui.act(u: Ui, +action: String, +value: String) -> Act:
-  Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
+def Ui.act(+u: Ui, +action: String, +value: String) -> Act:
+  Ui.reselect.act(Ui.sel(u), Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value))
 
 # the newest n of a list (oldest first), and how many are left out
 type Win is Data:

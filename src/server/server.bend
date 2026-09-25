@@ -3132,26 +3132,29 @@ def Hub.broadcast(h: Hub, +text: String) -> IO(Hub):
         Wire.all(cl, text)
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
-# a bot's browser page is named by its id; other threads use the shared one
-def Bot.page.k(m: Maybe<&2, BO.Bot>) -> String:
-  match m:
-    case Some{b}:
-      BO.Bot.id(b)
-    case None{}:
-      ""
-
+# a thread's browser page: a bot's is named by the bot, any other
+# thread's by the thread (BO.World.page)
 def Bot.page(+st: M.State, +thread: String) -> String:
-  Bot.page.k(BO.World.of_thread(M.State.bots(st), thread))
+  BO.World.page(M.State.bots(st), thread)
 
-# a bot's page is its own: only the shared page brings the Browser tab
-# forward
+def Bot.is_bot(m: Maybe<&2, BO.Bot>) -> Bool:
+  match m:
+    case Some{_}:
+      True{}
+    case None{}:
+      False{}
+
+# opening or navigating brings the Browser tab forward in the viewer of
+# the thread that asked (a bot shows its page in its own Browser tab)
+def Preview.view(+thread: String) -> String:
+  J.Json.show(J.Json.obj([J.KV{"t", J.Str{"view"}}, J.KV{"thread", J.Str{thread}}, J.KV{"kind", J.Str{"browser"}}, J.KV{"path", J.Str{""}}]))
+
 def Hub.preview(h: Hub, +thread: String, +o: J.Json, +reply: Chan(String)) -> IO(Hub):
   match h:
     case Hub{+st, f, ls, +cl, as, inbox, +cfg, note}:
       do IO<Hub>:
-        +page : String = Bot.page(st, thread)
-        IO.spawn(Unit, Preview.run(cfg, page, o, reply))
-        Bool.pick(IO(Unit), Bool.and(String.is_empty(page), Preview.shows(o)), Wire.all(cl, "{\"t\":\"view\",\"kind\":\"browser\",\"path\":\"\"}"), IO.pure(Unit, Unit{}))
+        IO.spawn(Unit, Preview.run(cfg, Bot.page(st, thread), o, reply))
+        Bool.pick(IO(Unit), Bool.and(Bool.not(Bot.is_bot(BO.World.of_thread(M.State.bots(st), thread))), Preview.shows(o)), Wire.all(cl, Preview.view(thread)), IO.pure(Unit, Unit{}))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 # requests: "bots.*" to the bots' decider, the rest to the hub's

@@ -845,13 +845,32 @@ def View.main.b(settings: Bool, bv: BI.View, +u: U.Ui, +sel: String, +n: Nat) ->
     case _ _:
       View.main.k(String.is_empty(sel), u, sel, n)
 
-# the side pane: the diff view, or the board canvas
-def View.aside(diff: Bool, +text: String) -> D.Node:
-  match diff:
-    case True{}:
-      View.diff(text)
-    case False{}:
+# the thread's own browser page (a bot's is the bot's), as a bot's
+# Browser tab shows it
+def View.browser(+u: U.Ui) -> D.Node:
+  D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [
+    WB.WB.browser.k(String.is_empty(U.Ui.info(u, "shot." ++ U.Ui.page(u))), U.Ui.info(u, "shot." ++ U.Ui.page(u)), U.Ui.page(u), "This thread")]}
+
+# the side pane of the selected thread: its diff, its browser, or the
+# board canvas
+def View.aside.k(i: Nat, +u: U.Ui) -> D.Node:
+  match i:
+    case 0n:
+      View.diff(U.Ui.view_get(u, "diff"))
+    case 1n:
+      View.browser(u)
+    case _:
       D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}
+
+def View.aside(+kind: String, +u: U.Ui) -> D.Node:
+  View.aside.k(Bool.pick(Nat, String.eq(kind, "diff"), 0n, Bool.pick(Nat, String.eq(kind, "browser"), 1n, 2n)), u)
+
+def View.aside.if(open: Bool, +kind: String, +u: U.Ui) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [View.aside(kind, u)]
+    case False{}:
+      Nil{}
 
 # the whole page
 def View.page.b(+bv: BI.View, u: U.Ui) -> D.Node:
@@ -860,7 +879,7 @@ def View.page.b(+bv: BI.View, u: U.Ui) -> D.Node:
       D.El{"div", "app", [D.At{"class", Bool.pick(String, pa, "app panel", "app") ++ Bool.pick(String, Bool.or(Bool.or(Bool.not(String.is_empty(sel)), U.Flag.get(o, "settings")), WB.WB.shown(bv)), " picked", "")}],
         D.Dom.cat([View.sidebar(U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
           View.main.b(U.Flag.get(o, "settings"), bv, U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}, sel, List.length(&2, M.Project, U.Ui.projects(st)))],
-          D.Dom.cat(D.Dom.when(pa, View.aside(String.eq(U.Str.get(nf, "view.kind:" ++ sel), "diff"), U.Str.get(nf, "diff:" ++ sel))),
+          D.Dom.cat(View.aside.if(pa, U.Str.get(nf, "view.kind:" ++ sel), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}),
             D.Dom.cat(View.picker(U.Flag.get(o, "proj"), U.Ui{st, sel, d, l, o, on, now, ad, pa, v, r, w, e, note, nf, ob, tr}), View.error(e))))}
 
 def View.page(+u: U.Ui) -> D.Node:

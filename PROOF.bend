@@ -3426,6 +3426,9 @@ def Laws.view_other_stays_shut(u, th, o, p, h):
       %Equal.sym(Bool, String.eq(th, sel), False{}, h) : {Bool.or(False{}, _) == False{} : Bool}
       {==}
 
+def Laws.browser_page_own(th):
+  {==}
+
 # Hierarchy laws
 # --------------
 

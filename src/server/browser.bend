@@ -8,11 +8,12 @@ import ../core/utf8.bend as U
 # spoken to in JSON lines. Requests carry ids; a reply goes back to the
 # channel its request came with.
 #
-# Pages are keyed by an owner (a bot id; "" is the shared page every
-# agent's preview_* tools drive), all in one persistent Chrome profile at
+# Pages are keyed by an owner (a bot's id for a bot's thread, else the
+# thread's id, so each thread's preview_* tools drive a page of their
+# own; "" is the shared page), all in one persistent Chrome profile at
 # <home>/browser-profile, so logins last. The shared page's raw frames go
-# to <home>/browser.rgb for the native Browser tab; every page's JPEG
-# frames go to <home>/shots/<owner>.jpg, and each new one is announced on
+# to <home>/browser.rgb; every page's JPEG frames (which every client's
+# Browser tab shows) go to <home>/shots/<owner>.jpg, and each new one is announced on
 # the loop's event channel as the helper's line
 # {"event":"frame","page":<owner>,"n":<n>,...}; Browser.shot turns that
 # into the hub's {"t":"shot","bot":<owner>,"n":<n>}.

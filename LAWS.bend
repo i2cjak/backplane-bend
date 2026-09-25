@@ -1536,6 +1536,12 @@ law view_other_stays_shut:
   for h: {String.eq(th, U.Ui.sel(u)) == False{} : Bool}
   {U.Ui.panel(U.Ui.view.k(u, th, o)) == False{} : Bool}
 
+# no two threads share a browser page: a thread no bot owns drives the
+# page named by the thread
+law browser_page_own:
+  for +th: String
+  {BOT.World.page(BOT.World.empty(), th) == th : String}
+
 # Hierarchical schematics
 # -----------------------
 # The window reads the sheet tree from the root schematic; these hold for

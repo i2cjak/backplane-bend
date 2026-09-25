@@ -1232,15 +1232,16 @@ def Nui.shot(+n: Nui, +key: String, b: BM.Bitmap) -> Nui:
 def Nui.status(+n: Nui, +key: String, +text: String) -> Nui:
   Nui.with_vw(n, Vw.if(Vw.fresh_for(Nui.vw(n), key), Nui.vw(n), v => Vw.status(v, text)))
 
-# the browser's source is its frame file, whatever the project
-def Nui.source.k(x: V.Vx, +root: String, +frames: String) -> String:
+# the browser (its page's frames come as images, layout.bend's Lay.page)
+# and the diff (from the client state) read no file
+def Nui.source.k(x: V.Vx, +root: String) -> String:
   match x:
     case V.Vx{+k, _, _, _, _, _, _, _, +pa, _, bm}:
-      Bool.pick(String, U32.is_eq(k, 3), V.Src.key(3, "", frames), Bool.pick(String, U32.is_eq(k, 4), V.Src.key(4, "", ""), V.Src.key(k, root, pa)))
+      Bool.pick(String, U32.is_ge(k, 3), V.Src.key(k, "", ""), V.Src.key(k, root, pa))
 
 # the source the viewer should show now (Src.key)
 def Nui.source(+n: Nui) -> String:
-  Nui.source.k(Vw.x(Nui.vw(n)), U.Ui.root(Nui.ui(n)), U.Ui.info(Nui.ui(n), "browser.frames"))
+  Nui.source.k(Vw.x(Nui.vw(n)), U.Ui.root(Nui.ui(n)))
 
 def Vw.asked(v: V.Vw, +key: String) -> V.Vw:
   match v:
@@ -1525,6 +1526,41 @@ def Nui.view_at(+n: Nui) -> String:
 # a viewer_show or kind picked for it, switch to that
 def Nui.request(+n: Nui) -> Nui:
   Nui.request.k(Bool.not(String.eq(Nui.view_at(n), Vx.seen(Vw.x(Nui.vw(n))))), n, Nui.view_at(n))
+
+# Each thread keeps its own viewer (camera, scene, what is picked, the
+# layers shown): the window shows the selected thread's, and the others
+# wait here by thread until theirs is selected again (main.bend's
+# Shell.park swaps them)
+type Park is Data:
+  Park{thread: String, views: Map<&2, V.Vw>}
+
+def Park.init() -> Park:
+  Park{"", Map.new(&2, V.Vw)}
+
+def Park.thread(p: Park) -> String:
+  match p:
+    case Park{t, vs}:
+      t
+
+# a viewer back on screen asks for its source again (the file may have
+# changed while it was away; the scene it kept stays until the new one
+# comes, and what did not change does not fade in again) and redraws
+def Vw.back(v: V.Vw) -> V.Vw:
+  match v:
+    case V.Vw{s, vi, f, r, _, lx, ly, b, _, cu, V.Vx{k, p, t, c, _, bu, px, py, pa, se, bm}}:
+      V.Vw{s, vi, f, r, False{}, lx, ly, b, False{}, cu, V.Vx{k, p, t, c, "", bu, px, py, pa, se, bm}}
+
+def Park.got(r: Map<&2, V.Vw> & V.Vw) -> V.Vw:
+  (_, v) = r
+  Vw.back(v)
+
+def Park.take(+vs: Map<&2, V.Vw>, +id: String) -> V.Vw:
+  Park.got(Map.get(V.Vw, V.Vw.init(), vs, id))
+
+def Park.swap.k(p: Park, +n: Nui, +sel: String) -> Nui & Park:
+  match p:
+    case Park{+old, +vs}:
+      (Nui.with_vw(n, Park.take(vs, sel)), Park{sel, Map.set(&2, V.Vw, vs, old, Nui.vw(n))})
 
 def Nui.prepare(+n: Nui) -> Nui:
   Nui.prepare.k(Nui.panel(n), Nui.request(n))

@@ -5,7 +5,8 @@ import ../app/viewer.bend as V
 
 # The phones' board viewer, as the Bend client decides it. The viewer
 # shows the selected thread's project board, schematic or 3D model
-# ("@view": "board", "schematic", "3d", "" closed). The hub is asked for exactly the source on
+# ("@view:<thread>": "board", "schematic", "3d", "" closed; each thread
+# keeps its own). The hub is asked for exactly the source on
 # screen (kicad.watch), once per change of source, and again after a
 # reconnect (a new connection watches nothing). Plots (core/plot.bend)
 # come straight to the phone's renderer, not through here; one whose key
@@ -27,8 +28,12 @@ def View.key(+kind: String, +root: String) -> String:
 def View.layers(+kind: String, +root: String) -> String:
   View.key(Bool.pick(String, String.eq(kind, "3d"), "board", kind), root)
 
+# each thread's viewer is its own: "@view:<thread>"
+def View.slot(+u: U.Ui) -> String:
+  "@view:" ++ U.Ui.sel(u)
+
 def View.kind(+u: U.Ui) -> String:
-  U.Ui.scratch(u, "@view")
+  U.Ui.scratch(u, View.slot(u))
 
 # the source the screen shows now
 def View.want(+u: U.Ui) -> String:
@@ -61,8 +66,8 @@ def View.sync(a: U.Act) -> U.Act:
 
 # open a viewer ("board", "schematic", "3d") or close it (""); what was
 # picked is let go
-def View.open(u: U.Ui, v: String) -> U.Act:
-  View.sync(U.Act{U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(u, "@view", v), "@pick", ""), "@card", ""), "@pick.rid", ""), Nil{}})
+def View.open(+u: U.Ui, v: String) -> U.Act:
+  View.sync(U.Act{U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(u, View.slot(u), v), "@pick", ""), "@card", ""), "@pick.rid", ""), Nil{}})
 
 # a new connection watches nothing: ask again once online
 def View.online.k(on: Bool, u: U.Ui) -> U.Act:
