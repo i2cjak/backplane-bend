@@ -166,6 +166,14 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         scope.launch { apply(engine.act(action, value)) }
     }
 
+    // an action whose effect shows only with what the hub answers (a key
+    // typed into the terminal, which the shell echoes): its commands go
+    // out, and the screen waits for the answer, so fast typing never
+    // queues a screen per key
+    fun quiet(action: String, value: String) {
+        scope.launch { apply(engine.quiet(action, value)) }
+    }
+
     // the cats' rigs by key ("look:mood"), each asked of the bridge once
     val cats = mutableStateMapOf<String, List<CatPart>>()
     private val asked = mutableSetOf<String>()
@@ -189,6 +197,35 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         val s = screen ?: return null
         val l = links.firstOrNull { Pairing.key(it) == s.hub } ?: return null
         return Pairing.http(l, path, query, token)
+    }
+
+    // where the hub in focus serves a path ("/img?path=…"), with its token
+    fun web(path: String): String? {
+        val s = screen ?: return null
+        val l = links.firstOrNull { Pairing.key(it) == s.hub } ?: links.firstOrNull() ?: return null
+        val i = path.indexOf('?')
+        return if (i < 0) Pairing.http(l, path) else Pairing.http(l, path.substring(0, i), path.substring(i + 1))
+    }
+
+    // a file for the next message, sent to the thread's hub in the pieces
+    // the screen asks for ("attach" decides what goes out)
+    fun attach(data: ByteArray, name: String) {
+        if (data.isEmpty()) return
+        val size = maxOf(screen?.thread?.chunk ?: 196_608, 1024)
+        val key = "%08x".format(SecureRandom().nextInt())
+        scope.launch {
+            var i = 0
+            var off = 0
+            while (off < data.size) {
+                val end = minOf(off + size, data.size)
+                val piece = JSONObject()
+                    .put("key", key).put("name", name).put("size", data.size).put("i", i).put("last", end >= data.size)
+                    .put("data", Base64.encodeToString(data, off, end - off, Base64.NO_WRAP))
+                apply(engine.act("attach", piece.toString()))
+                i += 1
+                off = end
+            }
+        }
     }
 
     fun draft(text: String) {
