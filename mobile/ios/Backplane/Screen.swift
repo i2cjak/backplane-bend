@@ -214,6 +214,8 @@ struct ThreadView: Decodable {
     let queued: String
     let queue: [QueueRow]?
     let todos: Todos?
+    // how many older entries the page leaves out ("earlier" shows more)
+    let earlier: Int?
     let live: [Block]
     let working, draft, send: String
     let picker: ModelPicker
@@ -425,15 +427,19 @@ struct Resume: Decodable {
 struct Out: Decodable, @unchecked Sendable {
     let screen: Screen?
     let cmds: [Cmd]
+    // what the app keeps of the frame that brought it (Backplane.recv):
+    // "reset", "append" or none (LogStore)
+    var keep: String? = nil
 
     private struct Cmds: Decodable {
         let cmds: [Cmd]
+        var keep: String? = nil
     }
 
     // an answer; with screen false only its commands (a newer screen follows)
     static func decode(_ text: String, screen: Bool) -> Out? {
         let d = Data(text.utf8)
         if screen { return try? JSONDecoder().decode(Out.self, from: d) }
-        return (try? JSONDecoder().decode(Cmds.self, from: d)).map { Out(screen: nil, cmds: $0.cmds) }
+        return (try? JSONDecoder().decode(Cmds.self, from: d)).map { Out(screen: nil, cmds: $0.cmds, keep: $0.keep) }
     }
 }

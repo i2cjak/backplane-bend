@@ -10,6 +10,8 @@ import UIKit
 @Observable
 final class AppModel {
     private let engine = Engine()
+    // each hub's event frames, replayed at launch (LogStore)
+    private let logs = LogStore()
     @ObservationIgnored private var hubs: [String: Hub] = [:]
     // push tokens by kind, sent again to a hub paired later
     @ObservationIgnored private var tokens: [String: String] = [:]
@@ -114,6 +116,7 @@ final class AppModel {
 
     func unpair(_ key: String) {
         links = links.filter { Pairing.key($0) != key }
+        logs.forget(key)
         save()
         connect()
     }
@@ -150,7 +153,12 @@ final class AppModel {
         let fresh = keys.contains { hubs[$0] == nil }
         Task {
             apply(await e.hubs(keys))
-            for (k, l) in keyed where hubs[k] == nil { open(k, l) }
+            for (k, l) in keyed where hubs[k] == nil {
+                // what this phone already holds, shown before the socket opens
+                let kept = logs.load(k)
+                if !kept.isEmpty { apply(await e.replay(k, kept)) }
+                open(k, l)
+            }
             // a hub paired later learns this phone's push tokens too
             if fresh { for (kind, token) in tokens { register(kind, token) } }
         }
@@ -172,7 +180,13 @@ final class AppModel {
                 if PlotStore.isPlot(d) {
                     if self?.shownHub == key { self?.plots.receive(d) }
                 } else {
-                    self?.run { await $0.recv(key, d.base64EncodedString()) }
+                    let f = d.base64EncodedString()
+                    let logs = self?.logs
+                    self?.run { e in
+                        let r = await e.recv(key, f)
+                        if let how = r?.keep, how != "none" { logs?.keep(key, how, f) }
+                        return r
+                    }
                 }
             },
             onClose: { [weak self] in self?.run { await $0.online(key, false) } })

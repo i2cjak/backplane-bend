@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.security.SecureRandom
 
@@ -30,6 +31,8 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
     private val prefs = app.getSharedPreferences("backplane", Context.MODE_PRIVATE)
     private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid(), prefs.getString("drafts", "{}") ?: "{}")
     private val hubs = mutableMapOf<String, Hub>()
+    // each hub's event frames, replayed at launch (LogStore)
+    private val logs = LogStore(app.filesDir)
     // the hub whose plots are drawn: frames from any other are dropped
     private var shownHub = ""
 
@@ -93,6 +96,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
 
     fun unpair(key: String) {
         links = links.filter { Pairing.key(it) != key }
+        logs.forget(key)
         save()
         connect()
     }
@@ -104,7 +108,12 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
         for (k in hubs.keys.toList()) if (k !in keyed) hubs.remove(k)?.stop()
         scope.launch {
             apply(engine.hubs(keyed.keys.toList()))
-            for ((k, l) in keyed) if (k !in hubs) open(k, l)
+            for ((k, l) in keyed) if (k !in hubs) {
+                // what this phone already holds, shown before the socket opens
+                val kept = withContext(Dispatchers.IO) { logs.load(k) }
+                if (kept.isNotEmpty()) apply(engine.replay(k, kept))
+                open(k, l)
+            }
         }
     }
 
@@ -120,7 +129,12 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             // client, and only the hub in focus draws
             onMessage = { b ->
                 if (PlotStore.isPlot(b)) { if (shownHub == key) plots.receive(b) }
-                else scope.launch { apply(engine.recv(key, Base64.encodeToString(b, Base64.NO_WRAP))) }
+                else scope.launch {
+                    val f = Base64.encodeToString(b, Base64.NO_WRAP)
+                    val r = engine.recv(key, f)
+                    if (r.keep.isNotEmpty()) withContext(Dispatchers.IO) { logs.keep(key, r.keep, f) }
+                    apply(r)
+                }
             },
             onClose = { scope.launch { apply(engine.online(key, false)) } },
         ).also { it.start() }

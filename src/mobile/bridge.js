@@ -204,7 +204,16 @@ globalThis.Backplane = {
   },
   // a binary frame from hub k, as base64
   recv(k, data) {
-    return step(App.recv(hubs, k, cbor(bytes(data))));
+    const j = cbor(bytes(data));
+    const r = step(App.recv(hubs, k, j));
+    // the native side keeps "reset"/"append" frames per hub (replay())
+    return r.slice(0, -1) + ',"keep":"' + App.keep(j) + '"}';
+  },
+  // kept frames of hub k replayed at launch, before the socket opens: the
+  // screen shows the log at once and resume() then asks only for the rest
+  replay(k, frames) {
+    for (const f of frames) hubs = App.recv(hubs, k, cbor(bytes(f))).hubs;
+    return out(null);
   },
   register(platform, token, kind, thread, env, bundle) {
     return step(App.register(hubs, platform, token, kind, thread, env, bundle), true);

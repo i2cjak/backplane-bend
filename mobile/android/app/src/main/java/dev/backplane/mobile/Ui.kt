@@ -471,7 +471,7 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
     Errors(m, s, snacks)
-    val count = t.entries.size + t.sending.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
+    val count = (if (t.earlier > 0) 1 else 0) + t.entries.size + t.sending.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
     LaunchedEffect(t.id, m.scrolls) { if (count > 0) list.scrollToItem(count - 1) }
     LaunchedEffect(count, t.live) {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
@@ -586,6 +586,11 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(
             start = 16.dp, end = 16.dp, top = pad.calculateTopPadding() + 8.dp, bottom = pad.calculateBottomPadding() + 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (t.earlier > 0) item(key = "earlier") {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TextButton(onClick = { m.act("earlier", "") }) { Text("Show earlier (${t.earlier})") }
+                }
+            }
             items(t.entries, key = { it.id }) { EntryView(m, it) }
             itemsIndexed(t.sending, key = { i, _ -> "sending:$i" }) { _, text -> SendingView(text) }
             if (t.live.isNotEmpty()) item(key = "live") { Markdown(t.live) }

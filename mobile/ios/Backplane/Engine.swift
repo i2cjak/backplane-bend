@@ -81,6 +81,8 @@ final class Engine: @unchecked Sendable {
     }
     func screen() async -> Out? { await out("screen", []) }
     func recv(_ key: String, _ text: String) async -> Out? { await out("recv", [key, text]) }
+    // hub key's kept frames (base64), replayed at launch before its socket
+    func replay(_ key: String, _ frames: [String]) async -> Out? { await out("replay", [key, frames]) }
     func act(_ action: String, _ value: String) async -> Out? { await out("act", [action, value]) }
     func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
     func online(_ key: String, _ b: Bool) async -> Out? { await out("online", [key, b]) }

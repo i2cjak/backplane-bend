@@ -627,10 +627,24 @@ def View.entries.r(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +
     case e <> t Nil{}:
       List.append(&2, D.Node, View.entry(e, st, sel), View.entries.r(t, Nil{}, st, sel))
 
+# the newest page of a thread's entries (core's Page), with a button for
+# the earlier ones when some are left out
+def View.earlier(+hidden: Nat, +id: String) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, Nat.is_eq(hidden, 0n), Nil{},
+    [D.Dom.div("earlier", [D.Dom.button("earlier-btn", "earlier", id, "Show earlier messages", "Show earlier (" ++ Nat.show(hidden) ++ ")")])])
+
 # a thread's entries, its runs of tool calls folded (the last stays open
 # while its turn runs)
 def View.entries(+es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, D.Node>:
   View.entries.r(es, FO.Fold.roles(es, info, running), st, sel)
+
+def View.paged.w(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, D.Node>:
+  match w:
+    case U.Win{+h, es}:
+      List.append(&2, D.Node, View.earlier(h, sel), View.entries(es, st, sel, info, running))
+
+def View.paged(+drafts: Map<&2, String>, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, D.Node>:
+  View.paged.w(U.Page.window(es, U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ sel)), 0n))), st, sel, info, running)
 
 def View.sending(ps: List<&2, String>) -> List<&2, D.Node>:
   match ps:
@@ -779,7 +793,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         View.top(hd, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind:" ++ id), "diff"), String.eq(U.Str.get(drafts, "@del"), id)), [
         D.El{"div", "timeline", [D.At{"class", "timeline"}, D.At{"id", "timeline"}],
           D.Dom.cat(View.parent(st, U.Tasks.parent(st, id)), D.Dom.cat(View.tasks(U.Tasks.of(st, id), st),
-          D.Dom.cat(View.entries(View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
+          D.Dom.cat(View.paged(drafts, View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, View.running(turn)), D.Dom.cat(View.sending(pend),
             View.live.k(String.is_empty(U.Str.get(live, id)), U.Side.phase(st, U.Ui.thread(st, id)), U.Str.get(live, id))))))},
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.todos(U.Todos.shown(st, id, View.running(turn))),

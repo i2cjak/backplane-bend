@@ -81,6 +81,8 @@ data class ThreadView(
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
     val queue: List<QueueRow> = emptyList(),
     val todos: Todos? = null,
+    // how many older entries the page leaves out (the "earlier" action shows more)
+    val earlier: Int = 0,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -165,7 +167,9 @@ data class Cmd(
 
 // an answer from the engine: its screen (none from a quiet call, or when a
 // newer one follows) and its commands
-data class Reply(val screen: Screen?, val cmds: List<Cmd>)
+// keep: what the app keeps of the frame that brought it (Backplane.recv):
+// "reset", "append" or "" (LogStore)
+data class Reply(val screen: Screen?, val cmds: List<Cmd>, val keep: String = "")
 
 private fun <T> JSONArray?.map(f: (JSONObject) -> T): List<T> =
     if (this == null) emptyList() else (0 until length()).map { f(getJSONObject(it)) }
@@ -184,7 +188,9 @@ private fun row(o: JSONObject) = Row(
     o.optJSONArray("lead").map(::swipe), o.optJSONArray("trail").map(::swipe),
 )
 
-private fun thread(o: JSONObject) = ThreadView(
+private fun thread(o: JSONObject) = threadOf(o).copy(earlier = o.optInt("earlier", 0))
+
+private fun threadOf(o: JSONObject) = ThreadView(
     o.optString("id"), o.optString("title"), o.optString("branch"), o.optString("state"),
     o.optJSONArray("tools").map { Tool(it.optString("label"), it.optString("action"), it.optBoolean("on")) },
     o.optJSONArray("entries").map {

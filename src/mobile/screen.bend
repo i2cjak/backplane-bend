@@ -552,6 +552,14 @@ def Mob.menu(+id: String, snoozed: Bool) -> List<&2, J.Json>:
    Mob.item("Find file", "find-open", "files", False{}, False{}, Nil{}), Mob.snooze(snoozed),
    Mob.item("Delete", "row-delete", id, False{}, True{}, Nil{})]
 
+# the newest page of a thread's entries (core's Page): "earlier" says how
+# many are left out, and the action "earlier" shows another page
+def Mob.page(+drafts: Map<&2, String>, +id: String, +st: M.State) -> U.Win:
+  U.Page.window(V.View.mine(U.Ui.entries(st), id, Nil{}), U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ id)), 0n)))
+
+def Mob.paged.es(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
+  Mob.entries(U.Win.shown(w), st, sel, info, running)
+
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: List<&2, String>, +up: String, term: J.Json, skills: List<&2, J.Json>, +phase: String) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, _, _, +now, _, pa, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, archived, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
@@ -561,7 +569,8 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: 
         J.KV{"menu", J.Json.arr(Mob.menu(id, M.Snooze.on(now, U.Side.until(st, id))))},
         J.KV{"parent", Mob.parent(String.is_empty(U.Tasks.parent(st, id)), st, U.Tasks.parent(st, id))},
         J.KV{"tasks", J.Json.arr(Mob.tasks(U.Tasks.of(st, id), st))},
-        J.KV{"entries", J.Json.arr(Mob.entries(V.View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, V.View.running(turn)))},
+        J.KV{"entries", J.Json.arr(Mob.paged.es(Mob.page(drafts, id, st), st, id, nf, V.View.running(turn)))},
+        J.KV{"earlier", J.Json.nat(U.Win.hidden(Mob.page(drafts, id, st)))},
         J.KV{"sending", J.Json.arr(Mob.strs(pend))},
         J.KV{"asks", J.Json.arr(Mob.asks(U.Asks.open(st, id), U.Str.get(drafts, sel)))},
         J.KV{"queued", J.Json.str(M.Queue.of(st, id))},

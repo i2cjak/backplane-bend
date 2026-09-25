@@ -42,7 +42,7 @@ class Engine(private val source: String, private val cid: String, private val dr
         return withContext(dispatcher) {
             val o = JSONObject(context().evaluate(expr) as String)
             val stale = screen && ahead.decrementAndGet() > 0
-            Reply(if (stale) null else o.optJSONObject("screen")?.let(::parseScreen), parseCmds(o))
+            Reply(if (stale) null else o.optJSONObject("screen")?.let(::parseScreen), parseCmds(o), o.optString("keep", ""))
         }
     }
 
@@ -54,6 +54,8 @@ class Engine(private val source: String, private val cid: String, private val dr
     suspend fun screen() = out("Backplane.screen()")
     // a binary frame from hub key, as base64
     suspend fun recv(key: String, data: String) = out("Backplane.recv(${q(key)}, ${q(data)})")
+    // hub key's kept frames (base64), replayed at launch before its socket
+    suspend fun replay(key: String, frames: List<String>) = out("Backplane.replay(${q(key)}, ${org.json.JSONArray(frames)})")
     suspend fun act(action: String, value: String) = out("Backplane.act(${q(action)}, ${q(value)})")
     suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
     suspend fun online(key: String, b: Boolean) = out("Backplane.online(${q(key)}, $b)")
