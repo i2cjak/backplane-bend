@@ -4542,6 +4542,122 @@ def Laws.bot_room_no_takeover(i, n, c, s, pid):
 def Laws.bot_room_deleted_stays(i, n, ms, c, s, pid):
   {==}
 
+# Each room once
+# --------------
+
+law rooms_or_false_l:
+  for a: Bool
+  for -b: Bool
+  for h: {Bool.or(a, b) == False{} : Bool}
+  {a == False{} : Bool}
+
+def rooms_or_false_l(a, b, h):
+  match a:
+    case False{}:
+      {==}
+    case True{}:
+      Empty.absurd({True{} == False{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+
+law rooms_or_false_r:
+  for a: Bool
+  for b: Bool
+  for h: {Bool.or(a, b) == False{} : Bool}
+  {b == False{} : Bool}
+
+def rooms_or_false_r(a, b, h):
+  match a:
+    case False{}:
+      h
+    case True{}:
+      Empty.absurd({b == False{} : Bool}, false_ne_true(Equal.sym(Bool, True{}, False{}, h)))
+
+# keeping each key once only drops items: a key not among xs is not among
+# what is kept
+law rooms_once_has_step:
+  for -A: Data
+  for b: Bool
+  for +x: String
+  for v: A
+  for +t: List<&2, BU.RK<A>>
+  for +k: String
+  for +e: {BU.BU.once.has(A, t, x) == b : Bool}
+  for hx: {String.eq(x, k) == False{} : Bool}
+  for ih: {BU.BU.once.has(A, BU.BU.once.of(A, t), k) == False{} : Bool}
+  {BU.BU.once.has(A, BU.BU.once.step(A, BU.BU.once.has(A, t, x), x, v, BU.BU.once.of(A, t)), k) == False{} : Bool}
+
+def rooms_once_has_step(A, b, x, v, t, k, e, hx, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, BU.BU.once.has(A, t, x), True{}, e) : {BU.BU.once.has(A, BU.BU.once.step(A, _, x, v, BU.BU.once.of(A, t)), k) == False{} : Bool}
+      ih
+    case False{}:
+      %Equal.sym(Bool, BU.BU.once.has(A, t, x), False{}, e) : {BU.BU.once.has(A, BU.BU.once.step(A, _, x, v, BU.BU.once.of(A, t)), k) == False{} : Bool}
+      %Equal.sym(Bool, String.eq(x, k), False{}, hx) : {Bool.or(_, BU.BU.once.has(A, BU.BU.once.of(A, t), k)) == False{} : Bool}
+      %Equal.sym(Bool, BU.BU.once.has(A, BU.BU.once.of(A, t), k), False{}, ih) : {Bool.or(False{}, _) == False{} : Bool}
+      {==}
+
+law rooms_once_has:
+  for -A: Data
+  for xs: List<&2, BU.RK<A>>
+  for +k: String
+  for +h: {BU.BU.once.has(A, xs, k) == False{} : Bool}
+  {BU.BU.once.has(A, BU.BU.once.of(A, xs), k) == False{} : Bool}
+
+def rooms_once_has(A, xs, k, h):
+  match xs:
+    case Nil{}:
+      {==}
+    case BU.RK{+x, v} <> +t:
+      rooms_once_has_step(A, BU.BU.once.has(A, t, x), x, v, t, k, {==},
+        rooms_or_false_l(String.eq(x, k), BU.BU.once.has(A, t, k), h),
+        rooms_once_has(A, t, k, rooms_or_false_r(String.eq(x, k), BU.BU.once.has(A, t, k), h)))
+
+law rooms_once_step:
+  for -A: Data
+  for b: Bool
+  for +x: String
+  for v: A
+  for +t: List<&2, BU.RK<A>>
+  for +e: {BU.BU.once.has(A, t, x) == b : Bool}
+  for ih: {BU.BU.once.distinct(A, BU.BU.once.of(A, t)) == True{} : Bool}
+  {BU.BU.once.distinct(A, BU.BU.once.step(A, BU.BU.once.has(A, t, x), x, v, BU.BU.once.of(A, t))) == True{} : Bool}
+
+def rooms_once_step(A, b, x, v, t, e, ih):
+  match b:
+    case True{}:
+      %Equal.sym(Bool, BU.BU.once.has(A, t, x), True{}, e) : {BU.BU.once.distinct(A, BU.BU.once.step(A, _, x, v, BU.BU.once.of(A, t))) == True{} : Bool}
+      ih
+    case False{}:
+      %Equal.sym(Bool, BU.BU.once.has(A, t, x), False{}, e) : {BU.BU.once.distinct(A, BU.BU.once.step(A, _, x, v, BU.BU.once.of(A, t))) == True{} : Bool}
+      %Equal.sym(Bool, BU.BU.once.has(A, BU.BU.once.of(A, t), x), False{}, rooms_once_has(A, t, x, e)) : {Bool.and(Bool.not(_), BU.BU.once.distinct(A, BU.BU.once.of(A, t))) == True{} : Bool}
+      ih
+
+# what is kept names each key once, whatever the list
+law rooms_once_distinct:
+  for -A: Data
+  for xs: List<&2, BU.RK<A>>
+  {BU.BU.once.distinct(A, BU.BU.once.of(A, xs)) == True{} : Bool}
+
+def rooms_once_distinct(A, xs):
+  match xs:
+    case Nil{}:
+      {==}
+    case BU.RK{+x, v} <> +t:
+      rooms_once_step(A, BU.BU.once.has(A, t, x), x, v, t, {==}, rooms_once_distinct(A, t))
+
+def Laws.rooms_listed_once(u):
+  +rs = BOT.World.rooms(M.State.bots(U.Ui.state(u)))
+  rooms_once_distinct(BU.RRow, BU.BU.rooms.go(rs, BU.BU.rooms.names(rs), BU.BU.room.sel(u)))
+
+def Laws.hubs_rooms_listed_once(ss, many):
+  rooms_once_distinct(J.Json, Hb.Hubs.rkeyed(Hb.Hubs.all(ss, "rooms", many)))
+
+def Laws.rooms_same_id_once():
+  {==}
+
+def Laws.rooms_same_name_both():
+  {==}
+
 def Laws.bot_mood_wait(talked, idle):
   {==}
 

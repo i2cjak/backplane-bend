@@ -116,6 +116,13 @@ has a member on that machine (law `bot_room_no_takeover`), and never opens
 a room the person deleted (law `bot_room_deleted_stays`). The other
 machine learns of a room at its first post.
 
+Every room list names a room by its id, so a shared room shows once: in
+a hub's own list (the window, the web) and in a phone's list over several
+paired hubs, which both report it (`BU.once.of`, `Hubs.rooms`; laws
+`rooms_listed_once`, `hubs_rooms_listed_once`). Rooms are never merged by
+name: two rooms with one name both show, each named with its id, and on a
+phone with several hubs each row also carries its machine.
+
 ## Machines and people
 
 A peer is another hub, linked by an invite: the inviting hub makes

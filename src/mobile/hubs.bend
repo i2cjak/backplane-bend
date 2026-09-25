@@ -7,6 +7,7 @@ import ./screen.bend as S
 import ./notify.bend as N
 import ./view.bend as VW
 import ./picker.bend as PK
+import ../core/botui.bend as BU
 
 # The phone keeps every hub it paired with connected at once, each with
 # its own client (Ui). A hub's key is its socket's host:port, which the
@@ -598,6 +599,22 @@ def Hubs.all(ss: List<&2, Shown>, +k: String, +many: Bool) -> List<&2, J.Json>:
     case Shown{_, +n, +j} <> t:
       List.append(&2, J.Json, Hubs.machines(J.Json.elems(J.Json.get_obj(j, k)), Bool.pick(String, many, n, "")), Hubs.all(t, k, many))
 
+# rooms keyed by their id as their own hub gives it (a room shared by two
+# machines is one room, whichever hub reports it)
+def Hubs.rkeyed(rs: List<&2, J.Json>) -> List<&2, BU.RK<J.Json>>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case +r <> t:
+      BU.RK{Hubs.rest(J.Json.get_str(r, "id", "")), r} <> Hubs.rkeyed(t)
+
+# every hub's rooms, each room once (law hubs_rooms_listed_once)
+def Hubs.rooms.keyed(ss: List<&2, Shown>, +many: Bool) -> List<&2, BU.RK<J.Json>>:
+  BU.BU.once.of(J.Json, Hubs.rkeyed(Hubs.all(ss, "rooms", many)))
+
+def Hubs.rooms(ss: List<&2, Shown>, +many: Bool) -> List<&2, J.Json>:
+  BU.BU.once.vals(J.Json, Hubs.rooms.keyed(ss, many))
+
 def Hubs.lines(ss: List<&2, Shown>) -> List<&2, J.Json>:
   match ss:
     case Nil{}:
@@ -679,7 +696,7 @@ def Hubs.screen.k(+ss: List<&2, Shown>, +cur: String, +list: List<&2, Hub>) -> J
     J.KV{"island", N.Note.island.k(Hubs.lines(ss))},
     J.KV{"thread", J.Json.get_obj(Hubs.of(ss, cur), "thread")},
     J.KV{"bots", J.Json.arr(Hubs.all(ss, "bots", Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
-    J.KV{"rooms", J.Json.arr(Hubs.all(ss, "rooms", Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
+    J.KV{"rooms", J.Json.arr(Hubs.rooms(ss, Nat.is_gt(List.length(&2, Shown, ss), 1n)))},
     J.KV{"newBot", J.Json.get_obj(Hubs.of(ss, cur), "newBot")},
     J.KV{"newRoom", J.Json.get_obj(Hubs.of(ss, cur), "newRoom")},
     J.KV{"bot", J.Json.get_obj(Hubs.of(ss, cur), "bot")},
