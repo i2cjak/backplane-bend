@@ -6,6 +6,7 @@
 //   xpoke ctrl KEY         ctrl+key (an upper-case letter adds shift)
 //   xpoke wheel X Y up|down
 //   xpoke drag X Y X2 Y2   press at X Y, move to X2 Y2, release there
+//   xpoke size W H         resize the window
 // Build: cc -I<x11 include> test/tools/xpoke.c -o build/xpoke -lX11
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -85,6 +86,8 @@ int main(int argc, char** argv) {
       unsigned shift = (*c >= 'A' && *c <= 'Z') || *c == '?' || *c == '!' ? ShiftMask : 0;
       key(d, w, ks, shift);
     }
+  } else if (!strcmp(argv[1], "size") && argc == 4) {
+    XResizeWindow(d, w, atoi(argv[2]), atoi(argv[3]));
   } else if (!strcmp(argv[1], "key") && argc == 3) {
     key(d, w, XStringToKeysym(argv[2]), 0);
   } else if (!strcmp(argv[1], "ctrl") && argc == 3) {

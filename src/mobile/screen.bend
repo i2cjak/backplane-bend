@@ -298,16 +298,21 @@ def Mob.choice(label: String, value: String, on: Bool) -> J.Json:
   J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"value", J.Json.str(value)}, J.KV{"on", J.Json.bool(on)}])
 
 # a model's name in the menu: the CLI's label for it ("Opus 5.5 ·
-# claude-opus-5-5"), else its name
-def Mob.model_name(+info: String, +provider: String, +m: String) -> String:
-  Bool.pick(String, String.is_empty(U.Models.label_of(info, provider, m)), Bool.pick(String, String.is_empty(m), "default", m), U.Models.label_of(info, provider, m))
+# claude-opus-5-5"), else its name. The picker reads the models info
+# parsed once (parsing its text for each model, twice, was most of what
+# a thread's screen cost on a phone's JS engine)
+def Mob.label.k(+l: String, +m: String) -> String:
+  Bool.pick(String, String.is_empty(l), Bool.pick(String, String.is_empty(m), "default", m), l)
 
-def Mob.models(ms: List<&2, String>, +info: String, +provider: String, +cur: String) -> List<&2, J.Json>:
+def Mob.model_name(+about: J.Json, +m: String) -> String:
+  Mob.label.k(J.Json.get_str(J.Json.get_obj(about, "labels"), Bool.pick(String, String.is_empty(m), "default", m), ""), m)
+
+def Mob.models(ms: List<&2, String>, +about: J.Json, +cur: String) -> List<&2, J.Json>:
   match ms:
     case Nil{}:
       Nil{}
     case +m <> t:
-      Mob.choice(Mob.model_name(info, provider, m), m, String.eq(m, cur)) <> Mob.models(t, info, provider, cur)
+      Mob.choice(Mob.model_name(about, m), m, String.eq(m, cur)) <> Mob.models(t, about, cur)
 
 def Mob.efforts(es: List<&2, String>, +cur: String, +prov: String) -> List<&2, J.Json>:
   match es:
@@ -319,11 +324,18 @@ def Mob.efforts(es: List<&2, String>, +cur: String, +prov: String) -> List<&2, J
 # the composer's model chip and its menu: the thread's provider's models
 # (its default first; "model" sends one) and the efforts that model takes
 # ("effort")
-def Mob.picker.ctx(+info: String, +provider: String, +model: String, +effort: String, +ctx: String) -> J.Json:
+# (j: the models info, parsed; about: its part for the provider)
+def Mob.picker.j(+j: J.Json, +about: J.Json, +provider: String, +model: String, +effort: String, +ctx: String) -> J.Json:
   J.Json.obj([J.KV{"label", J.Json.str(U.Effort.label(U.Models.label(provider, model), effort) ++ ctx)},
-    J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.list(info, provider), info, provider, model))},
-    J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips(info, provider, model), effort, provider))},
+    J.KV{"models", J.Json.arr(Mob.models("" <> U.Models.strs(J.Json.elems(J.Json.get_obj(j, provider))), about, model))},
+    J.KV{"efforts", J.Json.arr(Mob.efforts(U.Effort.chips.of(U.Effort.known(J.Json.get(J.Json.get_obj(about, "efforts"), Bool.pick(String, String.is_empty(model), "default", model)), provider)), effort, provider))},
     J.KV{"providers", J.Json.arr(Mob.efforts(U.Chip.providers(), effort, provider))}])
+
+def Mob.picker.p(+j: J.Json, +provider: String, +model: String, +effort: String, +ctx: String) -> J.Json:
+  Mob.picker.j(j, J.Json.get_obj(J.Json.get_obj(j, "about"), provider), provider, model, effort, ctx)
+
+def Mob.picker.ctx(+info: String, +provider: String, +model: String, +effort: String, +ctx: String) -> J.Json:
+  Mob.picker.p(Maybe.default(&2, J.Json, J.Json.parse(info), J.Null{}), provider, model, effort, ctx)
 
 def Mob.picker(+info: String, +provider: String, +model: String, +effort: String) -> J.Json:
   Mob.picker.ctx(info, provider, model, effort, "")
@@ -552,10 +564,17 @@ def Mob.menu(+id: String, snoozed: Bool) -> List<&2, J.Json>:
    Mob.item("Find file", "find-open", "files", False{}, False{}, Nil{}), Mob.snooze(snoozed),
    Mob.item("Delete", "row-delete", id, False{}, True{}, Nil{})]
 
+# a phone opens a thread on its newest 20 entries (a screen shows about
+# ten, and each reply's markdown is laid out in the phone's JS engine,
+# the most of what opening a thread costs there); "earlier" adds pages
+# of core's size (U.Page.size)
+def Mob.count(+more: Nat) -> Nat:
+  Nat.add(20n, Nat.mul(U.Page.size(), more))
+
 # the newest page of a thread's entries (core's Page): "earlier" says how
 # many are left out, and the action "earlier" shows another page
 def Mob.page(+drafts: Map<&2, String>, +id: String, +st: M.State) -> U.Win:
-  U.Page.newest(U.Ui.entries(st), id, U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ id)), 0n)))
+  U.Page.newest.from(U.Ui.entries(st), id, U.Page.since(st, id), Mob.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ id)), 0n)))
 
 def Mob.paged.es(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
   Mob.entries(U.Win.shown(w), st, sel, info, running)

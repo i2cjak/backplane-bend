@@ -873,6 +873,43 @@ law frame_again_exact:
   for +dy: U32
   {T.Frame.again(w, h, ops, base, T.FSome{w0, h0, T.Frame.make(w0, h0, old, base0)}, dy) == T.Frame.make(w, h, ops, base) : T.Tiles}
 
+# a tile's image taken from what the parallel jobs drew is the tile drawn
+# here, wherever its path leads in whatever jobs ran
+law drawn_get_run:
+  for t: T.Jobs
+  for path: List<&2, Bool>
+  for +e: Nat
+  for +l: List<&2, R.Op>
+  for +base: Image
+  {T.Drawn.get(T.Jobs.run(t, e), path, e, l, base) == T.Tile.draw(e, l, base) : Image}
+
+# a plan filled from any jobs drawn in parallel is exactly the tiles
+# Tiles.again gives, over any last tiles, with any scroll
+law plan_fill_again:
+  for k: Nat
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for prev: T.Tiles
+  for +p: T.Past
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +off: Nat
+  for +t: T.Jobs
+  {T.Plan.fill(T.Tiles.plan(k, e, ops, base, prev, p, rx, ry, n), e, off, T.Jobs.run(t, e)) == T.Tiles.again(k, e, ops, base, prev, p, rx, ry, n) : T.Tiles}
+
+# the window's frame drawn in parallel is exactly Frame.again's (and so,
+# by frame_again_exact, the frame drawn from scratch)
+law frame_par_exact:
+  for +w: U32
+  for +h: U32
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for prev: T.Frames
+  for +dy: U32
+  {T.Frame.par(w, h, ops, base, prev, dy) == T.Frame.again(w, h, ops, base, prev, dy) : T.Tiles}
+
 # the timeline's memo brought up to date is exactly the memo made from
 # scratch, for any earlier entries
 law tl_again_exact:

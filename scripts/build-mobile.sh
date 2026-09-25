@@ -11,6 +11,8 @@ rm -rf build/mobile-web
 bend src/mobile/index.html -o build/mobile-web >/dev/null
 mkdir -p mobile/build/assets
 cat build/mobile-web/chunk-*.js > mobile/build/assets/bridge.js
+# the kept state's name: the apps keep it across builds with the same types
+printf '\nglobalThis.BackplaneStateKey = "%s";\n' "$(python3 scripts/state-key.py)" >> mobile/build/assets/bridge.js
 echo "mobile/build/assets/bridge.js ($(wc -c < mobile/build/assets/bridge.js) bytes)"
 [ "${1:-}" = "--js" ] && exit 0
 sdk=${ANDROID_HOME:-$HOME/.local/opt/android-sdk}

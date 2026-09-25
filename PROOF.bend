@@ -1760,6 +1760,55 @@ def eq_op_refl(a):
       %Equal.sym(Bool, T.Eq.shape(a6, a6), True{}, eq_shape_refl(a6)) : {Bool.and(True{}, Bool.and(True{}, Bool.and(True{}, Bool.and(True{}, Bool.and(True{}, Bool.and(True{}, _)))))) == True{} : Bool}
       {==}
 
+# the walk's flag is true when it answers true
+law ops_go_ok:
+  for xs: List<&2, R.Op>
+  for ys: List<&2, R.Op>
+  for ok: Bool
+  for h: {T.Eq.ops.go(xs, ys, ok) == True{} : Bool}
+  {ok == True{} : Bool}
+
+def ops_go_ok(xs, ys, ok, h):
+  match xs ys ok:
+    case _ _ True{}:
+      {==}
+    case Nil{} Nil{} False{}:
+      Empty.absurd({False{} == True{} : Bool}, false_ne_true(h))
+    case Nil{} _ <> _ False{}:
+      Empty.absurd({False{} == True{} : Bool}, false_ne_true(h))
+    case _ <> _ Nil{} False{}:
+      Empty.absurd({False{} == True{} : Bool}, false_ne_true(h))
+    case _ <> _ _ <> _ False{}:
+      Empty.absurd({False{} == True{} : Bool}, false_ne_true(h))
+
+law ops_go_sound:
+  for xs: List<&2, R.Op>
+  for ys: List<&2, R.Op>
+  for ok: Bool
+  for +h: {T.Eq.ops.go(xs, ys, ok) == True{} : Bool}
+  {xs == ys : List<&2, R.Op>}
+
+def ops_go_sound(xs, ys, ok, h):
+  match xs ys ok:
+    case Nil{} Nil{} _:
+      {==}
+    case Nil{} +y <> +yt True{}:
+      Empty.absurd({Nil{} == y <> yt : List<&2, R.Op>}, false_ne_true(h))
+    case +x <> +xt Nil{} True{}:
+      Empty.absurd({x <> xt == Nil{} : List<&2, R.Op>}, false_ne_true(h))
+    case Nil{} +y <> +yt False{}:
+      Empty.absurd({Nil{} == y <> yt : List<&2, R.Op>}, false_ne_true(h))
+    case +x <> +xt Nil{} False{}:
+      Empty.absurd({x <> xt == Nil{} : List<&2, R.Op>}, false_ne_true(h))
+    case +x <> +xt +y <> +yt False{}:
+      Empty.absurd({x <> xt == y <> yt : List<&2, R.Op>}, false_ne_true(h))
+    case +x <> +xt +y <> +yt True{}:
+      e0 = eq_op_sound(x, y, ops_go_ok(xt, yt, T.Eq.op(x, y), h))
+      e1 = ops_go_sound(xt, yt, T.Eq.op(x, y), h)
+      %e0 : {x <> xt == _ <> yt : List<&2, R.Op>}
+      %e1 : {x <> xt == x <> _ : List<&2, R.Op>}
+      {==}
+
 law eq_ops_sound:
   for a: List<&2, R.Op>
   for b: List<&2, R.Op>
@@ -1767,19 +1816,7 @@ law eq_ops_sound:
   {a == b : List<&2, R.Op>}
 
 def eq_ops_sound(a, b, h):
-  match a b:
-    case Nil{} Nil{}:
-      {==}
-    case Nil{} +y <> +yt:
-      Empty.absurd({Nil{} == y <> yt : List<&2, R.Op>}, false_ne_true(h))
-    case +x <> +xt Nil{}:
-      Empty.absurd({x <> xt == Nil{} : List<&2, R.Op>}, false_ne_true(h))
-    case +x <> +xt +y <> +yt:
-      e0 = eq_op_sound(x, y, and_l(T.Eq.op(x, y), T.Eq.ops(xt, yt), h))
-      e1 = eq_ops_sound(xt, yt, and_r(T.Eq.op(x, y), T.Eq.ops(xt, yt), h))
-      %e0 : {x <> xt == _ <> yt : List<&2, R.Op>}
-      %e1 : {x <> xt == x <> _ : List<&2, R.Op>}
-      {==}
+  ops_go_sound(a, b, True{}, h)
 
 law eq_ops_refl:
   for +a: List<&2, R.Op>
@@ -1790,7 +1827,7 @@ def eq_ops_refl(a):
     case Nil{}:
       {==}
     case +x <> +xt:
-      %Equal.sym(Bool, T.Eq.op(x, x), True{}, eq_op_refl(x)) : {Bool.and(_, T.Eq.ops(xt, xt)) == True{} : Bool}
+      %Equal.sym(Bool, T.Eq.op(x, x), True{}, eq_op_refl(x)) : {T.Eq.ops.go(xt, xt, _) == True{} : Bool}
       eq_ops_refl(xt)
 
 law eq_image_sound:
@@ -2150,6 +2187,8 @@ def tile_again_k(s, e, ops, old, base0, base1, rx, ry, n, pk, old2, base2, prx, 
       {==}
 
 law tnode_cong:
+  for -o: List<&2, R.Op>
+  for -bs: Image
   for -a1: T.Tiles
   for -a2: T.Tiles
   for -b1: T.Tiles
@@ -2162,14 +2201,54 @@ law tnode_cong:
   for eb: {b1 == b2 : T.Tiles}
   for ec: {c1 == c2 : T.Tiles}
   for ed: {d1 == d2 : T.Tiles}
-  {T.TNode{a1, b1, c1, d1} == T.TNode{a2, b2, c2, d2} : T.Tiles}
+  {T.TNode{o, bs, a1, b1, c1, d1} == T.TNode{o, bs, a2, b2, c2, d2} : T.Tiles}
 
-def tnode_cong(a1, a2, b1, b2, c1, c2, d1, d2, ea, eb, ec, ed):
-  %ea : {T.TNode{a1, b1, c1, d1} == T.TNode{_, b2, c2, d2} : T.Tiles}
-  %eb : {T.TNode{a1, b1, c1, d1} == T.TNode{a1, _, c2, d2} : T.Tiles}
-  %ec : {T.TNode{a1, b1, c1, d1} == T.TNode{a1, b1, _, d2} : T.Tiles}
-  %ed : {T.TNode{a1, b1, c1, d1} == T.TNode{a1, b1, c1, _} : T.Tiles}
+def tnode_cong(o, bs, a1, a2, b1, b2, c1, c2, d1, d2, ea, eb, ec, ed):
+  %ea : {T.TNode{o, bs, a1, b1, c1, d1} == T.TNode{o, bs, _, b2, c2, d2} : T.Tiles}
+  %eb : {T.TNode{o, bs, a1, b1, c1, d1} == T.TNode{o, bs, a1, _, c2, d2} : T.Tiles}
+  %ec : {T.TNode{o, bs, a1, b1, c1, d1} == T.TNode{o, bs, a1, b1, _, d2} : T.Tiles}
+  %ed : {T.TNode{o, bs, a1, b1, c1, d1} == T.TNode{o, bs, a1, b1, c1, _} : T.Tiles}
   {==}
+
+# a node of the last frame's tiles: kept whole when its ops and base are
+# unchanged (the same tiles, as made from equal ops over an equal base),
+# else each quadrant again (ha..hd, the law one level down)
+law again_node_k:
+  for s: Bool
+  for +j: Nat
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +old: List<&2, R.Op>
+  for +base0: Image
+  for +base1: Image
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +pk: Nat
+  for +old2: List<&2, R.Op>
+  for +base2: Image
+  for +prx: U32
+  for +pry: U32
+  for +pn: U32
+  for +qn: U32
+  for +dy: U32
+  for +h: {Bool.and(T.Eq.ops(ops, old), T.Eq.image(base1, base0)) == s : Bool}
+  for ha: {T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base0, 0n), rx, ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, ry, U32.shr(n)) == T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), rx, ry, U32.shr(n)) : T.Tiles}
+  for hb: {T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base0, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), ry, U32.shr(n)) == T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)) : T.Tiles}
+  for hc: {T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, (ry + U32.shr(n) : U32), U32.shr(n)) == T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)) : T.Tiles}
+  for hd: {T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)) == T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)) : T.Tiles}
+  {T.Tiles.again.go(1n+j, e, ops, base1, T.Tiles.make(1n+j, e, old, base0, rx, ry, n), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, ry, n, s) == T.Tiles.make(1n+j, e, ops, base1, rx, ry, n) : T.Tiles}
+
+def again_node_k(s, j, e, ops, old, base0, base1, rx, ry, n, pk, old2, base2, prx, pry, pn, qn, dy, h, ha, hb, hc, hd):
+  match s:
+    case True{}:
+      eo = eq_ops_sound(ops, old, and_l(T.Eq.ops(ops, old), T.Eq.image(base1, base0), h))
+      eb = eq_image_sound(base1, base0, and_r(T.Eq.ops(ops, old), T.Eq.image(base1, base0), h))
+      %Equal.sym(List<&2, R.Op>, ops, old, eo) : {T.Tiles.make(1n+j, e, old, base0, rx, ry, n) == T.Tiles.make(1n+j, e, _, base1, rx, ry, n) : T.Tiles}
+      %Equal.sym(Image, base1, base0, eb) : {T.Tiles.make(1n+j, e, old, base0, rx, ry, n) == T.Tiles.make(1n+j, e, old, _, rx, ry, n) : T.Tiles}
+      {==}
+    case False{}:
+      tnode_cong(ops, base1, T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base0, 0n), rx, ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, ry, U32.shr(n)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), rx, ry, U32.shr(n)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base0, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), ha, hb, hc, hd)
 
 def Laws.tiles_again_exact(k, e, ops, old, base0, base1, rx, ry, n, pk, old2, base2, prx, pry, pn, qn, dy):
   match k:
@@ -2178,14 +2257,7 @@ def Laws.tiles_again_exact(k, e, ops, old, base0, base1, rx, ry, n, pk, old2, ba
         tile_again_k(Bool.and(T.Eq.ops(ops, old), T.Eq.image(base1, base0)), e, ops, old, base0, base1, rx, ry, n, pk, old2, base2, prx, pry, pn, qn, dy, {==}))
     case 1n+j0:
       +j = j0
-      tnode_cong(T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base0, 0n), rx, ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, ry, U32.shr(n)),
-        T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base1, 0n), rx, ry, U32.shr(n)),
-        T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base0, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), ry, U32.shr(n)),
-        T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base1, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)),
-        T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, rx, (ry + U32.shr(n) : U32), U32.shr(n)),
-        T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)),
-        T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), T.Tiles.make(j, e, R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Past{pk, T.Tiles.make(pk, e, old2, base2, prx, pry, pn), qn, dy}, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)),
-        T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base1, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)),
+      again_node_k(Bool.and(T.Eq.ops(ops, old), T.Eq.image(base1, base0)), j, e, ops, old, base0, base1, rx, ry, n, pk, old2, base2, prx, pry, pn, qn, dy, {==},
         Laws.tiles_again_exact(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), R.Region.keep(old, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base0, 0n), T.Img.q(base1, 0n), rx, ry, U32.shr(n), pk, old2, base2, prx, pry, pn, qn, dy),
         Laws.tiles_again_exact(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), R.Region.keep(old, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base0, 1n), T.Img.q(base1, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n), pk, old2, base2, prx, pry, pn, qn, dy),
         Laws.tiles_again_exact(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), R.Region.keep(old, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base0, 2n), T.Img.q(base1, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n), pk, old2, base2, prx, pry, pn, qn, dy),
@@ -2224,6 +2296,268 @@ def frame_again_k(s, w0, h0, w, h, ops, old, base0, base, dy, hs):
 
 def Laws.frame_again_exact(w0, h0, w, h, ops, old, base0, base, dy):
   frame_again_k(Bool.and(U32.is_eq(w0, w), U32.is_eq(h0, h)), w0, h0, w, h, ops, old, base0, base, dy, {==})
+
+# Drawing in parallel
+# -------------------
+
+law take_k:
+  for s: Bool
+  for +e: Nat
+  for +l: List<&2, R.Op>
+  for +l2: List<&2, R.Op>
+  for +base: Image
+  for +b2: Image
+  for +h: {Bool.and(T.Eq.ops(l, l2), T.Eq.image(base, b2)) == s : Bool}
+  {T.Drawn.take(s, T.Tile.draw(e, l2, b2), e, l, base) == T.Tile.draw(e, l, base) : Image}
+
+def take_k(s, e, l, l2, base, b2, h):
+  match s:
+    case False{}:
+      {==}
+    case True{}:
+      eo = eq_ops_sound(l, l2, and_l(T.Eq.ops(l, l2), T.Eq.image(base, b2), h))
+      eb = eq_image_sound(base, b2, and_r(T.Eq.ops(l, l2), T.Eq.image(base, b2), h))
+      %eo : {T.Tile.draw(e, _, b2) == T.Tile.draw(e, l, base) : Image}
+      %eb : {T.Tile.draw(e, l, _) == T.Tile.draw(e, l, base) : Image}
+      {==}
+
+def Laws.drawn_get_run(t, path, e, l, base):
+  match t path:
+    case T.JNone{} _:
+      {==}
+    case T.JOne{T.Job{+l2, +b2}} _:
+      take_k(Bool.and(T.Eq.ops(l, l2), T.Eq.image(base, b2)), e, l, l2, base, b2, {==})
+    case T.JTwo{_, _} Nil{}:
+      {==}
+    case T.JTwo{a, _} False{} <> r:
+      Laws.drawn_get_run(a, r, e, l, base)
+    case T.JTwo{_, b} True{} <> r:
+      Laws.drawn_get_run(b, r, e, l, base)
+
+law plan_make_fill:
+  for k: Nat
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +off: Nat
+  for +t: T.Jobs
+  {T.Plan.fill(T.Tiles.plan.make(k, e, ops, base, rx, ry, n), e, off, T.Jobs.run(t, e)) == T.Tiles.make(k, e, ops, base, rx, ry, n) : T.Tiles}
+
+def plan_make_fill(k, e, ops, base, rx, ry, n, off, t):
+  match k:
+    case 0n:
+      Equal.cong(Image, T.Tiles, i => T.TLeaf{T.Tile{ops, T.Loc.ops(ops, rx, ry, T.Tile.size(e)), base, i}},
+        T.Drawn.get(T.Jobs.run(t, e), T.Jobs.path(24n, off), e, T.Loc.ops(ops, rx, ry, T.Tile.size(e)), base), T.Tile.draw(e, T.Loc.ops(ops, rx, ry, T.Tile.size(e)), base),
+        Laws.drawn_get_run(t, T.Jobs.path(24n, off), e, T.Loc.ops(ops, rx, ry, T.Tile.size(e)), base))
+    case 1n+j0:
+      +j = j0
+      tnode_cong(ops, base, T.Plan.fill(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)), e, off, T.Jobs.run(t, e)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)), T.Plan.fill(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), e, Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Plan.fill(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Plan.fill(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)),
+        plan_make_fill(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n), off, t),
+        plan_make_fill(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n), Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), t),
+        plan_make_fill(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n), Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)))), t),
+        plan_make_fill(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n), Nat.add(Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)))), t))
+
+
+# Tiles.seek is Tiles.find with the drawing put back
+def Seek.from(m: Maybe<&2, Image>, +e: Nat, +l: List<&2, R.Op>, +base: Image) -> Image:
+  match m:
+    case Some{i}:
+      i
+    case None{}:
+      T.Tile.draw(e, l, base)
+
+law find_k:
+  for s: Bool
+  for +img: Image
+  for +e: Nat
+  for +l: List<&2, R.Op>
+  for +base: Image
+  {T.Tiles.seek.k(s, img, e, l, base) == Seek.from(T.Tiles.find.k(s, img), e, l, base) : Image}
+
+def find_k(s, img, e, l, base):
+  match s:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+law Laws_find:
+  for k: Nat
+  for t: T.Tiles
+  for +x: U32
+  for +y: U32
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +e: Nat
+  for +l: List<&2, R.Op>
+  for +base: Image
+  {T.Tiles.seek(k, t, x, y, rx, ry, n, e, l, base) == Seek.from(T.Tiles.find(k, t, x, y, rx, ry, n, l, base), e, l, base) : Image}
+
+def Laws_find(k, t, x, y, rx, ry, n, e, l, base):
+  match k t:
+    case 0n T.TLeaf{T.Tile{_, +o, +b, +i}}:
+      find_k(Bool.and(T.Eq.ops(o, l), T.Eq.image(b, base)), i, e, l, base)
+    case 1n+j0 T.TNode{_, _, a, b, c, d}:
+      +j = j0
+      Laws_find(j, T.Tiles.pick(U32.is_ge(x, (rx + U32.shr(n) : U32)), U32.is_ge(y, (ry + U32.shr(n) : U32)), a, b, c, d), x, y,
+        Bool.pick(U32, U32.is_ge(x, (rx + U32.shr(n) : U32)), (rx + U32.shr(n) : U32), rx), Bool.pick(U32, U32.is_ge(y, (ry + U32.shr(n) : U32)), (ry + U32.shr(n) : U32), ry), U32.shr(n), e, l, base)
+    case 0n T.TNode{_, _, _, _, _, _}:
+      {==}
+    case 1n+j T.TLeaf{_}:
+      {==}
+
+# a found tile kept, a missing one drawn in parallel: the tile seek gives
+law plan_found:
+  for m: Maybe<&2, Image>
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +l: List<&2, R.Op>
+  for +base: Image
+  for +off: Nat
+  for +t: T.Jobs
+  for -s: Image
+  for h: {s == Seek.from(m, e, l, base) : Image}
+  {T.Plan.fill(T.Tile.plan.found(m, ops, l, base), e, off, T.Jobs.run(t, e)) == T.TLeaf{T.Tile{ops, l, base, s}} : T.Tiles}
+
+def plan_found(m, e, ops, l, base, off, t, s, h):
+  match m:
+    case Some{i}:
+      %Equal.sym(Image, s, Seek.from(Some{i}, e, l, base), h) : {T.Plan.fill(T.Tile.plan.found(Some{i}, ops, l, base), e, off, T.Jobs.run(t, e)) == T.TLeaf{T.Tile{ops, l, base, _}} : T.Tiles}
+      {==}
+    case None{}:
+      %Equal.sym(Image, s, Seek.from(None{}, e, l, base), h) : {T.Plan.fill(T.Tile.plan.found(None{}, ops, l, base), e, off, T.Jobs.run(t, e)) == T.TLeaf{T.Tile{ops, l, base, _}} : T.Tiles}
+      Equal.cong(Image, T.Tiles, i => T.TLeaf{T.Tile{ops, l, base, i}},
+        T.Drawn.get(T.Jobs.run(t, e), T.Jobs.path(24n, off), e, l, base), T.Tile.draw(e, l, base),
+        Laws.drawn_get_run(t, T.Jobs.path(24n, off), e, l, base))
+
+law plan_fresh_k:
+  for look: Bool
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +l: List<&2, R.Op>
+  for +base: Image
+  for +pk: Nat
+  for +pt: T.Tiles
+  for +pn: U32
+  for +dy: U32
+  for +rx: U32
+  for +ry: U32
+  for +off: Nat
+  for +t: T.Jobs
+  {T.Plan.fill(T.Tile.plan.fresh.k(look, e, ops, l, base, T.Past{pk, pt, pn, dy}, rx, ry), e, off, T.Jobs.run(t, e)) == T.TLeaf{T.Tile.fresh.k(look, e, ops, l, base, T.Past{pk, pt, pn, dy}, rx, ry)} : T.Tiles}
+
+def plan_fresh_k(look, e, ops, l, base, pk, pt, pn, dy, rx, ry, off, t):
+  match look:
+    case True{}:
+      plan_found(T.Tiles.find(pk, pt, rx, (ry - dy : U32), 0, 0, pn, l, base), e, ops, l, base, off, t,
+        T.Tiles.seek(pk, pt, rx, (ry - dy : U32), 0, 0, pn, e, l, base), Laws_find(pk, pt, rx, (ry - dy : U32), 0, 0, pn, e, l, base))
+    case False{}:
+      Equal.cong(Image, T.Tiles, i => T.TLeaf{T.Tile{ops, l, base, i}},
+        T.Drawn.get(T.Jobs.run(t, e), T.Jobs.path(24n, off), e, l, base), T.Tile.draw(e, l, base),
+        Laws.drawn_get_run(t, T.Jobs.path(24n, off), e, l, base))
+
+law tile_plan_k:
+  for s: Bool
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for +o: List<&2, R.Op>
+  for +l: List<&2, R.Op>
+  for +b: Image
+  for +i: Image
+  for +p: T.Past
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +off: Nat
+  for +t: T.Jobs
+  {T.Plan.fill(T.Tile.plan.k(s, e, ops, base, T.Tile{o, l, b, i}, p, rx, ry, n), e, off, T.Jobs.run(t, e)) == T.TLeaf{T.Tile.again.k(s, e, ops, base, T.Tile{o, l, b, i}, p, rx, ry, n)} : T.Tiles}
+
+def tile_plan_k(s, e, ops, base, o, l, b, i, p, rx, ry, n, off, t):
+  match s p:
+    case True{} _:
+      {==}
+    case False{} T.Past{pk, pt, pn, dy}:
+      plan_fresh_k(U32.is_ne(dy, 0), e, ops, T.Loc.ops(ops, rx, ry, T.Tile.size(e)), base, pk, pt, pn, dy, rx, ry, off, t)
+
+# a node of any last tiles: both keep it whole, or both go down a level
+law plan_node_k:
+  for s: Bool
+  for +j: Nat
+  for +e: Nat
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for +o: List<&2, R.Op>
+  for +bs: Image
+  for +pa: T.Tiles
+  for +pb: T.Tiles
+  for +pc: T.Tiles
+  for +pd: T.Tiles
+  for +p: T.Past
+  for +rx: U32
+  for +ry: U32
+  for +n: U32
+  for +off: Nat
+  for +t: T.Jobs
+  for ha: {T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)), e, off, T.Jobs.run(t, e)) == T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)) : T.Tiles}
+  for hb: {T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)), e, Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Jobs.run(t, e)) == T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)) : T.Tiles}
+  for hc: {T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Jobs.run(t, e)) == T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)) : T.Tiles}
+  for hd: {T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)))), T.Jobs.run(t, e)) == T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)) : T.Tiles}
+  {T.Plan.fill(T.Tiles.plan.go(1n+j, e, ops, base, T.TNode{o, bs, pa, pb, pc, pd}, p, rx, ry, n, s), e, off, T.Jobs.run(t, e)) == T.Tiles.again.go(1n+j, e, ops, base, T.TNode{o, bs, pa, pb, pc, pd}, p, rx, ry, n, s) : T.Tiles}
+
+def plan_node_k(s, j, e, ops, base, o, bs, pa, pb, pc, pd, p, rx, ry, n, off, t, ha, hb, hc, hd):
+  match s:
+    case True{}:
+      {==}
+    case False{}:
+      tnode_cong(ops, base, T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)), e, off, T.Jobs.run(t, e)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)), T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)), e, Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Plan.fill(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), e, Nat.add(Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)))), T.Jobs.run(t, e)), T.Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), ha, hb, hc, hd)
+
+def Laws.plan_fill_again(k, e, ops, base, prev, p, rx, ry, n, off, t):
+  match k prev:
+    case 0n T.TLeaf{T.Tile{+o, +l, +b, +i}}:
+      tile_plan_k(Bool.and(T.Eq.ops(ops, o), T.Eq.image(base, b)), e, ops, base, o, l, b, i, p, rx, ry, n, off, t)
+    case 1n+j0 T.TNode{+o, +bs, +pa, +pb, +pc, +pd}:
+      +j = j0
+      plan_node_k(Bool.and(T.Eq.ops(ops, o), T.Eq.image(base, bs)), j, e, ops, base, o, bs, pa, pb, pc, pd, p, rx, ry, n, off, t,
+        Laws.plan_fill_again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n), off, t),
+        Laws.plan_fill_again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n), Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), t),
+        Laws.plan_fill_again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n), Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), t),
+        Laws.plan_fill_again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n), Nat.add(Nat.add(Nat.add(off, T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), T.Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), T.Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)))), T.Plan.count(T.Tiles.plan(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), T.Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)))), t))
+    case 0n T.TNode{_, _, _, _, _, _}:
+      plan_make_fill(0n, e, ops, base, rx, ry, n, off, t)
+    case 1n+j T.TLeaf{_}:
+      plan_make_fill(1n+j, e, ops, base, rx, ry, n, off, t)
+
+law frame_par_k:
+  for s: Bool
+  for +w: U32
+  for +h: U32
+  for +ops: List<&2, R.Op>
+  for +base: Image
+  for +prev: T.Tiles
+  for +dy: U32
+  {T.Plan.run(T.Frame.plan.k(s, w, h, ops, base, prev, dy), T.Frame.edge(w, h)) == T.Frame.again.k(s, w, h, ops, base, prev, dy) : T.Tiles}
+
+def frame_par_k(s, w, h, ops, base, prev, dy):
+  match s:
+    case True{}:
+      Laws.plan_fill_again(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, prev, T.Past{T.Frame.levels(w, h), prev, U32.shln(1, R.Frame.depth(w, h)), dy}, 0, 0, U32.shln(1, R.Frame.depth(w, h)), 0n,
+        T.Jobs.deal(T.Plan.jobs(T.Tiles.plan(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, prev, T.Past{T.Frame.levels(w, h), prev, U32.shln(1, R.Frame.depth(w, h)), dy}, 0, 0, U32.shln(1, R.Frame.depth(w, h))), Nil{})))
+    case False{}:
+      plan_make_fill(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h)), 0n,
+        T.Jobs.deal(T.Plan.jobs(T.Tiles.plan.make(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h))), Nil{})))
+
+def Laws.frame_par_exact(w, h, ops, base, prev, dy):
+  match prev:
+    case T.FNone{}:
+      plan_make_fill(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h)), 0n,
+        T.Jobs.deal(T.Plan.jobs(T.Tiles.plan.make(T.Frame.levels(w, h), T.Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h))), Nil{})))
+    case T.FSome{pw, ph, pt}:
+      frame_par_k(Bool.and(U32.is_eq(pw, w), U32.is_eq(ph, h)), w, h, ops, base, pt, dy)
 
 law tl_one_k:
   for s: Bool

@@ -103,6 +103,21 @@ def screen(+hs: H.Hubs) -> String:
 def screenj(+hs: H.Hubs) -> J.Json:
   H.Hubs.screen(hs)
 
+def online.is(u: U.Ui, b: Bool) -> Bool:
+  match u b:
+    case U.Ui{_, _, _, _, _, True{}, _, _, _, _, _, _, _, _, _, _, _} True{}:
+      True{}
+    case U.Ui{_, _, _, _, _, False{}, _, _, _, _, _, _, _, _, _, _, _} False{}:
+      True{}
+    case _ _:
+      False{}
+
+# hub key already is online (or offline) as b says: a socket that keeps
+# failing to open says so every few seconds, and nothing on the screen
+# changes, so the bridge builds no screen for it
+def online_same(+hs: H.Hubs, +key: String, b: Bool) -> Bool:
+  online.is(H.Hubs.ui(hs, key), b)
+
 def online(+hs: H.Hubs, +key: String, b: Bool) -> H.HAct:
   H.Hubs.online(hs, key, b)
 

@@ -4,7 +4,8 @@
 // Base's Window is fixed-size and reports no text, wheel, resize or
 // clipboard, so the app has its own. libX11 is opened at run time (no link
 // flags, and a machine without X still runs the server). A frame is the
-// Bend Image quadtree; present() fills each solid region as one rectangle.
+// Bend Image quadtree; present() fills each solid region as one rectangle
+// and sends the X server only the 64 px blocks whose pixels changed.
 //
 // Events are five words (kind, a, b, c, d):
 //   0 key (keysym, code point typed, mods, down)   1 button (x, y, button, down)
@@ -73,6 +74,14 @@ typedef struct {
   Atom      del, clip, utf8, targets, prop;
   XImage*   img;
   u32       w, h;
+  // present: the blocks (64 px) a fill changed, and whether the next
+  // present must send the whole frame (a new image, or an expose)
+  u8*       dirty;
+  u32       dw, dh;
+  _Atomic int full;
+  // the buffer holds something other than the last shown frame (a
+  // lightbox, a new size): the next show fills it whole
+  int       stale;
   u32       n, cap;
   u32*      evs;
   char*     copy;
@@ -306,6 +315,7 @@ static void win_pump(AppWin* a) {
         }
         break;
       case Expose:
+        a->full = 1;
         if (ev.xexpose.count == 0) {
           win_push(a, 5, 0, 0, 0, 0);
         }
@@ -460,18 +470,19 @@ static void __attribute__((constructor)) win_words_use(void) {
 
 #ifdef CID_WIN_PRESENT
 
-// fill the part of an n x n region at (x, y) that lies in the w x h frame
-static void win_fill(Corpus H, u32* pix, u32 w, u32 h, Term t, u32 x, u32 y, u32 n) {
+// fill the part of an n x n region at (x, y) that lies in the w x h frame,
+// marking each 64 px block in which a pixel changed (dirty is dw wide)
+static void win_fill(Corpus H, u32* pix, u32 w, u32 h, u8* dirty, u32 dw, Term t, u32 x, u32 y, u32 n) {
   if (x >= w || y >= h) {
     return;
   }
   if (term_tag(t) == TAG_CTR && n > 1) {
     Loc l = term_rfc(t) ? H[term_loc(t)] >> 24 : term_loc(t);
     u32 m = n / 2;
-    win_fill(H, pix, w, h, H[l + 0], x, y, m);
-    win_fill(H, pix, w, h, H[l + 1], x + m, y, m);
-    win_fill(H, pix, w, h, H[l + 2], x, y + m, m);
-    win_fill(H, pix, w, h, H[l + 3], x + m, y + m, m);
+    win_fill(H, pix, w, h, dirty, dw, H[l + 0], x, y, m);
+    win_fill(H, pix, w, h, dirty, dw, H[l + 1], x + m, y, m);
+    win_fill(H, pix, w, h, dirty, dw, H[l + 2], x, y + m, m);
+    win_fill(H, pix, w, h, dirty, dw, H[l + 3], x + m, y + m, m);
     return;
   }
   while (term_tag(t) == TAG_CTR) {
@@ -481,12 +492,77 @@ static void win_fill(Corpus H, u32* pix, u32 w, u32 h, Term t, u32 x, u32 y, u32
   u32 c  = (u32)term_loc(t) & 0xFFFFFF;
   u32 x1 = x + n < w ? x + n : w;
   u32 y1 = y + n < h ? y + n : h;
+  // a region lies within one block column unless it is 64 px or wider,
+  // and then it starts on a block edge: each row is checked per block
   for (u32 yy = y; yy < y1; yy += 1) {
     u32* row = pix + (size_t)yy * w;
-    for (u32 xx = x; xx < x1; xx += 1) {
-      row[xx] = c;
+    u8*  dr  = dirty + (size_t)(yy >> 6) * dw;
+    for (u32 bx = x; bx < x1; bx = (bx | 63) + 1) {
+      u32 be = (bx | 63) + 1 < x1 ? (bx | 63) + 1 : x1;
+      u32 diff = 0;
+      for (u32 xx = bx; xx < be; xx += 1) {
+        diff |= row[xx] ^ c;
+        row[xx] = c;
+      }
+      if (diff != 0) {
+        dr[bx >> 6] = 1;
+      }
     }
   }
+}
+
+// send the changed blocks: each block row's runs of dirty blocks as one
+// rectangle
+static void win_put(AppWin* a) {
+  GC gc = DefaultGC(a->dpy, DefaultScreen(a->dpy));
+  for (u32 by = 0; by < a->dh; by += 1) {
+    u8* dr = a->dirty + (size_t)by * a->dw;
+    u32 bx = 0;
+    while (bx < a->dw) {
+      if (!dr[bx]) {
+        bx += 1;
+        continue;
+      }
+      u32 b0 = bx;
+      while (bx < a->dw && dr[bx]) {
+        dr[bx] = 0;
+        bx += 1;
+      }
+      u32 x0 = b0 * 64, y0 = by * 64;
+      u32 x1 = bx * 64 < a->w ? bx * 64 : a->w;
+      u32 y1 = y0 + 64 < a->h ? y0 + 64 : a->h;
+      x_XPutImage(a->dpy, a->win, gc, a->img, (int)x0, (int)y0, (int)x0, (int)y0, x1 - x0, y1 - y0);
+    }
+  }
+}
+
+// the node a term names (a shared one through its count cell)
+static inline Loc win_src(Corpus H, Term t) {
+  return term_rfc(t) ? H[term_loc(t)] >> 24 : term_loc(t);
+}
+
+// win_fill over the regions where the frame differs from the last one
+// shown (old, whose pixels the buffer holds): a region that is the very
+// same node in both is skipped. Both trees are alive here, so one node
+// can't stand for two images.
+static void win_fill_diff(Corpus H, u32* pix, u32 w, u32 h, u8* dirty, u32 dw, Term t, Term old, u32 x, u32 y, u32 n) {
+  if (x >= w || y >= h) {
+    return;
+  }
+  if (term_tag(t) != TAG_CTR || n <= 1 || term_tag(old) != TAG_CTR) {
+    win_fill(H, pix, w, h, dirty, dw, t, x, y, n);
+    return;
+  }
+  Loc l = win_src(H, t);
+  Loc o = win_src(H, old);
+  if (l == o) {
+    return;
+  }
+  u32 m = n / 2;
+  win_fill_diff(H, pix, w, h, dirty, dw, H[l + 0], H[o + 0], x, y, m);
+  win_fill_diff(H, pix, w, h, dirty, dw, H[l + 1], H[o + 1], x + m, y, m);
+  win_fill_diff(H, pix, w, h, dirty, dw, H[l + 2], H[o + 2], x, y + m, m);
+  win_fill_diff(H, pix, w, h, dirty, dw, H[l + 3], H[o + 3], x + m, y + m, m);
 }
 
 // BACKPLANE_SNAP=<path>: every presented frame is also written there as
@@ -509,10 +585,11 @@ static void win_snap(AppWin* a) {
   fclose(out);
 }
 
-Term win_present_run(Env e, Term* f, IoWork* w) {
-  AppWin* a = (AppWin*)io_hand_v(f[0]);
-  Term image = f[1];
+// fill the buffer with image (over old where it may skip, has_old) and
+// send what changed
+static void win_show_image(Env e, AppWin* a, Term image, Term old, int has_old) {
   io_sync();
+  int whole = atomic_exchange(&a->full, 0);
   if (a->img == NULL || (u32)a->img->width != a->w || (u32)a->img->height != a->h) {
     if (a->img) {
       XDestroyImage(a->img);
@@ -521,22 +598,60 @@ Term win_present_run(Env e, Term* f, IoWork* w) {
     a->img = x_XCreateImage(a->dpy, DefaultVisual(a->dpy, scr), DefaultDepth(a->dpy, scr),
       ZPixmap, 0, io_mem(calloc((size_t)a->w * a->h, 4)), a->w, a->h, 32, (int)a->w * 4);
     a->img->byte_order = LSBFirst;
+    a->dw = (a->w + 63) / 64;
+    a->dh = (a->h + 63) / 64;
+    free(a->dirty);
+    a->dirty = io_mem(calloc((size_t)a->dw * a->dh, 1));
+    whole = 1;
+    a->stale = 1;
   }
   u32 n = 1;
   while (n < a->w || n < a->h) {
     n *= 2;
   }
-  win_fill(e.mem, (u32*)a->img->data, a->w, a->h, image, 0, 0, n);
-  x_XPutImage(a->dpy, a->win, DefaultGC(a->dpy, DefaultScreen(a->dpy)), a->img,
-    0, 0, 0, 0, a->w, a->h);
+  if (has_old && !a->stale) {
+    win_fill_diff(e.mem, (u32*)a->img->data, a->w, a->h, a->dirty, a->dw, image, old, 0, 0, n);
+  } else {
+    win_fill(e.mem, (u32*)a->img->data, a->w, a->h, a->dirty, a->dw, image, 0, 0, n);
+  }
+  a->stale = !has_old;
+  if (whole) {
+    memset(a->dirty, 0, (size_t)a->dw * a->dh);
+    x_XPutImage(a->dpy, a->win, DefaultGC(a->dpy, DefaultScreen(a->dpy)), a->img,
+      0, 0, 0, 0, a->w, a->h);
+  } else {
+    win_put(a);
+  }
   x_XFlush(a->dpy);
   win_nudge(a);
   win_snap(a);
-  return io_tup(e, f[0], image);
+}
+
+// a frame that is not the window's own (the lightbox): the next show
+// fills whole
+Term win_present_run(Env e, Term* f, IoWork* w) {
+  AppWin* a = (AppWin*)io_hand_v(f[0]);
+  win_show_image(e, a, f[1], 0, 0);
+  return io_tup(e, f[0], f[1]);
 }
 
 static void __attribute__((constructor)) win_present_use(void) {
   io_eff(CID_WIN_PRESENT, win_present_run, 0);
+}
+
+#endif
+
+#ifdef CID_WIN_SHOW
+
+// the window's frame, and the last one it showed (the buffer holds it)
+Term win_show_run(Env e, Term* f, IoWork* w) {
+  AppWin* a = (AppWin*)io_hand_v(f[0]);
+  win_show_image(e, a, f[1], f[2], 1);
+  return io_tup(e, f[0], io_tup(e, f[1], f[2]));
+}
+
+static void __attribute__((constructor)) win_show_use(void) {
+  io_eff(CID_WIN_SHOW, win_show_run, 0);
 }
 
 #endif

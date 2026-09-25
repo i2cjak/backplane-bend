@@ -47,3 +47,6 @@ def main() -> IO(Unit):
     C.Check.str("newest page no more", Nat.show(U.Win.hidden(U.Page.newest(log(100n, 0n, Nil{}), "t1", 60n))), "0")
     C.Check.str("newest page exact fit", Nat.show(U.Win.hidden(U.Page.newest(log(120n, 0n, Nil{}), "t1", 60n))), "0")
     C.Check.str("newest page other thread", first(U.Page.newest(log(400n, 0n, Nil{}), "t2", 60n)), "m281")
+    # the walk stops an hour before the thread began (entries at 0..159 s)
+    C.Check.str("newest page stops before the thread", len(U.Page.newest.from(log(160n, 0n, Nil{}), "t1", 3700n, 60n)), "30")
+    C.Check.str("newest page from long ago walks it all", len(U.Page.newest.from(log(100n, 0n, Nil{}), "t1", 3600n, 60n)), "50")

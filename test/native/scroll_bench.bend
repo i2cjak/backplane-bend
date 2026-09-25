@@ -120,7 +120,7 @@ def notch(n: Nat, +dir: U32, +ty: L.Ty, k: Kept, t: Times, ok: Bool, sh: String)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
         +dy : U32 = N.Hits.slide(hits(o), N.Nui.hits(n0))
-        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, dy)
+        +tiles : TI.Tiles = TI.Frame.par(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, dy)
         +img : Image = TI.Tiles.image(tiles)
         +t4 : Nat <- IO.now()
         notch(rest, dir, ty, Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}},
@@ -132,7 +132,7 @@ def warm(+ty: L.Ty, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
   +memo = L.Lay.memo(ty, n, L.TL.memo.none())
   +o = L.Lay.frame(ty, memo, n)
-  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
+  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.par(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
 
 def report(r: Times & Kept, +label: String) -> IO(Kept):
   (t, k) = r

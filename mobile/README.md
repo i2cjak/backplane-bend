@@ -23,6 +23,12 @@ a thread without taps.
 Pairing: paste the hub's tailnet link (`http://host:3787/#token=…`), or open
 `backplane://pair?url=<that link, URL-encoded>`.
 
+Kept state: each app writes the Bend client's whole state down (a file
+named `state-<key>.json`) and loads it at launch, then asks each hub only
+for what came since. The key is a hash of the Bend type definitions
+(`scripts/state-key.py`, stamped at the end of bridge.js by
+`build-mobile.sh`), so a new build keeps the state unless a type changed.
+
 Several hubs: the phone stays connected to every hub it pairs with, one
 socket and one Bend client each (`src/mobile/hubs.bend`, keyed by
 host:port). The screen is all of them in one: each hub's projects, named

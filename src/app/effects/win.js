@@ -8,6 +8,9 @@ function win_words(win) {
 function win_present(win, image) {
   return io_tup(win, image);
 }
+function win_show(win, image, prev) {
+  return io_tup(win, io_tup(image, prev));
+}
 function win_copy(win, text) {
   return win;
 }

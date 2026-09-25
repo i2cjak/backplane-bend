@@ -60,7 +60,12 @@ final class Engine: @unchecked Sendable {
         await withCheckedContinuation { k in
             queue.async {
                 let b = self.context().objectForKeyedSubscript("Backplane")!
-                k.resume(returning: finish(b.invokeMethod(name, withArguments: late?() ?? args)?.toString() ?? "{}"))
+                let t0 = DispatchTime.now().uptimeNanoseconds
+                let text = b.invokeMethod(name, withArguments: late?() ?? args)?.toString() ?? "{}"
+                // a slow step of the Bend client, for finding what to make faster (as Android's)
+                let ms = (DispatchTime.now().uptimeNanoseconds - t0) / 1_000_000
+                if ms > 100 { NSLog("Backplane slow %@: %llu ms", name, ms) }
+                k.resume(returning: finish(text))
             }
         }
     }

@@ -440,6 +440,14 @@ def Shell.shown(r: Window & Image, +n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg
     wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q, Shot.home(n2))
     Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa2})
 
+# a frame shown with Win.show: the last frame's image comes back too
+def Shell.shown.two(r: Window & Image & Image, +n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux, anim: Bool, +ms: Nat) -> IO(Shell):
+  (w, ab) = r
+  (img, prev) = ab
+  do IO<Shell>:
+    Unit <- IO.pure(Unit, Image.drop!(prev))
+    Shell.shown((w, img), n, q, i, wa, anim, ms)
+
 def Pics.found(r: Map<&2, BM.Bitmap> & BM.Bitmap) -> BM.Bitmap:
   (_, b) = r
   b
@@ -1370,11 +1378,11 @@ def Vx.pick(x: V.Vx) -> String:
       p
 
 # UI ops over the fading items and the picked item, over the base; tiles
-# the last frame drew the same way are kept (TI.Frame.again)
-def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Tiles:
+# the last frame drew the same way are kept (the plan of TI.Frame.par)
+def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Plan:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
-      TI.Frame.again(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
+      TI.Frame.plan(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
         Pics.over(hs, pics, Nil{}, ww, hh, R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], b)), prev, dy)
@@ -1382,12 +1390,12 @@ def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U3
 # the frame: UI ops over the fading items over the base. dy is how far
 # the thread scrolled since the last frame: tiles it moved are taken from
 # there, not drawn again
-def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Tiles:
+def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Plan:
   match pa:
     case True{}:
       Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev, dy)
     case False{}:
-      TI.Frame.again(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev, dy)
+      TI.Frame.plan(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev, dy)
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
@@ -1431,16 +1439,35 @@ def Shell.timed(+t0: U32) -> IO(Unit):
     PS.Perf.done("ui.input")
     PS.Perf.done("ui.hub")
 
-# present the frame's tiles (drawn since t2) and keep them for the next frame
-def Shell.present(+tiles: TI.Tiles, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
+# the last frame shown from tiles (none yet: a solid one, never the same
+# node as a frame's)
+def Frames.image(f: TI.Frames) -> Image:
+  match f:
+    case TI.FNone{}:
+      Pix{0}
+    case TI.FSome{_, _, t}:
+      TI.Tiles.image(t)
+
+# carry out the frame's plan (TI.Frame.par one step at a time: the plan,
+# the tiles to draw drawn in parallel, the tiles filled in), present them
+# and keep them for the next frame; the window fills only what differs
+# from the last one
+def Shell.present(+pl: TI.Plan, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
   match o:
     case L.Out{_, +hs}:
       do IO<Shell>:
+        +k : Nat = TI.Plan.count(pl)
+        ta : U32 <- PS.Perf.lap("ui.plan", t2)
+        PS.Perf.add("ui.drawn", U32.from_nat(k))
+        +d : TI.Drawn = TI.Plan.drawn(pl, TI.Frame.edge(N.Nui.width(n), N.Nui.height(n)))
+        tb : U32 <- PS.Perf.lap("ui.draw", ta)
+        +tiles : TI.Tiles = TI.Plan.fill(pl, TI.Frame.edge(N.Nui.width(n), N.Nui.height(n)), 0n, d)
+        tc : U32 <- PS.Perf.lap("ui.fill", tb)
         t3 : U32 <- PS.Perf.lap("ui.raster", t2)
-        r : Window & Image <- W.Win.present(w, TI.Tiles.image(tiles))
-        t4 : U32 <- PS.Perf.lap("ui.present", t3)
+        r : Window & Image & Image <- W.Win.show(w, TI.Tiles.image(tiles), Frames.image(Aux.frames(wa)))
+        t4 : U32 <- PS.Perf.lap("ui.present", tc)
         Shell.timed(t0)
-        Shell.shown(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms)
+        Shell.shown.two(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms)
 
 # The lightbox (nui.bend's Lbx, core/lightbox.bend's Lb): the picture
 # alone on a dark window, zoomed and panned, its full decode once there

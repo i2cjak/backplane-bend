@@ -644,7 +644,7 @@ def View.paged.w(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +
       List.append(&2, D.Node, View.earlier(h, sel), View.entries(es, st, sel, info, running))
 
 def View.paged(+drafts: Map<&2, String>, +es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, D.Node>:
-  View.paged.w(U.Page.newest(es, sel, U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ sel)), 0n))), st, sel, info, running)
+  View.paged.w(U.Page.newest.from(es, sel, U.Page.since(st, sel), U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ sel)), 0n))), st, sel, info, running)
 
 def View.sending(ps: List<&2, String>) -> List<&2, D.Node>:
   match ps:
