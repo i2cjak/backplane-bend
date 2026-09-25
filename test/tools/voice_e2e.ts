@@ -53,6 +53,10 @@ const mock = Bun.serve({
     if (!(req.headers.get("authorization") ?? "").startsWith("Bearer sk-")) return Response.json({ error: { message: "bad key" } }, { status: 401 });
     if (u.pathname === "/v1/realtime" && srv.upgrade(req, { data: { n: 0 } })) return;
     if (u.pathname === "/v1/models") return Response.json({ data: [] });
+    if (u.pathname === "/v1/audio/transcriptions") {
+      openai.push({ type: "rest" });
+      return Response.json({ text: "open key cad now" });
+    }
     return new Response("not found", { status: 404 });
   },
   websocket: {
@@ -82,6 +86,12 @@ for i in range(80):
     time.sleep(0.1)
 `);
 chmodSync(join(fake, "pw-record"), 0o755);
+// NO_FFMPEG: the hub's helper finds an ffmpeg that fails (a host without
+// one), so a recording goes to gpt-transcribe over REST
+if (process.env.NO_FFMPEG) {
+  writeFileSync(join(fake, "ffmpeg"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(fake, "ffmpeg"), 0o755);
+}
 
 const port = freePort();
 const proc = Bun.spawn([resolve(bin), "--home", home, "--port", String(port), "--no-tailscale"], {
@@ -169,7 +179,8 @@ try {
     const wav = join(home, "note.m4a");
     Bun.spawnSync(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "aac", "-f", "mp4", wav]);
     const fd = new FormData();
-    fd.set("transcription", "open keycard now");
+    // the ring set to send the recording alone: no transcription part
+    if (!process.env.AUDIO_ONLY) fd.set("transcription", "open keycard now");
     fd.set("recordedAt", "1790000000000");
     fd.set("client", "ring");
     fd.set("audio", new Blob([readFileSync(wav)], { type: "audio/mp4" }), "note.m4a");
@@ -186,6 +197,7 @@ try {
     const heard = await until(() => seen.find((c) => JSON.stringify(c).includes("open key cad now")), 30000);
     check("the bot gets Backplane's words", !!heard, seen.slice(-5));
     check("with the words to clarify", JSON.stringify(heard ?? "").includes("key cad"), heard);
+    if (process.env.NO_FFMPEG) check("without ffmpeg, heard by gpt-transcribe over REST", openai.some((e) => e.type === "rest"));
     check("the recording is not kept", !readdirSync(join(home, "voice")).some((f) => f.startsWith("ring-")), readdirSync(join(home, "voice")));
   } else console.log("skip ring (no ffmpeg)");
   // a binary body for the bot (no form): its bytes become text a client can read
