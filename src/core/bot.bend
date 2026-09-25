@@ -362,6 +362,18 @@ def Bot.of.thread.go(bs: List<&2, Bot>, +thread: String) -> Maybe<&2, Bot>:
 def World.of_thread(+w: World, +thread: String) -> Maybe<&2, Bot>:
   Bot.of.thread.go(World.bots(w), thread)
 
+def World.page.k(m: Maybe<&2, Bot>, +thread: String) -> String:
+  match m:
+    case Some{b}:
+      Bot.id(b)
+    case None{}:
+      thread
+
+# the browser page a thread's agent drives: a bot's is named by the bot,
+# any other thread's by the thread, so no two threads share a page
+def World.page(+w: World, +thread: String) -> String:
+  World.page.k(World.of_thread(w, thread), thread)
+
 def Maybe.is(-A: Data, m: Maybe<&2, A>) -> Bool:
   match m:
     case Some{_}:

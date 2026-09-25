@@ -1939,11 +1939,11 @@ def Lay.tab(+ty: Ty, +label: String, +k: U32, +cur: U32, +x: U32) -> Out:
 def Lay.shown(+k: U32, +empty: Bool, +ts: FA.Scene3, b: BM.Bitmap) -> Bool:
   match b:
     case BM.Bitmap{w, _, _, _, _, _, _, _}:
-      Bool.pick(Bool, U32.is_ge(k, 4), True{}, Bool.pick(Bool, U32.is_eq(k, 3), U32.is_gt(w, 0), Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(FA.Scene3.is_empty(ts)), Bool.not(empty))))
+      Bool.pick(Bool, U32.is_ge(k, 3), True{}, Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(FA.Scene3.is_empty(ts)), Bool.not(empty)))
 
 def Lay.help(+k: U32) -> String:
   Bool.pick(String, U32.is_eq(k, 4), "wheel scroll",
-  Bool.pick(String, U32.is_eq(k, 3), "what the agents' browser shows, live",
+  Bool.pick(String, U32.is_eq(k, 3), "what this thread's browser shows, live",
     Bool.pick(String, U32.is_eq(k, 2), "drag rotate · ctrl pan · shift zoom · alt roll · 1-7 views · f fit", "click inspect · drag pan · wheel zoom · f fit")))
 
 # Diff view
@@ -2205,9 +2205,63 @@ def Lay.scene(n: S.Nui) -> List<&2, V.Seen>:
       ss
 
 # the viewer's chrome; the scene under it is drawn by the viewer
+# A browser page
+# --------------
+# Each thread's agent drives a page of its own (a bot's is the bot's): the
+# hub writes its frames as <home>/shots/<page>.jpg and says when a new one
+# is there ("shot.<page>", nui.bend's Shot). The frame is an image the
+# window loads ("img" regions, main.bend's Pics) under the key
+# "shot:<page>:<n>"; the one last loaded ("shot.ok.<page>") shows while
+# the next loads.
+
+def Page.num(+s: String, +i: Nat) -> U32:
+  U32.from_nat(Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(s, 'x'), i), "")), 0n))
+
+def Page.fit.w(+bw: U32, +bh: U32, +pw: U32, +ph: U32) -> U32:
+  U32.min(bw, Bool.pick(U32, U32.is_gt((bw * ph : U32), (bh * pw : U32)), pw, ((bw * ph : U32) / U32.max(bh, 1) : U32)))
+
+# the frame fitted to the pane (never enlarged), centred, with a rule round it
+def Page.draw(+key: String, +size: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> Out:
+  +bw = Page.num(size, 0n)
+  +bh = Page.num(size, 1n)
+  +fw = Page.fit.w(bw, bh, (x1 - x0 - 48 : U32), (h - top - 24 : U32))
+  +fh = {((fw * bh : U32) / U32.max(bw, 1) : U32) : U32}
+  +x = {(x0 + U32.shr((x1 - x0 - fw : U32)) : U32) : U32}
+  Out{D.Draw.frame(D.Clip.all(), (x - 1 : U32), (top - 1 : U32), (fw + 2 : U32), (fh + 2 : U32), T.Th.line()), [Lay.hit(x, top, fw, fh, "img", key)]}
+
+def Page.k(state: Nat, +ty: Ty, +key: String, +size: String, +none: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> Out:
+  match state:
+    case 0n:
+      Out.ops(Ty.text(ty, 2n, "Loading the page…", D.Clip.all(), (x0 + 24 : U32), top, 28, T.Th.faint()))
+    case 1n:
+      Out.ops(Ty.text(ty, 2n, none, D.Clip.all(), (x0 + 24 : U32), top, 28, T.Th.faint()))
+    case _:
+      Page.draw(key, size, x0, x1, top, h)
+
+def Page.state(+shown: String, +size: String, +next: String) -> Nat:
+  Bool.pick(Nat, Bool.and(Bool.not(String.is_empty(shown)), Bool.not(String.is_empty(size))), 2n, Bool.pick(Nat, String.starts_with(next, "err:"), 1n, 0n))
+
+# page id's newest frame from top down, or `none` while it has none
+def Lay.page(+ty: Ty, +u: U.Ui, +id: String, +none: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> Out:
+  +n = U.Ui.info(u, "shot." ++ id)
+  +key = "shot:" ++ id ++ ":" ++ Bool.pick(String, String.is_empty(n), "0", n)
+  +shown = U.Ui.info(u, "shot.ok." ++ id)
+  +size = U.Ui.info(u, "img:" ++ shown)
+  Out.cat(Out{Nil{}, [Lay.hit(x0, top, 1, 1, "img", key)]},
+    Page.k(Page.state(shown, size, U.Ui.info(u, "img:" ++ key)), ty, shown, size, none, x0, x1, (top + 12 : U32), h))
+
+# the Browser tab: the selected thread's own page
+def Lay.page.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match on:
+    case True{}:
+      Lay.page(ty, u, U.Ui.page(u), "No page yet. This thread's browser shows here when its agent opens one.", x0, x1, 52, h)
+    case False{}:
+      Out.none()
+
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
   Out.all([
     Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h),
+    Lay.page.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 3), ty, S.Nui.ui(n), x0, x1, h),
     Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h)])
 
 def Lay.note.k(+ty: Ty, empty: Bool, offer: Bool, +note: String, +x: U32, +y: U32) -> Out:

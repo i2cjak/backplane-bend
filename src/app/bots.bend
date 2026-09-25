@@ -468,46 +468,10 @@ def Bv.stab(+ty: L.Ty, +f: F.FS, b: BT.Bot, +c: D.Clip, +x: U32, +w: U32, +y: U3
 
 # Browser
 # -------
-# The bot's page: the hub writes its frames as <home>/shots/<bot>.jpg and
-# says when a new one is there ("shot.<bot>", nui.bend's Shot). The frame
-# is an image the window loads ("img" regions, main.bend's Pics) under the
-# key "shot:<bot>:<n>"; the one last loaded ("shot.ok.<bot>") shows while
-# the next loads.
-
-def Bv.num(+s: String, +i: Nat) -> U32:
-  U32.from_nat(Maybe.default(&2, Nat, Nat.read(Maybe.default(&2, String, List.get(&2, String, String.split(s, 'x'), i), "")), 0n))
-
-def Bv.fit.w(+bw: U32, +bh: U32, +pw: U32, +ph: U32) -> U32:
-  U32.min(bw, Bool.pick(U32, U32.is_gt((bw * ph : U32), (bh * pw : U32)), pw, ((bw * ph : U32) / U32.max(bh, 1) : U32)))
-
-# the frame fitted to the pane (never enlarged), centred, with a rule round it
-def Bv.shot.draw(+key: String, +size: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> L.Out:
-  +bw = Bv.num(size, 0n)
-  +bh = Bv.num(size, 1n)
-  +fw = Bv.fit.w(bw, bh, (x1 - x0 - 48 : U32), (h - top - 24 : U32))
-  +fh = {((fw * bh : U32) / U32.max(bw, 1) : U32) : U32}
-  +x = {(x0 + U32.shr((x1 - x0 - fw : U32)) : U32) : U32}
-  L.Out{D.Draw.frame(D.Clip.all(), (x - 1 : U32), (top - 1 : U32), (fw + 2 : U32), (fh + 2 : U32), T.Th.line()), [L.Lay.hit(x, top, fw, fh, "img", key)]}
-
-def Bv.shot.k(state: Nat, +ty: L.Ty, +key: String, +size: String, +name: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> L.Out:
-  match state:
-    case 0n:
-      L.Out.ops(L.Ty.text(ty, 2n, "Loading the page…", D.Clip.all(), (x0 + 24 : U32), top, 28, T.Th.faint()))
-    case 1n:
-      L.Out.ops(L.Ty.text(ty, 2n, "No page yet. Ask " ++ name ++ " to open one.", D.Clip.all(), (x0 + 24 : U32), top, 28, T.Th.faint()))
-    case _:
-      Bv.shot.draw(key, size, x0, x1, top, h)
-
-def Bv.shot.state(+shown: String, +size: String, +next: String) -> Nat:
-  Bool.pick(Nat, Bool.and(Bool.not(String.is_empty(shown)), Bool.not(String.is_empty(size))), 2n, Bool.pick(Nat, String.starts_with(next, "err:"), 1n, 0n))
+# The bot's page (layout.bend's Lay.page).
 
 def Bv.browser(+ty: L.Ty, +u: U.Ui, +id: String, +name: String, +x0: U32, +x1: U32, +top: U32, +h: U32) -> L.Out:
-  +n = U.Ui.info(u, "shot." ++ id)
-  +key = "shot:" ++ id ++ ":" ++ Bool.pick(String, String.is_empty(n), "0", n)
-  +shown = U.Ui.info(u, "shot.ok." ++ id)
-  +size = U.Ui.info(u, "img:" ++ shown)
-  L.Out.cat(L.Out{Nil{}, [L.Lay.hit(x0, top, 1, 1, "img", key)]},
-    Bv.shot.k(Bv.shot.state(shown, size, U.Ui.info(u, "img:" ++ key)), ty, shown, size, name, x0, x1, (top + 12 : U32), h))
+  L.Lay.page(ty, u, id, "No page yet. Ask " ++ name ++ " to open one.", x0, x1, top, h)
 
 # A bot
 # -----
@@ -536,7 +500,8 @@ def Bv.stop(on: Bool, +ty: L.Ty, +x1: U32) -> L.Out:
     case False{}:
       L.Out.none()
 
-# the bot's cat (64 px), its name and mood, and its tabs
+# the bot's cat (64 px), its name and mood, its tabs, and its own viewer
+# (board, schematic, 3D, browser, diff) opened or shut beside them
 def Bv.header(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +u: U.Ui, +ms: Nat, b: BT.Bot, +tab: String, +x0: U32, +x1: U32) -> L.Out:
   match b:
     case BT.Bot{+id, +name, +th, +look, pe, cr, de}:
@@ -550,7 +515,8 @@ def Bv.header(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +u: U.Ui, +ms: Nat, b: BT.Bot,
         L.Out.ops(CA.Cats.draw(cats, look, mood, ms, D.Clip.all(), (x0 + 20 : U32), 12, 64)),
         L.Out.ops(L.Ty.text(ty, 1n, name, D.Clip.all(), (x0 + 100 : U32), 10, 30, T.Th.text())),
         L.Out.ops(L.Ty.text(ty, 2n, BU.Mood.note(mood) ++ " · " ++ M.Thread.provider(t), D.Clip.all(), (x0 + 112 + nw : U32), 10, 30, Bv.note.color(mood))),
-        Bv.stop(Bv.busy(U.Side.status(st, U.Ui.thread(st, th))), ty, x1),
+        Bv.stop(Bv.busy(U.Side.status(st, U.Ui.thread(st, th))), ty, (x1 - 8 - L.Lay.button.w(ty, "Viewer") : U32)),
+        F.Fm.chip(ty, D.Clip.all(), (x1 - 16 - L.Lay.button.w(ty, "Viewer") : U32), 12, "Viewer", U.Ui.panel(u), "panel", ""),
         Bv.tabs(BU.BU.tabs(), ty, tab, (x0 + 100 : U32), 48)])
 
 def Bv.tab.n(+t: String) -> Nat:

@@ -67,7 +67,7 @@ type Tie is Data:
 # (the open thread's first, then the threads shown before it) and the
 # bots' cats, flattened once per look and mood
 type Kept is Data:
-  Kept{frames: TI.Frames, memos: List<&2, L.TLMemo>, cats: Map<&2, CA.CatF>}
+  Kept{frames: TI.Frames, memos: List<&2, L.TLMemo>, cats: Map<&2, CA.CatF>, park: N.Park}
 
 # the boards being watched and the fonts
 type Aux is Data:
@@ -437,7 +437,7 @@ def Shell.shown(r: Window & Image, +n: N.Nui, +q: Chan(ShellMsg), +i: Chan(S.Msg
     Unit <- IO.pure(Unit, Image.drop!(img))
     +n1 : N.Nui <- Lbv.blink(N.Lbx.on(n), n, q, ms)
     +n2 : N.Nui <- Shell.cats(n1, q, ms)
-    wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q, "")
+    wa2 : Aux <- Pics.ask(List.append(&2, N.Hit, Lbv.want(N.Lbx.on(n2), N.Lbx.path(n2)), N.Nui.hits(n2)), wa, q, Shot.home(n2))
     Shell.again(anim, Shell{n2, w, False{}, False{}, q, i, wa2})
 
 def Pics.found(r: Map<&2, BM.Bitmap> & BM.Bitmap) -> BM.Bitmap:
@@ -1391,33 +1391,33 @@ def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
-    case Aux{_, _, _, Kept{f, _, _}}:
+    case Aux{_, _, _, Kept{f, _, _, _}}:
       f
 
 def Aux.memos(a: Aux) -> List<&2, L.TLMemo>:
   match a:
-    case Aux{_, _, _, Kept{_, m, _}}:
+    case Aux{_, _, _, Kept{_, m, _, _}}:
       m
 
 def Aux.with_frames(a: Aux, f: TI.Frames) -> Aux:
   match a:
-    case Aux{ws, ty, ti, Kept{_, m, cs}}:
-      Aux{ws, ty, ti, Kept{f, m, cs}}
+    case Aux{ws, ty, ti, Kept{_, m, cs, pk}}:
+      Aux{ws, ty, ti, Kept{f, m, cs, pk}}
 
 def Aux.with_memos(a: Aux, m: List<&2, L.TLMemo>) -> Aux:
   match a:
-    case Aux{ws, ty, ti, Kept{f, _, cs}}:
-      Aux{ws, ty, ti, Kept{f, m, cs}}
+    case Aux{ws, ty, ti, Kept{f, _, cs, pk}}:
+      Aux{ws, ty, ti, Kept{f, m, cs, pk}}
 
 def Aux.cats(a: Aux) -> Map<&2, CA.CatF>:
   match a:
-    case Aux{_, _, _, Kept{_, _, cs}}:
+    case Aux{_, _, _, Kept{_, _, cs, _}}:
       cs
 
 def Aux.with_cats(a: Aux, cs: Map<&2, CA.CatF>) -> Aux:
   match a:
-    case Aux{ws, ty, ti, Kept{f, m, _}}:
-      Aux{ws, ty, ti, Kept{f, m, cs}}
+    case Aux{ws, ty, ti, Kept{f, m, _, pk}}:
+      Aux{ws, ty, ti, Kept{f, m, cs, pk}}
 
 # frames go on while a fade, a hover ease or a lightbox ease runs
 def Shell.anim(+n: N.Nui, +ms: Nat) -> Bool:
@@ -1602,6 +1602,33 @@ def Shell.handle(a: Shell, m: ShellMsg) -> IO(Shell):
     case PicErr{tag, path, why}:
       Shell.tagged(a, PicErr{tag, path, why})
 
+def Aux.park(a: Aux) -> N.Park:
+  match a:
+    case Aux{_, _, _, Kept{_, _, _, pk}}:
+      pk
+
+def Aux.with_park(a: Aux, pk: N.Park) -> Aux:
+  match a:
+    case Aux{ws, ty, ti, Kept{f, m, cs, _}}:
+      Aux{ws, ty, ti, Kept{f, m, cs, pk}}
+
+def Shell.parked(r: N.Nui & N.Park, w: Window, qd: Bool, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa: Aux) -> Shell:
+  (n, pk) = r
+  Shell{n, w, True{}, qd, q, i, Aux.with_park(wa, pk)}
+
+def Shell.park.k(same: Bool, a: Shell) -> Shell:
+  match same a:
+    case True{} _:
+      a
+    case False{} Shell{+n, w, _, qd, q, i, +wa}:
+      Shell.parked(N.Park.swap.k(Aux.park(wa), n, U.Ui.sel(N.Nui.ui(n))), w, qd, q, i, wa)
+
+# another thread selected: its own viewer comes back, the last one waits
+def Shell.park(a: Shell) -> Shell:
+  match a:
+    case Shell{+n, w, d, qd, q, i, +wa}:
+      Shell.park.k(String.eq(N.Park.thread(Aux.park(wa)), U.Ui.sel(N.Nui.ui(n))), Shell{n, w, d, qd, q, i, wa})
+
 def ShellMsg.kind(m: ShellMsg) -> String:
   match m:
     case FromWin{_}:
@@ -1661,7 +1688,7 @@ def Shell.got(m: Maybe<&1, ShellMsg>, a: Shell, k: Shell -> IO(Unit)) -> IO(Unit
     case Some{+msg}:
       do IO<Unit>:
         t0 : U32 <- PS.Perf.us()
-        a2 : Shell <- IO.bind(Shell, Shell, Shell.handle(a, msg), Shell.watch)
+        a2 : Shell <- IO.bind(Shell, Shell, Shell.handle(a, msg), h => Shell.watch(Shell.park(h)))
         t1 : U32 <- PS.Perf.lap("ui.msg." ++ ShellMsg.kind(msg), t0)
         a3 : Shell <- Shell.mark(a2, ShellMsg.waits(msg))
         k(a3)
@@ -1700,7 +1727,7 @@ def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Ch
     got : Maybe<&1, L.Ty> <- Chan.recv(L.Ty, fq)
     ty : L.Ty <- Shell.fonts(got)
     ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
-    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}, CA.Cats.none()}}})
+    a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}, CA.Cats.none(), N.Park.init()}}})
     Shell.loop(S.Fuel.forever(), a)
 
 def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):

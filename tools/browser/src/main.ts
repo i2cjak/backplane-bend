@@ -407,6 +407,18 @@ function clearShot(o: Owner): void {
   o.shot.timer = null;
 }
 
+// a page that painted before its screencast began sends nothing until it
+// paints again: after a navigation its frame is taken once by hand
+async function shotNow(name: string): Promise<void> {
+  const o = owners.get(name);
+  const s = o?.shot.cdp;
+  if (!o || !s) return;
+  const r: any = await s.send("Page.captureScreenshot", { format: "jpeg", quality: 70 }).catch(() => null);
+  if (!r?.data || o.shot.cdp !== s) return;
+  o.shot.pending ??= Buffer.from(r.data, "base64");
+  scheduleShot(o);
+}
+
 // at most JPEG_FPS writes a second: the newest frame waits for its slot,
 // older ones are dropped
 function scheduleShot(o: Owner): void {
@@ -551,6 +563,7 @@ const handlers: Record<string, (a: Json, name: string) => Promise<any>> = {
     const p = await ensurePage(name);
     await p.setViewportSize(o.viewport);
     if (a.url) await p.goto(normalizeUrl(a.url), { waitUntil: "load", timeout: timeoutOf(a) });
+    await shotNow(name);
     return status(name);
   },
   async navigate(a, name) {
@@ -558,6 +571,7 @@ const handlers: Record<string, (a: Json, name: string) => Promise<any>> = {
     const p = await ensurePage(name);
     const waitUntil = a.readiness === "none" ? "commit" : a.readiness === "domContentLoaded" ? "domcontentloaded" : "load";
     await p.goto(normalizeUrl(a.url), { waitUntil, timeout: timeoutOf(a) });
+    await shotNow(name);
     return status(name);
   },
   async back(a, name) {
