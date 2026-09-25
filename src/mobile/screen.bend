@@ -203,7 +203,7 @@ def Mob.entry.k(mine: Bool, e: M.Entry, +st: M.State, recent: Bool) -> List<&2, 
       Nil{}
 
 def Mob.entry(+e: M.Entry, +st: M.State, +sel: String, +left: Nat) -> List<&2, J.Json>:
-  Mob.entry.k(String.eq(V.View.entry_thread(e), sel), e, st, Nat.is_le(left, 40n))
+  Mob.entry.k(String.eq(V.View.entry_thread(e), sel), e, st, Nat.is_le(left, 240n))
 
 # a run of tool calls as one row; "fold" with its value opens or shuts it
 def Mob.fold(+id: String, +label: String, +open: Bool) -> J.Json:
@@ -246,9 +246,9 @@ def Mob.entries.go(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +
       Mob.entries.go(t, Nil{}, st, sel, Nat.sub(left, 1n), Mob.onto(Mob.entry(e, st, sel, left), acc))
 
 # oldest first, runs of tool calls folded (the last stays open while its
-# turn runs). Only the newest 40 entries look for images: finding them
-# walks a reply's text char by char, which on a phone cost more than the
-# rest of the screen
+# turn runs). Entries look for images (finding them walks a reply's text
+# char by char) only on the pages shown, which are 60 at a time
+# (core's Page), up to four pages back
 def Mob.entries(+es: List<&2, M.Entry>, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
   List.reverse(&2, J.Json, Mob.entries.go(es, FO.Fold.roles(es, info, running), st, sel, List.length(&2, M.Entry, es), Nil{}))
 
@@ -552,16 +552,26 @@ def Mob.menu(+id: String, snoozed: Bool) -> List<&2, J.Json>:
    Mob.item("Find file", "find-open", "files", False{}, False{}, Nil{}), Mob.snooze(snoozed),
    Mob.item("Delete", "row-delete", id, False{}, True{}, Nil{})]
 
+# the newest page of a thread's entries (core's Page): "earlier" says how
+# many are left out, and the action "earlier" shows another page
+def Mob.page(+drafts: Map<&2, String>, +id: String, +st: M.State) -> U.Win:
+  U.Page.newest(U.Ui.entries(st), id, U.Page.count(Maybe.default(&2, Nat, Nat.read(U.Str.get(drafts, "@more." ++ id)), 0n)))
+
+def Mob.paged.es(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
+  Mob.entries(U.Win.shown(w), st, sel, info, running)
+
 def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: List<&2, String>, +up: String, term: J.Json, skills: List<&2, J.Json>, +phase: String) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, _, _, +now, _, pa, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, archived, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
+      +pg = Mob.page(drafts, id, st)
       J.Json.obj([J.KV{"id", J.Json.str(id)}, J.KV{"title", J.Json.str(title)}, J.KV{"branch", J.Json.str(branch)},
         J.KV{"state", J.Json.str(Mob.state(turn))},
         J.KV{"tools", J.Json.arr(List.concat(&2, J.Json, [Mob.stop(V.View.running(turn)), [Mob.pin(pinned), Mob.settle(o, Nat.is_gt(sa, ua)), Mob.archive(archived), Mob.tool("Fork", "fork", False{})], Bool.pick(List<&2, J.Json>, String.is_empty(M.Fork.source(st, id)), Nil{}, [Mob.tool("Bring back", "back", False{})])]))},
         J.KV{"menu", J.Json.arr(Mob.menu(id, M.Snooze.on(now, U.Side.until(st, id))))},
         J.KV{"parent", Mob.parent(String.is_empty(U.Tasks.parent(st, id)), st, U.Tasks.parent(st, id))},
         J.KV{"tasks", J.Json.arr(Mob.tasks(U.Tasks.of(st, id), st))},
-        J.KV{"entries", J.Json.arr(Mob.entries(V.View.mine(U.Ui.entries(st), id, Nil{}), st, id, nf, V.View.running(turn)))},
+        J.KV{"entries", J.Json.arr(Mob.paged.es(pg, st, id, nf, V.View.running(turn)))},
+        J.KV{"earlier", J.Json.nat(U.Win.hidden(pg))},
         J.KV{"sending", J.Json.arr(Mob.strs(pend))},
         J.KV{"asks", J.Json.arr(Mob.asks(U.Asks.open(st, id), U.Str.get(drafts, sel)))},
         J.KV{"queued", J.Json.str(M.Queue.of(st, id))},

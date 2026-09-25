@@ -5,6 +5,7 @@ import ./codec.bend as C
 import ./hub.bend as B
 import ./acp.bend as AC
 import ./handoff.bend as HD
+import ./bot.bend as BT
 
 # The Backplane MCP server, as a decider. Each agent session gets its own
 # endpoint (/mcp/<thread>), so every call knows which thread is asking. A
@@ -95,9 +96,10 @@ def Mcp.tools() -> J.Json:
       [Tool.prop("threadId", "string", "The thread to read."), Tool.prop("limit", "number", "How many entries (default 40).")], ["threadId"]),
     Tool.def("thread_send", "Send a message to another thread in this project. mode auto (default) starts a turn there, or waits in its queue while one runs; queue always waits for the running turn; steer sends it into the running turn (Codex and Grok restart the turn with it).",
       [Tool.prop("threadId", "string", "The thread."), Tool.prop("text", "string", "The message."), Tool.prop("mode", "string", "auto, queue or steer.")], ["threadId", "text"]),
-    Tool.def("thread_launch", "Start a new top-level thread in this project (not a child of this one: the user sees it in the sidebar like their own) with a first message, on any provider/model. Answers its threadId; follow it with thread_wait or thread_read.",
+    Tool.def("thread_launch", "Start a new top-level thread in this project, or in `project` (not a child of this one: the user sees it in the sidebar like their own) with a first message, on any provider/model. Bots must name the project. Answers its threadId; follow it with thread_wait or thread_read.",
       [Tool.prop("prompt", "string", "The first message, complete."), Tool.prop("title", "string", "A short title (default: from the prompt)."),
-       Tool.prop("provider", "string", "claude, codex or grok (default: the user's default)."), Tool.prop("model", "string", "Model (default: the provider's default).")], ["prompt"]),
+       Tool.prop("provider", "string", "claude, codex or grok (default: the user's default)."), Tool.prop("model", "string", "Model (default: the provider's default)."),
+       Tool.prop("project", "string", "The project's name or id (default: this thread's; bots must give one).")], ["prompt"]),
     Tool.def("thread_update", "Rename a thread in this project (this one by default), or with no title have its title written again from its first message.",
       [Tool.prop("threadId", "string", "The thread (default: this one)."), Tool.prop("title", "string", "The new title; empty to regenerate it.")], Nil{}),
     Tool.def("thread_wait", "Wait until a thread in this project has finished its turn and has nothing queued, or until timeoutMs passes. Answers its state, whether it is done, and its last reply.",
@@ -225,8 +227,13 @@ def Mcp.project_of(t: M.Thread) -> String:
 # Threads
 # -------
 
+# whether the thread is a bot's (bot.bend): a bot works for the person
+# across all their projects, where any other thread stays in its own
+def Mcp.bot(+s: M.State, +thread: String) -> Bool:
+  BT.World.is_bot_thread(M.State.bots(s), thread)
+
 def Mcp.same_project(+s: M.State, +a: String, +b: String) -> Bool:
-  String.eq(Mcp.project_of(B.Hub.thread(s, a)), Mcp.project_of(B.Hub.thread(s, b)))
+  Bool.or(Mcp.bot(s, a), String.eq(Mcp.project_of(B.Hub.thread(s, a)), Mcp.project_of(B.Hub.thread(s, b))))
 
 def Mcp.threads.k(keep: Bool, t: M.Thread, rest: List<&2, J.Json>) -> List<&2, J.Json>:
   match keep:
@@ -235,10 +242,12 @@ def Mcp.threads.k(keep: Bool, t: M.Thread, rest: List<&2, J.Json>) -> List<&2, J
     case False{}:
       rest
 
+# a thread listed for a caller in `project` ("*": a bot, which sees the
+# threads of every project, not other bots' own)
 def Mcp.visible(t: M.Thread, +project: String) -> Bool:
   match t:
-    case M.Thread{_, p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, de}:
-      Bool.and(String.eq(p, project), Bool.not(de))
+    case M.Thread{_, +p, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, de}:
+      Bool.and(Bool.or(String.eq(p, project), Bool.and(String.eq(project, "*"), Bool.not(String.is_empty(p)))), Bool.not(de))
 
 def Mcp.threads(ts: List<&2, M.Thread>, +project: String) -> List<&2, J.Json>:
   match ts:
@@ -247,10 +256,13 @@ def Mcp.threads(ts: List<&2, M.Thread>, +project: String) -> List<&2, J.Json>:
     case +t <> rest:
       Mcp.threads.k(Mcp.visible(t, project), t, Mcp.threads(rest, project))
 
+def Mcp.scope(+s: M.State, +thread: String) -> String:
+  Bool.pick(String, Mcp.bot(s, thread), "*", Mcp.project_of(B.Hub.thread(s, thread)))
+
 def Mcp.list(+s: M.State, +thread: String) -> Res:
   match s:
     case M.State{_, ts, _, _, _, _, _, _, _, _, _}:
-      Res.ok(J.Json.obj([J.KV{"threads", J.Json.arr(Mcp.threads(Map.values(&2, M.Thread, ts), Mcp.project_of(B.Hub.thread(s, thread))))}]))
+      Res.ok(J.Json.obj([J.KV{"threads", J.Json.arr(Mcp.threads(Map.values(&2, M.Thread, ts), Mcp.scope(s, thread)))}]))
 
 def Mcp.entry(e: M.Entry) -> J.Json:
   match e:
@@ -303,27 +315,66 @@ def Mcp.view(+thread: String, +path: String, +kind: String) -> Res:
 def Mcp.proj(+s: M.State, +thread: String) -> String:
   Mcp.project_of(B.Hub.thread(s, thread))
 
+# a bot's first message names it (the link visuals read the sender)
+def Mcp.from.id(+from: String, +msg: String) -> String:
+  Bool.pick(String, String.is_empty(from), msg, M.Link.id(from, msg))
+
 # a new top-level thread with its first message (it waits for its
 # worktree like any new thread)
-def Mcp.launch.go(+s: M.State, +now: Nat, +th: String, +project: String, +env: String, +provider: String, +model: String, +title: String, +prompt: String) -> Res:
+def Mcp.launch.go(+s: M.State, +now: Nat, +th: String, +from: String, +project: String, +env: String, +provider: String, +model: String, +title: String, +prompt: String) -> Res:
   +c = {M.ThreadCreated{th, project, title, B.Hub.env.of(env), "", "", provider, model, now} : M.Change}
   +s1 = {M.State.replay([c], s) : M.State}
   Res{True{}, J.Json.obj([J.KV{"threadId", J.Str{th}}, J.KV{"title", J.Str{title}}, J.KV{"provider", J.Str{provider}}, J.KV{"state", J.Str{"started"}}]),
     B.Step.before([c], B.Hub.env.outs(B.Hub.env.of(env), th, B.Hub.project.root(B.Hub.project(s, project)), env),
-      B.Hub.post(s1, now, th, B.Hub.id("m", now, B.Hub.seq(s1)), M.User{}, prompt))}
+      B.Hub.post(s1, now, th, Mcp.from.id(from, B.Hub.id("m", now, B.Hub.seq(s1))), M.User{}, prompt))}
+
+# a project by id or name (any case)
+def Mcp.project.k(p: M.Project, +name: String) -> Bool:
+  match p:
+    case M.Project{i, t, _, _, rm}:
+      Bool.and(Bool.not(rm), Bool.or(String.eq(i, name), String.eq(String.to_lower(t), String.to_lower(name))))
+
+def Mcp.project.id(p: M.Project) -> String:
+  match p:
+    case M.Project{i, _, _, _, _}:
+      i
+
+def Mcp.project.go(ps: List<&2, M.Project>, +name: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case +p <> t:
+      Bool.pick(String, Mcp.project.k(p, name), Mcp.project.id(p), Mcp.project.go(t, name))
+
+def Mcp.project.find(+s: M.State, +name: String) -> String:
+  match s:
+    case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
+      Mcp.project.go(Map.values(&2, M.Project, ps), String.trim(name))
+
+# where a new thread goes: the caller's project, or for a bot the one it
+# names (it has none of its own)
+def Mcp.launch.proj(+s: M.State, +thread: String, +name: String) -> String:
+  Bool.pick(String, Bool.or(Mcp.bot(s, thread), Bool.not(String.is_empty(name))), Mcp.project.find(s, name), Mcp.proj(s, thread))
 
 def Mcp.launch.k(empty: Bool, +s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
   match empty:
     case True{}:
       Res.fail("a prompt is needed")
     case False{}:
-      Mcp.launch.go(s, now, B.Hub.id("t", now, B.Hub.seq(s)), Mcp.proj(s, thread), M.Setting.get(s, "thread.env", "auto"),
+      Mcp.launch.go(s, now, B.Hub.id("t", now, B.Hub.seq(s)), Bool.pick(String, Mcp.bot(s, thread), thread, ""), Mcp.launch.proj(s, thread, J.Json.get_str(p, "project", "")), M.Setting.get(s, "thread.env", "auto"),
         Mcp.or(J.Json.get_str(p, "provider", ""), M.Setting.get(s, "agent.provider", "claude")),
         Mcp.or(J.Json.get_str(p, "model", ""), Bool.pick(String, String.is_empty(J.Json.get_str(p, "provider", "")), M.Setting.get(s, "agent.model", ""), "")),
         Mcp.or(J.Json.get_str(p, "title", ""), B.Hub.title.of(J.Json.get_str(p, "prompt", ""))), J.Json.get_str(p, "prompt", ""))
 
+def Mcp.launch.b(bad: Bool, +s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
+  match bad:
+    case True{}:
+      Res.fail("name an existing project (project_list shows them)")
+    case False{}:
+      Mcp.launch.k(String.is_empty(String.trim(J.Json.get_str(p, "prompt", ""))), s, now, thread, p)
+
 def Mcp.launch(+s: M.State, +now: Nat, +thread: String, +p: J.Json) -> Res:
-  Mcp.launch.k(String.is_empty(String.trim(J.Json.get_str(p, "prompt", ""))), s, now, thread, p)
+  Mcp.launch.b(String.is_empty(Mcp.launch.proj(s, thread, J.Json.get_str(p, "project", ""))), s, now, thread, p)
 
 def Mcp.first.k(e: M.Entry, +th: String, rest: String) -> String:
   match e:

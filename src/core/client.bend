@@ -679,7 +679,7 @@ def Ui.actions() -> List<&2, String>:
    "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back",
    "bot", "bot-tab", "bot-new", "bot-create", "bot-delete", "bot-edit", "bfield", "room", "room-new", "room-save", "room-pick", "room-post",
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
-   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close"]
+   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier"]
 
 # Reading the client state
 # ------------------------
@@ -2669,6 +2669,111 @@ def Bots.google(+u: Ui, +op: String) -> Act:
   Ui.rpc(u, "bots.google", [J.KV{"op", J.Str{op}}, J.KV{"clientId", J.Str{Bots.field(u, "gid")}}, J.KV{"clientSecret", J.Str{Bots.field(u, "gsecret")}},
     J.KV{"pasted", J.Str{Bots.field(u, "gpaste")}}])
 
+# the reply may beat the bot's own change: remember it, and show it when it comes
+def Bots.reply.show(m: Maybe<&2, BT.Bot>, +id: String, u: Ui) -> Ui:
+  match m:
+    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
+      Bots.views(Bots.sel.set(u, th), i, "", "")
+    case None{}:
+      Ui.scratch_set(u, "@bot.want", id)
+
+def Bots.reply.bot.k(none: Bool, +o: J.Json, +u: Ui) -> Ui:
+  match none:
+    case True{}:
+      u
+    case False{}:
+      Bots.reply.show(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), J.Json.get_str(o, "bot", ""))), J.Json.get_str(o, "bot", ""), u)
+
+# answers that carry something for the bots' screens: a new bot is shown;
+# a webhook's secret and an invite are shown once; Google's sign-in link
+def Bots.reply.bot(+o: J.Json, u: Ui) -> Ui:
+  Bots.reply.bot.k(String.is_empty(J.Json.get_str(o, "bot", "")), o, u)
+
+def Bots.reply.put(+o: J.Json, +key: String, +into: String, +u: Ui) -> Ui:
+  Bool.pick(Ui, String.is_empty(J.Json.get_str(o, key, "")), u, Ui.scratch_set(u, into, J.Json.get_str(o, key, "")))
+
+def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
+  Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
+    Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id", Bots.reply.bot(o, u))))))
+
+# an answer: its request leaves the outbox; a diff opens the diff view
+def Ui.reply(u: Ui, +o: J.Json) -> Ui:
+  Bots.reply(o, Proj.reply(o, Ui.reply.skills(u, o)))
+
+def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 0n:
+      Ui.reset(u, o)
+    case 1n:
+      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
+    case 2n:
+      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
+    case 3n:
+      Ui.reply(u, o)
+    case 4n:
+      Ui.update(u, o)
+    case 5n:
+      Ui.view(u, o)
+    case 6n:
+      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
+    case 7n:
+      Ui.info_merge(u, J.Json.get_obj(o, "info"))
+    case _:
+      u
+
+def Bots.wanted.m(m: Maybe<&2, BT.Bot>, u: Ui) -> Ui:
+  match m:
+    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
+      Ui.scratch_set(Bots.views(Bots.sel.set(u, th), i, "", ""), "@bot.want", "")
+    case None{}:
+      u
+
+def Bots.wanted.k(none: Bool, +u: Ui) -> Ui:
+  match none:
+    case True{}:
+      u
+    case False{}:
+      Bots.wanted.m(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), Ui.scratch(u, "@bot.want"))), u)
+
+# a bot asked for (just made) is shown once its change has come
+def Bots.wanted(+u: Ui) -> Ui:
+  Bots.wanted.k(String.is_empty(Ui.scratch(u, "@bot.want")), u)
+
+# a message from the server
+def Ui.recv(u: Ui, +o: J.Json) -> Ui:
+  Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o))
+
+# a message from the server, with what to send: a (re)connection (the
+# server's log arrives first on each) sends the outbox again, so nothing
+# the user sent is lost to a dropped link
+def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
+
+# Pages of a timeline
+# -------------------
+# A thread can hold thousands of entries; a client shows its newest
+# Page.size(), and "earlier" (value: the thread, "" for the selected one)
+# shows Page.size() more each time ("@more.<thread>" counts the presses).
+
+def Page.size() -> Nat:
+  60n
+
+def Page.more(+u: Ui, +thread: String) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Ui.scratch(u, "@more." ++ thread)), 0n)
+
+# how many of a thread's newest entries are shown
+def Page.count(+more: Nat) -> Nat:
+  Nat.mul(Page.size(), 1n+more)
+
+def Page.shown(+u: Ui, +thread: String) -> Nat:
+  Page.count(Page.more(u, thread))
+
+def Page.earlier.k(+u: Ui, +thread: String) -> Ui:
+  Ui.scratch_set(u, "@more." ++ thread, Nat.show(1n+Page.more(u, thread)))
+
+def Page.earlier(+u: Ui, +value: String) -> Ui:
+  Page.earlier.k(u, Bool.pick(String, String.is_empty(value), Ui.sel.of(u), value))
+
 def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2735,6 +2840,8 @@ def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
       Act{Ui.scratch_set(Ui.scratch_set(u, "@hook.secret", ""), "@hook.id", ""), Nil{}}
     case 31n:
       Act{Ui.scratch_set(u, value, ""), Nil{}}
+    case 32n:
+      Act{Page.earlier(u, value), Nil{}}
     case _:
       Act{u, Nil{}}
 
@@ -2889,82 +2996,90 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
 def Ui.act(u: Ui, +action: String, +value: String) -> Act:
   Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)
 
-# the reply may beat the bot's own change: remember it, and show it when it comes
-def Bots.reply.show(m: Maybe<&2, BT.Bot>, +id: String, u: Ui) -> Ui:
-  match m:
-    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
-      Bots.views(Bots.sel.set(u, th), i, "", "")
-    case None{}:
-      Ui.scratch_set(u, "@bot.want", id)
+# the newest n of a list (oldest first), and how many are left out
+type Win is Data:
+  Win{hidden: Nat, shown: List<&2, M.Entry>}
 
-def Bots.reply.bot.k(none: Bool, +o: J.Json, +u: Ui) -> Ui:
-  match none:
+def Page.drop(n: Nat, es: List<&2, M.Entry>) -> List<&2, M.Entry>:
+  match n es:
+    case 0n _:
+      es
+    case 1n+k _ <> t:
+      Page.drop(k, t)
+    case 1n+_ Nil{}:
+      Nil{}
+
+def Page.window.k(+hidden: Nat, es: List<&2, M.Entry>) -> Win:
+  Win{hidden, Page.drop(hidden, es)}
+
+def Page.window(+es: List<&2, M.Entry>, +n: Nat) -> Win:
+  Page.window.k(Nat.sub(List.length(&2, M.Entry, es), n), es)
+
+def Win.hidden(w: Win) -> Nat:
+  match w:
+    case Win{h, _}:
+      h
+
+def Win.shown(w: Win) -> List<&2, M.Entry>:
+  match w:
+    case Win{_, es}:
+      es
+
+# A thread's newest page, found from the log's newest end: the log is
+# newest first, so the walk stops once it has one entry more than the page
+# (which says there are earlier ones) instead of going through every
+# thread's entries. An entry is the thread's, or a message it sent to
+# another (its id names the sender; read only when the entry is not the
+# thread's own). `hidden` is 1 when earlier entries exist, else 0.
+type PW is Data:
+  PW{left: Nat, acc: List<&2, M.Entry>}
+
+def Page.entry.thread(e: M.Entry) -> String:
+  match e:
+    case M.Msg{_, t, _, _, _}:
+      t
+    case M.Act{_, t, _, _, _, _}:
+      t
+
+def Page.entry.id(e: M.Entry) -> String:
+  match e:
+    case M.Msg{i, _, _, _, _}:
+      i
+    case M.Act{i, _, _, _, _, _}:
+      i
+
+def Page.mine(own: Bool, +e: M.Entry, +th: String) -> Bool:
+  match own:
     case True{}:
-      u
+      True{}
     case False{}:
-      Bots.reply.show(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), J.Json.get_str(o, "bot", ""))), J.Json.get_str(o, "bot", ""), u)
+      String.eq(M.Link.from(Page.entry.id(e)), th)
 
-# answers that carry something for the bots' screens: a new bot is shown;
-# a webhook's secret and an invite are shown once; Google's sign-in link
-def Bots.reply.bot(+o: J.Json, u: Ui) -> Ui:
-  Bots.reply.bot.k(String.is_empty(J.Json.get_str(o, "bot", "")), o, u)
+def Page.newest.step(own: Bool, e: M.Entry, st: PW) -> PW:
+  match own st:
+    case True{} PW{0n, acc}:
+      PW{0n, acc}
+    case True{} PW{1n+k, acc}:
+      PW{k, e <> acc}
+    case False{} PW{l, acc}:
+      PW{l, acc}
 
-def Bots.reply.put(+o: J.Json, +key: String, +into: String, +u: Ui) -> Ui:
-  Bool.pick(Ui, String.is_empty(J.Json.get_str(o, key, "")), u, Ui.scratch_set(u, into, J.Json.get_str(o, key, "")))
+def Page.newest.go(es: List<&2, M.Entry>, +th: String, st: PW) -> PW:
+  match es st:
+    case +_ PW{0n, acc}:
+      PW{0n, acc}
+    case Nil{} PW{l, acc}:
+      PW{l, acc}
+    case +e <> t PW{1n+k, acc}:
+      Page.newest.go(t, th, Page.newest.step(Page.mine(String.eq(Page.entry.thread(e), th), e, th), e, PW{1n+k, acc}))
 
-def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
-  Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
-    Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id", Bots.reply.bot(o, u))))))
+# one more than the page was found: drop the oldest, say there are more
+def Page.newest.k(st: PW) -> Win:
+  match st:
+    case PW{0n, _ <> rest}:
+      Win{1n, rest}
+    case PW{_, acc}:
+      Win{0n, acc}
 
-# an answer: its request leaves the outbox; a diff opens the diff view
-def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Bots.reply(o, Proj.reply(o, Ui.reply.skills(u, o)))
-
-def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
-  match i:
-    case 0n:
-      Ui.reset(u, o)
-    case 1n:
-      Ui.fold(Ui.decode(J.Json.elems(J.Json.get_obj(o, "items"))), u)
-    case 2n:
-      Ui.delta(u, J.Json.get_str(o, "thread", ""), J.Json.get_str(o, "text", ""))
-    case 3n:
-      Ui.reply(u, o)
-    case 4n:
-      Ui.update(u, o)
-    case 5n:
-      Ui.view(u, o)
-    case 6n:
-      Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
-    case 7n:
-      Ui.info_merge(u, J.Json.get_obj(o, "info"))
-    case _:
-      u
-
-def Bots.wanted.m(m: Maybe<&2, BT.Bot>, u: Ui) -> Ui:
-  match m:
-    case Some{BT.Bot{+i, _, +th, _, _, _, _}}:
-      Ui.scratch_set(Bots.views(Bots.sel.set(u, th), i, "", ""), "@bot.want", "")
-    case None{}:
-      u
-
-def Bots.wanted.k(none: Bool, +u: Ui) -> Ui:
-  match none:
-    case True{}:
-      u
-    case False{}:
-      Bots.wanted.m(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), Ui.scratch(u, "@bot.want"))), u)
-
-# a bot asked for (just made) is shown once its change has come
-def Bots.wanted(+u: Ui) -> Ui:
-  Bots.wanted.k(String.is_empty(Ui.scratch(u, "@bot.want")), u)
-
-# a message from the server
-def Ui.recv(u: Ui, +o: J.Json) -> Ui:
-  Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o))
-
-# a message from the server, with what to send: a (re)connection (the
-# server's log arrives first on each) sends the outbox again, so nothing
-# the user sent is lost to a dropped link
-def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
-  Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
+def Page.newest(+es: List<&2, M.Entry>, +th: String, +n: Nat) -> Win:
+  Page.newest.k(Page.newest.go(es, th, PW{1n+n, Nil{}}))

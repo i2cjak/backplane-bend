@@ -807,6 +807,30 @@ def TL.mine(es: List<&2, M.Entry>, +th: String, acc: List<&2, M.Entry>) -> List<
     case +e <> t:
       TL.mine(t, th, TL.mine.k(TL.mine.or(String.eq(TL.thread_of(e), th), e, th), e, acc))
 
+# the newest `left` of a thread's entries (and the messages it sent),
+# oldest first: the log is newest first, so the walk stops once it has
+# them instead of going through the whole log each frame
+type NW is Data:
+  NW{left: Nat, acc: List<&2, M.Entry>}
+
+def TL.newest.step(own: Bool, e: M.Entry, st: NW) -> NW:
+  match own st:
+    case True{} NW{0n, acc}:
+      NW{0n, acc}
+    case True{} NW{1n+k, acc}:
+      NW{k, e <> acc}
+    case False{} NW{l, acc}:
+      NW{l, acc}
+
+def TL.newest(es: List<&2, M.Entry>, +th: String, st: NW) -> List<&2, M.Entry>:
+  match es st:
+    case +_ NW{0n, acc}:
+      acc
+    case Nil{} NW{_, acc}:
+      acc
+    case +e <> t NW{1n+k, acc}:
+      TL.newest(t, th, TL.newest.step(TL.mine.or(String.eq(TL.thread_of(e), th), e, th), e, NW{1n+k, acc}))
+
 def TL.height(ls: List<&2, TLine>, +acc: U32) -> U32:
   match ls:
     case Nil{}:
@@ -2730,31 +2754,23 @@ def Lay.drop_mark(on: Bool, +ty: Ty, +draft: String, +x0: U32, +x1: U32, +h: U32
     case False{}:
       Out.none()
 
-def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U32) -> Out:
-  match n:
-    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
-        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy))
+def Lay.earlier.at(+ty: Ty, +label: String, +x: U32, +y: U32, +w: U32) -> Out:
+  Out{Ty.text(ty, 2n, label, D.Clip.all(), x, y, 28, T.Th.accent()), [Lay.hit(x, y, w, 28, "earlier", "")]}
 
-# the thread view with its header at the top
-def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
-  Lay.thread.at(ty, memo, n, x0, x1, 0)
+def Lay.earlier.b(+ty: Ty, +label: String, +x1: U32, +y: U32) -> Out:
+  Lay.earlier.at(ty, label, (x1 - Ty.width(ty, 2n, label) - 16 : U32), y, (Ty.width(ty, 2n, label) + 8 : U32))
 
-# only the screen shown is laid out (a Bool.pick would lay out all three)
-def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:
-  match settings empty:
-    case True{} _:
-      Lay.settings(ty, st, nf, v, note, x0, x1, h, Maybe.default(&2, U32, U32.read(U.Ui.scratch(S.Nui.ui(n), "@set.sc")), 0))
-    case False{} True{}:
-      Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st)))
-    case False{} False{}:
-      Lay.thread(ty, memo, n, x0, x1)
+# "Show earlier" at the timeline's top right, while the page is full (a
+# thread with more entries than one page shows)
+def Lay.earlier.k(more: Bool, +ty: Ty, +x1: U32, +y: U32) -> Out:
+  match more:
+    case True{}:
+      Lay.earlier.b(ty, "Show earlier", x1, y)
+    case False{}:
+      Out.none()
 
-def Lay.main(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
-  match n:
-    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
-      Lay.main.k(U.Flag.get(op, "settings"), String.is_empty(sel), ty, memo, n, st, nf, v, note, x0, x1, h)
+def Lay.earlier(+ty: Ty, more: Bool, +x0: U32, +x1: U32, +hy: U32) -> Out:
+  Lay.earlier.k(more, ty, (x0 + U32.shr((x1 - x0 - U32.min((x1 - x0 - 64 : U32), 780) : U32)) + U32.min((x1 - x0 - 64 : U32), 780) : U32), (58 + hy : U32))
 
 def Lay.viewer.if(open: Bool, +ty: Ty, +n: S.Nui, +x0: U32, +w: U32, +h: U32) -> Out:
   match open:
@@ -2777,6 +2793,66 @@ def Lay.proj.if(open: Bool, +ty: Ty, +n: S.Nui, +w: U32, +h: U32) -> Out:
     case False{}:
       Out.none()
 
+# the main area's right edge (half the window with the viewer open)
+def Lay.x1(+n: S.Nui) -> U32:
+  Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((S.Nui.width(n) - 264 : U32)) : U32), S.Nui.width(n))
+
+# the timeline's width, as Lay.frame lays it out
+def Lay.tl.px(+n: S.Nui) -> U32:
+  +w = S.Nui.width(n)
+  +x1 = Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((w - 264 : U32)) : U32), w)
+  U32.min((x1 - 264 - 64 : U32), 780)
+
+# the open thread's entries (none with no thread open)
+def Lay.memo.es(none: Bool, +n: S.Nui) -> List<&2, M.Entry>:
+  match none:
+    case True{}:
+      Nil{}
+    case False{}:
+      TL.newest(U.Ui.entries(U.Ui.state(S.Nui.ui(n))), U.Ui.sel(S.Nui.ui(n)), NW{U.Page.shown(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), Nil{}})
+
+# (only the newest page of a thread, core's Page: a long thread laid out
+# whole cost every frame 15 ms on a real log; "earlier" shows another page)
+# the memo brought up to this frame: the open thread's entries at its width
+def Lay.memo(+ty: Ty, +n: S.Nui, prev: TLMemo) -> TLMemo:
+  TL.memo.of(ty, Lay.memo.es(String.is_empty(U.Ui.sel(S.Nui.ui(n))), n), Lay.tl.px(n), U.Ui.sel(S.Nui.ui(n)), prev)
+
+# the memos brought up to this frame: the open thread's in front, from the
+# one kept for it
+def Lay.memos(+ty: Ty, +n: S.Nui, +ms: List<&2, TLMemo>) -> List<&2, TLMemo>:
+  TL.memos.keep(Lay.memo(ty, n, TL.memos.pick(ms, U.Ui.sel(S.Nui.ui(n)))), ms)
+
+def TL.memo.size(m: TLMemo) -> Nat:
+  match m:
+    case TLMemo{_, _, its}:
+      List.length(&2, TLE, its)
+
+def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U32) -> Out:
+  match n:
+    case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
+      Out.cat(Out.all([Lay.earlier(ty, Nat.is_ge(TL.memo.size(memo), U.Page.shown(S.Nui.ui(n), sel)), x0, x1, hy), Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)]), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
+        U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy))
+
+# the thread view with its header at the top
+def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  Lay.thread.at(ty, memo, n, x0, x1, 0)
+
+# only the screen shown is laid out (a Bool.pick would lay out all three)
+def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match settings empty:
+    case True{} _:
+      Lay.settings(ty, st, nf, v, note, x0, x1, h, Maybe.default(&2, U32, U32.read(U.Ui.scratch(S.Nui.ui(n), "@set.sc")), 0))
+    case False{} True{}:
+      Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st)))
+    case False{} False{}:
+      Lay.thread(ty, memo, n, x0, x1)
+
+def Lay.main(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
+  match n:
+    case S.Nui{U.Ui{+st, +sel, _, _, +op, _, _, _, _, +v, _, _, _, +note, +nf, _, _}, _, +h, _, _, _, _, _, _, _, _, _, _}:
+      Lay.main.k(U.Flag.get(op, "settings"), String.is_empty(sel), ty, memo, n, st, nf, v, note, x0, x1, h)
+
 # the main area: the one given (a bot's, a room's), or the usual one
 def Lay.main.m(m: Maybe<&2, Out>, +ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
   match m:
@@ -2784,10 +2860,6 @@ def Lay.main.m(m: Maybe<&2, Out>, +ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +
       o
     case None{}:
       Lay.main(ty, memo, n, x0, x1)
-
-# the main area's right edge (half the window with the viewer open)
-def Lay.x1(+n: S.Nui) -> U32:
-  Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((S.Nui.width(n) - 264 : U32)) : U32), S.Nui.width(n))
 
 # the whole window, topmost first; `more` lays out what the sidebar shows
 # under the projects, `main` a main area in place of the usual one
@@ -2808,31 +2880,3 @@ def Lay.frame.x(+ty: Ty, +memo: TLMemo, +n: S.Nui, more: D.Clip -> U32 -> Col, m
 
 def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
   Lay.frame.x(ty, memo, n, c => y => Col{Out.none(), y}, None{})
-
-# the timeline's width, as Lay.frame lays it out
-def Lay.tl.px(+n: S.Nui) -> U32:
-  +w = S.Nui.width(n)
-  +x1 = Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((w - 264 : U32)) : U32), w)
-  U32.min((x1 - 264 - 64 : U32), 780)
-
-# the open thread's entries (none with no thread open)
-def Lay.memo.es(none: Bool, +n: S.Nui) -> List<&2, M.Entry>:
-  match none:
-    case True{}:
-      Nil{}
-    case False{}:
-      TL.mine(U.Ui.entries(U.Ui.state(S.Nui.ui(n))), U.Ui.sel(S.Nui.ui(n)), Nil{})
-
-# the memo brought up to this frame: the open thread's entries at its width
-def Lay.memo(+ty: Ty, +n: S.Nui, prev: TLMemo) -> TLMemo:
-  TL.memo.of(ty, Lay.memo.es(String.is_empty(U.Ui.sel(S.Nui.ui(n))), n), Lay.tl.px(n), U.Ui.sel(S.Nui.ui(n)), prev)
-
-# the memos brought up to this frame: the open thread's in front, from the
-# one kept for it
-def Lay.memos(+ty: Ty, +n: S.Nui, +ms: List<&2, TLMemo>) -> List<&2, TLMemo>:
-  TL.memos.keep(Lay.memo(ty, n, TL.memos.pick(ms, U.Ui.sel(S.Nui.ui(n)))), ms)
-
-def TL.memo.size(m: TLMemo) -> Nat:
-  match m:
-    case TLMemo{_, _, its}:
-      List.length(&2, TLE, its)

@@ -179,7 +179,7 @@ def Cat.mood.all(ms: List<&2, String>) -> List<&2, U32>:
 # holds still there, so it never asks for frames (web and phones may still
 # let a sleeping cat breathe)
 def Cat.moving(+mood: String) -> Bool:
-  Bool.not(Bool.or(String.eq(mood, "sleep"), Bool.or(String.eq(mood, "error"), String.eq(mood, "away"))))
+  Bool.or(Bool.or(String.eq(mood, "work"), String.eq(mood, "think")), Bool.or(String.eq(mood, "wait"), String.eq(mood, "talk")))
 
 # Path data
 # ---------

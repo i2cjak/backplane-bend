@@ -347,6 +347,10 @@ struct ThreadScreen: View {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     if let p = thread.parent { EntryRow(model: model, entry: p) { shown = $0 } }
                     if let ts = thread.tasks, !ts.isEmpty { TasksView(model: model, tasks: ts) }
+                    if let n = thread.earlier, n > 0 {
+                        Button("Show earlier") { model.act("earlier", "") }
+                            .font(.footnote).frame(maxWidth: .infinity).padding(.vertical, 4)
+                    }
                     ForEach(thread.entries) { EntryRow(model: model, entry: $0) { shown = $0 }.id($0.id) }
                     ForEach(Array(thread.sending.enumerated()), id: \.offset) { _, text in
                         VStack(alignment: .trailing, spacing: 2) {

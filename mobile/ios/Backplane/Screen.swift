@@ -214,6 +214,8 @@ struct ThreadView: Decodable {
     let queued: String
     let queue: [QueueRow]?
     let todos: Todos?
+    // how many older entries the page leaves out ("earlier" shows more)
+    let earlier: Int?
     let live: [Block]
     let working, draft, send: String
     let picker: ModelPicker

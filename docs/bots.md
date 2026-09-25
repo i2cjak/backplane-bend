@@ -19,6 +19,19 @@ machine or across machines, including other people's Backplanes.
   secrets are files under `<home>/secrets/` (0700 dir, 0600 files); the
   Google refresh token too.
 
+## Projects and sub-bots
+
+A bot works for the person across all their projects. Its thread belongs
+to none, so the thread tools reach every project for it: `thread_list`
+lists every project's threads, `thread_read`, `thread_send`, `thread_wait`
+and `thread_interrupt` take any of them, and `thread_launch` needs a
+`project` (a name or id from `project_list`). The new thread shows in that
+project like the person's own, its first message naming the bot.
+
+`bot_create` makes a sub-bot for a lasting role. Its maker is kept as the
+setting `bot.parent.<id>`. Sub-bots go at most two levels below a bot a
+person made (law `bot_spawn_bounded`), and a bot keeps at most eight.
+
 ## Conversation depth
 
 A message a bot sends carries a hop count: a human, a routine, a webhook or

@@ -11,9 +11,10 @@ data class SwipeChoice(val label: String, val value: String)
 
 data class Swipe(val label: String, val action: String, val value: String, val tone: String, val options: List<SwipeChoice>)
 
+// status: what its dot says (approval, input, working, failed, queued, ready)
 data class Row(
     val id: String, val title: String, val state: String, val ago: String, val pinned: Boolean,
-    val lead: List<Swipe>, val trail: List<Swipe>,
+    val lead: List<Swipe>, val trail: List<Swipe>, val status: String = "",
 )
 
 // machine: the hub it is on, named when the phone has several
@@ -21,6 +22,8 @@ data class Project(
     val id: String, val title: String, val root: String, val machine: String, val open: Boolean,
     val threads: List<Row>, val snoozedShelf: String, val snoozed: List<Row>,
     val shelf: String, val settled: List<Row>,
+    // the Archived shelf: "toggle-settled" with value opens or shuts it
+    val value: String = "", val archOpen: Boolean = false, val archived: List<Row> = emptyList(),
 )
 
 // a delete a row asked for, waiting for yes ("row-delete" id) or no
@@ -32,17 +35,61 @@ data class FolderRow(val label: String, val action: String, val value: String, v
 
 data class Folders(val text: String, val hint: String, val error: String, val items: List<FolderRow>)
 
-data class Tool(val label: String, val action: String, val on: Boolean)
+// a toolbar or menu item: it sends action with value, or (a snooze)
+// offers choices whose values it sends instead; danger asks first
+data class Tool(
+    val label: String, val action: String, val on: Boolean,
+    val value: String = "", val danger: Boolean = false, val options: List<SwipeChoice> = emptyList(),
+)
 
 sealed interface Block {
     data class El(val tag: String, val kids: List<Block>) : Block
     data class Txt(val text: String) : Block
 }
 
+// an attachment of a user message (url: where its hub serves it)
+data class Chip(val label: String, val path: String, val image: Boolean, val url: String)
+
+// an image a reply names
+data class Shot(val path: String, val url: String)
+
+// kind: user, assistant, act (a tool line), fold (a run of tool calls:
+// "fold" with value opens or shuts it), link (opens thread value)
 data class Entry(
     val id: String, val kind: String, val text: String,
     val tone: String, val label: String, val blocks: List<Block>,
+    val attachments: List<Chip> = emptyList(), val images: List<Shot> = emptyList(),
+    val open: Boolean = false, val value: String = "",
 )
+
+// what the agent waits on the user for: an approval, a question or a
+// plan; each button sends "answer" with its value
+data class AskButton(val label: String, val value: String, val primary: Boolean)
+data class Ask(val id: String, val kind: String, val head: String, val detail: String, val blocks: List<Block>, val buttons: List<AskButton>)
+
+// a thread this one delegated to ("select" opens it)
+data class TaskRow(val id: String, val who: String, val title: String, val state: String)
+
+// a skill the `$` being typed may complete to ("skill" with its name)
+data class Skill(val name: String, val desc: String)
+
+// what the thread changed: k 0 context, 1 added, 2 removed, 3 meta, 4 a hunk head
+data class DiffLine(val k: Int, val t: String, val o: String, val n: String)
+data class DiffFile(val name: String, val status: String, val lines: List<DiffLine>)
+data class Diff(val summary: String, val files: List<DiffFile>)
+
+// the thread's shell: rows of styled runs (colours 0xRRGGBB) and the cursor
+data class TermRun(val t: String, val fg: Int, val bg: Int, val b: Boolean, val u: Boolean)
+data class TermCursor(val x: Int, val y: Int, val on: Boolean)
+data class Term(val title: String, val fg: Int, val bg: Int, val lines: List<List<TermRun>>, val cursor: TermCursor)
+
+// settings: rows of a label, a note and buttons (each sends action with value)
+data class SetButton(val label: String, val action: String, val value: String, val on: Boolean)
+data class SetRow(val label: String, val note: String, val buttons: List<SetButton>)
+data class Settings(val rows: List<SetRow>)
+
+// thread search ("search") or the file picker ("files"): its query and rows
+data class Find(val mode: String, val query: String, val rows: List<FolderRow>)
 
 // the board viewer (src/mobile/view.bend): the source open ("" closed),
 // the key its plots carry, the choices, and how to draw
@@ -81,6 +128,21 @@ data class ThreadView(
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
     val queue: List<QueueRow> = emptyList(),
     val todos: Todos? = null,
+    // how many older entries the page leaves out (the "earlier" action shows more)
+    val earlier: Int = 0,
+    // the menu under the toolbar's overflow, after the tools
+    val menu: List<Tool> = emptyList(),
+    val parent: Entry? = null,
+    val tasks: List<TaskRow> = emptyList(),
+    val asks: List<Ask> = emptyList(),
+    val skills: List<Skill> = emptyList(),
+    // what the next message attaches, and what is still uploading; files
+    // go up in pieces of chunk bytes
+    val attaching: List<Chip> = emptyList(),
+    val uploading: String = "",
+    val chunk: Int = 196_608,
+    val diff: Diff? = null,
+    val term: Term? = null,
 )
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
@@ -153,6 +215,7 @@ data class Screen(
     val hub: String, val hubs: List<HubRow>, val found: List<Found>,
     val bots: List<BotRow> = emptyList(), val rooms: List<RoomRow> = emptyList(),
     val newBot: NewBot? = null, val newRoom: NewRoom? = null, val bot: BotView? = null,
+    val settings: Settings? = null, val find: Find? = null,
 )
 
 data class Cmd(
@@ -181,16 +244,64 @@ private fun swipe(o: JSONObject) = Swipe(
 
 private fun row(o: JSONObject) = Row(
     o.optString("id"), o.optString("title"), o.optString("state"), o.optString("ago"), o.optBoolean("pinned"),
-    o.optJSONArray("lead").map(::swipe), o.optJSONArray("trail").map(::swipe),
+    o.optJSONArray("lead").map(::swipe), o.optJSONArray("trail").map(::swipe), o.optString("status"),
 )
 
-private fun thread(o: JSONObject) = ThreadView(
-    o.optString("id"), o.optString("title"), o.optString("branch"), o.optString("state"),
-    o.optJSONArray("tools").map { Tool(it.optString("label"), it.optString("action"), it.optBoolean("on")) },
-    o.optJSONArray("entries").map {
-        Entry(it.optString("id"), it.optString("kind"), it.optString("text"), it.optString("tone"),
-            it.optString("label"), blocks(it.optJSONArray("blocks")))
+private fun chips(a: JSONArray?) =
+    a.map { Chip(it.optString("label"), it.optString("path"), it.optBoolean("image"), it.optString("url")) }
+
+private fun entry(o: JSONObject) = Entry(
+    o.optString("id"), o.optString("kind"), o.optString("text"), o.optString("tone"),
+    o.optString("label"), blocks(o.optJSONArray("blocks")),
+    chips(o.optJSONArray("attachments")),
+    o.optJSONArray("images").map { Shot(it.optString("path"), it.optString("url")) },
+    o.optBoolean("open"), o.optString("value"),
+)
+
+private fun tool(o: JSONObject) = Tool(
+    o.optString("label"), o.optString("action"), o.optBoolean("on"), o.optString("value"), o.optBoolean("danger"),
+    o.optJSONArray("options").map { SwipeChoice(it.optString("label"), it.optString("value")) },
+)
+
+private fun term(o: JSONObject) = Term(
+    o.optString("title"), o.optInt("fg"), o.optInt("bg"),
+    o.optJSONArray("lines").let { a ->
+        if (a == null) emptyList() else (0 until a.length()).map { i ->
+            a.optJSONArray(i).map { TermRun(it.optString("t"), it.optInt("fg"), it.optInt("bg"), it.optBoolean("b"), it.optBoolean("u")) }
+        }
     },
+    (o.optJSONObject("cursor") ?: JSONObject()).let { TermCursor(it.optInt("x"), it.optInt("y"), it.optBoolean("on")) },
+)
+
+private fun folderRows(a: JSONArray?) =
+    a.map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) }
+
+private fun thread(o: JSONObject) = threadOf(o).copy(
+    earlier = o.optInt("earlier", 0),
+    menu = o.optJSONArray("menu").map(::tool),
+    parent = o.optJSONObject("parent")?.let(::entry),
+    tasks = o.optJSONArray("tasks").map { TaskRow(it.optString("id"), it.optString("who"), it.optString("title"), it.optString("state")) },
+    asks = o.optJSONArray("asks").map { a ->
+        Ask(a.optString("id"), a.optString("kind"), a.optString("head"), a.optString("detail"), blocks(a.optJSONArray("blocks")),
+            a.optJSONArray("buttons").map { AskButton(it.optString("label"), it.optString("value"), it.optBoolean("primary")) })
+    },
+    skills = o.optJSONArray("skills").map { Skill(it.optString("name"), it.optString("desc")) },
+    attaching = chips(o.optJSONArray("attaching")),
+    uploading = o.optString("uploading"),
+    chunk = o.optInt("chunk", 196_608),
+    diff = o.optJSONObject("diff")?.let { d ->
+        Diff(d.optString("summary"), d.optJSONArray("files").map { f ->
+            DiffFile(f.optString("name"), f.optString("status"),
+                f.optJSONArray("lines").map { DiffLine(it.optInt("k"), it.optString("t"), it.optString("o"), it.optString("n")) })
+        })
+    },
+    term = o.optJSONObject("term")?.let(::term),
+)
+
+private fun threadOf(o: JSONObject) = ThreadView(
+    o.optString("id"), o.optString("title"), o.optString("branch"), o.optString("state"),
+    o.optJSONArray("tools").map(::tool),
+    o.optJSONArray("entries").map(::entry),
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
     strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
     viewer(o.optJSONObject("viewer") ?: JSONObject()),
@@ -266,7 +377,8 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optJSONArray("projects").map {
         Project(it.optString("id"), it.optString("title"), it.optString("root"), it.optString("machine"), it.optBoolean("open"),
             it.optJSONArray("threads").map(::row), it.optString("snoozedShelf"), it.optJSONArray("snoozed").map(::row),
-            it.optString("shelf"), it.optJSONArray("settled").map(::row))
+            it.optString("shelf"), it.optJSONArray("settled").map(::row),
+            it.optString("value"), it.optBoolean("archOpen"), it.optJSONArray("archived").map(::row))
     },
     o.optJSONObject("thread")?.let(::thread),
     island(o.optJSONObject("island")),
@@ -275,7 +387,7 @@ fun parseScreen(o: JSONObject) = Screen(
     },
     o.optJSONObject("folders")?.let { p ->
         Folders(p.optString("text"), p.optString("hint"), p.optString("error"),
-            p.optJSONArray("items").map { FolderRow(it.optString("label"), it.optString("action"), it.optString("value"), it.optString("kind")) })
+            folderRows(p.optJSONArray("items")))
     },
     o.optString("hub"),
     o.optJSONArray("hubs").map { HubRow(it.optString("key"), it.optString("name"), it.optBoolean("online")) },
@@ -295,6 +407,13 @@ fun parseScreen(o: JSONObject) = Screen(
         NewRoom(f.optString("name"), f.optJSONArray("picks").map { RoomPick(it.optString("id"), it.optString("name"), it.optBoolean("on")) })
     },
     o.optJSONObject("bot")?.let(::botView),
+    o.optJSONObject("settings")?.let { st ->
+        Settings(st.optJSONArray("rows").map { r ->
+            SetRow(r.optString("label"), r.optString("note"),
+                r.optJSONArray("buttons").map { SetButton(it.optString("label"), it.optString("action"), it.optString("value"), it.optBoolean("on")) })
+        })
+    },
+    o.optJSONObject("find")?.let { Find(it.optString("mode"), it.optString("query"), folderRows(it.optJSONArray("rows"))) },
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =

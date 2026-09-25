@@ -36,6 +36,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -104,6 +106,11 @@ fun App(m: AppModel) {
             BackHandler { m.act("view", "") }
             PlotScreen(m, s.thread.viewer)
         }
+        // the thread's shell, in place of the screen so it follows the keyboard
+        s.thread?.term != null -> {
+            BackHandler { m.act("term-toggle") }
+            TermSheet(m, s.thread.term)
+        }
         // a bot (its chat is its thread), a room, or a bot on a linked machine
         s.bot != null -> {
             BackHandler { m.act("select", "") }
@@ -115,6 +122,23 @@ fun App(m: AppModel) {
         }
         else -> Projects(m, s, onPair = { pairing = true })
     }
+    if (s == null || m.links.isEmpty()) return
+    val d = s.deleting
+    // the delete just answered: its dialog stays down until the screen drops it
+    var answered by remember(d?.id) { mutableStateOf(false) }
+    if (d != null && !answered) AlertDialog(
+        onDismissRequest = { answered = true; m.act("delete-no") },
+        title = { Text(d.title) },
+        text = { Text(d.body) },
+        confirmButton = {
+            TextButton(onClick = { answered = true; m.act("row-delete", d.id) }) {
+                Text(d.yes, color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
+    )
+    s.settings?.let { SettingsSheet(m, it) }
+    s.find?.let { FindSheet(m, it) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -246,7 +270,7 @@ private fun ThreadRow(m: AppModel, r: Row) {
         ) {
             ListItem(
                 headlineContent = { Text(r.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                leadingContent = { Status(r.state) },
+                leadingContent = { StatusDot(r.state, r.status) },
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (r.pinned) Icon(Icons.Filled.PushPin, "Pinned", Modifier.size(16.dp).padding(end = 4.dp))
@@ -275,7 +299,7 @@ private fun ThreadRow(m: AppModel, r: Row) {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-private fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onClick: () -> Unit) =
+internal fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onClick: () -> Unit) =
     this.combinedClickable(onClick = onClick, onLongClick = onLong)
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -283,6 +307,7 @@ private fun Modifier.combinedClickableCompat(onLong: (() -> Unit)? = null, onCli
 private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
     val snacks = remember { SnackbarHostState() }
     var choosing by remember { mutableStateOf(false) }
+    var more by remember { mutableStateOf(false) }
     Errors(m, s, snacks)
     Scaffold(
         topBar = {
@@ -309,6 +334,15 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                         }
                     }
                     IconButton(onClick = onPair) { Icon(Icons.Filled.Link, "Hubs") }
+                    Box {
+                        IconButton(onClick = { more = true }) { Icon(Icons.Filled.MoreVert, "More") }
+                        DropdownMenu(more, { more = false }) {
+                            DropdownMenuItem(text = { Text("Search threads") }, leadingIcon = { Icon(Icons.Filled.Search, null) },
+                                onClick = { more = false; m.act("find-open", "search") })
+                            DropdownMenuItem(text = { Text("Settings") }, leadingIcon = { Icon(Icons.Filled.Settings, null) },
+                                onClick = { more = false; m.act("flag", "settings") })
+                        }
+                    }
                 },
             )
         },
@@ -352,25 +386,23 @@ private fun Projects(m: AppModel, s: Screen, onPair: () -> Unit) {
                     }
                     if (p.open) items(p.settled, key = { "t:" + it.id }) { ThreadRow(m, it) }
                 }
+                if (p.archived.isNotEmpty() && p.value.isNotEmpty()) {
+                    item(key = "a:" + p.id) {
+                        ListItem(
+                            headlineContent = { Text("Archived ${p.archived.size}", style = MaterialTheme.typography.labelLarge) },
+                            trailingContent = {
+                                Icon(if (p.archOpen) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore, null)
+                            },
+                            modifier = Modifier.combinedClickableCompat { m.act("toggle-settled", p.value) },
+                        )
+                    }
+                    if (p.archOpen) items(p.archived, key = { "t:" + it.id }) { ThreadRow(m, it) }
+                }
                 item(key = "d:" + p.id) { HorizontalDivider() }
             }
             if (s.hubs.isNotEmpty()) botsSection(m, s)
         }
     }
-    val d = s.deleting
-    // the delete just answered: its dialog stays down until the screen drops it
-    var answered by remember(d?.id) { mutableStateOf(false) }
-    if (d != null && !answered) AlertDialog(
-        onDismissRequest = { answered = true; m.act("delete-no") },
-        title = { Text(d.title) },
-        text = { Text(d.body) },
-        confirmButton = {
-            TextButton(onClick = { answered = true; m.act("row-delete", d.id) }) {
-                Text(d.yes, color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = { TextButton(onClick = { answered = true; m.act("delete-no") }) { Text(d.no) } },
-    )
     s.folders?.let { FolderPicker(m, it) }
     s.newBot?.let { NewBotDialog(m, it) }
     s.newRoom?.let { NewRoomDialog(m, it) }
@@ -427,27 +459,6 @@ private fun FolderPicker(m: AppModel, p: Folders) {
     }
 }
 
-@Composable
-private fun EntryView(m: AppModel, e: Entry) {
-    when (e.kind) {
-        "user" -> Row(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.weight(1f).widthIn(min = 48.dp))
-            Surface(
-                color = MaterialTheme.colorScheme.primaryContainer,
-                shape = MaterialTheme.shapes.large,
-                modifier = Modifier.combinedClickableCompat(onLong = { m.act("copy", e.text) }) {},
-            ) { Text(e.text, Modifier.padding(horizontal = 14.dp, vertical = 10.dp), style = MaterialTheme.typography.bodyLarge) }
-        }
-        "assistant" -> Markdown(e.blocks, Modifier.fillMaxWidth().combinedClickableCompat(onLong = { m.act("copy", e.text) }) {})
-        else -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val color = if (e.tone == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outline
-            val mono = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace)
-            Text(e.label, style = mono, color = color.copy(alpha = 0.7f))
-            Text(e.text, style = mono, color = color, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
 // a message the hub has not stored yet
 @Composable
 private fun SendingView(text: String) {
@@ -470,15 +481,20 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
     val snacks = remember { SnackbarHostState() }
     val list = rememberLazyListState()
     var menu by remember { mutableStateOf(false) }
+    // the image open in the lightbox
+    var shown by remember { mutableStateOf<String?>(null) }
+    val termSize = rememberTermSize()
     Errors(m, s, snacks)
-    val count = t.entries.size + t.sending.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
+    val count = (if (t.parent != null) 1 else 0) + (if (t.tasks.isNotEmpty()) 1 else 0) +
+        (if (t.earlier > 0) 1 else 0) + t.entries.size + t.sending.size + (if (t.live.isNotEmpty() || t.working.isNotEmpty()) 1 else 0)
     LaunchedEffect(t.id, m.scrolls) { if (count > 0) list.scrollToItem(count - 1) }
     LaunchedEffect(count, t.live) {
         val last = list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
         if (count > 0 && last >= count - 3) list.animateScrollToItem(count - 1)
     }
     Scaffold(
-        topBar = { Column {
+        // opaque, so the entries scrolled under it (a bot's cat and tabs) never show through
+        topBar = { Column(Modifier.background(MaterialTheme.colorScheme.surface)) {
             TopAppBar(
                 navigationIcon = { IconButton(onClick = { m.act("select", "") }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } },
                 title = {
@@ -507,8 +523,35 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
                             for (tool in t.tools) if (tool.action != "interrupt") DropdownMenuItem(
                                 text = { Text(tool.label) },
                                 leadingIcon = { if (tool.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
-                                onClick = { menu = false; m.act(tool.action) },
+                                onClick = { menu = false; m.act(tool.action, tool.value) },
                             )
+                            if (t.menu.isNotEmpty()) HorizontalDivider()
+                            for (item in t.menu) {
+                                if (item.options.isNotEmpty()) {
+                                    Text(item.label, Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                                    for (o in item.options) DropdownMenuItem(
+                                        text = { Text(o.label) },
+                                        leadingIcon = { Spacer(Modifier.width(24.dp)) },
+                                        onClick = { menu = false; m.act(item.action, o.value) },
+                                    )
+                                } else DropdownMenuItem(
+                                    text = { Text(item.label, color = if (item.danger) MaterialTheme.colorScheme.error else Color.Unspecified) },
+                                    leadingIcon = {
+                                        val icon = menuIcon(item.action)
+                                        when {
+                                            item.on -> Icon(Icons.Filled.Check, null)
+                                            icon != null -> Icon(icon, null, tint = if (item.danger) MaterialTheme.colorScheme.error else Color.Unspecified)
+                                            else -> Spacer(Modifier.width(24.dp))
+                                        }
+                                    },
+                                    onClick = {
+                                        menu = false
+                                        // the terminal opens at the size this phone has room for
+                                        m.act(item.action, if (item.action == "term-toggle") termSize() else item.value)
+                                    },
+                                )
+                            }
                         }
                     }
                 },
@@ -518,6 +561,7 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
         bottomBar = {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(8.dp)) {
+                    for (a in t.asks) Box(Modifier.padding(bottom = 8.dp)) { AskCard(m, a) }
                     t.todos?.let { td ->
                         Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
                             Text(td.head, style = MaterialTheme.typography.labelMedium)
@@ -567,7 +611,9 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
                             }
                         }
                     }
+                    ComposerExtras(m, t)
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        AttachButton(m)
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })
                         // a long press sends with the other follow-up mode (queue or steer)
@@ -586,17 +632,26 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
         LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = PaddingValues(
             start = 16.dp, end = 16.dp, top = pad.calculateTopPadding() + 8.dp, bottom = pad.calculateBottomPadding() + 8.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            items(t.entries, key = { it.id }) { EntryView(m, it) }
+            t.parent?.let { p -> item(key = "parent") { EntryRow(m, p) { shown = it } } }
+            if (t.tasks.isNotEmpty()) item(key = "tasks") { TasksView(m, t.tasks) }
+            if (t.earlier > 0) item(key = "earlier") {
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    TextButton(onClick = { m.act("earlier", "") }) { Text("Show earlier") }
+                }
+            }
+            items(t.entries, key = { it.id }) { EntryRow(m, it) { u -> shown = u } }
             itemsIndexed(t.sending, key = { i, _ -> "sending:$i" }) { _, text -> SendingView(text) }
             if (t.live.isNotEmpty()) item(key = "live") { Markdown(t.live) }
             else if (t.working.isNotEmpty()) item(key = "live") {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(t.working, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.outline)
-                    LinearProgressIndicator(Modifier.width(120.dp))
+                    if (t.state == "run") LinearProgressIndicator(Modifier.width(120.dp))
                 }
             }
         }
     }
+    shown?.let { u -> Lightbox(u) { shown = null } }
+    t.diff?.let { DiffSheet(m, it) }
 }
 
 // The board viewer over the thread: the plot of the screen's source, the

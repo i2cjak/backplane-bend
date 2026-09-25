@@ -10,6 +10,10 @@ import UIKit
 @Observable
 final class AppModel {
     private let engine = Engine()
+    // the client's state, kept for the next launch (StateStore)
+    private let kept = StateStore()
+    // something changed since the state was last kept
+    @ObservationIgnored private var dirty = false
     @ObservationIgnored private var hubs: [String: Hub] = [:]
     // push tokens by kind, sent again to a hub paired later
     @ObservationIgnored private var tokens: [String: String] = [:]
@@ -84,6 +88,12 @@ final class AppModel {
         let e = engine
         Task {
             apply(await e.start(Self.cid, UserDefaults.standard.string(forKey: "drafts") ?? "{}"))
+            // the state kept at the last launch: the screen shows at once, and
+            // each hub then sends only what came since
+            if let text = kept.load() {
+                apply(await e.load(text))
+                for l in links { if let k = Pairing.key(l) { apply(await e.offline(k)) } }
+            }
             ready = true
             island = IslandController { [weak self] kind, token in self?.register(kind, token) }
             connect()
@@ -98,6 +108,7 @@ final class AppModel {
             while true {
                 try? await Task.sleep(for: .seconds(30))
                 if ready { apply(await e.tick(Int(Date().timeIntervalSince1970))) }
+                keep()
             }
         }
     }
@@ -172,6 +183,7 @@ final class AppModel {
                 if PlotStore.isPlot(d) {
                     if self?.shownHub == key { self?.plots.receive(d) }
                 } else {
+                    self?.dirty = true
                     self?.run { await $0.recv(key, d.base64EncodedString()) }
                 }
             },
@@ -273,8 +285,18 @@ final class AppModel {
         }
     }
 
+    // the state written down when it changed (the app may be ended at any
+    // time once in the background)
+    func keep() {
+        guard dirty, ready else { return }
+        dirty = false
+        let e = engine, k = kept
+        Task { k.save(await e.save()) }
+    }
+
     func foreground(_ yes: Bool) {
         active = yes
+        if !yes { keep() }
         if yes, let s = screen { island?.show(s.island, foreground: true) }
     }
 
@@ -297,6 +319,10 @@ final class AppModel {
             if let id = opening, let row = s.projects.lazy.flatMap(\.threads).first(where: { $0.id == id || $0.id.hasSuffix("|" + id) }) {
                 opening = nil
                 act("select", row.id)
+            } else if let id = opening, !s.hub.isEmpty, !s.projects.isEmpty {
+                // a thread not on show (a settled or archived shelf): by its hub
+                opening = nil
+                act("select", s.hub + "|" + id)
             }
             if let n = botting, let b = s.bots.first(where: { $0.name == n }) {
                 botting = nil

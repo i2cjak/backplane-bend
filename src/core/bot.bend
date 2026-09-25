@@ -430,47 +430,59 @@ def Post.room(p: Post) -> String:
     case Post{_, r, _, _, _, _}:
       r
 
-def Post.in.k(hit: Bool, p: Post, skip: List<&2, Post>, take: List<&2, Post>) -> List<&2, Post>:
+# one post decided: kept (and one fewer still wanted) or passed over. The
+# walk below builds its answer onto an accumulator, deciding each post
+# once: handing both outcomes' walks to a chooser computed both, and the
+# JS target is strict, so a room of 80 posts took 2^80 steps
+def Post.in.n(hit: Bool, +n: Nat) -> Nat:
   match hit:
     case True{}:
-      p <> take
+      Nat.sub(n, 1n)
     case False{}:
-      skip
+      n
 
-def Post.in.go(ps: List<&2, Post>, +room: String, +n: Nat) -> List<&2, Post>:
+def Post.in.acc(hit: Bool, p: Post, acc: List<&2, Post>) -> List<&2, Post>:
+  match hit:
+    case True{}:
+      p <> acc
+    case False{}:
+      acc
+
+# the first n posts of ps (newest first) in room, oldest first
+def Post.in.go(ps: List<&2, Post>, +room: String, +n: Nat, acc: List<&2, Post>) -> List<&2, Post>:
   match ps n:
     case Nil{} _:
-      Nil{}
+      acc
     case _ 0n:
-      Nil{}
-    case +p <> +t 1n+k:
-      Post.in.k(String.eq(Post.room(p), room), p, Post.in.go(t, room, 1n+k), Post.in.go(t, room, k))
+      acc
+    case +p <> +t _:
+      Post.in.go(t, room, Post.in.n(String.eq(Post.room(p), room), n), Post.in.acc(String.eq(Post.room(p), room), p, acc))
 
 # a room's last n posts, oldest first
 def World.posts(+w: World, +room: String, +n: Nat) -> List<&2, Post>:
   match w:
     case World{_, _, ps, _, _, _, _, _, _, _}:
-      List.reverse(&2, Post, Post.in.go(ps, room, n))
+      Post.in.go(ps, room, n, Nil{})
 
 def Post.touches(p: Post, +bot: String) -> Bool:
   match p:
     case Post{_, r, f, _, _, _}:
       Bool.or(String.eq(f, bot), String.contains(r, bot))
 
-def Post.by.go(ps: List<&2, Post>, +bot: String, +n: Nat) -> List<&2, Post>:
+def Post.by.go(ps: List<&2, Post>, +bot: String, +n: Nat, acc: List<&2, Post>) -> List<&2, Post>:
   match ps n:
     case Nil{} _:
-      Nil{}
+      acc
     case _ 0n:
-      Nil{}
-    case +p <> +t 1n+k:
-      Post.in.k(Post.touches(p, bot), p, Post.by.go(t, bot, 1n+k), Post.by.go(t, bot, k))
+      acc
+    case +p <> +t _:
+      Post.by.go(t, bot, Post.in.n(Post.touches(p, bot), n), Post.in.acc(Post.touches(p, bot), p, acc))
 
 # a bot's last n posts in any room (sent, or in a direct room of its own)
 def World.posts_of(+w: World, +bot: String, +n: Nat) -> List<&2, Post>:
   match w:
     case World{_, _, ps, _, _, _, _, _, _, _}:
-      List.reverse(&2, Post, Post.by.go(ps, bot, n))
+      Post.by.go(ps, bot, n, Nil{})
 
 def World.space(+w: World, +bot: String) -> String:
   match w:
