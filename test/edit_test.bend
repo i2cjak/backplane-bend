@@ -27,6 +27,34 @@ def lines(ls: List<&2, String>) -> String:
 def wrap(+s: String) -> String:
   lines(X.Text.wrap(Map.new(&2, X.TG), X.Text.bitmap(), s, 400))
 
+def wrap_at(+s: String, +px: U32) -> List<&2, String>:
+  X.Text.wrap(Map.new(&2, X.TG), X.Text.bitmap(), s, px)
+
+def nats(ns: List<&2, Nat>) -> String:
+  match ns:
+    case Nil{}:
+      ""
+    case n <> t:
+      Nat.show(n) ++ "," ++ nats(t)
+
+# where each wrapped line starts (8 px a character)
+def starts(+s: String, +px: U32) -> String:
+  nats(E.Edit.starts(wrap_at(s, px), s))
+
+# every line is the text between its start and its length
+def agree.go(ls: List<&2, String>, ss: List<&2, Nat>, +s: String) -> Bool:
+  match ls ss:
+    case +l <> lt +a <> st:
+      Bool.and(String.eq(E.Edit.slice(s, a, Nat.add(a, String.length(l))), l), agree.go(lt, st, s))
+    case _ _:
+      True{}
+
+def agree(+s: String, +px: U32) -> Bool:
+  agree.go(wrap_at(s, px), E.Edit.starts(wrap_at(s, px), s), s)
+
+def row(+s: String, +px: U32, +p: Nat) -> String:
+  Nat.show(E.Edit.row(E.Edit.starts(wrap_at(s, px), s), p))
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("word right", Nat.show(E.Edit.word_right("foo bar.baz", 0n)), "3")
@@ -73,3 +101,12 @@ def main() -> IO(Unit):
     C.Check.str("wrap keeps runs of spaces", wrap("a  b"), "[a  b]")
     C.Check.str("wrap keeps leading spaces", wrap("  a"), "[  a]")
     C.Check.str("wrap blank line", wrap("a\n\nb"), "[a][][b]")
+    C.Check.str("starts at a space", starts("hello world", 40), "0,6,")
+    C.Check.str("starts in a broken word", starts("abcdefghij", 40), "0,5,")
+    C.Check.str("starts at newlines", starts("a\n\nb", 400), "0,2,3,")
+    C.Check.str("starts past a run of spaces", starts("ab   cd", 24), "0,4,")
+    C.Check.str("row before the break", row("hello world", 40, 5n), "0")
+    C.Check.str("row after the break", row("hello world", 40, 6n), "1")
+    C.Check.str("row where a word goes on", row("abcdefghij", 40, 5n), "1")
+    C.Check.str("row at the end", row("hello world", 40, 11n), "1")
+    C.Check.str("lines agree with starts", Bool.show(Bool.and(Bool.and(agree("the quick brown fox jumps over the lazy dog", 64), agree("a  b   c\n\n  d eeeeeeeeeeeeeee f", 40)), agree("x\ny z ", 16))), "True")

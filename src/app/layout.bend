@@ -1387,11 +1387,13 @@ def Lay.skills(+ty: Ty, +rs: List<&2, U.SkillRow>, +x0: U32, +x1: U32, +bottom: 
       Skills.rows(ty, rs, x0, (bottom - h + 4 : U32), (x1 - x0 : U32), True{})))
 
 # where position p of the draft sits: its wrapped line and x
-def Comp.row(+ty: Ty, +draft: String, +p: Nat, +tw: U32) -> Nat:
-  Nat.sub(List.length(&2, String, Ty.wrap(ty, 3n, String.take(draft, p), tw)), 1n)
+# the shown line position p is on, and how far into it (ss: where each
+# line starts, core/edit.bend's Edit.starts)
+def Comp.row(+ss: List<&2, Nat>, +p: Nat) -> Nat:
+  ED.Edit.row(ss, p)
 
-def Comp.x(+ty: Ty, +draft: String, +p: Nat, +tw: U32) -> U32:
-  Ty.width(ty, 3n, Maybe.default(&2, String, List.last(&2, String, Ty.wrap(ty, 3n, String.take(draft, p), tw)), ""))
+def Comp.x(+ty: Ty, +draft: String, +ss: List<&2, Nat>, +p: Nat) -> U32:
+  Ty.width(ty, 3n, ED.Edit.before(ss, draft, p))
 
 # the selection behind the shown lines (j is the first one's number),
 # from line rlo at xlo to line rhi at xhi
@@ -1406,10 +1408,10 @@ def Comp.sel.go(ls: List<&2, String>, +ty: Ty, +j: Nat, +rlo: Nat, +xlo: U32, +r
         [D.Draw.rect(D.Clip.all(), (x + a : U32), y, (b - a : U32), 20, T.Th.sel(), 255)], Nil{}),
         Comp.sel.go(t, ty, 1n+j, rlo, xlo, rhi, xhi, x, (y + 23 : U32)))
 
-def Comp.sel(on: Bool, +ty: Ty, +shown: List<&2, String>, +top: Nat, +draft: String, +lo: Nat, +hi: Nat, +tw: U32, +x: U32, +y: U32) -> Out:
+def Comp.sel(on: Bool, +ty: Ty, +shown: List<&2, String>, +top: Nat, +draft: String, +ss: List<&2, Nat>, +lo: Nat, +hi: Nat, +x: U32, +y: U32) -> Out:
   match on:
     case True{}:
-      Out.ops(Comp.sel.go(shown, ty, top, Comp.row(ty, draft, lo, tw), Comp.x(ty, draft, lo, tw), Comp.row(ty, draft, hi, tw), Comp.x(ty, draft, hi, tw), x, y))
+      Out.ops(Comp.sel.go(shown, ty, top, Comp.row(ss, lo), Comp.x(ty, draft, ss, lo), Comp.row(ss, hi), Comp.x(ty, draft, ss, hi), x, y))
     case False{}:
       Out.none()
 
@@ -1446,16 +1448,17 @@ def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, 
   +n = List.length(&2, String, ls)
   +v = S.Cs.rows(n)
   +eh = Comp.eh(n)
-  +crow = Comp.row(ty, draft, caret, tw)
+  +ss = ED.Edit.starts(ls, draft)
+  +crow = Comp.row(ss, caret)
   +top = S.Cs.top(held, n, crow)
   +shown = List.take(&2, String, List.drop(&2, String, ls, top), v)
   +row = Nat.sub(crow, top)
-  +cx = Comp.x(ty, draft, caret, tw)
+  +cx = Comp.x(ty, draft, ss, caret)
   +y = {(h - 120 - eh : U32) : U32}
   +fy = Comp.foot(h)
   Out.all([
     Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), (100 + eh : U32), 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
-    Comp.sel(Bool.and(focused, Bool.not(Nat.is_eq(caret, mark))), ty, shown, top, draft, ED.Edit.lo(caret, mark), ED.Edit.hi(caret, mark), tw, (x0 + 16 : U32), (y + 12 : U32)),
+    Comp.sel(Bool.and(focused, Bool.not(Nat.is_eq(caret, mark))), ty, shown, top, draft, ss, ED.Edit.lo(caret, mark), ED.Edit.hi(caret, mark), (x0 + 16 : U32), (y + 12 : U32)),
     Bool.pick(Out, String.is_empty(draft),
       Out.ops(Ty.text(ty, 3n, Ty.fit(ty, 3n, "Ask anything, @tag files, $skill, or describe the change", tw), D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
       Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 + eh : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
@@ -1465,6 +1468,125 @@ def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, 
     Out{List.append(&2, R.Op, Ty.text(ty, 2n, models, D.Clip.all(), (x0 + 16 : U32), fy, 28, T.Th.dim()), Lay.icon(ty, "chevron-down", D.Clip.all(), (x0 + 22 + Ty.width(ty, 2n, models) : U32), (fy + 6 : U32), T.Th.dim())), [Lay.hit((x0 + 8 : U32), fy, (Ty.width(ty, 2n, models) + 38 : U32), 28, "flag", "models")]},
     Lay.button(ty, D.Clip.all(), Comp.send_x(ty, x1, send), fy, send, T.Th.accent(), "send", ""),
     Lay.skills(ty, rs, x0, x1, (y - 4 : U32))])
+
+# Caret moves only layout can place
+# ---------------------------------
+# Up and Down in the composer go by the lines it shows, and a press or a
+# drag in it puts the caret under the pointer; both depend on how the
+# draft wraps, so nui.bend leaves them in the scratch ("@cq", its Cq) and
+# the window places them after each event with the font: "u0"/"d0" a line
+# up or down ("u1"/"d1" with shift, selecting), "p,x,y" a press, "m,x,y"
+# a drag. The composer's region and first shown line come from the last
+# frame's hits. Going up or down keeps the column it started from while
+# the caret stays where it put it ("@cgoal", signed as "@mark" is).
+
+# the composer's region in the last frame (all zero when it has none)
+def Comp.hit(hs: List<&2, S.Hit>) -> S.Hit:
+  match hs:
+    case Nil{}:
+      S.Hit{0, 0, 0, 0, "", ""}
+    case S.Hit{+a, +b, +c, +d, +ac, +v} <> t:
+      Bool.pick(S.Hit, Bool.and(String.eq(ac, "focus"), String.eq(v, "composer")), S.Hit{a, b, c, d, ac, v}, Comp.hit(t))
+
+# how many characters of l lie left of dx, counting one when dx passes
+# the middle of it
+def Comp.col(l: String, +ty: Ty, +pen: U32, +dx: U32) -> Nat:
+  match l:
+    case SNil{}:
+      0n
+    case SCon{Chr{+c}, t}:
+      +w = Ty.width(ty, 3n, SCon{Chr{c}, SNil{}})
+      Bool.pick(Nat, U32.is_gt((pen + pen + w : U32), (dx + dx : U32)), 0n, 1n+Comp.col(t, ty, (pen + w : U32), dx))
+
+# the position on line r nearest dx pixels in
+def Comp.at(+ty: Ty, +ls: List<&2, String>, +ss: List<&2, Nat>, +r: Nat, +dx: U32) -> Nat:
+  Nat.add(ED.Edit.start(ss, r), Comp.col(Maybe.default(&2, String, List.get(&2, String, ls, r), ""), ty, 0, dx))
+
+# a line up (or down) from line r, at goal pixels in; past the first line is
+# the start, past the last the end
+def Comp.vert(up: Bool, +ty: Ty, +draft: String, +ls: List<&2, String>, +ss: List<&2, Nat>, +r: Nat, +goal: U32) -> Nat:
+  match up:
+    case True{}:
+      Bool.pick(Nat, Nat.is_eq(r, 0n), 0n, Comp.at(ty, ls, ss, Nat.sub(r, 1n), goal))
+    case False{}:
+      Bool.pick(Nat, Nat.is_ge(1n+r, List.length(&2, String, ls)), String.length(draft), Comp.at(ty, ls, ss, 1n+r, goal))
+
+# the position under (x, y) in the composer h (top: its first shown line)
+def Comp.under(h: S.Hit, +ty: Ty, +ls: List<&2, String>, +ss: List<&2, Nat>, +top: Nat, +x: U32, +y: U32) -> Nat:
+  match h:
+    case S.Hit{+x0, +y0, _, _, _, _}:
+      +r = Nat.add(top, U32.to_nat((U32.dim(y, (y0 + 10 : U32)) / 23 : U32)))
+      Comp.at(ty, ls, ss, Bool.pick(Nat, Nat.is_ge(r, List.length(&2, String, ls)), Nat.sub(List.length(&2, String, ls), 1n), r), U32.dim(x, (x0 + 16 : U32)))
+
+# the caret at c with the selection's other end at m; kept is the goal
+# column to keep ("" none)
+def Comp.put(+n: S.Nui, +c: Nat, +m: Nat, +goal: String) -> S.Nui:
+  +n1 = S.Mark.save(S.Nui.with_caret(n, c), m)
+  S.Nui.with_ui(n1, U.Ui.scratch_set(U.Ui.scratch_set(S.Nui.ui(n1), "@cq", ""), "@cgoal", Bool.pick(String, String.is_empty(goal), "", S.Mark.sig(n1) ++ goal)))
+
+def Comp.hit.w(h: S.Hit) -> U32:
+  match h:
+    case S.Hit{+x0, _, +x1, _, _, _}:
+      U32.dim(x1, x0)
+
+# what q asks: 0 a press, 1 a drag, 2 a line up, 3 a line down
+def Comp.kind(+q: String) -> Nat:
+  Bool.pick(Nat, String.starts_with(q, "p"), 0n, Bool.pick(Nat, String.starts_with(q, "m"), 1n, Bool.pick(Nat, String.starts_with(q, "u"), 2n, 3n)))
+
+# a line up or down, from the column it started at while the caret stays
+# where the last one put it
+def Comp.vert.go(up: Bool, +shift: Bool, +ty: Ty, +n: S.Nui, +draft: String, +ls: List<&2, String>, +ss: List<&2, Nat>, +goal: U32) -> S.Nui:
+  +v = Comp.vert(up, ty, draft, ls, ss, Comp.row(ss, S.Nui.caret_of(n)), goal)
+  Comp.put(n, v, Bool.pick(Nat, shift, S.Nui.mark(n), v), U32.show(goal))
+
+def Comp.goal(+ty: Ty, +n: S.Nui, +draft: String, +ss: List<&2, Nat>) -> U32:
+  U32.from_nat(S.Mark.of(U.Ui.scratch(S.Nui.ui(n), "@cgoal"), S.Mark.sig(n), U32.to_nat(Comp.x(ty, draft, ss, S.Nui.caret_of(n)))))
+
+def Comp.under.q(+ty: Ty, +n: S.Nui, +h: S.Hit, +q: String, +ls: List<&2, String>, +ss: List<&2, Nat>) -> Nat:
+  Comp.under(h, ty, ls, ss, S.Cs.num(S.Cs.region(S.Nui.hits(n)), 0n), U32.from_nat(S.Cs.num(q, 1n)), U32.from_nat(S.Cs.num(q, 2n)))
+
+def Comp.press.go(+n: S.Nui, +u: Nat) -> S.Nui:
+  Comp.put(n, u, u, "")
+
+def Comp.place.k(k: Nat, +ty: Ty, +n: S.Nui, +h: S.Hit, +q: String, +draft: String, +ls: List<&2, String>, +ss: List<&2, Nat>) -> S.Nui:
+  match k:
+    case 0n:
+      Comp.press.go(n, Comp.under.q(ty, n, h, q, ls, ss))
+    case 1n:
+      Comp.put(n, Comp.under.q(ty, n, h, q, ls, ss), S.Nui.mark(n), "")
+    case +j:
+      Comp.vert.go(Nat.is_eq(j, 2n), String.eq(String.drop(q, 1n), "1"), ty, n, draft, ls, ss, Comp.goal(ty, n, draft, ss))
+
+def Comp.place.ls(+ty: Ty, +n: S.Nui, +h: S.Hit, +q: String, +draft: String, +ls: List<&2, String>) -> S.Nui:
+  Comp.place.k(Comp.kind(q), ty, n, h, q, draft, ls, ED.Edit.starts(ls, draft))
+
+def Comp.place.d(+ty: Ty, +n: S.Nui, +h: S.Hit, +q: String, +draft: String) -> S.Nui:
+  Comp.place.ls(ty, n, h, q, draft, Comp.wrap(ty, draft, Comp.hit.w(h)))
+
+# one asked-for move q in the composer region h
+def Comp.place(+ty: Ty, +n: S.Nui, +h: S.Hit, +q: String) -> S.Nui:
+  Comp.place.d(ty, n, h, q, U.Ui.draft_text(S.Nui.ui(n)))
+
+def Comp.pend.h(found: Bool, +ty: Ty, +n: S.Nui, +h: S.Hit, +q: String) -> S.Nui:
+  match found:
+    case True{}:
+      Comp.place(ty, n, h, q)
+    case False{}:
+      S.Nui.with_ui(n, U.Ui.scratch_set(S.Nui.ui(n), "@cq", ""))
+
+def Comp.pend.k(none: Bool, +ty: Ty, +n: S.Nui, +q: String) -> S.Nui:
+  match none:
+    case True{}:
+      n
+    case False{}:
+      +h = Comp.hit(S.Nui.hits(n))
+      Comp.pend.h(U32.is_gt(Comp.hit.w(h), 40), ty, n, h, q)
+
+# the window state after an event, with any move it asked for placed
+def Comp.pend(+ty: Ty, s: S.Step) -> S.Step:
+  match s:
+    case S.Step{+n, cs, d}:
+      S.Step{Comp.pend.k(String.is_empty(U.Ui.scratch(S.Nui.ui(n), "@cq")), ty, n, U.Ui.scratch(S.Nui.ui(n), "@cq")), cs, d}
 
 # whether the head line ends above top (it is out of view)
 def TL.above(ls: List<&2, TLine>, +y: U32, +top: U32) -> Bool:
