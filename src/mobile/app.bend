@@ -97,6 +97,12 @@ def act(+hs: H.Hubs, +action: String, +value: String) -> H.HAct:
 def screen(+hs: H.Hubs) -> String:
   J.Json.show(H.Hubs.screen(hs))
 
+# the screen as a JSON value: the bridge writes it with the JS engine's own
+# JSON.stringify (writing it in Bend walks every string char by char, the
+# most of a thread screen's cost on a phone's QuickJS)
+def screenj(+hs: H.Hubs) -> J.Json:
+  H.Hubs.screen(hs)
+
 def online(+hs: H.Hubs, +key: String, b: Bool) -> H.HAct:
   H.Hubs.online(hs, key, b)
 

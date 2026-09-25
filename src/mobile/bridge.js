@@ -146,6 +146,35 @@ function restore() {
 // every call answers {"screen": <screen>, "cmds": [...]} as one string;
 // a send names the hub it goes to; alerts ride along as
 // {"type": "notify", ...} commands
+// a Bend JSON value (core/json.bend: Arr/Obj hold Item/Field chains ending
+// in End) as a plain JS value, for the engine's own JSON.stringify
+function plain(j) {
+  switch (j.$) {
+    case "Null":
+      return null;
+    case "Flag":
+      return j.value;
+    case "Num": {
+      const n = Number(j.raw);
+      return Number.isFinite(n) ? n : j.raw;
+    }
+    case "Str":
+      return j.text;
+    case "Arr": {
+      const a = [];
+      for (let c = j.items; c.$ === "Item"; c = c.tail) a.push(plain(c.head));
+      return a;
+    }
+    case "Obj": {
+      const o = {};
+      for (let c = j.fields; c.$ === "Field"; c = c.tail) o[c.key] = plain(c.value);
+      return o;
+    }
+    default:
+      return null;
+  }
+}
+
 function out(cmds, quiet, alerts) {
   const cs = [];
   for (const h of each(cmds)) {
@@ -163,7 +192,7 @@ function out(cmds, quiet, alerts) {
     }
   }
   for (const a of alerts ?? []) cs.push({ type: "notify", ...a });
-  return '{"screen":' + (quiet ? "null" : App.screen(hubs)) + ',"cmds":' + JSON.stringify(cs) + "}";
+  return '{"screen":' + (quiet ? "null" : JSON.stringify(plain(App.screenj(hubs)))) + ',"cmds":' + JSON.stringify(cs) + "}";
 }
 
 // a step's answer: the hubs after it, its commands and alerts
@@ -203,8 +232,10 @@ globalThis.Backplane = {
     return App.cat(BigInt(Number(String(key).slice(0, i)) || 0), String(key).slice(i + 1));
   },
   // a binary frame from hub k, as base64
-  recv(k, data) {
-    return step(App.recv(hubs, k, cbor(bytes(data))));
+  // quiet: more frames wait behind this one, so no screen is built for it
+  // (only the last of a burst is drawn: terminal echoes, streamed text)
+  recv(k, data, quiet) {
+    return step(App.recv(hubs, k, cbor(bytes(data))), quiet === true);
   },
   // The whole client state as text, kept by the app when it leaves the
   // foreground: the next launch load()s it instead of folding every event
@@ -234,8 +265,10 @@ globalThis.Backplane = {
   },
   // hub k's socket opened or closed; a new connection re-asks for the
   // viewer's plot
-  online(k, b) {
-    return step(App.online(hubs, k, !!b));
+  // quiet: no screen (the hubs marked offline after load(), before the
+  // screen that follows)
+  online(k, b, quiet) {
+    return step(App.online(hubs, k, !!b), quiet === true);
   },
   tick(now) {
     return step(App.tick(hubs, secs(now)));

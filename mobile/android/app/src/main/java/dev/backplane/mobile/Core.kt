@@ -80,7 +80,7 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             if (text != null) {
                 apply(engine.load(text))
                 android.util.Log.i("Backplane", "state loaded ${since()} ms")
-                for (l in links) Pairing.key(l)?.let { apply(engine.online(it, false)) }
+                for (l in links) Pairing.key(l)?.let { apply(engine.offline(it)) }
             }
             connect()
         }

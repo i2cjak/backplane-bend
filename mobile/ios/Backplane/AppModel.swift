@@ -92,7 +92,7 @@ final class AppModel {
             // each hub then sends only what came since
             if let text = kept.load() {
                 apply(await e.load(text))
-                for l in links { if let k = Pairing.key(l) { apply(await e.online(k, false)) } }
+                for l in links { if let k = Pairing.key(l) { apply(await e.offline(k)) } }
             }
             ready = true
             island = IslandController { [weak self] kind, token in self?.register(kind, token) }

@@ -36,11 +36,19 @@ class Engine(private val source: String, private val cid: String, private val dr
     private suspend fun call(expr: String): String =
         withContext(dispatcher) { context().evaluate(expr) as String }
 
-    // parsed here, off the main thread: a thread's screen is large
-    private suspend fun out(expr: String, screen: Boolean = true): Reply {
+    // parsed here, off the main thread: a thread's screen is large.
+    // behind: the call to make instead when newer calls wait behind this
+    // one (its screen would be dropped anyway)
+    private suspend fun out(expr: String, screen: Boolean = true, behind: String? = null): Reply {
         if (screen) ahead.incrementAndGet()
         return withContext(dispatcher) {
-            val o = JSONObject(context().evaluate(expr) as String)
+            val e = if (behind != null && ahead.get() > 1) behind else expr
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val text = context().evaluate(e) as String
+            val ms = android.os.SystemClock.elapsedRealtime() - t0
+            // a slow step of the Bend client, for finding what to make faster
+            if (ms > 100) android.util.Log.i("Backplane", "slow ${e.substringBefore('(')}: $ms ms")
+            val o = JSONObject(text)
             val stale = screen && ahead.decrementAndGet() > 0
             Reply(if (stale) null else o.optJSONObject("screen")?.let(::parseScreen), parseCmds(o))
         }
@@ -53,13 +61,16 @@ class Engine(private val source: String, private val cid: String, private val dr
     suspend fun resume(key: String) = call("Backplane.resume(${q(key)})")
     suspend fun screen() = out("Backplane.screen()")
     // a binary frame from hub key, as base64
-    suspend fun recv(key: String, data: String) = out("Backplane.recv(${q(key)}, ${q(data)})")
+    suspend fun recv(key: String, data: String) =
+        out("Backplane.recv(${q(key)}, ${q(data)})", behind = "Backplane.recv(${q(key)}, ${q(data)}, true)")
     // the whole client state as text (StateStore), and the state loaded back
     suspend fun save() = call("Backplane.save()")
     suspend fun load(text: String) = out("Backplane.load(${q(text)})")
     suspend fun act(action: String, value: String) = out("Backplane.act(${q(action)}, ${q(value)})")
     suspend fun quiet(action: String, value: String) = out("Backplane.quiet(${q(action)}, ${q(value)})", screen = false)
     suspend fun online(key: String, b: Boolean) = out("Backplane.online(${q(key)}, $b)")
+    // a hub marked offline with no screen of its own (after load())
+    suspend fun offline(key: String) = out("Backplane.online(${q(key)}, false, true)", screen = false)
     suspend fun tick(now: Long) = out("Backplane.tick($now)")
     // a cat's rig (JSON text) for its key ("look:mood")
     suspend fun cat(key: String) = call("Backplane.cat(${q(key)})")

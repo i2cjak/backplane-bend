@@ -87,9 +87,65 @@ def Hubs.rest(+v: String) -> String:
 # viewer's, model picker's and project picker's own values; the bot, room
 # or remote bot shown and the bot and room forms, all of the hub in focus,
 # whose actions go there), 2 an id of this hub, 0 anything else
+# (asked of every field of the screen, which on a phone made this walk a
+# third of a screen's cost: the key's first letters name the one name it
+# could be, and one comparison settles it)
+type Q4 is Data:
+  Q4{a: U32, b: U32, c: U32, d: U32}
+
+def Q.chars(+k: String) -> Q4:
+  match k:
+    case SCon{Chr{a}, SCon{Chr{b}, SCon{Chr{c}, SCon{Chr{d}, _}}}}:
+      Q4{a, b, c, d}
+    case SCon{Chr{a}, SCon{Chr{b}, SCon{Chr{c}, SNil{}}}}:
+      Q4{a, b, c, 0}
+    case SCon{Chr{a}, SCon{Chr{b}, SNil{}}}:
+      Q4{a, b, 0, 0}
+    case SCon{Chr{a}, SNil{}}:
+      Q4{a, 0, 0, 0}
+    case SNil{}:
+      Q4{0, 0, 0, 0}
+
+# a name, and its kind (1 left alone, 2 an id)
+type QN is Data:
+  QN{name: String, kind: Nat}
+
+def Q.two(+a: U32, +b: U32, +x: U32, +y: U32) -> Bool:
+  Bool.and(U32.is_eq(a, x), U32.is_eq(b, y))
+
+# the only name a key starting a b c d could be ("" for none)
+def Q.cand(q: Q4) -> QN:
+  match q:
+    case Q4{+a, +b, +c, +d}:
+      Bool.pick(QN, Q.two(a, b, 101, 110), QN{"entries", 1n},
+      Bool.pick(QN, Q.two(a, b, 108, 105), QN{"live", 1n},
+      Bool.pick(QN, Q.two(a, b, 118, 105), QN{"viewer", 1n},
+      Bool.pick(QN, Q.two(a, b, 118, 97), QN{"value", 2n},
+      Bool.pick(QN, Q.two(a, b, 98, 108), QN{"blocks", 1n},
+      Bool.pick(QN, Q.two(a, b, 98, 111), QN{"bot", 1n},
+      Bool.pick(QN, Q.two(a, b, 112, 105), QN{"picker", 1n},
+      Bool.pick(QN, Q.two(a, b, 102, 111), QN{"folders", 1n},
+      Bool.pick(QN, Q.two(a, b, 102, 105), QN{"find", 1n},
+      Bool.pick(QN, Q.two(a, b, 97, 115), QN{"asks", 1n},
+      Bool.pick(QN, Q.two(a, b, 97, 116), QN{"attaching", 1n},
+      Bool.pick(QN, Q.two(a, b, 109, 101), QN{"menu", 1n},
+      Bool.pick(QN, Q.two(a, b, 100, 105), QN{"diff", 1n},
+      Bool.pick(QN, Q.two(a, b, 116, 101), QN{"term", 1n},
+      Bool.pick(QN, Q.two(a, b, 116, 104), QN{"thread", 2n},
+      Bool.pick(QN, Q.two(a, b, 115, 107), QN{"skills", 1n},
+      Bool.pick(QN, Bool.and(Q.two(a, b, 115, 101), U32.is_eq(c, 116)), QN{"settings", 1n},
+      Bool.pick(QN, Bool.and(Q.two(a, b, 115, 101), U32.is_eq(c, 108)), QN{"sel", 2n},
+      Bool.pick(QN, Bool.and(Q.two(a, b, 110, 101), U32.is_eq(d, 66)), QN{"newBot", 1n},
+      Bool.pick(QN, Bool.and(Q.two(a, b, 110, 101), U32.is_eq(d, 82)), QN{"newRoom", 1n},
+      Bool.pick(QN, Q.two(a, b, 105, 100), QN{"id", 2n}, QN{"", 0n})))))))))))))))))))))
+
+def Q.kind.k(n: QN, +k: String) -> Nat:
+  match n:
+    case QN{+name, kind}:
+      Bool.pick(Nat, Bool.and(Bool.not(String.is_empty(name)), String.eq(k, name)), kind, 0n)
+
 def Q.kind(+k: String) -> Nat:
-  Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["entries", "live", "viewer", "blocks", "picker", "folders", "asks", "menu", "diff", "term", "skills", "attaching", "find", "settings", "bot", "newBot", "newRoom"], k), 17n), 1n,
-    Bool.pick(Nat, Nat.is_lt(C.Codec.pos(["id", "value", "sel", "thread"], k), 4n), 2n, 0n))
+  Q.kind.k(Q.cand(Q.chars(k)), k)
 
 # a hub's screen (or alerts) with every id made that hub's
 def Q.walk(j: J.Json, +p: String, mode: Nat) -> J.Json:

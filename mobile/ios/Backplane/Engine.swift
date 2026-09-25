@@ -55,19 +55,23 @@ final class Engine: @unchecked Sendable {
     private let lock = NSLock()
     private var ahead = 0
 
-    private func call<T>(_ name: String, _ args: [Any], _ finish: @escaping (String) -> T) async -> T {
+    // late: the arguments decided on the queue, as the call runs
+    private func call<T>(_ name: String, _ args: [Any], late: (() -> [Any])? = nil, _ finish: @escaping (String) -> T) async -> T {
         await withCheckedContinuation { k in
             queue.async {
                 let b = self.context().objectForKeyedSubscript("Backplane")!
-                k.resume(returning: finish(b.invokeMethod(name, withArguments: args)?.toString() ?? "{}"))
+                k.resume(returning: finish(b.invokeMethod(name, withArguments: late?() ?? args)?.toString() ?? "{}"))
             }
         }
     }
 
     // decoded here, off the main thread: a thread's screen is large
-    private func out(_ name: String, _ args: [Any], screen: Bool = true) async -> Out? {
+    // quiet: when newer calls wait behind this one, it is made with a last
+    // argument true, and builds no screen (it would be dropped anyway)
+    private func out(_ name: String, _ args: [Any], screen: Bool = true, quiet: Bool = false) async -> Out? {
         if screen { lock.withLock { ahead += 1 } }
-        return await call(name, args) { text in
+        let late: (() -> [Any])? = quiet ? { self.lock.withLock { self.ahead > 1 } ? args + [true] : args } : nil
+        return await call(name, args, late: late) { text in
             let stale = screen && self.lock.withLock { self.ahead -= 1; return self.ahead > 0 }
             return Out.decode(text, screen: !stale)
         }
@@ -80,13 +84,15 @@ final class Engine: @unchecked Sendable {
         await out("register", ["ios", token, kind, "", env, bundle], screen: false)
     }
     func screen() async -> Out? { await out("screen", []) }
-    func recv(_ key: String, _ text: String) async -> Out? { await out("recv", [key, text]) }
+    func recv(_ key: String, _ text: String) async -> Out? { await out("recv", [key, text], quiet: true) }
     // the whole client state as text (StateStore), and the state loaded back
     func save() async -> String { await call("save", []) { $0 } }
     func load(_ text: String) async -> Out? { await out("load", [text]) }
     func act(_ action: String, _ value: String) async -> Out? { await out("act", [action, value]) }
     func quiet(_ action: String, _ value: String) async -> Out? { await out("quiet", [action, value], screen: false) }
     func online(_ key: String, _ b: Bool) async -> Out? { await out("online", [key, b]) }
+    // a hub marked offline with no screen of its own (after load())
+    func offline(_ key: String) async -> Out? { await out("online", [key, false, true], screen: false) }
     func tick(_ now: Int) async -> Out? { await out("tick", [now]) }
     // a cat's rig for its key ("look:mood")
     func cat(_ key: String) async -> String { await call("cat", [key]) { $0 } }

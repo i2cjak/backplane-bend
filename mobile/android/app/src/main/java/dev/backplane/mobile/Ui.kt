@@ -636,7 +636,7 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
             if (t.tasks.isNotEmpty()) item(key = "tasks") { TasksView(m, t.tasks) }
             if (t.earlier > 0) item(key = "earlier") {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TextButton(onClick = { m.act("earlier", "") }) { Text("Show earlier (${t.earlier})") }
+                    TextButton(onClick = { m.act("earlier", "") }) { Text("Show earlier") }
                 }
             }
             items(t.entries, key = { it.id }) { EntryRow(m, it) { u -> shown = u } }

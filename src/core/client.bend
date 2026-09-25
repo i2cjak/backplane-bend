@@ -3024,3 +3024,62 @@ def Win.shown(w: Win) -> List<&2, M.Entry>:
   match w:
     case Win{_, es}:
       es
+
+# A thread's newest page, found from the log's newest end: the log is
+# newest first, so the walk stops once it has one entry more than the page
+# (which says there are earlier ones) instead of going through every
+# thread's entries. An entry is the thread's, or a message it sent to
+# another (its id names the sender; read only when the entry is not the
+# thread's own). `hidden` is 1 when earlier entries exist, else 0.
+type PW is Data:
+  PW{left: Nat, acc: List<&2, M.Entry>}
+
+def Page.entry.thread(e: M.Entry) -> String:
+  match e:
+    case M.Msg{_, t, _, _, _}:
+      t
+    case M.Act{_, t, _, _, _, _}:
+      t
+
+def Page.entry.id(e: M.Entry) -> String:
+  match e:
+    case M.Msg{i, _, _, _, _}:
+      i
+    case M.Act{i, _, _, _, _, _}:
+      i
+
+def Page.mine(own: Bool, +e: M.Entry, +th: String) -> Bool:
+  match own:
+    case True{}:
+      True{}
+    case False{}:
+      String.eq(M.Link.from(Page.entry.id(e)), th)
+
+def Page.newest.step(own: Bool, e: M.Entry, st: PW) -> PW:
+  match own st:
+    case True{} PW{0n, acc}:
+      PW{0n, acc}
+    case True{} PW{1n+k, acc}:
+      PW{k, e <> acc}
+    case False{} PW{l, acc}:
+      PW{l, acc}
+
+def Page.newest.go(es: List<&2, M.Entry>, +th: String, st: PW) -> PW:
+  match es st:
+    case +_ PW{0n, acc}:
+      PW{0n, acc}
+    case Nil{} PW{l, acc}:
+      PW{l, acc}
+    case +e <> t PW{1n+k, acc}:
+      Page.newest.go(t, th, Page.newest.step(Page.mine(String.eq(Page.entry.thread(e), th), e, th), e, PW{1n+k, acc}))
+
+# one more than the page was found: drop the oldest, say there are more
+def Page.newest.k(st: PW) -> Win:
+  match st:
+    case PW{0n, _ <> rest}:
+      Win{1n, rest}
+    case PW{_, acc}:
+      Win{0n, acc}
+
+def Page.newest(+es: List<&2, M.Entry>, +th: String, +n: Nat) -> Win:
+  Page.newest.k(Page.newest.go(es, th, PW{1n+n, Nil{}}))
