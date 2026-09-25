@@ -9,6 +9,7 @@ import ./attach.bend as AT
 import ./fold.bend as FO
 import ./todo.bend as TD
 import ./bot.bend as BT
+import ./voice.bend as VC
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -705,7 +706,8 @@ def Ui.actions() -> List<&2, String>:
    "bot", "bot-tab", "bot-new", "bot-create", "bot-delete", "bot-edit", "bfield", "room", "room-new", "room-save", "room-pick", "room-post",
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
-   "hook-token", "hook-retoken", "hook-untoken"]
+   "hook-token", "hook-retoken", "hook-untoken",
+   "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm"]
 
 # Reading the client state
 # ------------------------
@@ -2726,6 +2728,268 @@ def Bots.google(+u: Ui, +op: String) -> Act:
   Ui.rpc(u, "bots.google", [J.KV{"op", J.Str{op}}, J.KV{"clientId", J.Str{Bots.field(u, "gid")}}, J.KV{"clientSecret", J.Str{Bots.field(u, "gsecret")}},
     J.KV{"pasted", J.Str{Bots.field(u, "gpaste")}}])
 
+# Voice
+# -----
+# Dictation into the composer (docs/voice.md). The hub records its own
+# machine's microphone with GPT-Live-Transcribe and sends {"t":"voice"}
+# messages to the client that started it. "@voice" is the session
+# (starting, live, stopping, "" when off), "@voice.th" its thread,
+# "@voice.dev" the microphone, "@voice.lv" its level (0..100), "@voice.hint"
+# why nothing is coming (no-audio, silent), "@voice.part" the words of the
+# segment being heard, "@voice.err" the last error. A finished segment joins
+# its thread's draft; the words it may have misheard wait in "@voice.unsure"
+# (VC.Voice.unsure.json, for thread "@voice.uth") to be clarified: take the
+# guess, type the right spelling (it joins the dictionary), add the word as
+# heard to the dictionary, or skip it (skipped words, "@voice.ign", are not
+# asked about again).
+
+def Voice.on(+u: Ui) -> Bool:
+  Bool.not(String.is_empty(Ui.scratch(u, "@voice")))
+
+# a segment after the draft, a space between
+def Voice.join(+draft: String, +text: String) -> String:
+  Bool.pick(String, String.is_empty(text), draft,
+    Bool.pick(String, Bool.or(String.is_empty(String.trim(draft)), Bool.or(String.ends_with(draft, " "), String.ends_with(draft, "\n"))),
+      draft ++ text, draft ++ " " ++ text))
+
+def Voice.unsure(+u: Ui) -> List<&2, VC.Unsure>:
+  VC.Voice.unsure.parse(Maybe.default(&2, J.Json, J.Json.parse(Ui.scratch(u, "@voice.unsure")), J.Null{}))
+
+def Voice.unsure.set(u: Ui, us: List<&2, VC.Unsure>) -> Ui:
+  Ui.scratch_set(u, "@voice.unsure", J.Json.show(VC.Voice.unsure.json(us)))
+
+def Voice.ignored(+u: Ui) -> List<&2, String>:
+  String.lines(Ui.scratch(u, "@voice.ign"))
+
+def Voice.word(x: VC.Unsure) -> String:
+  match x:
+    case VC.Unsure{w, _}:
+      w
+
+def Voice.guess(x: VC.Unsure) -> String:
+  match x:
+    case VC.Unsure{_, g}:
+      g
+
+def Voice.has(us: List<&2, VC.Unsure>, +w: String) -> Bool:
+  match us:
+    case Nil{}:
+      False{}
+    case x <> t:
+      Bool.or(String.eq(Voice.word(x), w), Voice.has(t, w))
+
+def Voice.merge.k(new: Bool, x: VC.Unsure, acc: List<&2, VC.Unsure>) -> List<&2, VC.Unsure>:
+  match new:
+    case True{}:
+      List.append(&2, VC.Unsure, acc, [x])
+    case False{}:
+      acc
+
+# the words to clarify: the old ones, then new ones not already asked
+# about or skipped, at most VC.Voice.max_unsure()
+def Voice.merge.go(us: List<&2, VC.Unsure>, +ig: List<&2, String>, +acc: List<&2, VC.Unsure>) -> List<&2, VC.Unsure>:
+  match us:
+    case Nil{}:
+      acc
+    case +x <> t:
+      Voice.merge.go(t, ig, Voice.merge.k(Bool.and(Bool.not(Voice.has(acc, Voice.word(x))), Bool.not(VC.Voice.dict.has(ig, Voice.word(x)))), x, acc))
+
+def Voice.merge(old: List<&2, VC.Unsure>, new: List<&2, VC.Unsure>, +ig: List<&2, String>) -> List<&2, VC.Unsure>:
+  VC.Voice.cap(VC.Unsure, VC.Voice.max_unsure(), Voice.merge.go(new, ig, old))
+
+def Voice.at(us: List<&2, VC.Unsure>, +n: String) -> VC.Unsure:
+  Maybe.default(&2, VC.Unsure, List.get(&2, VC.Unsure, us, Maybe.default(&2, Nat, Nat.read(n), 0n)), VC.Unsure{"", ""})
+
+def Voice.without.go(us: List<&2, VC.Unsure>, n: Nat) -> List<&2, VC.Unsure>:
+  match us n:
+    case Nil{} _:
+      Nil{}
+    case +x <> t 0n:
+      t
+    case +x <> t 1n+k:
+      x <> Voice.without.go(t, k)
+
+def Voice.drop(+u: Ui, +n: String) -> Ui:
+  Voice.unsure.set(u, Voice.without.go(Voice.unsure(u), Maybe.default(&2, Nat, Nat.read(n), 0n)))
+
+# a finished segment: into its thread's draft, and its words to clarify
+def Voice.heard(+u: Ui, +thread: String, +text: String, us: List<&2, VC.Unsure>) -> Ui:
+  Voice.unsure.set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, thread, Voice.join(Ui.scratch(u, thread), text)), "@voice.part", ""), "@voice.uth", thread),
+    Voice.merge(Bool.pick(List<&2, VC.Unsure>, String.eq(Ui.scratch(u, "@voice.uth"), thread), Voice.unsure(u), Nil{}), us, Voice.ignored(u)))
+
+def Voice.dev(+o: J.Json) -> String:
+  Bool.pick(String, String.is_empty(J.Json.get_str(o, "label", "")), J.Json.get_str(o, "device", ""), J.Json.get_str(o, "label", ""))
+
+def Voice.live(+u: Ui, +o: J.Json) -> Ui:
+  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@voice", "live"), "@voice.dev", Voice.dev(o)), "@voice.lv", "0"),
+    "@voice.hint", ""), "@voice.rec", J.Json.get_str(o, "recorder", ""))
+
+def Voice.idle(u: Ui) -> Ui:
+  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@voice", ""), "@voice.part", ""), "@voice.lv", ""), "@voice.hint", "")
+
+def Voice.recv.k(i: Nat, +u: Ui, +o: J.Json) -> Ui:
+  match i:
+    case 0n:
+      Voice.live(u, o)
+    case 1n:
+      Ui.scratch_set(u, "@voice.part", Ui.scratch(u, "@voice.part") ++ J.Json.get_str(o, "text", ""))
+    case 2n:
+      Voice.heard(u, J.Json.get_str(o, "thread", ""), String.trim(J.Json.get_str(o, "text", "")), VC.Voice.unsure.parse(J.Json.get_obj(o, "unsure")))
+    case 3n:
+      Ui.scratch_set(u, "@voice.lv", Nat.show(J.Json.get_nat(o, "v", 0n)))
+    case 4n:
+      Ui.scratch_set(u, "@voice.hint", Bool.pick(String, String.eq(J.Json.get_str(o, "hint", ""), "ok"), "", J.Json.get_str(o, "hint", "")))
+    case 5n:
+      Ui.scratch_set(u, "@voice", "stopping")
+    case 6n:
+      Ui.scratch_set(u, "@voice.err", J.Json.get_str(o, "error", ""))
+    case 7n:
+      Voice.idle(u)
+    case _:
+      u
+
+# a {"t":"voice"} message from the hub
+def Voice.recv(+u: Ui, +o: J.Json) -> Ui:
+  Voice.recv.k(C.Codec.pos(["live", "part", "text", "level", "hint", "stopping", "error", "idle"], J.Json.get_str(o, "ev", "")), u, o)
+
+# what the hub answers about voice: the key (masked), the dictionary, the
+# microphones ("@voice.set" once known)
+def Voice.reply.k(has: Bool, +o: J.Json, +u: Ui) -> Ui:
+  match has:
+    case True{}:
+      Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@voice.key", J.Json.get_str(o, "voiceKey", "")), "@voice.dict", J.Json.get_str(o, "voiceDict", "")),
+        "@f.vdict", J.Json.get_str(o, "voiceDict", "")), "@voice.set", "1")
+    case False{}:
+      u
+
+def Voice.reply.devs(+o: J.Json, +u: Ui) -> Ui:
+  Bool.pick(Ui, String.is_empty(J.Json.get_str(o, "voiceDevices", "")), u, Ui.scratch_set(u, "@voice.devs", J.Json.get_str(o, "voiceDevices", "")))
+
+def Voice.reply(+o: J.Json, +u: Ui) -> Ui:
+  Voice.reply.devs(o, Voice.reply.k(Maybe.is_some(&2, J.Json, J.Json.get(o, "voiceDict")), o, u))
+
+# the dictionary as the hub last answered it
+def Voice.dict(+u: Ui) -> List<&2, String>:
+  VC.Voice.dict.parse(Ui.scratch(u, "@voice.dict"))
+
+# a microphone the hub found: its name (what the recorder takes) and label
+type VDev is Data:
+  VDev{name: String, label: String}
+
+def Voice.devs.go(js: List<&2, J.Json>) -> List<&2, VDev>:
+  match js:
+    case Nil{}:
+      Nil{}
+    case +j <> t:
+      VDev{J.Json.get_str(j, "name", ""), Bool.pick(String, String.is_empty(J.Json.get_str(j, "label", "")), J.Json.get_str(j, "name", ""), J.Json.get_str(j, "label", ""))} <> Voice.devs.go(t)
+
+def Voice.devices(+u: Ui) -> List<&2, VDev>:
+  Voice.devs.go(J.Json.elems(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(Ui.scratch(u, "@voice.devs")), J.Null{}), "devices")))
+
+def Voice.label.go(ds: List<&2, VDev>, +name: String) -> String:
+  match ds:
+    case Nil{}:
+      name
+    case VDev{+n, +l} <> t:
+      Bool.pick(String, String.eq(n, name), l, Voice.label.go(t, name))
+
+# a microphone's label, from its name
+def Voice.label(+u: Ui, +name: String) -> String:
+  Voice.label.go(Voice.devices(u), name)
+
+# the microphone the hub records by default
+def Voice.default(+u: Ui) -> String:
+  J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(Ui.scratch(u, "@voice.devs")), J.Null{}), "default", "")
+
+def Voice.rpc(u: Ui, +op: String, kvs: List<&2, J.KV>) -> Act:
+  Ui.rpc(u, "bots.voice", J.KV{"op", J.Str{op}} <> kvs)
+
+def Voice.start(+u: Ui) -> Act:
+  Voice.rpc(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@voice", "starting"), "@voice.th", Ui.sel(u)), "@voice.err", ""), "@voice.hint", ""),
+    "@voice.dev", ""), "start", [J.KV{"thread", J.Str{Ui.sel(u)}}, J.KV{"device", J.Str{M.Setting.get(Ui.state.of(u), "voice.device", "")}}])
+
+def Voice.stop(+u: Ui) -> Act:
+  Voice.rpc(Ui.scratch_set(u, "@voice", "stopping"), "stop", [J.KV{"thread", J.Str{Ui.scratch(u, "@voice.th")}}])
+
+# the mic button: start listening into the selected thread, or stop
+def Voice.toggle(on: Bool, +u: Ui) -> Act:
+  match on:
+    case True{}:
+      Voice.stop(u)
+    case False{}:
+      Voice.start(u)
+
+# a word replaced in the draft it was heard into
+def Voice.fix(+u: Ui, +w: String, +r: String) -> Ui:
+  Ui.scratch_set(u, Ui.scratch(u, "@voice.uth"), VC.Voice.fix(Ui.scratch(u, Ui.scratch(u, "@voice.uth")), w, r))
+
+def Voice.use(+u: Ui, x: VC.Unsure, +n: String) -> Act:
+  match x:
+    case VC.Unsure{+w, +g}:
+      Act{Voice.drop(Bool.pick(Ui, String.is_empty(g), u, Voice.fix(u, w, g)), n), Nil{}}
+
+def Voice.add(+u: Ui, x: VC.Unsure, +n: String) -> Act:
+  Voice.rpc(Voice.drop(u, n), "add", [J.KV{"term", J.Str{Voice.word(x)}}])
+
+def Voice.skip(+u: Ui, x: VC.Unsure, +n: String) -> Act:
+  Act{Voice.drop(Ui.scratch_set(u, "@voice.ign", Ui.scratch(u, "@voice.ign") ++ "\n" ++ Voice.word(x)), n), Nil{}}
+
+# "clarify": the word into a field to type its right spelling
+def Voice.clarify(+u: Ui, +x: VC.Unsure, +n: String) -> Act:
+  Act{Ui.scratch_set(Ui.scratch_set(u, "@voice.fix", n), "@f.vfix", Bool.pick(String, String.is_empty(Voice.guess(x)), Voice.word(x), Voice.guess(x))), [Focus{"voice-fix"}]}
+
+def Voice.fixed.k(none: Bool, +u: Ui, +x: VC.Unsure, +r: String) -> Act:
+  match none:
+    case True{}:
+      Act{Ui.scratch_set(u, "@voice.fix", ""), Nil{}}
+    case False{}:
+      Voice.rpc(Ui.scratch_set(Ui.scratch_set(Voice.drop(Voice.fix(u, Voice.word(x), r), Ui.scratch(u, "@voice.fix")), "@voice.fix", ""), "@f.vfix", ""),
+        "add", [J.KV{"term", J.Str{r}}])
+
+# the right spelling typed: it replaces the word, and joins the dictionary
+def Voice.fixed(+u: Ui) -> Act:
+  Voice.fixed.k(String.is_empty(String.trim(Ui.scratch(u, "@f.vfix"))), u, Voice.at(Voice.unsure(u), Ui.scratch(u, "@voice.fix")), String.trim(Ui.scratch(u, "@f.vfix")))
+
+def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
+  match i:
+    case 0n:
+      Voice.toggle(Voice.on(u), u)
+    case 1n:
+      Voice.rpc(Ui.scratch_set(u, "@f.vkey", ""), "key", [J.KV{"key", J.Str{Ui.scratch(u, "@f.vkey")}}])
+    case 2n:
+      Voice.rpc(u, "unkey", Nil{})
+    case 3n:
+      Voice.rpc(u, "dict", [J.KV{"dict", J.Str{Ui.scratch(u, "@f.vdict")}}])
+    case 4n:
+      Voice.use(u, Voice.at(Voice.unsure(u), value), value)
+    case 5n:
+      Voice.add(u, Voice.at(Voice.unsure(u), value), value)
+    case 6n:
+      Voice.clarify(u, Voice.at(Voice.unsure(u), value), value)
+    case 7n:
+      Voice.fixed(u)
+    case 8n:
+      Voice.skip(u, Voice.at(Voice.unsure(u), value), value)
+    case 9n:
+      Act{Ui.scratch_set(Ui.scratch_set(u, "@voice.err", ""), "@voice.hint", ""), Nil{}}
+    case 10n:
+      Voice.rpc(Ui.scratch_set(u, "@f.vterm", ""), "add", [J.KV{"term", J.Str{String.trim(Ui.scratch(u, "@f.vterm"))}}])
+    case 11n:
+      Voice.rpc(u, "dict", [J.KV{"dict", J.Str{VC.Voice.dict.show(VC.Voice.dict.remove(Voice.dict(u), value))}}])
+    case _:
+      Act{u, Nil{}}
+
+# opening Settings asks for the voice settings
+def Voice.flag.k(ask: Bool, a: Act) -> Act:
+  match ask a:
+    case True{} Act{u, cs}:
+      Ui.also(Voice.rpc(u, "status", Nil{}), cs)
+    case False{} _:
+      a
+
+def Voice.flag(+value: String, a: Act) -> Act:
+  Voice.flag.k(String.eq(value, "settings"), a)
+
 # the reply may beat the bot's own change: remember it, and show it when it comes
 def Bots.reply.show(m: Maybe<&2, BT.Bot>, +id: String, u: Ui) -> Ui:
   match m:
@@ -2750,9 +3014,9 @@ def Bots.reply.put(+o: J.Json, +key: String, +into: String, +u: Ui) -> Ui:
   Bool.pick(Ui, String.is_empty(J.Json.get_str(o, key, "")), u, Ui.scratch_set(u, into, J.Json.get_str(o, key, "")))
 
 def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
-  Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
+  Voice.reply(o, Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
     Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id",
-      Bots.reply.put(o, "token", "@hook.token", Bots.reply.put(o, "tokenHook", "@hook.tokfor", Bots.reply.put(o, "tokenUrl", "@hook.tokurl", Bots.reply.bot(o, u)))))))))
+      Bots.reply.put(o, "token", "@hook.token", Bots.reply.put(o, "tokenHook", "@hook.tokfor", Bots.reply.put(o, "tokenUrl", "@hook.tokurl", Bots.reply.bot(o, u))))))))))
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
@@ -2776,6 +3040,8 @@ def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
       Ui.term_feed(u, J.Json.get_str(o, "thread", ""), Term.bytes(J.Json.elems(J.Json.get_obj(o, "b"))))
     case 7n:
       Ui.info_merge(u, J.Json.get_obj(o, "info"))
+    case 8n:
+      Voice.recv(u, o)
     case _:
       u
 
@@ -2799,7 +3065,7 @@ def Bots.wanted(+u: Ui) -> Ui:
 
 # a message from the server
 def Ui.recv(+u: Ui, +o: J.Json) -> Ui:
-  Ui.reselect(Ui.sel(u), Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info"], J.Json.get_str(o, "t", "")), u, o)))
+  Ui.reselect(Ui.sel(u), Bots.wanted(Ui.recv.k(C.Codec.pos(["log", "changes", "delta", "reply", "update", "view", "term", "info", "voice"], J.Json.get_str(o, "t", "")), u, o)))
 
 # a message from the server, with what to send: a (re)connection (the
 # server's log arrives first on each) sends the outbox again, so nothing
@@ -2907,7 +3173,7 @@ def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
     case 35n:
       Bots.token(u, value, "off")
     case _:
-      Act{u, Nil{}}
+      Voice.act(Nat.sub(i, 36n), u, value)
 
 def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
   match i:
@@ -2948,7 +3214,7 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
     case 17n:
       Ui.rpc(u, "app.update", Nil{})
     case 18n:
-      Ui.toggle_settled(u, value)
+      Voice.flag(value, Ui.toggle_settled(u, value))
     case 19n:
       Ui.setting(u, value)
     case 20n:

@@ -137,7 +137,9 @@ A `multipart/form-data` body under a token becomes a JSON object for the
 bot: `source` ("pebble-index-01" when `client` is "ring", else
 "form-data"), `transcription`, `recordedAt` (a number), `client`, and
 `audio` as `"omitted, <X-Audio-Size> bytes"`: a bot cannot hear M4A, and
-keeping untrusted binaries in its folder buys nothing. Other bodies go as
+keeping untrusted binaries in its folder buys nothing. When Backplane
+transcribed the recording itself, `transcription` is its words, with
+`heardBy` and `unsure` (the words to ask the person about). Other bodies go as
 they came. Either way the bot reads it as untrusted data, like any
 webhook's.
 
@@ -156,7 +158,9 @@ Settings, Webhook, a gesture):
 - URL: the one shown with the token (`https://<machine>.<tailnet>.ts.net[:port]/hook/<hook id>`;
   the phone must be on the tailnet)
 - Header: `Authorization` = `Bearer <token>`
-- Send: Transcription only (the recording would pass the 256 KB cap)
+- Send: Transcription, or Recording (or both) to have Backplane transcribe it
+  with GPT-Live-Transcribe and your dictionary (docs/voice.md; needs the
+  OpenAI key in Settings, Voice; forms may be 2 MB)
 
 What arrives is untrusted data for the bot (above).
 
@@ -166,7 +170,7 @@ The hub also takes the Index webhook protocol's HMAC signature
 - URL: `https://<this machine>.<tailnet>.ts.net/hook/<hook id>` (the hub
   started with `--tailscale-https`; the phone must be on the tailnet)
 - Sign requests: on, with the webhook's secret pasted as it is shown
-- Send: Transcription only (the recording would pass the 256 KB cap)
+- Send: as above (a signed form with a recording is checked over its bytes)
 
 A signed voice note reaches the bot as the person's own words, `[voice note
 from your Pebble ring]` and the transcription, starting a conversation

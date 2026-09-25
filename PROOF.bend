@@ -49,6 +49,7 @@ import ./src/core/sign.bend as SG
 import ./src/core/cron.bend as CR
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
+import ./src/core/voice.bend as VO
 
 # Lemmas
 # ------
@@ -4570,3 +4571,87 @@ def Laws.perf_hud_first_frame(cur, at, now):
 def Laws.perf_hud_off_draws_nothing(ty, text, w):
   {==}
 
+# Dictation
+# ---------
+
+law voice_cap_le:
+  for -A: Data
+  for n: Nat
+  for xs: List<&2, A>
+  {Nat.is_le(List.length(&2, A, VO.Voice.cap(A, n, xs)), n) == True{} : Bool}
+
+def voice_cap_le(A, n, xs):
+  match n xs:
+    case 0n _:
+      {==}
+    case 1n+p Nil{}:
+      {==}
+    case 1n+p h <> t:
+      voice_cap_le(A, p, t)
+
+law voice_or_true:
+  for a: Bool
+  {Bool.or(a, True{}) == True{} : Bool}
+
+def voice_or_true(a):
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+law voice_has_snoc:
+  for ds: List<&2, String>
+  for +x: String
+  for +k: String
+  for acc: Bool
+  for e: {String.eq(String.to_lower(x), k) == True{} : Bool}
+  {VO.Voice.dict.has.go(List.append(&2, String, ds, [x]), k, acc) == True{} : Bool}
+
+def voice_has_snoc(ds, x, k, acc, e):
+  match ds:
+    case Nil{}:
+      %Equal.sym(Bool, String.eq(String.to_lower(x), k), True{}, e) : {Bool.or(acc, _) == True{} : Bool}
+      voice_or_true(acc)
+    case h <> t:
+      voice_has_snoc(t, x, k, Bool.or(acc, String.eq(String.to_lower(h), k)), e)
+
+law voice_add_has_k:
+  for b: Bool
+  for +ds: List<&2, String>
+  for +term: String
+  for e: {VO.Voice.dict.has(ds, term) == b : Bool}
+  for h: {String.is_empty(String.trim(term)) == False{} : Bool}
+  {VO.Voice.dict.has(VO.Voice.dict.add.k(b, String.is_empty(String.trim(term)), ds, String.trim(term)), term) == True{} : Bool}
+
+def voice_add_has_k(b, ds, term, e, h):
+  match b:
+    case True{}:
+      e
+    case False{}:
+      %Equal.sym(Bool, String.is_empty(String.trim(term)), False{}, h) : {VO.Voice.dict.has(VO.Voice.dict.add.k(False{}, _, ds, String.trim(term)), term) == True{} : Bool}
+      voice_has_snoc(ds, String.trim(term), VO.Voice.key(term), False{}, Laws.string_eq_refl(String.to_lower(String.trim(term))))
+
+def Laws.voice_add_idem(ds, term, h):
+  %Equal.sym(Bool, VO.Voice.dict.has(ds, term), True{}, h) : {VO.Voice.dict.add.k(_, String.is_empty(String.trim(term)), ds, String.trim(term)) == ds : List<&2, String>}
+  {==}
+
+def Laws.voice_add_has(ds, term, h):
+  voice_add_has_k(VO.Voice.dict.has(ds, term), ds, term, {==}, h)
+
+def Laws.voice_fix_same(t, w):
+  match w:
+    case SNil{}:
+      {==}
+    case SCon{+h, +tl}:
+      %Equal.sym(Bool, String.eq(SCon{h, tl}, SCon{h, tl}), True{}, Laws.string_eq_refl(SCon{h, tl})) : {VO.Voice.fix.k(_, t, SCon{h, tl}, SCon{h, tl}) == t : String}
+      {==}
+
+def Laws.voice_fix_empty(t, r):
+  {==}
+
+def Laws.voice_unsure_bounded(ds, ig, text):
+  voice_cap_le(VO.Unsure, 5n, VO.Voice.un.go(VO.Voice.words(text), VO.Voice.dts(ds), ds, ig, VO.Us{False{}, Nil{}, 0n}))
+
+def Laws.voice_keywords_bounded(ds):
+  voice_cap_le(String, 100n, ds)

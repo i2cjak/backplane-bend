@@ -344,6 +344,32 @@ def Bn.check.gh.or(ring: Bool, +secret: String, +now: Nat, +body: String, +gh: S
     case False{}:
       Bn.check.gh(SG.Sign.github(secret, body, gh), key, delivery)
 
+def Bn.check.raw.k(ok: Bool, m: Maybe<&2, Nat>, +secret: String, +now: Nat, +dl: String, +tr: String, test: Bool, raw: List<&2, U32>, +sig: String, +key: String) -> String:
+  match ok m:
+    case True{} Some{+ts}:
+      Bool.pick(String, SG.Sign.index.raw(secret, now, ts, dl, tr, test, raw, sig), key ++ ":i:" ++ dl, "")
+    case _ _:
+      ""
+
+def Bn.check.raw.f(fs: List<&2, String>, +secret: String, +now: Nat, raw: List<&2, U32>, +key: String) -> String:
+  match fs:
+    case _ <> +v <> +ts <> +dl <> +tr <> +te <> +sig <> _:
+      Bn.check.raw.k(Bool.and(String.eq(v, "1"), Bool.not(String.is_empty(dl))), Nat.read(ts), secret, now, dl, tr, String.eq(te, "true"), raw, sig, key)
+    case _:
+      ""
+
+def Bn.check.raw.go(ring: Bool, +secret: String, +now: Nat, +key: String, +gh: String, raw: List<&2, U32>) -> String:
+  match ring:
+    case True{}:
+      Bn.check.raw.f(String.split(gh, '\n'), secret, now, raw, key)
+    case False{}:
+      ""
+
+# a Pebble ring's form with its recording: the Index signature over the
+# body's bytes (only the ring sends one; "" for anything else)
+def Bn.check.raw(+secret: String, +now: Nat, +key: String, +gh: String, raw: List<&2, U32>) -> String:
+  Bn.check.raw.go(Bool.and(Bool.not(String.is_empty(secret)), String.starts_with(gh, "index\n")), secret, now, key, gh, raw)
+
 def Bn.check.k(empty: Bool, ours: Bool, github: Bool, +secret: String, +now: Nat, +ts: String, +body: String, +sig: String, +gh: String,
     +delivery: String, +key: String) -> String:
   match empty ours github:

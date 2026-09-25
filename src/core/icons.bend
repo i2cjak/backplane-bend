@@ -56,6 +56,7 @@ def Icon.all() -> List<&2, IDef>:
    IDef{"arrow-up", [Icon.s("m5 12 7-7 7 7"), Icon.s("M12 19V5")]},
    IDef{"send", [Icon.s("M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"), Icon.s("m21.854 2.147-10.94 10.939")]},
    IDef{"stop", [Layer{"M6 6h12v12H6z", True{}}]},
+   IDef{"mic", [Icon.s("M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"), Icon.s("M19 10v2a7 7 0 0 1-14 0v-2"), Icon.s("M12 19v3")]},
    IDef{"terminal", [Icon.s("m4 17 6-6-6-6"), Icon.s("M12 19h8")]},
    IDef{"git-branch", [Icon.s("M6 3v12"), Icon.s("M15 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0"), Icon.s("M3 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0"), Icon.s("M18 9a9 9 0 0 1-9 9")]},
    IDef{"panel-right", [Icon.s("M3 3h18v18H3z"), Icon.s("M15 3v18")]},
@@ -111,7 +112,7 @@ def Icon.names() -> List<&2, String>:
 
 # the icons the two UIs draw (laws icons_*: each is in the set)
 def Icon.used() -> List<&2, String>:
-  ["plus", "x", "chevron-down", "chevron-right", "settings", "paperclip", "arrow-up", "stop"]
+  ["plus", "x", "chevron-down", "chevron-right", "settings", "paperclip", "arrow-up", "stop", "mic"]
 
 def Icon.missing.k(none: Bool, +n: String, rest: List<&2, String>) -> List<&2, String>:
   match none:

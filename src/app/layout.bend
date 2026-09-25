@@ -27,6 +27,7 @@ import ../core/eq.bend as Q
 import ../core/fold.bend as FO
 import ../core/menu.bend as MN
 import ../core/badge.bend as BG
+import ../core/voice.bend as VC
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -1910,7 +1911,91 @@ def Set.fork(+ty: Ty, +fork: String, +x: U32, +y: U32) -> Out:
 
 # The settings screen, in place of the thread. Taller than the window, it
 # scrolls ("@set.sc", clamped here); the header stays on top.
-def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32, +raw: U32) -> Out:
+# a button or chip: its label, and the action and value it sends
+type VBtn is Data:
+  VBtn{label: String, action: String, value: String}
+
+# Voice in Settings: the OpenAI key (only ever shown masked), the
+# microphone, the dictionary (its terms as chips, × takes one out), and
+# what a Pebble ring needs to send
+def Set.key.note(+masked: String) -> String:
+  Bool.pick(String, String.is_empty(masked), "For GPT-Live-Transcribe. Kept in this machine's secrets; never shown again.",
+    "Saved: " ++ masked ++ ". Paste a new one to replace it.")
+
+# chips from (x, y), wrapping at x1 back to x0 on the next row; the one
+# whose value is `on` is lit
+def Vx.chips(bs: List<&2, VBtn>, +ty: Ty, +on: String, +x0: U32, +x1: U32, +x: U32, +y: U32) -> Out:
+  match bs:
+    case Nil{}:
+      Out.none()
+    case VBtn{+l, +a, +v} <> t:
+      +cx = {Bool.pick(U32, Set.wraps(ty, l, x0, x1, x), x0, x) : U32}
+      +cy = {Bool.pick(U32, Set.wraps(ty, l, x0, x1, x), (y + 34 : U32), y) : U32}
+      Out.cat(Lay.chip(ty, cx, cy, l, String.eq(v, on), a, v), Vx.chips(t, ty, on, x0, x1, (cx + Lay.button.w(ty, l) + 8 : U32), cy))
+
+def Vx.chips.rows(bs: List<&2, VBtn>, +ty: Ty, +x0: U32, +x1: U32, +x: U32) -> U32:
+  match bs:
+    case Nil{}:
+      0
+    case VBtn{+l, _, _} <> t:
+      +cx = {Bool.pick(U32, Set.wraps(ty, l, x0, x1, x), x0, x) : U32}
+      (Bool.pick(U32, Set.wraps(ty, l, x0, x1, x), 1, 0) + Vx.chips.rows(t, ty, x0, x1, (cx + Lay.button.w(ty, l) + 8 : U32)) : U32)
+
+def Vx.dev.btns(ds: List<&2, U.VDev>) -> List<&2, VBtn>:
+  match ds:
+    case Nil{}:
+      Nil{}
+    case U.VDev{+name, +label} <> t:
+      VBtn{label, "setting", "voice.device=" ++ name} <> Vx.dev.btns(t)
+
+# the microphones as chips, the default first
+def Vx.devs(+u: U.Ui) -> List<&2, VBtn>:
+  VBtn{"Default", "setting", "voice.device="} <> Vx.dev.btns(U.Voice.devices(u))
+
+def Vx.term.btns(ts: List<&2, String>) -> List<&2, VBtn>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> r:
+      VBtn{t ++ "  ×", "voice-unterm", t} <> Vx.term.btns(r)
+
+def Set.voice(+ty: Ty, +st: M.State, +n: S.Nui, +x: U32, +w: U32, +y: U32) -> Out:
+  +u = S.Nui.ui(n)
+  +kid = S.Fld.id("vkey", "voice-key", "")
+  +tid = S.Fld.id("vterm", "voice-term", "")
+  +devs = Vx.devs(u)
+  +terms = Vx.term.btns(U.Voice.dict(u))
+  +dr = {(Vx.chips.rows(devs, ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
+  +tr = {(Vx.chips.rows(terms, ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
+  +sw = Lay.button.w(ty, "Save")
+  +rw = Lay.button.w(ty, "Remove")
+  +aw = Lay.button.w(ty, "Add")
+  +dev = M.Setting.get(st, "voice.device", "")
+  Out.all([
+    Set.head(ty, "Voice", x, y),
+    Set.card(x, (y + 32 : U32), w, (334 + dr + tr : U32)),
+    Set.row(ty, "OpenAI API key", Set.key.note(U.Ui.scratch(u, "@voice.key")), x, (y + 34 : U32), w),
+    Lay.field(ty, D.Clip.all(), (x + 16 : U32), (y + 84 : U32), (w - 44 - sw - rw : U32), U.Ui.scratch(u, "@f.vkey"), String.eq(S.Nui.focus_of(n), kid), S.Blink.on(n),
+      S.Nui.caret_of(n), S.Nui.mark(n), "sk-…", kid),
+    Lay.button(ty, D.Clip.all(), (x + w - 22 - sw - rw : U32), (y + 84 : U32), "Save", T.Th.accent(), "voice-key", ""),
+    Lay.button(ty, D.Clip.all(), (x + w - 16 - rw : U32), (y + 84 : U32), "Remove", T.Th.soft(), "voice-unkey", ""),
+    Set.row(ty, "Microphone", "The mic button in the composer records this machine's " ++ Bool.pick(String, String.is_empty(dev), "default microphone" ++ Bool.pick(String, String.is_empty(U.Voice.default(u)), "", " (" ++ U.Voice.label(u, U.Voice.default(u)) ++ ")"), U.Voice.label(u, dev)) ++ ".", x, (y + 120 : U32), w),
+    Vx.chips(devs, ty, "voice.device=" ++ dev, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (y + 168 : U32)),
+    Set.row(ty, "Dictionary", "Names and terms to expect. Words you clarify after dictating join it.", x, (y + 206 + dr : U32), w),
+    Vx.chips(terms, ty, "", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (y + 254 + dr : U32)),
+    Lay.field(ty, D.Clip.all(), (x + 16 : U32), (y + 254 + dr + tr + Bool.pick(U32, List.is_empty(&2, VBtn, terms), 0, 34) : U32), (w - 38 - aw : U32), U.Ui.scratch(u, "@f.vterm"),
+      String.eq(S.Nui.focus_of(n), tid), S.Blink.on(n), S.Nui.caret_of(n), S.Nui.mark(n), "Add a term", tid),
+    Lay.button(ty, D.Clip.all(), (x + w - 16 - aw : U32), (y + 254 + dr + tr + Bool.pick(U32, List.is_empty(&2, VBtn, terms), 0, 34) : U32), "Add", T.Th.soft(), "voice-term", ""),
+    Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, "Pebble ring: set its webhook to send the recording; it is transcribed here with this dictionary.", (w - 32 : U32)),
+      D.Clip.all(), (x + 16 : U32), (y + 328 + dr + tr : U32), 24, T.Th.faint()))])
+
+def Set.voice.h(+ty: Ty, +n: S.Nui, +x: U32, +w: U32) -> U32:
+  +u = S.Nui.ui(n)
+  +devs = Vx.devs(u)
+  (386 + (Vx.chips.rows(devs, ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32)
+    + (Vx.chips.rows(Vx.term.btns(U.Voice.dict(u)), ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32)
+
+def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32, +raw: U32) -> Out:
   +w = {U32.min((x1 - x0 - 64 : U32), 720) : U32}
   +x = {(x0 + U32.shr((x1 - x0 - w : U32)) : U32) : U32}
   +prov = M.Setting.get(st, "agent.provider", "claude")
@@ -1922,7 +2007,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
   +tms = U.Models.menu(U.Str.get(info, "models"), tp)
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
-  +total = {(868 + dy + ey : U32) : U32}
+  +total = {(868 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
   +b2 = {(b + 64 : U32) : U32}
@@ -1968,7 +2053,8 @@ def Lay.settings(+ty: Ty, +st: M.State, +info: Map<&2, String>, +v: String, +not
       Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 666 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", "")),
     Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 708 + dy + ey : U32), w, 190),
     Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 722 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 722 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly")])),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 722 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
+    Set.voice(ty, st, n, x, w, (b2 + 786 + dy + ey : U32))])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])
@@ -3054,12 +3140,157 @@ def TL.memo.size(m: TLMemo) -> Nat:
     case TLMemo{_, _, its}:
       List.length(&2, TLE, its)
 
+# Voice
+# -----
+# Dictation (client.bend's Voice): the mic button beside the paperclip,
+# red while it records; above the composer, what is being heard (the
+# microphone, its level, the words so far), a note when nothing comes in
+# (the helper's hints) or something failed, and the words to clarify, one
+# at a time. Placed as Lay.thread.k places the composer.
+
+def Vx.send(t: M.Thread, +st: M.State, +sel: String) -> String:
+  match t:
+    case M.Thread{_, _, _, _, _, +turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      U.Follow.label(st, sel, Lay.running(turn))
+
+def Vx.mic(+ty: Ty, +state: String, +x: U32, +y: U32) -> Out:
+  Out{List.append(&2, R.Op,
+      Lay.box(D.Clip.all(), x, y, 28, 28, 6, Bool.pick(U32, String.eq(state, "live"), T.Th.bad(), T.Th.raise()),
+        Bool.pick(U32, String.is_empty(state), T.Th.line(), T.Th.bad())),
+      Lay.icon(ty, "mic", D.Clip.all(), (x + 6 : U32), (y + 6 : U32), Bool.pick(U32, String.eq(state, "live"), T.Th.bg(), Bool.pick(U32, String.is_empty(state), T.Th.soft(), T.Th.bad())))),
+    [Lay.hit(x, y, 28, 28, "voice", "")]}
+
+# the level meter: 0..100 over w pixels
+def Vx.meter(+lv: String, +x: U32, +y: U32, +w: U32) -> List<&2, R.Op>:
+  +v = {U32.min(Maybe.default(&2, U32, U32.read(lv), 0), 100) : U32}
+  [D.Draw.rect(D.Clip.all(), x, y, w, 6, T.Th.raise(), 255), D.Draw.rect(D.Clip.all(), x, y, ((w * v : U32) / 100 : U32), 6, T.Th.ok(), 255)]
+
+def Vx.head(+state: String, +dev: String) -> String:
+  Bool.pick(String, String.eq(state, "starting"), "Starting the microphone…",
+    Bool.pick(String, String.eq(state, "stopping"), "Finishing…", "Listening" ++ Bool.pick(String, String.is_empty(dev), "", " · " ++ dev)))
+
+# what is being heard: a red dot, the microphone, the level, the words so
+# far, and Stop
+def Vx.strip(+ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +y: U32) -> Out:
+  +head = Vx.head(U.Ui.scratch(u, "@voice"), U.Ui.scratch(u, "@voice.dev"))
+  +hw = {Ty.width(ty, 2n, Ty.fit(ty, 2n, head, U32.shr((x1 - x0 : U32)))) : U32}
+  +mx = {(x0 + 34 + hw : U32) : U32}
+  +bx = {(x1 - 8 - Lay.button.w(ty, "Stop") : U32) : U32}
+  Out.all([
+    Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 36, 6, T.Th.panel(), T.Th.bad()),
+      [D.Draw.rect(D.Clip.all(), (x0 + 12 : U32), (y + 13 : U32), 10, 10, T.Th.bad(), 255)],
+      Ty.text(ty, 2n, Ty.fit(ty, 2n, head, U32.shr((x1 - x0 : U32))), D.Clip.all(), (x0 + 30 : U32), (y + 4 : U32), 28, T.Th.text()),
+      Vx.meter(U.Ui.scratch(u, "@voice.lv"), (mx + 8 : U32), (y + 15 : U32), 64),
+      Ty.text(ty, 2n, Ty.fit(ty, 2n, U.Ui.scratch(u, "@voice.part"), U32.dim(bx, (mx + 90 : U32))), D.Clip.all(), (mx + 84 : U32), (y + 4 : U32), 28, T.Th.faint())])),
+    Lay.button(ty, D.Clip.all(), bx, (y + 4 : U32), "Stop", T.Th.bad(), "voice", "")])
+
+def Vx.hint(+h: String, +dev: String) -> String:
+  +d = Bool.pick(String, String.is_empty(dev), "the microphone", dev)
+  Bool.pick(String, String.eq(h, "no-audio"), "Nothing received from " ++ d ++ " yet. Is it plugged in? Pick another in Settings, Voice.",
+    Bool.pick(String, String.eq(h, "silent"), "Only silence from " ++ d ++ " so far. Is it muted, or the wrong one?", h))
+
+# a note above the strip: why nothing comes in, or what failed (× closes)
+def Vx.note(+ty: Ty, +text: String, +color: U32, +x0: U32, +x1: U32, +y: U32) -> Out:
+  Out.all([
+    Out.ops(List.append(&2, R.Op, Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 36, 6, T.Th.raise(), color),
+      Ty.text(ty, 2n, Ty.fit(ty, 2n, text, (x1 - x0 - 52 : U32)), D.Clip.all(), (x0 + 12 : U32), (y + 4 : U32), 28, T.Th.text()))),
+    Lay.ibutton(ty, D.Clip.all(), (x1 - 32 : U32), (y + 4 : U32), "x", T.Th.dim(), "voice-err", "")])
+
+# buttons in a row from x, each 6 px after the last
+def Vx.row(bs: List<&2, VBtn>, +ty: Ty, +x: U32, +y: U32) -> Out:
+  match bs:
+    case Nil{}:
+      Out.none()
+    case VBtn{+label, +action, value} <> t:
+      Out.cat(Lay.button(ty, D.Clip.all(), x, y, label, Bool.pick(U32, String.eq(action, "voice-use"), T.Th.accent(), T.Th.soft()), action, value),
+        Vx.row(t, ty, (x + Lay.button.w(ty, label) + 6 : U32), y))
+
+def Vx.ask.btns(+w: String, +g: String) -> List<&2, VBtn>:
+  List.append(&2, VBtn, Bool.pick(List<&2, VBtn>, String.is_empty(g), Nil{}, [VBtn{"Use " ++ g, "voice-use", "0"}]),
+    [VBtn{"Fix…", "voice-fix", "0"}, VBtn{"Add to dictionary", "voice-add", "0"}, VBtn{"Skip", "voice-skip", "0"}])
+
+# the first word to clarify: heard as, the guess, and what to do with it
+def Vx.ask.k(x: VC.Unsure, +ty: Ty, +n: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match x:
+    case VC.Unsure{+w, +g}:
+      +q = "Heard \"" ++ w ++ "\"" ++ Bool.pick(String, Nat.is_gt(n, 1n), " (1 of " ++ Nat.show(n) ++ ")", "")
+      Out.all([
+        Out.ops(List.append(&2, R.Op, Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 36, 6, T.Th.panel(), T.Th.warn()),
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, q, U32.shr((x1 - x0 : U32))), D.Clip.all(), (x0 + 12 : U32), (y + 4 : U32), 28, T.Th.text()))),
+        Vx.row(Vx.ask.btns(w, g), ty, (x0 + 24 + Ty.width(ty, 2n, Ty.fit(ty, 2n, q, U32.shr((x1 - x0 : U32)))) : U32), (y + 4 : U32))])
+
+# the right spelling being typed (Enter or Save replaces the word and adds
+# it to the dictionary)
+def Vx.fixing(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +y: U32) -> Out:
+  +id = S.Fld.id("vfix", "voice-fixed", "")
+  +sw = Lay.button.w(ty, "Save")
+  +cw = Lay.button.w(ty, "Cancel")
+  Out.all([
+    Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 36, 6, T.Th.panel(), T.Th.warn())),
+    Lay.field(ty, D.Clip.all(), (x0 + 4 : U32), (y + 4 : U32), (x1 - x0 - 20 - sw - cw : U32), U.Ui.scratch(S.Nui.ui(n), "@f.vfix"), String.eq(S.Nui.focus_of(n), id), S.Blink.on(n),
+      S.Nui.caret_of(n), S.Nui.mark(n), "The right spelling (it joins the dictionary)", id),
+    Lay.button(ty, D.Clip.all(), (x1 - 8 - sw - 6 - cw : U32), (y + 4 : U32), "Save", T.Th.accent(), "voice-fixed", ""),
+    Lay.button(ty, D.Clip.all(), (x1 - 8 - cw : U32), (y + 4 : U32), "Cancel", T.Th.soft(), "form-close", "@voice.fix")])
+
+def Vx.ask(fixing: Bool, +ty: Ty, +n: S.Nui, +us: List<&2, VC.Unsure>, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match fixing:
+    case True{}:
+      Vx.fixing(ty, n, x0, x1, y)
+    case False{}:
+      Vx.ask.k(Maybe.default(&2, VC.Unsure, List.head(&2, VC.Unsure, us), VC.Unsure{"", ""}), ty, List.length(&2, VC.Unsure, us), x0, x1, y)
+
+def Vx.ask.if(on: Bool, +ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match on:
+    case True{}:
+      Vx.ask(Bool.not(String.is_empty(U.Ui.scratch(S.Nui.ui(n), "@voice.fix"))), ty, n, U.Voice.unsure(S.Nui.ui(n)), x0, x1, y)
+    case False{}:
+      Out.none()
+
+def Vx.strip.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match on:
+    case True{}:
+      Vx.strip(ty, u, x0, x1, y)
+    case False{}:
+      Out.none()
+
+def Vx.note.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match on:
+    case True{}:
+      Bool.pick(Out, String.is_empty(U.Ui.scratch(u, "@voice.err")),
+        Vx.note(ty, Vx.hint(U.Ui.scratch(u, "@voice.hint"), U.Ui.scratch(u, "@voice.dev")), T.Th.warn(), x0, x1, y),
+        Vx.note(ty, "Dictation: " ++ U.Ui.scratch(u, "@voice.err"), T.Th.bad(), x0, x1, y))
+    case False{}:
+      Out.none()
+
+# the mic and what sits above the composer for dictation, stacked up from
+# the composer's top: the words to clarify, the strip, the note
+def Vx.view.k(+ty: Ty, +n: S.Nui, +u: U.Ui, +sel: String, +cx0: U32, +cx1: U32, +y: U32, +fy: U32, +send: String) -> Out:
+  +here = Bool.or(String.eq(U.Ui.scratch(u, "@voice.th"), sel), String.is_empty(U.Ui.scratch(u, "@voice.th")))
+  +asking = Bool.and(String.eq(U.Ui.scratch(u, "@voice.uth"), sel), Bool.not(List.is_empty(&2, VC.Unsure, U.Voice.unsure(u))))
+  +strip = Bool.and(here, U.Voice.on(u))
+  +noting = Bool.and(here, Bool.or(Bool.not(String.is_empty(U.Ui.scratch(u, "@voice.err"))), Bool.and(U.Voice.on(u), Bool.not(String.is_empty(U.Ui.scratch(u, "@voice.hint"))))))
+  +ay = {(y - 42 : U32) : U32}
+  +sy = {(ay - Bool.pick(U32, asking, 42, 0) : U32) : U32}
+  +ny = {(sy - Bool.pick(U32, strip, 42, 0) : U32) : U32}
+  Out.all([
+    Vx.mic(ty, Bool.pick(String, here, U.Ui.scratch(u, "@voice"), ""), (Comp.send_x(ty, cx1, send) - 68 : U32), fy),
+    Vx.ask.if(asking, ty, n, cx0, cx1, (ay + 2 : U32)),
+    Vx.strip.if(strip, ty, u, cx0, cx1, (sy + 2 : U32)),
+    Vx.note.if(noting, ty, u, cx0, cx1, (ny + 2 : U32))])
+
+def Vx.view(+ty: Ty, +n: S.Nui, +st: M.State, +sel: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+  +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
+  +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
+  +eh = Comp.eh(List.length(&2, String, Comp.wrap(ty, U.Ui.draft_text(S.Nui.ui(n)), cw)))
+  Vx.view.k(ty, n, S.Nui.ui(n), sel, cx0, (cx0 + cw : U32), (h - 120 - eh : U32), Comp.foot(h), Vx.send(U.Ui.thread(st, sel), st, sel))
+
 def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Out.cat(Out.all([Lay.earlier(ty, Nat.is_ge(TL.memo.size(memo), U.Page.shown(S.Nui.ui(n), sel)), x0, x1, hy), Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)]), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
+      Out.cat(Out.cat(Out.all([Lay.earlier(ty, Nat.is_ge(TL.memo.size(memo), U.Page.shown(S.Nui.ui(n), sel)), x0, x1, hy), Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)]), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy))
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy)),
+        Vx.view(ty, n, st, sel, x0, x1, h))
 
 # the thread view with its header at the top
 def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
@@ -3069,7 +3300,7 @@ def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:
 def Lay.main.k(settings: Bool, empty: Bool, +ty: Ty, +memo: TLMemo, +n: S.Nui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32) -> Out:
   match settings empty:
     case True{} _:
-      Lay.settings(ty, st, nf, v, note, x0, x1, h, Maybe.default(&2, U32, U32.read(U.Ui.scratch(S.Nui.ui(n), "@set.sc")), 0))
+      Lay.settings(ty, st, n, nf, v, note, x0, x1, h, Maybe.default(&2, U32, U32.read(U.Ui.scratch(S.Nui.ui(n), "@set.sc")), 0))
     case False{} True{}:
       Lay.empty(ty, x0, x1, h, List.length(&2, M.Project, U.Ui.projects(st)))
     case False{} False{}:
