@@ -822,14 +822,31 @@ def TL.newest.step(own: Bool, e: M.Entry, st: NW) -> NW:
     case False{} NW{l, acc}:
       NW{l, acc}
 
-def TL.newest(es: List<&2, M.Entry>, +th: String, st: NW) -> List<&2, M.Entry>:
+def TL.at_of(e: M.Entry) -> Nat:
+  match e:
+    case M.Msg{_, _, _, _, at}:
+      at
+    case M.Act{_, _, _, _, _, at}:
+      at
+
+# an entry from before the thread began (with an hour to spare for the
+# clock) ends the walk: the log is in time order, and nothing older is
+# the thread's (a thread with few entries no longer walks the whole log)
+def TL.newest.cut(old: Bool, st: NW) -> NW:
+  match old st:
+    case True{} NW{_, acc}:
+      NW{0n, acc}
+    case False{} _:
+      st
+
+def TL.newest(es: List<&2, M.Entry>, +th: String, +since: Nat, st: NW) -> List<&2, M.Entry>:
   match es st:
     case +_ NW{0n, acc}:
       acc
     case Nil{} NW{_, acc}:
       acc
     case +e <> t NW{1n+k, acc}:
-      TL.newest(t, th, TL.newest.step(TL.mine.or(String.eq(TL.thread_of(e), th), e, th), e, NW{1n+k, acc}))
+      TL.newest(t, th, since, TL.newest.cut(Nat.is_lt(Nat.add(TL.at_of(e), 3600n), since), TL.newest.step(TL.mine.or(String.eq(TL.thread_of(e), th), e, th), e, NW{1n+k, acc})))
 
 def TL.height(ls: List<&2, TLine>, +acc: U32) -> U32:
   match ls:
@@ -2886,13 +2903,18 @@ def Lay.tl.px(+n: S.Nui) -> U32:
   +x1 = Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((w - 264 : U32)) : U32), w)
   U32.min((x1 - 264 - 64 : U32), 780)
 
+def TL.created(t: M.Thread) -> Nat:
+  match t:
+    case M.Thread{_, _, _, c, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      c
+
 # the open thread's entries (none with no thread open)
 def Lay.memo.es(none: Bool, +n: S.Nui) -> List<&2, M.Entry>:
   match none:
     case True{}:
       Nil{}
     case False{}:
-      TL.newest(U.Ui.entries(U.Ui.state(S.Nui.ui(n))), U.Ui.sel(S.Nui.ui(n)), NW{U.Page.shown(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), Nil{}})
+      TL.newest(U.Ui.entries(U.Ui.state(S.Nui.ui(n))), U.Ui.sel(S.Nui.ui(n)), TL.created(U.Ui.thread(U.Ui.state(S.Nui.ui(n)), U.Ui.sel(S.Nui.ui(n)))), NW{U.Page.shown(S.Nui.ui(n), U.Ui.sel(S.Nui.ui(n))), Nil{}})
 
 # (only the newest page of a thread, core's Page: a long thread laid out
 # whole cost every frame 15 ms on a real log; "earlier" shows another page)

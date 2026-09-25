@@ -74,14 +74,21 @@ def Eq.op(a: R.Op, b: R.Op) -> Bool:
       Bool.and(U32.is_eq(a0, b0), Bool.and(U32.is_eq(a1, b1), Bool.and(U32.is_eq(a2, b2), Bool.and(U32.is_eq(a3, b3),
         Bool.and(U32.is_eq(ac, bc), Bool.and(U32.is_eq(aa, ba), Eq.shape(as, bs)))))))
 
-def Eq.ops(xs: List<&2, R.Op>, ys: List<&2, R.Op>) -> Bool:
-  match xs ys:
-    case Nil{} Nil{}:
-      True{}
-    case x <> xt y <> yt:
-      Bool.and(Eq.op(x, y), Eq.ops(xt, yt))
-    case _ _:
+# ok: the ops so far were equal; the walk stops at the first that is not
+# (a frame's changed regions differ early, and are compared that far)
+def Eq.ops.go(xs: List<&2, R.Op>, ys: List<&2, R.Op>, ok: Bool) -> Bool:
+  match xs ys ok:
+    case _ _ False{}:
       False{}
+    case Nil{} Nil{} True{}:
+      True{}
+    case x <> xt y <> yt True{}:
+      Eq.ops.go(xt, yt, Eq.op(x, y))
+    case _ _ True{}:
+      False{}
+
+def Eq.ops(xs: List<&2, R.Op>, ys: List<&2, R.Op>) -> Bool:
+  Eq.ops.go(xs, ys, True{})
 
 def Eq.image(a: Image, b: Image) -> Bool:
   match a b:
@@ -161,9 +168,11 @@ def Loc.ops(ops: List<&2, R.Op>, +ox: U32, +oy: U32, +n: U32) -> List<&2, R.Op>:
 type Tile is Data:
   Tile{ops: List<&2, R.Op>, loc: List<&2, R.Op>, base: Image, img: Image}
 
+# a node keeps the ops that reached it and the base under it: a node whose
+# ops and base are unchanged is kept whole, its tiles not looked at
 type Tiles is Data:
   TLeaf{t: Tile}
-  TNode{a: Tiles, b: Tiles, c: Tiles, d: Tiles}
+  TNode{ops: List<&2, R.Op>, base: Image, a: Tiles, b: Tiles, c: Tiles, d: Tiles}
 
 # the last frame's tiles (k levels over tiles, n wide from (0, 0)) and how
 # far its content moved down since, modulo 2^32 (0: not at all)
@@ -228,7 +237,7 @@ def Tiles.seek(k: Nat, t: Tiles, +x: U32, +y: U32, +rx: U32, +ry: U32, +n: U32, 
   match k t:
     case 0n TLeaf{tl}:
       Tiles.seek.leaf(tl, e, l, base)
-    case 1n+j0 TNode{a, b, c, d}:
+    case 1n+j0 TNode{_, _, a, b, c, d}:
       +j = j0
       Tiles.seek(j, Tiles.pick(U32.is_ge(x, (rx + U32.shr(n) : U32)), U32.is_ge(y, (ry + U32.shr(n) : U32)), a, b, c, d), x, y,
         Bool.pick(U32, U32.is_ge(x, (rx + U32.shr(n) : U32)), (rx + U32.shr(n) : U32), rx), Bool.pick(U32, U32.is_ge(y, (ry + U32.shr(n) : U32)), (ry + U32.shr(n) : U32), ry), U32.shr(n), e, l, base)
@@ -274,37 +283,55 @@ def Tiles.make(k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, +rx: U32, +r
       +j = j0
       # the four quadrants at once (a first frame, or one after a resize)
       a b c d = Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), Img.q(base, 0n), rx, ry, U32.shr(n)) Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)) Tiles.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)) Tiles.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n))
-      TNode{a, b, c, d}
+      TNode{ops, base, a, b, c, d}
 
-def Tiles.node(a: Tiles, b: Tiles, c: Tiles, d: Tiles) -> Tiles:
-  TNode{a, b, c, d}
+# the last frame's node holds the same ops over the same base
+def Tiles.same(+ops: List<&2, R.Op>, +base: Image, t: Tiles) -> Bool:
+  match t:
+    case TLeaf{_}:
+      False{}
+    case TNode{o, b, _, _, _, _}:
+      Bool.and(Eq.ops(ops, o), Eq.image(base, b))
 
-# the next frame over the last one's tiles: unchanged tiles are kept, the
-# rest drawn again or taken from the past; the four quadrants run at once
-def Tiles.again(+k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, prev: Tiles, +p: Past, +rx: U32, +ry: U32, +n: U32) -> Tiles:
-  match k prev:
-    case 0n TLeaf{t}:
+# the next frame over the last one's tiles: an unchanged node is kept
+# whole (same: Tiles.same of it), an unchanged tile is kept, the rest is
+# drawn again or taken from the past; the four quadrants run at once
+def Tiles.again.go(+k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, prev: Tiles, +p: Past, +rx: U32, +ry: U32, +n: U32, same: Bool) -> Tiles:
+  match k prev same:
+    case 0n TLeaf{t} _:
       TLeaf{Tile.again(e, ops, base, t, p, rx, ry, n)}
-    case 1n+j0 TNode{pa, pb, pc, pd}:
+    case 1n+j0 TNode{o, b, pa, pb, pc, pd} True{}:
+      TNode{o, b, pa, pb, pc, pd}
+    case 1n+j0 TNode{_, _, +pa, +pb, +pc, +pd} False{}:
       +j = j0
-      a b c d = Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), Img.q(base, 0n), pa, p, rx, ry, U32.shr(n)) Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), Img.q(base, 1n), pb, p, (rx + U32.shr(n) : U32), ry, U32.shr(n)) Tiles.again(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 2n), pc, p, rx, (ry + U32.shr(n) : U32), U32.shr(n)) Tiles.again(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 3n), pd, p, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n))
-      Tiles.node(a, b, c, d)
-    case _ _:
+      +h = U32.shr(n)
+      +oa = R.Region.keep(ops, rx, ry, rx, ry, h)
+      +ob = R.Region.keep(ops, rx, ry, (rx + h : U32), ry, h)
+      +oc = R.Region.keep(ops, rx, ry, rx, (ry + h : U32), h)
+      +od = R.Region.keep(ops, rx, ry, (rx + h : U32), (ry + h : U32), h)
+      a b c d = Tiles.again.go(j, e, oa, Img.q(base, 0n), pa, p, rx, ry, h, Tiles.same(oa, Img.q(base, 0n), pa)) Tiles.again.go(j, e, ob, Img.q(base, 1n), pb, p, (rx + h : U32), ry, h, Tiles.same(ob, Img.q(base, 1n), pb)) Tiles.again.go(j, e, oc, Img.q(base, 2n), pc, p, rx, (ry + h : U32), h, Tiles.same(oc, Img.q(base, 2n), pc)) Tiles.again.go(j, e, od, Img.q(base, 3n), pd, p, (rx + h : U32), (ry + h : U32), h, Tiles.same(od, Img.q(base, 3n), pd))
+      TNode{ops, base, a, b, c, d}
+    case _ _ _:
       Tiles.make(k, e, ops, base, rx, ry, n)
+
+def Tiles.again(+k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, +prev: Tiles, +p: Past, +rx: U32, +ry: U32, +n: U32) -> Tiles:
+  Tiles.again.go(k, e, ops, base, prev, p, rx, ry, n, Tiles.same(ops, base, prev))
 
 # the frame the tiles make
 def Tiles.image(t: Tiles) -> Image:
   match t:
     case TLeaf{Tile{_, _, _, i}}:
       i
-    case TNode{a, b, c, d}:
+    case TNode{_, _, a, b, c, d}:
       Qua{Tiles.image(a), Tiles.image(b), Tiles.image(c), Tiles.image(d)}
 
 # Frames
 # ------
 
 # tiles are 2^6 = 64 pixels wide (32 cut a 1400 x 900 frame into so many
-# that comparing them cost more than the redraws they saved)
+# that comparing them cost more than the redraws they saved). A wheel notch
+# (nui.bend's Nui.notch) is one tile, so a scroll finds its tiles where
+# they were: change both together
 def Frame.tile() -> Nat:
   6n
 
@@ -339,3 +366,269 @@ def Frame.again(+w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, prev: Fram
       Frame.make(w, h, ops, base)
     case FSome{pw, ph, t}:
       Frame.again.k(Bool.and(U32.is_eq(pw, w), U32.is_eq(ph, h)), w, h, ops, base, t, dy)
+
+# Drawing in parallel
+# -------------------
+# A fork's work stays on the core it was dealt to, and Tiles.again forks by
+# quadrant: the tiles that change (a thread's text, in a narrow column) sit
+# in few quadrants, so their drawing ran on one or two cores. Frame.par
+# makes the same decisions as Frame.again without drawing (a plan), deals
+# the tiles to draw into a balanced tree (alternate ones to each side, so
+# neighbours land apart), draws them in parallel, and fills the plan from
+# what they made. Each tile checks that what it takes was drawn from its
+# own local ops and base (else it draws them itself), so the frame is
+# exactly Frame.again's (law frame_par_exact) whatever the dealing did.
+
+# a tile: kept as it is, or to draw (its ops, local ops and base); a node
+# counts the tiles to draw under it
+type Plan is Data:
+  PKeep{t: Tile}
+  PDraw{ops: List<&2, R.Op>, l: List<&2, R.Op>, base: Image}
+  PNode{n: Nat, ops: List<&2, R.Op>, base: Image, a: Plan, b: Plan, c: Plan, d: Plan}
+  PKeepN{t: Tiles}
+
+def Plan.count(p: Plan) -> Nat:
+  match p:
+    case PKeep{_}:
+      0n
+    case PDraw{_, _, _}:
+      1n
+    case PNode{n, _, _, _, _, _, _}:
+      n
+    case PKeepN{_}:
+      0n
+
+def Plan.node(+ops: List<&2, R.Op>, +base: Image, +a: Plan, +b: Plan, +c: Plan, +d: Plan) -> Plan:
+  PNode{Nat.add(Nat.add(Plan.count(a), Plan.count(b)), Nat.add(Plan.count(c), Plan.count(d))), ops, base, a, b, c, d}
+
+# Tiles.seek without the drawing: the old image when it drew the same
+def Tiles.find.k(same: Bool, img: Image) -> Maybe<&2, Image>:
+  match same:
+    case True{}:
+      Some{img}
+    case False{}:
+      None{}
+
+def Tiles.find.leaf(t: Tile, +l: List<&2, R.Op>, +base: Image) -> Maybe<&2, Image>:
+  match t:
+    case Tile{_, +o, +b, i}:
+      Tiles.find.k(Bool.and(Eq.ops(o, l), Eq.image(b, base)), i)
+
+def Tiles.find(k: Nat, t: Tiles, +x: U32, +y: U32, +rx: U32, +ry: U32, +n: U32, +l: List<&2, R.Op>, +base: Image) -> Maybe<&2, Image>:
+  match k t:
+    case 0n TLeaf{tl}:
+      Tiles.find.leaf(tl, l, base)
+    case 1n+j0 TNode{_, _, a, b, c, d}:
+      +j = j0
+      Tiles.find(j, Tiles.pick(U32.is_ge(x, (rx + U32.shr(n) : U32)), U32.is_ge(y, (ry + U32.shr(n) : U32)), a, b, c, d), x, y,
+        Bool.pick(U32, U32.is_ge(x, (rx + U32.shr(n) : U32)), (rx + U32.shr(n) : U32), rx), Bool.pick(U32, U32.is_ge(y, (ry + U32.shr(n) : U32)), (ry + U32.shr(n) : U32), ry), U32.shr(n), l, base)
+    case _ _:
+      None{}
+
+# a tile found where the view moved it from is kept; one not found is drawn
+def Tile.plan.found(m: Maybe<&2, Image>, +ops: List<&2, R.Op>, +l: List<&2, R.Op>, +base: Image) -> Plan:
+  match m:
+    case Some{i}:
+      PKeep{Tile{ops, l, base, i}}
+    case None{}:
+      PDraw{ops, l, base}
+
+def Tile.plan.fresh.k(look: Bool, +e: Nat, +ops: List<&2, R.Op>, +l: List<&2, R.Op>, +base: Image, p: Past, +rx: U32, +ry: U32) -> Plan:
+  match look p:
+    case True{} Past{pk, pt, pn, dy}:
+      Tile.plan.found(Tiles.find(pk, pt, rx, (ry - dy : U32), 0, 0, pn, l, base), ops, l, base)
+    case False{} _:
+      PDraw{ops, l, base}
+
+def Tile.plan.fresh(+e: Nat, +ops: List<&2, R.Op>, +l: List<&2, R.Op>, +base: Image, p: Past, +rx: U32, +ry: U32) -> Plan:
+  match p:
+    case Past{pk, pt, pn, +dy}:
+      Tile.plan.fresh.k(U32.is_ne(dy, 0), e, ops, l, base, Past{pk, pt, pn, dy}, rx, ry)
+
+def Tile.plan.k(same: Bool, +e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Tile, p: Past, +rx: U32, +ry: U32, +n: U32) -> Plan:
+  match same:
+    case True{}:
+      PKeep{t}
+    case False{}:
+      Tile.plan.fresh(e, ops, Loc.ops(ops, rx, ry, Tile.size(e)), base, p, rx, ry)
+
+# Tile.again's decision, the drawing left for later
+def Tile.plan(+e: Nat, +ops: List<&2, R.Op>, +base: Image, t: Tile, p: Past, +rx: U32, +ry: U32, +n: U32) -> Plan:
+  match t:
+    case Tile{+o, l, +b, i}:
+      Tile.plan.k(Bool.and(Eq.ops(ops, o), Eq.image(base, b)), e, ops, base, Tile{o, l, b, i}, p, rx, ry, n)
+
+# Tiles.make's plan: every tile to draw
+def Tiles.plan.make(k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, +rx: U32, +ry: U32, +n: U32) -> Plan:
+  match k:
+    case 0n:
+      PDraw{ops, Loc.ops(ops, rx, ry, Tile.size(e)), base}
+    case 1n+j0:
+      +j = j0
+      Plan.node(ops, base, Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, ry, U32.shr(n)), Img.q(base, 0n), rx, ry, U32.shr(n)),
+        Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), ry, U32.shr(n)), Img.q(base, 1n), (rx + U32.shr(n) : U32), ry, U32.shr(n)),
+        Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, rx, (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 2n), rx, (ry + U32.shr(n) : U32), U32.shr(n)),
+        Tiles.plan.make(j, e, R.Region.keep(ops, rx, ry, (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)), Img.q(base, 3n), (rx + U32.shr(n) : U32), (ry + U32.shr(n) : U32), U32.shr(n)))
+
+# Tiles.again's plan
+def Tiles.plan.go(+k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, prev: Tiles, +p: Past, +rx: U32, +ry: U32, +n: U32, same: Bool) -> Plan:
+  match k prev same:
+    case 0n TLeaf{t} _:
+      Tile.plan(e, ops, base, t, p, rx, ry, n)
+    case 1n+j0 TNode{o, b, pa, pb, pc, pd} True{}:
+      PKeepN{TNode{o, b, pa, pb, pc, pd}}
+    case 1n+j0 TNode{_, _, +pa, +pb, +pc, +pd} False{}:
+      +j = j0
+      +h = U32.shr(n)
+      +oa = R.Region.keep(ops, rx, ry, rx, ry, h)
+      +ob = R.Region.keep(ops, rx, ry, (rx + h : U32), ry, h)
+      +oc = R.Region.keep(ops, rx, ry, rx, (ry + h : U32), h)
+      +od = R.Region.keep(ops, rx, ry, (rx + h : U32), (ry + h : U32), h)
+      Plan.node(ops, base, Tiles.plan.go(j, e, oa, Img.q(base, 0n), pa, p, rx, ry, h, Tiles.same(oa, Img.q(base, 0n), pa)),
+        Tiles.plan.go(j, e, ob, Img.q(base, 1n), pb, p, (rx + h : U32), ry, h, Tiles.same(ob, Img.q(base, 1n), pb)),
+        Tiles.plan.go(j, e, oc, Img.q(base, 2n), pc, p, rx, (ry + h : U32), h, Tiles.same(oc, Img.q(base, 2n), pc)),
+        Tiles.plan.go(j, e, od, Img.q(base, 3n), pd, p, (rx + h : U32), (ry + h : U32), h, Tiles.same(od, Img.q(base, 3n), pd)))
+    case _ _ _:
+      Tiles.plan.make(k, e, ops, base, rx, ry, n)
+
+def Tiles.plan(+k: Nat, +e: Nat, +ops: List<&2, R.Op>, +base: Image, +prev: Tiles, +p: Past, +rx: U32, +ry: U32, +n: U32) -> Plan:
+  Tiles.plan.go(k, e, ops, base, prev, p, rx, ry, n, Tiles.same(ops, base, prev))
+
+# the tiles to draw, in the plan's order (a, b, c, d under each node)
+type Job is Data:
+  Job{l: List<&2, R.Op>, base: Image}
+
+def Plan.jobs(p: Plan, acc: List<&2, Job>) -> List<&2, Job>:
+  match p:
+    case PKeep{_}:
+      acc
+    case PDraw{_, l, b}:
+      Job{l, b} <> acc
+    case PNode{_, _, _, a, b, c, d}:
+      Plan.jobs(a, Plan.jobs(b, Plan.jobs(c, Plan.jobs(d, acc))))
+    case PKeepN{_}:
+      acc
+
+# jobs dealt into a balanced tree: the i-th of a list is found by i's bits,
+# lowest first (0: the even places, 1: the odd ones)
+type Jobs is Data:
+  JNone{}
+  JOne{j: Job}
+  JTwo{a: Jobs, b: Jobs}
+
+type Halves is Data:
+  Halves{even: List<&2, Job>, odd: List<&2, Job>}
+
+def Halves.cons(x: Job, h: Halves) -> Halves:
+  match h:
+    case Halves{a, b}:
+      Halves{x <> b, a}
+
+def Halves.of(xs: List<&2, Job>) -> Halves:
+  match xs:
+    case Nil{}:
+      Halves{Nil{}, Nil{}}
+    case x <> t:
+      Halves.cons(x, Halves.of(t))
+
+def Jobs.deal.k(+d: Nat, h: Halves) -> Jobs:
+  match d h:
+    case _ Halves{Nil{}, Nil{}}:
+      JNone{}
+    case _ Halves{x <> Nil{}, Nil{}}:
+      JOne{x}
+    case 0n _:
+      JNone{}
+    case 1n+k Halves{a, b}:
+      JTwo{Jobs.deal.k(k, Halves.of(a)), Jobs.deal.k(k, Halves.of(b))}
+
+def Jobs.deal(xs: List<&2, Job>) -> Jobs:
+  Jobs.deal.k(24n, Halves.of(xs))
+
+# what the jobs drew, in the same tree
+type Drawn is Data:
+  DNone{}
+  DOne{l: List<&2, R.Op>, base: Image, img: Image}
+  DTwo{a: Drawn, b: Drawn}
+
+def Jobs.run(t: Jobs, +e: Nat) -> Drawn:
+  match t:
+    case JNone{}:
+      DNone{}
+    case JOne{Job{+l, +b}}:
+      DOne{l, b, Tile.draw(e, l, b)}
+    case JTwo{a, b}:
+      x y = Jobs.run(a, e) Jobs.run(b, e)
+      DTwo{x, y}
+
+# the bits of i, lowest first (as many as a list of 2^24 needs)
+def Jobs.path(+d: Nat, +i: Nat) -> List<&2, Bool>:
+  match d:
+    case 0n:
+      Nil{}
+    case 1n+k:
+      Nat.is_eq(Nat.mod(i, 2n), 1n) <> Jobs.path(k, Nat.div(i, 2n))
+
+def Drawn.take(same: Bool, img: Image, +e: Nat, +l: List<&2, R.Op>, +base: Image) -> Image:
+  match same:
+    case True{}:
+      img
+    case False{}:
+      Tile.draw(e, l, base)
+
+# the image of local ops l over base: the one drawn where the path leads
+# when it drew exactly these, else drawn here (law drawn_get_run)
+def Drawn.get(t: Drawn, path: List<&2, Bool>, +e: Nat, +l: List<&2, R.Op>, +base: Image) -> Image:
+  match t path:
+    case DOne{+l2, +b2, img} _:
+      Drawn.take(Bool.and(Eq.ops(l, l2), Eq.image(base, b2)), img, e, l, base)
+    case DTwo{a, _} False{} <> r:
+      Drawn.get(a, r, e, l, base)
+    case DTwo{_, b} True{} <> r:
+      Drawn.get(b, r, e, l, base)
+    case _ _:
+      Tile.draw(e, l, base)
+
+# the plan's tiles, the ones to draw taken from what was drawn (the first
+# to draw under p is the off-th job)
+def Plan.fill(p: Plan, +e: Nat, +off: Nat, +d: Drawn) -> Tiles:
+  match p:
+    case PKeep{t}:
+      TLeaf{t}
+    case PDraw{o, +l, +b}:
+      TLeaf{Tile{o, l, b, Drawn.get(d, Jobs.path(24n, off), e, l, b)}}
+    case PKeepN{t}:
+      t
+    case PNode{_, o, bs, +a, +b, +c, +dd}:
+      TNode{o, bs, Plan.fill(a, e, off, d), Plan.fill(b, e, Nat.add(off, Plan.count(a)), d),
+        Plan.fill(c, e, Nat.add(Nat.add(off, Plan.count(a)), Plan.count(b)), d),
+        Plan.fill(dd, e, Nat.add(Nat.add(Nat.add(off, Plan.count(a)), Plan.count(b)), Plan.count(c)), d)}
+
+# a plan's tiles to draw, drawn in parallel
+def Plan.drawn(+p: Plan, +e: Nat) -> Drawn:
+  Jobs.run(Jobs.deal(Plan.jobs(p, Nil{})), e)
+
+# a plan carried out: its tiles to draw drawn in parallel, then filled in
+# (the window takes these steps one by one: the drawing is then evaluated
+# on its own, so its forks are the first dealt to the cores)
+def Plan.run(+p: Plan, +e: Nat) -> Tiles:
+  Plan.fill(p, e, 0n, Plan.drawn(p, e))
+
+def Frame.plan.k(same: Bool, +w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, +prev: Tiles, +dy: U32) -> Plan:
+  match same:
+    case True{}:
+      Tiles.plan(Frame.levels(w, h), Frame.edge(w, h), ops, base, prev, Past{Frame.levels(w, h), prev, U32.shln(1, R.Frame.depth(w, h)), dy}, 0, 0, U32.shln(1, R.Frame.depth(w, h)))
+    case False{}:
+      Tiles.plan.make(Frame.levels(w, h), Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h)))
+
+# Frame.again's plan
+def Frame.plan(+w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, prev: Frames, +dy: U32) -> Plan:
+  match prev:
+    case FNone{}:
+      Tiles.plan.make(Frame.levels(w, h), Frame.edge(w, h), ops, base, 0, 0, U32.shln(1, R.Frame.depth(w, h)))
+    case FSome{pw, ph, t}:
+      Frame.plan.k(Bool.and(U32.is_eq(pw, w), U32.is_eq(ph, h)), w, h, ops, base, t, dy)
+
+# Frame.again, its drawing spread over the cores (law frame_par_exact)
+def Frame.par(+w: U32, +h: U32, +ops: List<&2, R.Op>, +base: Image, prev: Frames, +dy: U32) -> Tiles:
+  Plan.run(Frame.plan(w, h, ops, base, prev, dy), Frame.edge(w, h))

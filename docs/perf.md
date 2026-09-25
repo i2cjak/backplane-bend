@@ -41,6 +41,8 @@ their last value.
 |---|---|---|
 | `ui.frame` | span | a frame from memo to presented |
 | `ui.memo`, `ui.layout`, `ui.raster`, `ui.present` | span | its steps (`ui.lightbox` in the lightbox) |
+| `ui.plan`, `ui.draw`, `ui.fill` | span | `ui.raster`'s parts: which tiles to draw, drawing them in parallel, the tiles filled in |
+| `ui.drawn` | value | tiles drawn in a frame |
 | `ui.input` | span | a window event that changed something, to the frame showing it |
 | `ui.hub` | span | a hub message that changed something, to the frame showing it |
 | `ui.msg.<kind>` | span | handling one window message (`win`, `hub`, `frame`, `blink`, `board`, ...) |

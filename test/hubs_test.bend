@@ -5,6 +5,7 @@ import ../src/core/codec.bend as K
 import ../src/core/json.bend as J
 import ../src/core/client.bend as U
 import ../src/mobile/hubs.bend as H
+import ../src/mobile/app.bend as A
 
 # The phone with several hubs: one client each, one screen, actions
 # routed by the hub their value names.
@@ -58,9 +59,16 @@ def cmds(cs: List<&2, H.HCmd>) -> String:
 def sel(+h: H.Hubs, +k: String) -> String:
   U.Ui.sel(H.Hubs.ui(h, k))
 
+def yes(b: Bool) -> String:
+  Bool.pick(String, b, "yes", "no")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("first hub is current", H.Hubs.cur(two()), "100.1.1.1:3787")
+    # a socket that keeps failing says offline again: no screen for that
+    C.Check.str("online again is the same", yes(A.online_same(two(), "box:3787", True{})), "yes")
+    C.Check.str("offline is a change", yes(A.online_same(two(), "box:3787", False{})), "no")
+    C.Check.str("offline again is the same", yes(A.online_same(H.Hubs.after(H.Hubs.online(two(), "box:3787", False{})), "box:3787", False{})), "yes")
     C.Check.str("projects of both", list(two(), "projects", "id"), "100.1.1.1:3787|p1;box:3787|p2;")
     C.Check.str("under machine names", list(two(), "projects", "machine"), "lap;box;")
     C.Check.str("thread ids qualified", rows(two()), "100.1.1.1:3787|t1;")

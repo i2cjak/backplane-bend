@@ -1423,18 +1423,23 @@ def Links.recent.k(keep: Bool, +from: String, +to: String, +at: Nat, rest: List<
     case False{}:
       rest
 
-def Links.recent.go(es: List<&2, M.Entry>, +now: Nat) -> List<&2, Link2>:
-  match es:
-    case Nil{}:
+# (live: the entry before was under 75 minutes old; the log is in time
+# order, so the walk stops at the first older one instead of going
+# through the whole log each frame)
+def Links.recent.go(es: List<&2, M.Entry>, +now: Nat, live: Bool) -> List<&2, Link2>:
+  match es live:
+    case _ False{}:
       Nil{}
-    case M.Msg{+id, +to, _, _, +at} <> t:
-      Links.recent.k(Bool.and(Bool.not(String.is_empty(M.Link.from(id))), Nat.is_le(now, Nat.add(at, 900n))), M.Link.from(id), to, at, Links.recent.go(t, now))
-    case M.Act{_, _, _, _, _, _} <> t:
-      Links.recent.go(t, now)
+    case Nil{} _:
+      Nil{}
+    case M.Msg{+id, +to, _, _, +at} <> t True{}:
+      Links.recent.k(Bool.and(Nat.is_le(now, Nat.add(at, 900n)), Bool.not(String.is_empty(M.Link.from(id)))), M.Link.from(id), to, at, Links.recent.go(t, now, Nat.is_le(now, Nat.add(at, 4500n))))
+    case M.Act{_, _, _, _, _, +at} <> t True{}:
+      Links.recent.go(t, now, Nat.is_le(now, Nat.add(at, 4500n)))
 
 # messages between threads in the last 15 minutes (the sidebar draws them)
 def Links.recent(s: M.State, +now: Nat) -> List<&2, Link2>:
-  Links.recent.go(Ui.entries(s), now)
+  Links.recent.go(Ui.entries(s), now, True{})
 
 # Terminals
 # ---------
@@ -3092,6 +3097,7 @@ def Win.shown(w: Win) -> List<&2, M.Entry>:
 # thread's own). `hidden` is 1 when earlier entries exist, else 0.
 type PW is Data:
   PW{left: Nat, acc: List<&2, M.Entry>}
+  PDone{acc: List<&2, M.Entry>}
 
 def Page.entry.thread(e: M.Entry) -> String:
   match e:
@@ -3116,6 +3122,8 @@ def Page.mine(own: Bool, +e: M.Entry, +th: String) -> Bool:
 
 def Page.newest.step(own: Bool, e: M.Entry, st: PW) -> PW:
   match own st:
+    case _ PDone{acc}:
+      PDone{acc}
     case True{} PW{0n, acc}:
       PW{0n, acc}
     case True{} PW{1n+k, acc}:
@@ -3123,14 +3131,34 @@ def Page.newest.step(own: Bool, e: M.Entry, st: PW) -> PW:
     case False{} PW{l, acc}:
       PW{l, acc}
 
-def Page.newest.go(es: List<&2, M.Entry>, +th: String, st: PW) -> PW:
+def Page.entry.at(e: M.Entry) -> Nat:
+  match e:
+    case M.Msg{_, _, _, _, at}:
+      at
+    case M.Act{_, _, _, _, _, at}:
+      at
+
+# an entry from before the thread began (an hour to spare for the clock)
+# ends the walk: the log is in time order and nothing older is the
+# thread's, so a thread with fewer entries than a page no longer walks
+# the whole log (since 0: walk it all)
+def Page.newest.cut(old: Bool, st: PW) -> PW:
+  match old st:
+    case True{} PW{_, acc}:
+      PDone{acc}
+    case _ _:
+      st
+
+def Page.newest.go(es: List<&2, M.Entry>, +th: String, +since: Nat, st: PW) -> PW:
   match es st:
     case +_ PW{0n, acc}:
       PW{0n, acc}
+    case +_ PDone{acc}:
+      PDone{acc}
     case Nil{} PW{l, acc}:
       PW{l, acc}
     case +e <> t PW{1n+k, acc}:
-      Page.newest.go(t, th, Page.newest.step(Page.mine(String.eq(Page.entry.thread(e), th), e, th), e, PW{1n+k, acc}))
+      Page.newest.go(t, th, since, Page.newest.cut(Nat.is_lt(Nat.add(Page.entry.at(e), 3600n), since), Page.newest.step(Page.mine(String.eq(Page.entry.thread(e), th), e, th), e, PW{1n+k, acc})))
 
 # one more than the page was found: drop the oldest, say there are more
 def Page.newest.k(st: PW) -> Win:
@@ -3139,6 +3167,20 @@ def Page.newest.k(st: PW) -> Win:
       Win{1n, rest}
     case PW{_, acc}:
       Win{0n, acc}
+    case PDone{acc}:
+      Win{0n, acc}
+
+def Page.newest.from(+es: List<&2, M.Entry>, +th: String, +since: Nat, +n: Nat) -> Win:
+  Page.newest.k(Page.newest.go(es, th, since, PW{1n+n, Nil{}}))
 
 def Page.newest(+es: List<&2, M.Entry>, +th: String, +n: Nat) -> Win:
-  Page.newest.k(Page.newest.go(es, th, PW{1n+n, Nil{}}))
+  Page.newest.from(es, th, 0n, n)
+
+# when a thread began (its entries are no older)
+def Page.since.k(t: M.Thread) -> Nat:
+  match t:
+    case M.Thread{_, _, _, c, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
+      c
+
+def Page.since(s: M.State, +th: String) -> Nat:
+  Page.since.k(Ui.thread(s, th))

@@ -122,7 +122,7 @@ def key(cs: String, +ty: L.Ty, +cats: Map<&2, CA.CatF>, k: Kept, t: Times) -> IO
         +o : L.Out = BV.Bv.frame(ty, memo, cats, n1)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
         +t3 : Nat <- IO.now()
-        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, N.Hits.slide(hits(o), N.Nui.hits(n0)))
+        +tiles : TI.Tiles = TI.Frame.par(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, N.Hits.slide(hits(o), N.Nui.hits(n0)))
         +img : Image = TI.Tiles.image(tiles)
         +t4 : Nat <- IO.now()
         key(rest, ty, cats, Kept{with_hits(n1, hits(o), t4), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}},
@@ -140,7 +140,7 @@ def tick(+n: Nat, +ty: L.Ty, cats: Map<&2, CA.CatF>, k: Kept, +acc: Nat) -> IO(N
         +c2 : Map<&2, CA.CatF> = BV.Bv.warm(N.Nui.ui(n0), cats, Nat.mul(1n+j, 33n))
         +o : L.Out = BV.Bv.frame(ty, memo, c2, n0)
         +k2 : Nat = List.length(&2, R.Op, ops(o))
-        +tiles : TI.Tiles = TI.Frame.again(N.Nui.width(n0), N.Nui.height(n0), ops(o), Pix{T.Th.bg()}, fr0, 0)
+        +tiles : TI.Tiles = TI.Frame.par(N.Nui.width(n0), N.Nui.height(n0), ops(o), Pix{T.Th.bg()}, fr0, 0)
         +img : Image = TI.Tiles.image(tiles)
         +t1 : Nat <- IO.now()
         tick(j, ty, c2, Kept{n0, memo, TI.FSome{N.Nui.width(n0), N.Nui.height(n0), tiles}}, Nat.add(acc, Nat.sub(t1, t0)))
@@ -150,7 +150,7 @@ def warm(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +n0: N.Nui) -> Kept:
   +n = prepared(n0, 0n)
   +memo = L.Lay.memo(ty, n, L.TL.memo.none())
   +o = BV.Bv.frame(ty, memo, cats, n)
-  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.again(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
+  Kept{with_hits(n, hits(o), 0n), memo, TI.FSome{N.Nui.width(n), N.Nui.height(n), TI.Frame.par(N.Nui.width(n), N.Nui.height(n), ops(o), Pix{T.Th.bg()}, TI.FNone{}, 0)}}
 
 def text() -> String:
   "hello world, this is a test of typing speed in the composer "
@@ -192,7 +192,7 @@ def rep.tiles(+r: Nat, +os: List<&2, R.Op>, +prev: TI.Frames) -> Nat:
     case 0n:
       0n
     case 1n+q:
-      Nat.add(Bool.pick(Nat, some(TI.FSome{1400, 900, TI.Frame.again(1400, 900, os, Pix{T.Th.bg()}, prev, 0)}), 1n, 0n), rep.tiles(q, os, prev))
+      Nat.add(Bool.pick(Nat, some(TI.FSome{1400, 900, TI.Frame.par(1400, 900, os, Pix{T.Th.bg()}, prev, 0)}), 1n, 0n), rep.tiles(q, os, prev))
 
 def rep.make(+r: Nat, +os: List<&2, R.Op>) -> Nat:
   match r:

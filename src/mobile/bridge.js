@@ -267,8 +267,10 @@ globalThis.Backplane = {
   // viewer's plot
   // quiet: no screen (the hubs marked offline after load(), before the
   // screen that follows)
+  // (no screen either when the hub already was so: app.bend's online_same)
   online(k, b, quiet) {
-    return step(App.online(hubs, k, !!b), quiet === true);
+    const same = App.online_same(hubs, k, !!b);
+    return step(App.online(hubs, k, !!b), quiet === true || same);
   },
   tick(now) {
     return step(App.tick(hubs, secs(now)));

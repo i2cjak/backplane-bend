@@ -38,6 +38,13 @@ def Win.present(win: Window, image: Image) -> IO(Window & Image):
   import "./effects/win.c"
   import "./effects/win.js"
 
+# show the window's own frame; prev is the last frame it showed this way
+# (regions that are the same in both are not filled again). Both images
+# come back so the caller can free them
+def Win.show(win: Window, image: Image, prev: Image) -> IO(Window & Image & Image):
+  import "./effects/win.c"
+  import "./effects/win.js"
+
 def Win.copy(win: Window, text: String) -> IO(Window):
   import "./effects/win.c"
   import "./effects/win.js"
