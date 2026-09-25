@@ -16,6 +16,7 @@ import ../core/lightbox.bend as LB
 import ../core/edit.bend as ED
 import ../core/model.bend as M
 import ../core/bot.bend as BT
+import ../core/perf.bend as PF
 
 # The native window's state around the shared client state (Ui): size,
 # pointer, scroll, focus and the composer caret. Input is pure: an event
@@ -1065,7 +1066,7 @@ def Keys.name.k(ctrl: Bool, shift: Bool, term: Bool, +c: U32) -> String:
     case True{} True{} _:
       Bool.pick(String, U32.is_eq(c, 123), "prev", Bool.pick(String, U32.is_eq(c, 125), "next", Bool.pick(String, U32.is_eq(c, 91), "prev",
         Bool.pick(String, U32.is_eq(c, 93), "next", Bool.pick(String, U32.is_eq(c, 115), "settle", Bool.pick(String, U32.is_eq(c, 112), "pin",
-          Bool.pick(String, U32.is_eq(c, 118), "paste", Bool.pick(String, U32.is_eq(c, 102), "search", ""))))))))
+          Bool.pick(String, U32.is_eq(c, 118), "paste", Bool.pick(String, U32.is_eq(c, 102), "search", Bool.pick(String, U32.is_eq(c, 104), "perf", "")))))))))
     case _ _ _:
       ""
 
@@ -1294,7 +1295,7 @@ def Nui.goto(+n: Nui, +pid: String) -> Step:
   Bool.pick(Step, String.is_empty(pid), Step{n, Nil{}, False{}}, Nui.goto.k(String.is_empty(U.Side.home(Nui.ui(n), pid)), n, pid, U.Side.home(Nui.ui(n), pid)))
 
 def Keys.list() -> List<&2, String>:
-  ["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette", "jump", "search", "files", "project"]
+  ["term", "diff", "new", "prev", "next", "settle", "pin", "paste", "palette", "jump", "search", "files", "project", "perf"]
 
 def Nui.shortcut.k(i: Nat, +n: Nui, +code: U32) -> Step:
   match i:
@@ -1322,6 +1323,8 @@ def Nui.shortcut.k(i: Nat, +n: Nui, +code: U32) -> Step:
       Pal.files(n)
     case 12n:
       Nui.goto(n, U.Side.nth(U.Side.projects(Nui.ui(n)), U32.to_nat((code - 49 : U32))))
+    case 13n:
+      Nui.act(n, "flag", "perf")
     case _:
       Step{n, [NPaste{}], False{}}
 
@@ -2531,3 +2534,25 @@ def Nui.events(es: List<&2, W.WinEv>, s: Step) -> Step:
       s
     case e <> t Step{+n, cs, d}:
       Nui.events(t, Step.merge(Step{n, cs, d}, Nui.event.lb(Lbx.on(n), n, e)))
+
+# The performance overlay
+# -----------------------
+# ctrl+shift+h (flag "perf") shows the window's last few seconds of work.
+# Each frame drawn while it is up hands Hud.feed the rows perf.c holds
+# now; the text compares them with a reading 3 to 6 s old. The readings
+# stay in the scratch: "@perf.next" becomes "@perf.base" once it is
+# PF.Hud.span() old.
+
+def Hud.roll(old: Bool, +u: U.Ui, +cur: String, +ms: Nat) -> U.Ui:
+  match old:
+    case True{}:
+      U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.scratch_set(u, "@perf.base", U.Ui.scratch(u, "@perf.next")),
+        "@perf.at", U.Ui.scratch(u, "@perf.next.at")), "@perf.next", cur), "@perf.next.at", Nat.show(ms))
+    case False{}:
+      u
+
+def Hud.show(+u: U.Ui, +cur: String, +ms: Nat) -> U.Ui:
+  U.Ui.info_set(u, "perf.hud", PF.Hud.text(cur, U.Ui.scratch(u, "@perf.base"), PF.Perf.nat(U.Ui.scratch(u, "@perf.at")), ms))
+
+def Hud.feed(+n: Nui, +cur: String, +ms: Nat) -> Nui:
+  Nui.with_ui(n, Hud.show(Hud.roll(Nat.is_ge(PF.Perf.minus(ms, PF.Perf.nat(U.Ui.scratch(Nui.ui(n), "@perf.next.at"))), PF.Hud.span()), Nui.ui(n), cur, ms), cur, ms))

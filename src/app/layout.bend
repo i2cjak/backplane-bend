@@ -2797,6 +2797,35 @@ def Lay.proj.if(open: Bool, +ty: Ty, +n: S.Nui, +w: U32, +h: U32) -> Out:
 def Lay.x1(+n: S.Nui) -> U32:
   Bool.pick(U32, S.Nui.panel(n), (264 + U32.shr((S.Nui.width(n) - 264 : U32)) : U32), S.Nui.width(n))
 
+# The performance overlay (ctrl+shift+h, nui.bend's Hud): its text in the
+# code font, top right, over everything; no hit regions
+def Lay.perf.lines(ls: List<&2, String>, +ty: Ty, +x: U32, +y: U32) -> List<&2, R.Op>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      List.append(&2, R.Op, Ty.text(ty, 4n, l, D.Clip.all(), x, y, 16, T.Th.text()), Lay.perf.lines(t, ty, x, (y + 16 : U32)))
+
+def Lay.perf.wide(ls: List<&2, String>, +ty: Ty, +m: U32) -> U32:
+  match ls:
+    case Nil{}:
+      m
+    case l <> t:
+      Lay.perf.wide(t, ty, U32.max(m, Ty.width(ty, 4n, l)))
+
+def Lay.perf.box(+ty: Ty, +ls: List<&2, String>, +w: U32) -> Out:
+  +bw = (Lay.perf.wide(ls, ty, 0) + 20 : U32)
+  +x = U32.dim((w - 16 : U32), bw)
+  Out{List.append(&2, R.Op, Lay.box(D.Clip.all(), x, 60, bw, (U32.from_nat(List.length(&2, String, ls)) * 16 + 16 : U32), 0, T.Th.raise(), T.Th.line()),
+    Lay.perf.lines(ls, ty, (x + 10 : U32), 68)), Nil{}}
+
+def Lay.perf.if(on: Bool, +ty: Ty, +text: String, +w: U32) -> Out:
+  match on:
+    case True{}:
+      Lay.perf.box(ty, String.lines(text), w)
+    case False{}:
+      Out.none()
+
 # the timeline's width, as Lay.frame lays it out
 def Lay.tl.px(+n: S.Nui) -> U32:
   +w = S.Nui.width(n)
@@ -2876,7 +2905,8 @@ def Lay.frame.x(+ty: Ty, +memo: TLMemo, +n: S.Nui, more: D.Clip -> U32 -> Col, m
         Lay.toast(ty, err, w, h),
         Lay.palette.if(U.Ui.flag(S.Nui.ui(n), "palette"), ty, n, w, h),
         Lay.proj.if(U.Ui.flag(S.Nui.ui(n), "proj"), ty, n, w, h),
-        Lay.hover(U.Ui.info(S.Nui.ui(n), "hover"), S.Hover.alpha(n, S.Nui.ms_of(n)))]))
+        Lay.hover(U.Ui.info(S.Nui.ui(n), "hover"), S.Hover.alpha(n, S.Nui.ms_of(n))),
+        Lay.perf.if(U.Ui.flag(S.Nui.ui(n), "perf"), ty, U.Ui.info(S.Nui.ui(n), "perf.hud"), w)]))
 
 def Lay.frame(+ty: Ty, +memo: TLMemo, +n: S.Nui) -> Out:
   Lay.frame.x(ty, memo, n, c => y => Col{Out.none(), y}, None{})

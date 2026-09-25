@@ -55,6 +55,7 @@ import ./src/core/cron.bend as CR
 import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
+import ./src/core/perf.bend as PF
 
 # Backplane's rules, stated over the real code. `bend PROOF.bend` proves each
 # one. Humans own this file: an agent may add laws, never weaken or delete
@@ -2304,3 +2305,53 @@ law bot_spawn_bounded:
 # the window drawing frames
 law bot_mood_idle_still:
   {BU.Mood.moving("idle") == False{} : Bool}
+# Performance numbers
+# -------------------
+
+# an error is logged whatever BACKPLANE_LOG says
+law perf_errors_always_logged:
+  for +th: Nat
+  {PF.Log.on(0n, th) == True{} : Bool}
+
+# debug lines stay quiet unless asked for
+law perf_debug_quiet_by_default:
+  {PF.Log.on(3n, PF.Log.level("")) == False{} : Bool}
+
+# a gauge's window is its latest reading, whatever came before
+law perf_gauge_window_is_reading:
+  for +name: String
+  for +n: Nat
+  for +sum: Nat
+  for +max: Nat
+  for +last: Nat
+  for +bs: List<&2, Nat>
+  for +old: PF.Stat
+  {PF.Stat.since(PF.Stat{name, 1, n, sum, max, last, bs}, old) == PF.Stat{name, 1, n, sum, max, last, bs} : PF.Stat}
+
+# a row with no values has no percentiles
+law perf_pct_empty:
+  for +name: String
+  for +per: Nat
+  {PF.Stat.pct(PF.Stat.none(name), per) == 0n : Nat}
+
+# a percentile is the top of its bucket, never above the max
+law perf_pct_bucket_top:
+  {PF.Stat.pct(PF.Stat{"x", 0, 4n, 10000n, 6000n, 1000n, [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 2n, 1n, 0n, 1n]}, 500n) == 1023n : Nat}
+
+law perf_pct_capped_by_max:
+  {PF.Stat.pct(PF.Stat{"x", 0, 4n, 10000n, 6000n, 1000n, [0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 0n, 2n, 1n, 0n, 1n]}, 990n) == 6000n : Nat}
+
+# the overlay's first frame has no window yet to compare against
+law perf_hud_first_frame:
+  for +cur: String
+  for +at: Nat
+  for +now: Nat
+  {PF.Hud.text(cur, "", at, now) == "measuring (ctrl+shift+h hides this)" : String}
+
+# the overlay off lays nothing out (no cost in a frame)
+law perf_hud_off_draws_nothing:
+  for +ty: L.Ty
+  for +text: String
+  for +w: U32
+  {L.Lay.perf.if(False{}, ty, text, w) == L.Out.none() : L.Out}
+

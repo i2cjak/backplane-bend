@@ -36,6 +36,8 @@ import ../core/sign.bend as SG
 import ./google.bend as GS
 import ../core/google.bend as GG
 import ../core/ring.bend as RG
+import ./perf.bend as PS
+import ../core/perf.bend as PF
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -114,8 +116,8 @@ type Agent is Data:
 def Fuel.forever() -> Nat:
   U32.to_nat(4294967295)
 
-def Log.info(s: String) -> IO(Unit):
-  IO.print_err("backplane: " ++ s)
+def Log.info(+s: String) -> IO(Unit):
+  PS.Log.info("hub", s)
 
 def Now.nat() -> IO(Nat):
   do IO<Nat>:
@@ -2621,12 +2623,44 @@ def Conn.get(hello: Bool, s: Socket, +web: String, +path: String, gz: Bool) -> I
     case False{}:
       Conn.static(s, web, path, gz)
 
+# GET /debug/perf (a table), /debug/perf.json and /debug/log (the last
+# log lines): what this process measured since it started (docs/perf.md),
+# for a client the hub lets in
+def Debug.answer(+i: Nat, +r: String) -> List<&2, U32>:
+  match i:
+    case 2n:
+      W.Http.text("200 OK", PF.Stats.table(PF.Stats.parse(r)))
+    case 3n:
+      W.Http.response("200 OK", "application/json", U.Utf8.encode(J.Json.show(PF.Stats.json(PF.Stats.parse(r)))), "")
+    case _:
+      W.Http.text("200 OK", r)
+
+def Debug.read(+i: Nat) -> IO(String):
+  match i:
+    case 4n:
+      PS.Perf.logs()
+    case _:
+      PS.Perf.take()
+
+def Debug.serve(allowed: Bool, +i: Nat, s: Socket) -> IO(Unit):
+  match allowed:
+    case True{}:
+      IO.bind(String, Unit, Debug.read(i), r => Conn.finish(s, Debug.answer(i, r)))
+    case False{}:
+      Conn.finish(s, W.Http.text("401 Unauthorized", "this Backplane needs its pairing token"))
+
 def Conn.get.k(i: Nat, s: Socket, +web: String, +p: String, gz: Bool, +allowed: Bool) -> IO(Unit):
   match i:
     case 0n:
       Conn.get(True{}, s, web, W.Http.route(p), gz)
     case 1n:
       Img.serve(allowed, s, ATT.Att.from_uri("file://" ++ W.Http.param(p, "path")))
+    case 2n:
+      Debug.serve(allowed, 2n, s)
+    case 3n:
+      Debug.serve(allowed, 3n, s)
+    case 4n:
+      Debug.serve(allowed, 4n, s)
     case _:
       Conn.get(False{}, s, web, W.Http.route(p), gz)
 
@@ -2636,7 +2670,7 @@ def Conn.route.k(ws: Bool, s: Socket, req: W.Request, rest: List<&2, U32>, +web:
       Conn.gate(Conn.allowed(trusted, hs, p, token), s, W.Http.header_of(hs, "sec-websocket-key"), rest, id, inbox,
         Maybe.default(&2, Nat, Nat.read(W.Http.param(p, "since")), 0n), W.Http.param(p, "origin"))
     case False{} W.Request{_, +p, +hs}:
-      Conn.get.k(Conn.pos(["/hello", "/img"], W.Http.route(p), 0n), s, web, p, String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"), Conn.allowed(trusted, hs, p, token))
+      Conn.get.k(Conn.pos(["/hello", "/img", "/debug/perf", "/debug/perf.json", "/debug/log"], W.Http.route(p), 0n), s, web, p, String.contains(W.Http.header_of(hs, "accept-encoding"), "gzip"), Conn.allowed(trusted, hs, p, token))
 
 def Conn.route.mcp(mcp: Bool, s: Socket, +req: W.Request, rest: List<&2, U32>, +web: String, +id: U32, +inbox: Chan(Msg), +trusted: Bool, +token: String) -> IO(Unit):
   match mcp req:
@@ -3567,10 +3601,15 @@ def Hub.gone(h: Hub, +thread: String, +code: U32, +pid: U32, +now: Nat) -> IO(Hu
     case Hub{st, f, ls, cl, +as, inbox, cfg, note}:
       Hub.gone.k(Agent.pid_is(Agents.get(as, thread), pid), Hub{st, f, ls, cl, as, inbox, cfg, note}, thread, code, now)
 
+# each minute the hub's size goes into the gauges
 def Hub.tick(h: Hub, +now: Nat) -> IO(Hub):
   match h:
-    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
-      Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.tick(st, now))
+    case Hub{+st, f, +ls, +cl, +as, inbox, cfg, note}:
+      do IO<Hub>:
+        PS.Perf.set("hub.clients", U32.from_nat(List.length(&2, Client, cl)))
+        PS.Perf.set("hub.agents", U32.from_nat(List.length(&2, Agent, as)))
+        PS.Perf.set("hub.changes", U32.from_nat(List.length(&2, String, ls)))
+        Hub.step(Hub{st, f, ls, cl, as, inbox, cfg, note}, B.Hub.tick(st, now))
 
 def Hub.mcp.k(o: MC.McpOut, h: Hub, +reply: Chan(String), +body: String) -> IO(Hub):
   match o h:
@@ -4169,6 +4208,59 @@ def Hub.mcp.route(pv: Bool, h: Hub, +thread: String, +o: J.Json, body: String, +
 def Hub.mcp(h: Hub, +thread: String, +body: String, +reply: Chan(String), +now: Nat) -> IO(Hub):
   Hub.mcp.route(Preview.is(Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{})), h, thread, Maybe.default(&2, J.Json, J.Json.parse(body), J.Null{}), body, reply, now)
 
+def Msg.kind(m: Msg) -> String:
+  match m:
+    case AgentWrite{_, _}:
+      "agent_write"
+    case UpdateCheck{}:
+      "update_check"
+    case Mcp{_, _, _}:
+      "mcp"
+    case Announce{_}:
+      "announce"
+    case Join{_, _, _, _}:
+      "join"
+    case JoinHere{_, _}:
+      "join_here"
+    case Leave{_}:
+      "leave"
+    case Rpc{_, _}:
+      "rpc"
+    case AgentLine{_, _}:
+      "agent_line"
+    case AgentGone{_, _, _}:
+      "agent_gone"
+    case Tick{}:
+      "tick"
+    case Push{_, _}:
+      "push"
+    case PushBin{_, _}:
+      "push_bin"
+    case TermOut{_, _}:
+      "term_out"
+    case ModelsFound{_, _}:
+      "models"
+    case MachinesFound{_}:
+      "machines"
+    case TurnPid{_, _, _}:
+      "turn_pid"
+    case TurnDone{_}:
+      "turn_done"
+    case Recover{}:
+      "recover"
+    case Commit{_}:
+      "commit"
+    case BotTick{_}:
+      "bot_tick"
+    case BotsFound{_}:
+      "bots_found"
+    case BotHttp{_, _, _, _, _, _, _, _, _}:
+      "bot_http"
+    case BotVerified{_, _, _, _, _, _}:
+      "bot_verified"
+    case Shot{_}:
+      "shot"
+
 def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
   match m:
     case AgentWrite{thread, line}:
@@ -4222,12 +4314,15 @@ def Hub.handle(h: Hub, m: Msg, +now: Nat) -> IO(Hub):
     case Shot{text}:
       Hub.broadcast(h, text)
 
+# each message's handling is timed as hub.<kind> (docs/perf.md)
 def Hub.got(m: Maybe<&1, Msg>, h: Hub, k: Hub -> IO(Unit)) -> IO(Unit):
   match m:
-    case Some{msg}:
+    case Some{+msg}:
       do IO<Unit>:
         now : Nat <- Now.nat()
+        t0 : U32 <- PS.Perf.us()
         h2 : Hub <- Hub.handle(h, msg, now)
+        t1 : U32 <- PS.Perf.lap("hub." ++ Msg.kind(msg), t0)
         k(h2)
     case None{}:
       Hub.close(h)
@@ -4329,10 +4424,13 @@ def Main.boot(cfg: Cfg, need: Bool, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
     case Cfg{+home, w, h, p, pr, ds, v, nt}:
       do IO<Unit>:
         mk : Result<&1, &1, U32 & String, Unit> <- H.FS.mkdirs(home)
+        t0 : U32 <- PS.Perf.us()
         bs : List<&2, U32> <- Files.read(Store.path(home))
+        t1 : U32 <- PS.Perf.span("boot.read", t0)
         +ld : ST.Loaded = ST.Store.load(Store.lines(bs), ST.Loaded{M.State.empty(), Nil{}})
         +st : M.State = ST.Loaded.st(ld)
         +ls : List<&2, String> = ST.Loaded.wire(ld)
+        t2 : U32 <- PS.Perf.span("boot.replay", t1)
         Log.info("replayed " ++ Nat.show(List.length(&2, String, ls)) ++ " changes from " ++ Store.path(home))
         f : Result<&1, &1, U32 & String, File> <- File.open(Store.path(home), "a")
         tok : String <- Token.load(home)
