@@ -218,7 +218,9 @@ about 5-20 ms a frame.
 
 With `--jpeg-dir DIR`, every owner's active tab runs its own screencast
 (`Page.startScreencast`, JPEG, quality 70, at most 1280 wide), which Chrome
-pushes only when the page repaints. The newest frame is written to
+pushes only when the page repaints; after `open` and `navigate` one frame
+is also taken by hand, since a still page may have painted before its
+screencast began. The newest frame is written to
 `DIR/<owner>.jpg` via `DIR/<owner>.jpg.tmp` and a rename, at most
 `--jpeg-fps` times a second (a frame arriving early waits for its slot;
 older ones are dropped; a frame identical to the last is skipped), and
