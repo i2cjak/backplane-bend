@@ -2280,3 +2280,8 @@ law bot_spawn_step:
 law bot_spawn_bounded:
   for +d: Nat
   {BHS.Spawn.bound(BHS.Spawn.next(d)) == True{} : Bool}
+
+# a cat at rest (ready) holds still in the window: resting bots never keep
+# the window drawing frames
+law bot_mood_idle_still:
+  {BU.Mood.moving("idle") == False{} : Bool}

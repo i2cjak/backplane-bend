@@ -203,9 +203,9 @@ def main() -> IO(Unit):
     K.Check.str("data URI prefix", String.take(C.Cat.data_uri(0n, "idle", 32), 24n), "data:image/svg+xml;utf8,")
     K.Check.str("poses loop seamlessly", String.join(List.append(&2, String, loops.bad(moods(), 0n), loops.bad(moods(), 58n)), " | "), "")
     K.Check.str("every mood but away moves on the web", String.join(still.bad(moods(), 13n), " | "), "")
-    K.Check.str("the window animates only awake, working cats", String.join([Bool.show(C.Cat.moving("sleep")), Bool.show(C.Cat.moving("idle")), Bool.show(C.Cat.moving("work")),
+    K.Check.str("the window animates only cats doing something", String.join([Bool.show(C.Cat.moving("sleep")), Bool.show(C.Cat.moving("idle")), Bool.show(C.Cat.moving("work")),
       Bool.show(C.Cat.moving("think")), Bool.show(C.Cat.moving("wait")), Bool.show(C.Cat.moving("talk")), Bool.show(C.Cat.moving("error")), Bool.show(C.Cat.moving("away"))], ","),
-      "False,True,True,True,True,True,False,False")
+      "False,False,True,True,True,True,False,False")
     K.Check.str("an unknown mood is idle", Nat.show(List.length(&2, C.Part, C.Cat.rig(3n, "zzz"))), Nat.show(List.length(&2, C.Part, C.Cat.rig(3n, "idle"))))
     K.Check.str("easing: io, blink, saw", values([C.FPart{0, 0, 0.0, 255, False{}, [C.Anim{3, 0.0, 10.0, 0.0, 0.0, 1000, 0, 0}, C.Anim{5, 1.0, 0.0, 0.0, 0.0, 1000, 0, 1}, C.Anim{3, 0.0, 10.0, 0.0, 0.0, 1000, 250, 2}], Nil{}}], 500n)
       ++ "/" ++ values([C.FPart{0, 0, 0.0, 255, False{}, [C.Anim{3, 0.0, 10.0, 0.0, 0.0, 1000, 0, 0}, C.Anim{5, 1.0, 0.0, 0.0, 0.0, 1000, 0, 1}, C.Anim{3, 0.0, 10.0, 0.0, 0.0, 1000, 250, 2}], Nil{}}], 970n),

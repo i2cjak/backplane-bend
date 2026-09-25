@@ -4191,3 +4191,6 @@ def Laws.bot_spawn_step(ok, n, h):
 
 def Laws.bot_spawn_bounded(d):
   Laws.bot_spawn_step(Nat.is_le(1n+d, BHS.Spawn.max()), 1n+d, {==})
+
+def Laws.bot_mood_idle_still():
+  {==}

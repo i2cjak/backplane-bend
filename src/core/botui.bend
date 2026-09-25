@@ -46,10 +46,13 @@ def Mood.of.name(+state: String) -> String:
         Bool.pick(String, String.eq(state, "failed"), "error",
           Bool.pick(String, String.eq(state, "ready"), "idle", "away")))))
 
-# whether a mood moves in the window (a sleeping, sick or absent cat holds
-# still, so a window of resting bots never repaints)
+# whether a mood moves in the window: only a cat doing something (working,
+# thinking, waiting for you, talking). A ready, sleeping, sick or absent
+# cat holds still, so a window of resting bots never repaints (each cat
+# frame lays out the window: 27 ms on a real log; law bot_mood_idle_still).
+# The web and the phones animate every awake cat on the GPU.
 def Mood.moving(+m: String) -> Bool:
-  Bool.not(Bool.or(String.eq(m, "sleep"), Bool.or(String.eq(m, "error"), String.eq(m, "away"))))
+  Bool.or(Bool.or(String.eq(m, "work"), String.eq(m, "think")), Bool.or(String.eq(m, "wait"), String.eq(m, "talk")))
 
 def Mood.note(+m: String) -> String:
   Bool.pick(String, String.eq(m, "sleep"), "asleep",
