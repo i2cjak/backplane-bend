@@ -264,19 +264,33 @@ def Hub.has_root(ps: List<&2, M.Project>, +root: String) -> Bool:
     case M.Project{_, _, r, _, rm} <> t:
       Bool.or(Bool.and(String.eq(Hub.root.norm(r), Hub.root.norm(root)), Bool.not(rm)), Hub.has_root(t, root))
 
+# the id of a removed project with this root ("" when none): adding its
+# folder again brings it back, threads and all
+def Hub.removed_id(ps: List<&2, M.Project>, +root: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case M.Project{+i, _, r, _, rm} <> t:
+      Bool.pick(String, Bool.and(rm, String.eq(Hub.root.norm(r), Hub.root.norm(root))), i, Hub.removed_id(t, root))
+
 def Hub.projects(s: M.State) -> List<&2, M.Project>:
   match s:
     case M.State{ps, _, _, _, _, _, _, _, _, _, _}:
       Map.values(&2, M.Project, ps)
+
+# a new project's id, or the removed one's it brings back
+def Hub.project_id(+old: String, +s: M.State, +now: Nat) -> String:
+  Bool.pick(String, String.is_empty(old), Hub.id("p", now, Hub.seq(s)), old)
 
 def Hub.project_add.k(dup: Bool, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:
   match dup:
     case True{}:
       Step.outs([Reply.err(client, id, "already a project: " ++ root)])
     case False{}:
-      Step.reply(client, id, [M.ProjectCreated{Hub.id("p", now, Hub.seq(s)), J.Json.get_str(p, "title", Hub.base(root)), Hub.root.norm(root), now}])
+      Step.reply(client, id, [M.ProjectCreated{Hub.project_id(Hub.removed_id(Hub.projects(s), root), s, now), J.Json.get_str(p, "title", Hub.base(root)), Hub.root.norm(root), now}])
 
-# a folder becomes a project once (the same root twice is refused). The
+# a folder becomes a project once (the same root twice is refused; a
+# removed project's folder brings that project back). The
 # server resolves project.add's path first (~, relative, symlinks; it must
 # be a folder it can open) and sends it back here as project.create
 def Hub.project_add.p(+s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json, +root: String) -> Step:

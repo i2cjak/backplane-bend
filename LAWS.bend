@@ -787,6 +787,18 @@ law fuzzy_empty_matches:
   for s: String
   {Nat.is_gt(FZ.Fuzzy.score(s, ""), 0n) == True{} : Bool}
 
+# the sidebar's project search: an empty query keeps every project, in
+# order, and a shut search shows the sidebar as it is
+law find_empty_keeps:
+  for rs: List<&2, U.SRow>
+  {U.Find.rows(rs, "") == rs : List<&2, U.SRow>}
+
+law find_shut_shows_all:
+  for st: M.State
+  for now: Nat
+  for dr: Map<&2, String>
+  {U.Side.shown(st, now, U.Find.q.k(False{}, dr)) == U.Side.rows(st, now) : List<&2, U.SRow>}
+
 # a caret that just moved (or a field just focused) is shown
 law caret_shows_when_moved:
   {N.Blink.shown(0n) == True{} : Bool}

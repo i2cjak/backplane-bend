@@ -319,48 +319,50 @@ def Look.icons(+ty: Ty, bs: List<&2, MN.Box>, ns: List<&2, String>, +cur: String
               [Lay.hit(Picker.px(x), Picker.px(y), 28, 28, "look-set", BG.Badge.icon_key(id) ++ "=" ++ k)]},
             Look.icons(ty, bt, nt, cur, id, tint, c))
 
-def Look.panel(+ty: Ty, +st: M.State, +id: String, +c: D.Clip, +y: U32) -> Col:
+def Look.panel(+ty: Ty, +st: M.State, +id: String, +rm: Bool, +c: D.Clip, +y: U32) -> Col:
   +sws = Look.n(List.length(&2, String, BG.Badge.colors()), 18n)
   +iws = Look.n(List.length(&2, String, BG.Badge.icons()), 28n)
   +y0 = {Nat.add(U32.to_nat(y), 12n) : Nat}
   +y1 = {Nat.add(MN.Flow.under(sws, 18n, 248n, 18n, y0, 18n, 5n), 5n) : Nat}
   +y2 = MN.Flow.under(iws, 18n, 248n, 18n, y1, 28n, 4n)
-  +hh = {Nat.sub(Nat.add(y2, 6n), U32.to_nat(y)) : Nat}
+  +yb = {Nat.add(y2, 8n) : Nat}
+  +hh = {Nat.sub(Nat.add(yb, 34n), U32.to_nat(y)) : Nat}
   Col{Out.all([
       Out{Lay.box(c, 8, (y + 2 : U32), 248, Picker.px(Nat.sub(hh, 2n)), 0, T.Th.raise(), T.Th.line()), [Lay.hit(8, (y + 2 : U32), 248, Picker.px(Nat.sub(hh, 2n)), "look-bg", id)]},
       Look.swatches(MN.Flow.place(sws, 18n, 248n, 18n, y0, 18n, 5n), BG.Badge.colors(), BG.Badge.color(st, id), id, c),
-      Look.icons(ty, MN.Flow.place(iws, 18n, 248n, 18n, y1, 28n, 4n), BG.Badge.icons(), BG.Badge.icon(st, id), id, BG.Badge.rgb_of(st, id), c)]),
+      Look.icons(ty, MN.Flow.place(iws, 18n, 248n, 18n, y1, 28n, 4n), BG.Badge.icons(), BG.Badge.icon(st, id), id, BG.Badge.rgb_of(st, id), c),
+      Lay.button(ty, c, 18, Picker.px(yb), Bool.pick(String, rm, "Click again to remove", "Remove project"), T.Th.bad(), "proj-remove", id)]),
     Picker.px(Nat.add(U32.to_nat(y), Nat.add(hh, 6n)))}
 
-def Look.open(open: Bool, +ty: Ty, +st: M.State, +id: String, +c: D.Clip, +y: U32) -> Col:
+def Look.open(open: Bool, +ty: Ty, +st: M.State, +id: String, +rm: Bool, +c: D.Clip, +y: U32) -> Col:
   match open:
     case True{}:
-      Look.panel(ty, st, id, c, y)
+      Look.panel(ty, st, id, rm, c, y)
     case False{}:
       Col{Out.none(), y}
 
 # a project's name under its badge's icon (a click opens the editor; its
 # hit starts past x 10, where a drag drops onto the header), its
 # + for a new thread, the editor when open, then its threads
-def Lay.project(+ty: Ty, r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +c: D.Clip, +y: U32) -> Col:
+def Lay.project(+ty: Ty, r: U.SRow, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +rm: String, +c: D.Clip, +y: U32) -> Col:
   match r:
     case U.SRow{_, M.Project{+id, title, _, _, _}, M.Shelves{pinned, active, settled, hidden, snoozed}}:
       Lay.col.cat(Out.all([Out{Ty.text(ty, 2n, Ty.fit(ty, 2n, title, 180), c, 38, (y + 4 : U32), 28, T.Th.dim()), [Lay.hit(0, y, 228, 32, "project", id)]},
           Out{Lay.icon(ty, BG.Badge.icon(st, id), c, 14, (y + 10 : U32), BG.Badge.rgb_of(st, id)), [Lay.hit(12, (y + 4 : U32), 24, 28, "look", id)]},
           Out{Lay.icon(ty, "plus", c, 236, (y + 10 : U32), T.Th.faint()), [Lay.hit(230, (y + 4 : U32), 28, 28, "new-thread", id)]}]),
-        Lay.col.then(Look.open(String.eq(look, id), ty, st, id, c, (y + 32 : U32)), y0 =>
+        Lay.col.then(Look.open(String.eq(look, id), ty, st, id, String.eq(rm, id), c, (y + 32 : U32)), y0 =>
         Lay.col.then(Lay.rows(ty, pinned, st, sel, now, False{}, c, y0), y1 =>
           Lay.col.then(Lay.rows(ty, active, st, sel, now, False{}, c, y1), y2 =>
             Lay.col.then(Lay.snoozed(ty, snoozed, st, sel, now, c, y2), y3 =>
               Lay.col.then(Lay.shelf(ty, U.Flag.get(open, id), id, "Settled", settled, st, sel, now, c, y3), y4 =>
                 Lay.shelf(ty, U.Flag.get(open, "arch:" ++ id), "arch:" ++ id, "Archived", M.Archive.of(hidden), st, sel, now, c, y4)))))))
 
-def Lay.projects(+ty: Ty, rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +c: D.Clip, +y: U32) -> Col:
+def Lay.projects(+ty: Ty, rs: List<&2, U.SRow>, +open: Map<&2, Bool>, +st: M.State, +sel: String, +now: Nat, +look: String, +rm: String, +c: D.Clip, +y: U32) -> Col:
   match rs:
     case Nil{}:
       Col{Out.none(), y}
     case r <> t:
-      Lay.col.then(Lay.project(ty, r, open, st, sel, now, look, c, y), y2 => Lay.projects(ty, t, open, st, sel, now, look, c, (y2 + 8 : U32)))
+      Lay.col.then(Lay.project(ty, r, open, st, sel, now, look, rm, c, y), y2 => Lay.projects(ty, t, open, st, sel, now, look, rm, c, (y2 + 8 : U32)))
 
 def Lay.field(+ty: Ty, +c: D.Clip, +x: U32, +y: U32, +w: U32, +text: String, +focused: Bool, +blink: Bool, +caret: Nat, +mark: Nat, +placeholder: String, +id: String) -> Out:
   +vis = Ty.fit(ty, 2n, text, (w - 16 : U32))
@@ -536,20 +538,31 @@ def Lay.hint.ids(alt: Bool, ctrl: Bool, +u: U.Ui) -> List<&2, String>:
     case False{} False{}:
       Nil{}
 
+# the sidebar's project search, under the header (and the add row)
+def Lay.finding(+ty: Ty, find: Bool, +y: U32, +q: String, +focus: String, +caret: Nat, +mark: Nat) -> Out:
+  match find:
+    case True{}:
+      Lay.field(ty, D.Clip.all(), 12, y, 240, q, String.eq(focus, S.Fld.id("pq", "proj-go", "")), True{}, caret, mark, "Find a project", S.Fld.id("pq", "proj-go", ""))
+    case False{}:
+      Out.none()
+
 def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2, Bool>, on: Bool, +now: Nat, +adding: Bool, +v: String,
-    +sd: U32, +caret: Nat, +mark: Nat, +focus: String, +path: String, +h: U32, +settings: Bool, +ms: List<&2, U.MRow>, +hint: String, +ids: List<&2, String>, +look: String, more: D.Clip -> U32 -> Col) -> Out:
+    +sd: U32, +caret: Nat, +mark: Nat, +focus: String, +path: String, +h: U32, +settings: Bool, +ms: List<&2, U.MRow>, +hint: String, +ids: List<&2, String>, +look: String, +rm: String, +find: Bool, +q: String, more: D.Clip -> U32 -> Col) -> Out:
   +top = {D.Clip{0, 0, 264, 52} : D.Clip}
   +many = Nat.is_gt(List.length(&2, U.MRow, ms), 1n)
-  +y0 = {(Bool.pick(U32, adding, 96, 60) + Mach.h(many) : U32) : U32}
+  +yf = {(Bool.pick(U32, adding, 96, 58) + Mach.h(many) : U32) : U32}
+  +y0 = {(Bool.pick(U32, adding, 96, 60) + Mach.h(many) + Bool.pick(U32, find, 36, 0) : U32) : U32}
   Out.all([
     Out.ops([D.Draw.rect(D.Clip.all(), 0, 0, 264, h, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 263, 0, 1, h, T.Th.line(), 255),
       D.Draw.rect(top, 0, 51, 264, 1, T.Th.line(), 255),
       D.Draw.disc(top, 19.0, 26.0, 3.5, Bool.pick(U32, on, T.Th.ok(), T.Th.bad()), 255)]),
     Out.ops(List.append(&2, R.Op, Ty.text(ty, 1n, "Backplane", top, 30, 0, 52, T.Th.text()),
       Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
+    Out{Lay.icon(ty, "search", top, 206, 18, Bool.pick(U32, find, T.Th.text(), T.Th.dim())), [Lay.hit(200, 12, 28, 28, "proj-find", "")]},
     Out{Lay.icon(ty, "plus", top, 234, 18, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "vw-projo", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret, mark),
-    Links.over(Lay.hints(hint, Lay.col.out(Lay.col.then(Lay.projects(ty, U.Side.rows(st, now), open, st, sel, now, look,
+    Lay.finding(ty, find, yf, q, focus, caret, mark),
+    Links.over(Lay.hints(hint, Lay.col.out(Lay.col.then(Lay.projects(ty, U.Side.shown(st, now, Bool.pick(String, find, q, "")), open, st, sel, now, look, rm,
       D.Clip{0, y0, 264, (h - 48 : U32)}, U32.sub(y0, sd)), more(D.Clip{0, y0, 264, (h - 48 : U32)}))), ty, D.Clip{0, y0, 264, (h - 48 : U32)}, ids), U.Links.recent(st, now), now, D.Clip{0, y0, 264, (h - 48 : U32)}),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 48, T.Th.panel(), 255), D.Draw.rect(D.Clip.all(), 0, (h - 48 : U32), 263, 1, T.Th.line(), 255)],
         List.append(&2, R.Op, Lay.icon(ty, "settings", D.Clip.all(), 16, (h - 32 : U32), Bool.pick(U32, settings, T.Th.text(), T.Th.dim())), Ty.text(ty, 2n, "Settings", D.Clip.all(), 40, (h - 48 : U32), 48, Bool.pick(U32, settings, T.Th.text(), T.Th.dim())))),
@@ -2524,7 +2537,8 @@ def Lay.sidebar.x(+ty: Ty, +n: S.Nui, +h: U32, more: D.Clip -> U32 -> Col) -> Ou
   match n:
     case S.Nui{U.Ui{+st, +sel, _, _, +open, on, +now, adding, _, +v, _, _, _, +note, _, _, _}, _, _, _, _, +sd, _, +caret, +focus, +path, _, _, vw}:
       Out.all([Lay.sidebar.k(ty, D.Clip{0, 52, 264, h}, st, sel, open, on, now, adding, v, sd, caret, S.Nui.mark(n), focus, path, h, U.Flag.get(open, "settings"), U.Machines.rows(S.Nui.ui(n)),
-        U.Ui.scratch(S.Nui.ui(n), "@hint"), Lay.hint.ids(String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "alt"), String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "ctrl"), S.Nui.ui(n)), U.Ui.scratch(S.Nui.ui(n), "@look"), more), Lay.note(ty, note, h), Lay.ghost(ty, n)])
+        U.Ui.scratch(S.Nui.ui(n), "@hint"), Lay.hint.ids(String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "alt"), String.eq(U.Ui.scratch(S.Nui.ui(n), "@hint"), "ctrl"), S.Nui.ui(n)), U.Ui.scratch(S.Nui.ui(n), "@look"), U.Ui.scratch(S.Nui.ui(n), "@rm"),
+        U.Flag.get(open, "psearch"), U.Ui.scratch(S.Nui.ui(n), "@f.pq"), more), Lay.note(ty, note, h), Lay.ghost(ty, n)])
 
 # the sidebar with nothing under the projects
 def Lay.sidebar(+ty: Ty, +n: S.Nui, +h: U32) -> Out:

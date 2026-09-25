@@ -3,8 +3,9 @@ import SwiftUI
 struct RootView: View {
     @Bindable var model: AppModel
     @State private var pairing = false
-    // the delete just answered: its dialog stays down until the screen drops it
+    // the delete (or remove) just answered: its dialog stays down until the screen drops it
     @State private var answered = ""
+    @State private var removed = ""
 
     var body: some View {
         if model.links.isEmpty {
@@ -31,6 +32,14 @@ struct RootView: View {
                 Text(d.body)
             }
             .onChange(of: s.deleting?.id) { answered = "" }
+            .alert(s.removing?.title ?? "", isPresented: Binding(get: { s.removing.map { $0.id != removed } ?? false }, set: { _ in }),
+                   presenting: s.removing) { d in
+                Button(d.yes, role: .destructive) { removed = d.id; model.act("proj-remove", d.id) }
+                Button(d.no, role: .cancel) { removed = d.id; model.act("proj-keep") }
+            } message: { d in
+                Text(d.body)
+            }
+            .onChange(of: s.removing?.id) { removed = "" }
             .sheet(isPresented: Binding(get: { model.screen?.settings != nil }, set: { if !$0, model.screen?.settings != nil { model.act("flag", "settings") } })) {
                 if let st = model.screen?.settings { SettingsSheet(model: model, settings: st, version: model.screen?.version ?? "") }
             }
@@ -186,6 +195,9 @@ struct ProjectsView: View {
 
     var body: some View {
         List {
+            if let f = screen.search, f.open {
+                Section { SearchField(model: model, search: f, first: screen.projects.first?.id) }
+            }
             ForEach(screen.projects) { p in
                 Section {
                     ForEach(p.threads) { ThreadRow(model: model, row: $0) { choosing = $0 } }
@@ -226,6 +238,9 @@ struct ProjectsView: View {
                         Button { model.act("new-thread", p.id) } label: { Image(systemName: "square.and.pencil") }
                             .accessibilityLabel("New thread")
                     }
+                    .contextMenu {
+                        Button("Remove project", systemImage: "trash", role: .destructive) { model.act("proj-remove", p.id) }
+                    }
                 }
             }
             if !screen.hubs.isEmpty { BotsSection(model: model, screen: screen) }
@@ -253,6 +268,8 @@ struct ProjectsView: View {
                 } else {
                     Button { model.act("picker-open") } label: { Image(systemName: "folder.badge.plus") }.accessibilityLabel("Add project")
                 }
+                Button { model.act("proj-find", screen.search?.open == true ? "off" : "on") } label: { Image(systemName: "magnifyingglass") }
+                    .accessibilityLabel("Find a project")
                 Button { pairing = true } label: { Image(systemName: "link") }.accessibilityLabel("Hubs")
                 Menu {
                     Button("Search threads", systemImage: "magnifyingglass") { model.act("find-open", "search") }
@@ -274,6 +291,33 @@ struct ProjectsView: View {
         .sheet(isPresented: Binding(get: { screen.newRoom != nil }, set: { if !$0 { model.act("form-close", "@rnew") } })) {
             if let f = model.screen?.newRoom { NewRoomSheet(model: model, form: f) }
         }
+    }
+}
+
+// the project search's field: typing filters the list ("proj-find-q"),
+// return goes to the first project shown ("proj-go"), the x shuts it
+private struct SearchField: View {
+    let model: AppModel
+    let search: Search
+    let first: String?
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(search.hint, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .focused($focused)
+                .submitLabel(.go)
+                .onChange(of: text) { _, t in if t != search.query { model.act("proj-find-q", t) } }
+                .onSubmit { if let f = first { model.act("proj-go", f) } }
+            Button { model.act("proj-find", "off") } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
+        }
+        .onAppear { text = search.query; focused = true }
     }
 }
 

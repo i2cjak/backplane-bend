@@ -62,6 +62,15 @@ def sel(+h: H.Hubs, +k: String) -> String:
 def yes(b: Bool) -> String:
   Bool.pick(String, b, "yes", "no")
 
+def act(+h: H.Hubs, +a: String, +v: String) -> H.Hubs:
+  H.Hubs.after(H.Hubs.act(h, a, v))
+
+def searching() -> H.Hubs:
+  act(act(two(), "proj-find", "on"), "proj-find-q", "bo")
+
+def obj(+h: H.Hubs, +key: String, +field: String) -> String:
+  J.Json.get_str(J.Json.get_obj(H.Hubs.screen(h), key), field, "")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("first hub is current", H.Hubs.cur(two()), "100.1.1.1:3787")
@@ -98,3 +107,15 @@ def main() -> IO(Unit):
     C.Check.str("picker's paths stay as they are",
       J.Json.get_str(J.Json.get_obj(H.Hubs.screen(H.Hubs.after(H.Hubs.act(two(), "picker-open", "box:3787|"))), "folders"), "text", ""), "~/")
     C.Check.str("snooze value", H.Hubs.rest("box:3787|t2|1h"), "t2|1h")
+    C.Check.str("search filters every hub", list(searching(), "projects", "id"), "box:3787|p2;")
+    C.Check.str("search shown", yes(J.Json.get_bool(J.Json.get_obj(H.Hubs.screen(searching()), "search"), "open", False{})), "yes")
+    C.Check.str("search query", obj(searching(), "search", "query"), "bo")
+    C.Check.str("search off shows all", list(act(searching(), "proj-find", "off"), "projects", "id"), "100.1.1.1:3787|p1;box:3787|p2;")
+    C.Check.str("go selects on its hub", sel(act(searching(), "proj-go", "box:3787|p2"), "box:3787"), "t2")
+    C.Check.str("go moves focus", H.Hubs.cur(act(searching(), "proj-go", "box:3787|p2")), "box:3787")
+    C.Check.str("go shuts every search", list(act(searching(), "proj-go", "box:3787|p2"), "projects", "id"), "100.1.1.1:3787|p1;box:3787|p2;")
+    C.Check.str("remove arms a dialog", obj(act(two(), "proj-remove", "box:3787|p2"), "removing", "id"), "box:3787|p2")
+    C.Check.str("dialog names it", obj(act(two(), "proj-remove", "box:3787|p2"), "removing", "title"), "Remove Box?")
+    C.Check.str("confirm sends remove", cmds(H.Hubs.cmds(H.Hubs.act(act(two(), "proj-remove", "box:3787|p2"), "proj-remove", "box:3787|p2"))), "send@box:3787 ")
+    C.Check.str("cancel disarms", obj(act(act(two(), "proj-remove", "box:3787|p2"), "proj-keep", ""), "removing", "id"), "")
+    C.Check.str("no match says so", screen(act(searching(), "proj-find-q", "zzz"), "empty"), "No project matches.")

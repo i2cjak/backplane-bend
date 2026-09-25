@@ -143,7 +143,8 @@ def Fld.alias(+id: String) -> String:
       Bool.pick(String, String.eq(id, "room-post"), Fld.id("rpost", "room-post", ""),
         Bool.pick(String, String.eq(id, "remote-send"), Fld.id("rtext", "remote-send", ""),
           Bool.pick(String, String.eq(id, "routine-name"), Fld.id("oname", "routine-save", ""),
-            Bool.pick(String, String.eq(id, "voice-fix"), Fld.id("vfix", "voice-fixed", ""), id))))))
+            Bool.pick(String, String.eq(id, "voice-fix"), Fld.id("vfix", "voice-fixed", ""),
+              Bool.pick(String, String.eq(id, "proj-find"), Fld.id("pq", "proj-go", ""), id)))))))
 
 # Focus and scroll requests from the client state apply here
 def Nui.effects(cs: List<&2, U.Cmd>, n: Nui) -> Nui:
@@ -2010,12 +2011,20 @@ def Nui.key.free(nofocus: Bool, fit: Bool, +n: Nui, +code: U32, +text: U32, +mod
     case _ _:
       Nui.field.k(String.eq(Nui.focus_of(n), "composer"), Nui.in_path(n), n, Nui.mark(n), code, text, mods)
 
+# Esc leaves a field; in the project search it also shuts the search
+def Esc.field(find: Bool, +n: Nui) -> Step:
+  match find:
+    case True{}:
+      Nui.focus(Nui.with_ui(n, U.Ui.scratch_set(U.Ui.flag_off(Nui.ui(n), "psearch"), "@f.pq", "")), "")
+    case False{}:
+      Nui.focus(n, "")
+
 def Nui.key.k(paste: Bool, esc: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match paste esc:
     case True{} _:
       Step{n, [NPaste{}], False{}}
     case False{} True{}:
-      Nui.focus(n, "")
+      Esc.field(String.eq(Nui.focus_of(n), Fld.id("pq", "proj-go", "")), n)
     case False{} False{}:
       Nui.key.free(String.is_empty(Nui.focus_of(n)), U32.is_eq(code, 102), n, code, text, mods)
 

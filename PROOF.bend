@@ -1088,6 +1088,18 @@ def Laws.fuzzy_empty_matches(s):
     case SCon{Chr{c}, t}:
       {==}
 
+def Laws.find_empty_keeps(rs):
+  match rs:
+    case Nil{}:
+      {==}
+    case U.SRow{+r, M.Project{+id, +ti, +ro, +c, +rm}, +sh} <> +t:
+      %Equal.sym(Bool, Nat.is_gt(FZ.Fuzzy.score(ti, ""), 0n), True{}, Laws.fuzzy_empty_matches(ti)) : {U.Find.keep(_, U.SRow{r, M.Project{id, ti, ro, c, rm}, sh}, U.Find.rows(t, "")) == U.SRow{r, M.Project{id, ti, ro, c, rm}, sh} <> t : List<&2, U.SRow>}
+      %Equal.sym(List<&2, U.SRow>, U.Find.rows(t, ""), t, Laws.find_empty_keeps(t)) : {U.SRow{r, M.Project{id, ti, ro, c, rm}, sh} <> _ == U.SRow{r, M.Project{id, ti, ro, c, rm}, sh} <> t : List<&2, U.SRow>}
+      {==}
+
+def Laws.find_shut_shows_all(st, now, dr):
+  Laws.find_empty_keeps(U.Side.rows(st, now))
+
 def Laws.caret_shows_when_moved():
   {==}
 

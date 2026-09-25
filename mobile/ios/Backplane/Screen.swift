@@ -240,6 +240,12 @@ struct Deleting: Decodable, Equatable {
     let id, title, body, yes, no: String
 }
 
+// the project search over the list: open, its query ("proj-find-q"), the hint
+struct Search: Decodable, Equatable {
+    let open: Bool
+    let query, hint: String
+}
+
 // the project picker: its path field, the field's hint, an error, and the
 // rows (a tap sends action with value; one with no action is only shown)
 struct FolderRow: Decodable, Hashable {
@@ -404,6 +410,9 @@ struct Screen: Decodable {
     let newRoom: NewRoom?
     let bot: BotView?
     let deleting: Deleting?
+    // a project remove to confirm ("proj-remove" id, or "proj-keep")
+    let removing: Deleting?
+    let search: Search?
     let folders: Folders?
     let settings: Settings?
     let find: Find?
