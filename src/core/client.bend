@@ -679,7 +679,8 @@ def Ui.actions() -> List<&2, String>:
    "q-steer", "q-remove", "q-up", "q-edit", "q-resume", "send-alt", "fork", "back",
    "bot", "bot-tab", "bot-new", "bot-create", "bot-delete", "bot-edit", "bfield", "room", "room-new", "room-save", "room-pick", "room-post",
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
-   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier"]
+   "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
+   "hook-token", "hook-retoken", "hook-untoken"]
 
 # Reading the client state
 # ------------------------
@@ -2665,6 +2666,14 @@ def Bots.hook.new(+u: Ui) -> Act:
   Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@hook.secret", ""), ["hname"]), "bots.hook",
     [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"name", J.Str{Bool.pick(String, String.is_empty(Bots.field(u, "hname")), "webhook", Bots.field(u, "hname"))}}])
 
+# a webhook's bearer token and the URL to post to, as the server answered
+def Bots.token.clear(u: Ui) -> Ui:
+  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@hook.token", ""), "@hook.tokfor", ""), "@hook.tokurl", "")
+
+# show (made the first time), "new" or "off"
+def Bots.token(u: Ui, +hook: String, +op: String) -> Act:
+  Ui.rpc(Bots.token.clear(u), "bots.hook_token", [J.KV{"hook", J.Str{hook}}, J.KV{"op", J.Str{op}}])
+
 def Bots.google(+u: Ui, +op: String) -> Act:
   Ui.rpc(u, "bots.google", [J.KV{"op", J.Str{op}}, J.KV{"clientId", J.Str{Bots.field(u, "gid")}}, J.KV{"clientSecret", J.Str{Bots.field(u, "gsecret")}},
     J.KV{"pasted", J.Str{Bots.field(u, "gpaste")}}])
@@ -2694,7 +2703,8 @@ def Bots.reply.put(+o: J.Json, +key: String, +into: String, +u: Ui) -> Ui:
 
 def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
   Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
-    Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id", Bots.reply.bot(o, u))))))
+    Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id",
+      Bots.reply.put(o, "token", "@hook.token", Bots.reply.put(o, "tokenHook", "@hook.tokfor", Bots.reply.put(o, "tokenUrl", "@hook.tokurl", Bots.reply.bot(o, u)))))))))
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
@@ -2837,11 +2847,17 @@ def Bots.act(i: Nat, +u: Ui, +value: String) -> Act:
     case 29n:
       Act{Bots.routine.edit(u, Bots.routine.of(u, value)), [Focus{"routine-name"}]}
     case 30n:
-      Act{Ui.scratch_set(Ui.scratch_set(u, "@hook.secret", ""), "@hook.id", ""), Nil{}}
+      Act{Bots.token.clear(Ui.scratch_set(Ui.scratch_set(u, "@hook.secret", ""), "@hook.id", "")), Nil{}}
     case 31n:
       Act{Ui.scratch_set(u, value, ""), Nil{}}
     case 32n:
       Act{Page.earlier(u, value), Nil{}}
+    case 33n:
+      Bots.token(u, value, "show")
+    case 34n:
+      Bots.token(u, value, "new")
+    case 35n:
+      Bots.token(u, value, "off")
     case _:
       Act{u, Nil{}}
 

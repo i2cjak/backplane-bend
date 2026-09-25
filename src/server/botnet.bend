@@ -238,8 +238,50 @@ def Bn.peer.save.k(safe: Bool, +home: String, +id: String, +secret: String) -> I
 def Bn.peer.save(+home: String, +id: String, +secret: String) -> IO(Bool):
   Bn.peer.save.k(Bn.safe(id), home, id, secret)
 
+# a webhook's bearer token sits beside its secret: "<id>.token" (a plain
+# id has no dot, so it never names another hook's file)
+def Bn.token.path(+home: String, +id: String) -> String:
+  Bn.hook.path(home, id) ++ ".token"
+
+def Bn.hook.forget.k(+home: String, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    Bf.rm(Bn.hook.path(home, id))
+    Bf.rm(Bn.token.path(home, id))
+
+# a revoked hook's secret and token both go
 def Bn.hook.forget(+home: String, +id: String) -> IO(Unit):
-  Bool.pick(IO(Unit), Bn.safe(id), Bf.rm(Bn.hook.path(home, id)), IO.pure(Unit, Unit{}))
+  Bool.pick(IO(Unit), Bn.safe(id), Bn.hook.forget.k(home, id), IO.pure(Unit, Unit{}))
+
+def Bn.token.k(safe: Bool, +home: String, +id: String) -> IO(String):
+  match safe:
+    case True{}:
+      IO.bind(String, String, Bf.text(Bn.token.path(home, id)), t => IO.pure(String, String.trim(t)))
+    case False{}:
+      IO.pure(String, "")
+
+# a webhook's bearer token, "" when it has none
+def Bn.token.of(+home: String, +id: String) -> IO(String):
+  Bn.token.k(Bn.safe(id), home, id)
+
+def Bn.token.make.k(safe: Bool, +home: String, +id: String) -> IO(String):
+  match safe:
+    case True{}:
+      do IO<String>:
+        Bf.secrets(home, "hooks")
+        +token : String <- Bn.random(4n)
+        ok : Bool <- Bf.secret(Bn.token.path(home, id), token)
+        return Bn.made(ok, token)
+    case False{}:
+      IO.pure(String, "")
+
+# a webhook's new bearer token (16 random bytes, 32 hex digits: short
+# enough to type into a phone), replacing any other; "" when it could not
+# be kept
+def Bn.token.make(+home: String, +id: String) -> IO(String):
+  Bn.token.make.k(Bn.safe(id), home, id)
+
+def Bn.token.forget(+home: String, +id: String) -> IO(Unit):
+  Bool.pick(IO(Unit), Bn.safe(id), Bf.rm(Bn.token.path(home, id)), IO.pure(Unit, Unit{}))
 
 def Bn.peer.forget(+home: String, +id: String) -> IO(Unit):
   Bool.pick(IO(Unit), Bn.safe(id), Bf.rm(Bn.peer.path(home, id)), IO.pure(Unit, Unit{}))
@@ -319,6 +361,23 @@ def Bn.check.k(empty: Bool, ours: Bool, github: Bool, +secret: String, +now: Nat
 # webhook, GitHub's with its delivery id. `key` names what was signed for.
 def Bn.check(+hook: Bool, +secret: String, +now: Nat, +key: String, +ts: String, +sig: String, +gh: String, +delivery: String, +body: String) -> String:
   Bn.check.k(String.is_empty(secret), Bool.not(String.is_empty(sig)), Bool.and(hook, Bool.not(String.is_empty(gh))), secret, now, ts, body, sig, gh, delivery, key)
+
+# a webhook called with Authorization: Bearer <token>: its replay key
+# (tagged ":b:" with a fresh nonce, so each call is new; a static token
+# cannot prove freshness anyway), else why it is refused, after a "!"
+def Bn.bearer(+kept: String, +given: String, +key: String, +nonce: String) -> String:
+  Bool.pick(String, String.is_empty(kept), "!notoken",
+    Bool.pick(String, SG.Sign.bearer(kept, given), key ++ ":b:" ++ nonce, "!bearer"))
+
+# a refused request: why, for the 401's text
+def Bn.denied(+key: String) -> String:
+  Bool.pick(String, String.eq(key, "!none"), "no credentials: send Authorization: Bearer <the webhook's token>, or sign the request",
+    Bool.pick(String, String.eq(key, "!notoken"), "this webhook has no bearer token: make one in its bot's Webhooks tab",
+      Bool.pick(String, String.eq(key, "!bearer"), "wrong bearer token", "bad or stale signature")))
+
+# a key that lets nothing in: none, or a refusal
+def Bn.refused(+key: String) -> Bool:
+  Bool.or(String.is_empty(key), String.starts_with(key, "!"))
 
 # a key accepted once: None when it was seen within the window, else the
 # cache that now holds it

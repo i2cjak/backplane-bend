@@ -35,6 +35,7 @@ import ../core/bot.bend as BO
 import ../core/sign.bend as SG
 import ./google.bend as GS
 import ../core/google.bend as GG
+import ../core/ring.bend as RG
 
 # The server. One hub computation owns the read model and the event log;
 # every connection and agent process is its own computation and talks to
@@ -3347,7 +3348,71 @@ def BotJob.google(+inbox: Chan(Msg), +home: String, +port: U32, +params: String,
     +text : String <- BotJob.google.op(i, home, p, Bot.redirect(port))
     BotJob.google.done(text, Nat.is_eq(i, 1n), inbox, client, id)
 
-# one B.BotFx: home, gone, hook, unhook, send, invite, join, unpeer, google
+def Bot.ran(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, out}:
+      out
+    case _:
+      ""
+
+def Bot.serve(on: Bool) -> IO(P.Ran):
+  match on:
+    case True{}:
+      P.Proc.run("sh", ["-c", "command -v tailscale >/dev/null && timeout 5 tailscale serve status --json"], "/")
+    case False{}:
+      IO.pure(P.Ran, P.Ran{1, ""})
+
+def Bot.hook.base.k(+env: String, +serve: String, +here: String) -> String:
+  Bool.pick(String, String.is_empty(env), Bool.pick(String, String.is_empty(serve), here, serve),
+    Bool.pick(String, String.ends_with(env, "/"), String.take(env, Nat.sub(String.length(env), 1n)), env))
+
+# where a phone reaches this hub's webhooks: BACKPLANE_HOOK_URL (a
+# funnel, a relay), else the HTTPS address `tailscale serve` gives the
+# hub's port, else its tailnet address (plain HTTP)
+def Bot.hook.base(+tailnet: Bool, +host: String, +port: U32) -> IO(String):
+  do IO<String>:
+    +env : String <- BN.Bf.env("BACKPLANE_HOOK_URL")
+    r : P.Ran <- Bot.serve(tailnet)
+    +here : String <- BN.Bn.url.here(tailnet, host, port)
+    return Bot.hook.base.k(String.trim(env), TN.Tailnet.serve(Bot.ran(r), U32.show(port)), here)
+
+def BotJob.token.or(none: Bool, +t: String, +home: String, +hook: String) -> IO(String):
+  match none:
+    case True{}:
+      BN.Bn.token.make(home, hook)
+    case False{}:
+      IO.pure(String, t)
+
+def BotJob.token.got(+t: String, +home: String, +hook: String) -> IO(String):
+  BotJob.token.or(String.is_empty(t), t, home, hook)
+
+# 0: the hook's token (made the first time), 1: a new one, 2: none
+def BotJob.token.tok(op: Nat, +home: String, +hook: String) -> IO(String):
+  match op:
+    case 0n:
+      IO.bind(String, String, BN.Bn.token.of(home, hook), t => BotJob.token.got(t, home, hook))
+    case 1n:
+      BN.Bn.token.make(home, hook)
+    case _:
+      IO.bind(Unit, String, BN.Bn.token.forget(home, hook), u => IO.pure(String, ""))
+
+def BotJob.token.done(bad: Bool, +tok: String, +url: String, +inbox: Chan(Msg), +client: U32, +id: String, +hook: String) -> IO(Unit):
+  match bad:
+    case True{}:
+      BotJob.fail(inbox, client, id, "could not keep the webhook's token")
+    case False{}:
+      BotJob.reply(inbox, client, id, True{}, [J.KV{"tokenHook", J.Str{hook}}, J.KV{"token", J.Str{tok}}, J.KV{"tokenUrl", J.Str{url ++ "/hook/" ++ hook}}])
+
+# a webhook's bearer token, shown to the client that asked (only clients
+# the server lets in reach this), with the URL a phone posts to
+def BotJob.token(+op: Nat, +inbox: Chan(Msg), +home: String, +tailnet: Bool, +host: String, +port: U32, +hook: String, +client: U32, +id: String) -> IO(Unit):
+  do IO<Unit>:
+    +tok : String <- BotJob.token.tok(op, home, hook)
+    +url : String <- Bot.hook.base(tailnet, host, port)
+    BotJob.token.done(Bool.and(String.is_empty(tok), Nat.is_lt(op, 2n)), tok, url, inbox, client, id, hook)
+
+# one B.BotFx: home, gone, hook, unhook, send, invite, join, unpeer, google,
+# token, retoken, untoken
 def Bot.fx(i: Nat, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +a: String, +b: String, +c: String) -> IO(Unit):
   match i:
     case 0n:
@@ -3368,6 +3433,12 @@ def Bot.fx(i: Nat, +st: M.State, +inbox: Chan(Msg), +cfg: Cfg, +a: String, +b: S
       IO.spawn(Unit, BN.Bn.peer.forget(Cfg.home(cfg), a))
     case 8n:
       IO.spawn(Unit, BotJob.google(inbox, Cfg.home(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 9n:
+      IO.spawn(Unit, BotJob.token(0n, inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 10n:
+      IO.spawn(Unit, BotJob.token(1n, inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
+    case 11n:
+      IO.spawn(Unit, BotJob.token(2n, inbox, Cfg.home(cfg), Cfg.tailnet(cfg), Cfg.host(cfg), Cfg.port(cfg), a, BotJob.client(b), BotJob.id(c)))
     case _:
       IO.pure(Unit, Unit{})
 
@@ -3444,7 +3515,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.BotFx{+kind, +a, +b, +c}:
       do IO<Hub>:
-        Bot.fx(C.Codec.pos(["home", "gone", "hook", "unhook", "send", "invite", "join", "unpeer", "google"], kind), st, inbox, cfg, a, b, c)
+        Bot.fx(C.Codec.pos(["home", "gone", "hook", "unhook", "send", "invite", "join", "unpeer", "google", "token", "retoken", "untoken"], kind), st, inbox, cfg, a, b, c)
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
 
 def Hub.outs(os: List<&2, B.Out>, h: Hub) -> IO(Hub):
@@ -3629,6 +3700,54 @@ def Bot.verify(+hook: Bool, +home: String, +kind: String, +id: String, +ts: Stri
     ok : Bool <- Chan.send(Msg, inbox, BotVerified{kind, id, key, body, Bool.pick(String, String.contains(key, ":i:"), "ring", me), reply})
     return Unit{}
 
+def Bot.refuse(+id: String, +key: String, body: String, +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
+  do IO<Unit>:
+    ok : Bool <- Chan.send(Msg, inbox, BotVerified{"hook", id, key, body, "", reply})
+    return Unit{}
+
+# a form (the Pebble Index ring's) becomes a JSON object; any other body
+# goes as it came. Only a call let in is read.
+def Bot.bearer.body(form: Bool, +body: String, +size: String) -> String:
+  match form:
+    case True{}:
+      RG.Ring.form(body, size)
+    case False{}:
+      body
+
+def Bot.bearer.k(+kept: String, +nonce: String, +tok: String, +ct: String, +size: String, +id: String, +body: String,
+    +reply: Chan(List<&2, U32>), +inbox: Chan(Msg)) -> IO(Unit):
+  Bot.refuse(id, BN.Bn.bearer(kept, tok, "hook:" ++ id, nonce),
+    Bot.bearer.body(Bool.and(Bool.not(BN.Bn.refused(BN.Bn.bearer(kept, tok, "hook:" ++ id, nonce))), RG.Ring.is_form(ct)), body, size), reply, inbox)
+
+# a webhook called with a bearer token (packed by Bot.gh as
+# "bearer\n<token>\n<content type>\n<X-Audio-Size>"): the token compared
+# with the hook's own off the hub
+def Bot.bearer(fs: List<&2, String>, +home: String, +id: String, +body: String, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  match fs:
+    case _ <> +tok <> +ct <> +size <> _:
+      do IO<Unit>:
+        +kept : String <- BN.Bn.token.of(home, id)
+        +nonce : String <- BN.Bn.random(2n)
+        Bot.bearer.k(kept, Nat.show(now) ++ "." ++ nonce, tok, ct, size, id, body, reply, inbox)
+    case _:
+      Bot.refuse(id, "!bearer", body, reply, inbox)
+
+# how a webhook call proves itself: 0 not at all, 1 a bearer token, 2 a
+# signature (ours, GitHub's, the ring's). A signature wins over a token.
+def Bot.hook.how(+sig: String, +gh: String) -> Nat:
+  Bool.pick(Nat, Bool.not(String.is_empty(sig)), 2n,
+    Bool.pick(Nat, String.starts_with(gh, "bearer\n"), 1n, Bool.pick(Nat, String.is_empty(gh), 0n, 2n)))
+
+def Bot.hook.in(i: Nat, +home: String, +id: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
+  match i:
+    case 0n:
+      Bot.refuse(id, "!none", body, reply, inbox)
+    case 1n:
+      Bot.bearer(String.split(gh, '\n'), home, id, body, reply, now, inbox)
+    case _:
+      Bot.verify(True{}, home, "hook", id, ts, sig, gh, dl, body, reply, now, inbox)
+
 def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String,
     +body: String, +reply: Chan(List<&2, U32>), +now: Nat, +inbox: Chan(Msg)) -> IO(Unit):
   match i:
@@ -3637,7 +3756,7 @@ def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String,
     case 1n:
       Bot.oauth(home, port, arg, reply)
     case 2n:
-      Bot.verify(True{}, home, kind, arg, ts, sig, gh, dl, body, reply, now, inbox)
+      Bot.hook.in(Bot.hook.how(sig, gh), home, arg, ts, sig, gh, dl, body, reply, now, inbox)
     case _:
       Bot.verify(False{}, home, kind, peer, ts, sig, gh, dl, body, reply, now, inbox)
 
@@ -3725,21 +3844,22 @@ def Hub.bot.act(i: Nat, h: Hub, +arg: String, body: String, +me: String, +reply:
     case _ _:
       Hub.answer(h, reply, W.Http.text("404 Not Found", "not found"))
 
-def Hub.bot.seen(bad: Bool, m: Maybe<&2, SG.Seen>, h: Hub, +kind: String, +arg: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+def Hub.bot.seen(bad: Bool, m: Maybe<&2, SG.Seen>, h: Hub, +why: String, +kind: String, +arg: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match bad m h:
     case True{} _ _:
-      Hub.answer(h, reply, W.Http.text("401 Unauthorized", "bad or stale signature"))
+      Hub.answer(h, reply, W.Http.text("401 Unauthorized", why))
     case False{} None{} _:
       Hub.answer(h, reply, W.Http.text("401 Unauthorized", "already seen"))
     case False{} Some{s} Hub{st, f, ls, cl, as, inbox, +cfg, note}:
       Hub.bot.act(C.Codec.pos(["hook", "deliver", "link", "dir"], kind), Hub{st, f, ls, cl, as, inbox, Cfg.with_bn(cfg, BN.Bn.with_seen(Cfg.bn(cfg), s)), note},
         arg, body, me, reply, now)
 
-# a signed request, checked: genuine (key), not seen before, then acted on
+# a signed request (or a webhook's bearer token), checked: genuine (key),
+# not seen before, then acted on; a refusal says why
 def Hub.bot_verified(h: Hub, +kind: String, +arg: String, +key: String, body: String, +me: String, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match h:
     case Hub{st, f, ls, cl, as, inbox, +cfg, note}:
-      Hub.bot.seen(String.is_empty(key), BN.Bn.accept(Cfg.bn(cfg), key, now), Hub{st, f, ls, cl, as, inbox, cfg, note}, kind, arg, body, me, reply, now)
+      Hub.bot.seen(BN.Bn.refused(key), BN.Bn.accept(Cfg.bn(cfg), key, now), Hub{st, f, ls, cl, as, inbox, cfg, note}, BN.Bn.denied(key), kind, arg, body, me, reply, now)
 
 # Connections for bots' routes
 # ----------------------------
@@ -3809,8 +3929,21 @@ def Conn.bot.signed.k(ok: Bool, big: Bool, s: Socket, rest: List<&2, U32>, +len:
 def Conn.bot.len(+hs: List<&2, W.Header>) -> Nat:
   Maybe.default(&2, Nat, Nat.read(W.Http.header_of(hs, "content-length")), 0n)
 
+def Bot.bearer.of(+auth: String) -> String:
+  Bool.pick(String, Bool.or(String.starts_with(auth, "Bearer "), String.starts_with(auth, "bearer ")), String.trim(String.drop(auth, 7n)), "")
+
+# Authorization: Bearer <token>, with what reading the body needs, packed
+# after "bearer\n" ("" when there is no token)
+def Bot.gh.bearer(+tok: String, +hs: List<&2, W.Header>) -> String:
+  Bool.pick(String, String.is_empty(tok), "",
+    "bearer\n" ++ tok ++ "\n" ++ W.Http.header_of(hs, "content-type") ++ "\n" ++ W.Http.header_of(hs, "x-audio-size"))
+
+def Bot.gh.hub(+g: String, +hs: List<&2, W.Header>) -> String:
+  Bool.pick(String, String.is_empty(g), Bot.gh.bearer(Bot.bearer.of(W.Http.header_of(hs, "authorization")), hs), g)
+
 # a third party's signature: the Pebble Index ring's (its X-Index-*
-# headers, packed after "index\n" for BN.Bn.check), else GitHub's
+# headers, packed after "index\n" for BN.Bn.check), else GitHub's, else a
+# bearer token
 def Bot.gh.k(ring: Bool, +hs: List<&2, W.Header>) -> String:
   match ring:
     case True{}:
@@ -3818,7 +3951,7 @@ def Bot.gh.k(ring: Bool, +hs: List<&2, W.Header>) -> String:
         W.Http.header_of(hs, "x-index-delivery"), W.Http.header_of(hs, "x-index-trigger"), W.Http.header_of(hs, "x-index-test"),
         W.Http.header_of(hs, "x-index-signature")], "\n")
     case False{}:
-      W.Http.header_of(hs, "x-hub-signature-256")
+      Bot.gh.hub(W.Http.header_of(hs, "x-hub-signature-256"), hs)
 
 def Bot.gh(+hs: List<&2, W.Header>) -> String:
   Bot.gh.k(Bool.not(String.is_empty(W.Http.header_of(hs, "x-index-signature"))), hs)

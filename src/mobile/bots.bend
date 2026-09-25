@@ -214,7 +214,8 @@ def MBots.tab.k(i: Nat, +u: U.Ui, b: BT.Bot, +id: String, +persona: String, +now
       [J.KV{"routines", J.Json.arr(MBots.routines(B.BU.routines(u, id), now))}, J.KV{"routine", MBots.routine.form(u)}]
     case 5n:
       [J.KV{"hooks", J.Json.arr(MBots.hooks(B.BU.hooks(u, id), now))}, J.KV{"secret", J.Json.str(U.Ui.scratch(u, "@hook.secret"))},
-       J.KV{"secretFor", J.Json.str(U.Ui.scratch(u, "@hook.id"))}, MBots.str(u, "hname")]
+       J.KV{"secretFor", J.Json.str(U.Ui.scratch(u, "@hook.id"))}, J.KV{"token", J.Json.str(U.Ui.scratch(u, "@hook.token"))},
+       J.KV{"tokenFor", J.Json.str(U.Ui.scratch(u, "@hook.tokfor"))}, J.KV{"tokenUrl", J.Json.str(U.Ui.scratch(u, "@hook.tokurl"))}, MBots.str(u, "hname")]
     case 6n:
       [J.KV{"settings", MBots.settings(u, persona)}]
     case _:

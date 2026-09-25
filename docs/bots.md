@@ -101,18 +101,56 @@ directory (name, look, mood) every minute and deliver messages with
 - The payload reaches the bot marked as untrusted data, never as
   instructions.
 
+### Bearer tokens
+
+A sender that cannot sign (the Pebble Index ring's app sends only fixed
+headers) can use the hook's bearer token instead: `Authorization: Bearer
+<token>`. A hook has none until someone asks for it (the Token button,
+`bots.hook_token` with `op` "show", "new" or "off"). The token is 16
+random bytes as 32 hex digits, kept by the server in
+`<home>/secrets/hooks/<id>.token` (0600, gone when the hook is revoked),
+never in the log; it is compared in constant time. A signature, when
+there is one, is checked instead of the token. Each call with the token is
+new to the replay cache (a static token proves nothing about freshness).
+Refusals say why: no credentials, no token on this hook, wrong token, or
+a bad or stale signature.
+
+A `multipart/form-data` body under a token becomes a JSON object for the
+bot: `source` ("pebble-index-01" when `client` is "ring", else
+"form-data"), `transcription`, `recordedAt` (a number), `client`, and
+`audio` as `"omitted, <X-Audio-Size> bytes"`: a bot cannot hear M4A, and
+keeping untrusted binaries in its folder buys nothing. Other bodies go as
+they came. Either way the bot reads it as untrusted data, like any
+webhook's.
+
+The URL shown with the token is where a phone reaches the hub:
+`BACKPLANE_HOOK_URL` when set (a funnel, a relay), else the HTTPS address
+`tailscale serve` gives the hub's port, else its tailnet address over
+plain HTTP (the Pebble app wants HTTPS; the panel says so). To give a hub
+an HTTPS address on the tailnet without taking port 443 from another
+service: `tailscale serve --bg --https=3788 http://127.0.0.1:3787`.
+
 ### A Pebble Index ring
 
-The ring's app signs its webhooks with HMAC-SHA256 (its protocol version
-1), and a hook takes those as well: make a webhook for the bot, then in
-the Pebble app (Index 01 Settings, Webhook, a gesture):
+Make a webhook for the bot, press Token, then in the Pebble app (Index 01
+Settings, Webhook, a gesture):
+
+- URL: the one shown with the token (`https://<machine>.<tailnet>.ts.net[:port]/hook/<hook id>`;
+  the phone must be on the tailnet)
+- Header: `Authorization` = `Bearer <token>`
+- Send: Transcription only (the recording would pass the 256 KB cap)
+
+What arrives is untrusted data for the bot (above).
+
+The hub also takes the Index webhook protocol's HMAC signature
+(`X-Index-Signature`, version 1) where an app sends it: then configure:
 
 - URL: `https://<this machine>.<tailnet>.ts.net/hook/<hook id>` (the hub
   started with `--tailscale-https`; the phone must be on the tailnet)
 - Sign requests: on, with the webhook's secret pasted as it is shown
 - Send: Transcription only (the recording would pass the 256 KB cap)
 
-A voice note reaches the bot as the person's own words, `[voice note
+A signed voice note reaches the bot as the person's own words, `[voice note
 from your Pebble ring]` and the transcription, starting a conversation
 at hop 0: only the phone holding the secret can sign it. The app's
 "Send test event" is logged and wakes no one. Each gesture has its own
@@ -188,7 +226,7 @@ tools). Routes:
 
 | route | who | auth |
 |---|---|---|
-| `POST /hook/<id>` | anyone with the hook's secret | our signature or GitHub's, replay cache, 256 KB |
+| `POST /hook/<id>` | anyone with the hook's secret or token | our signature, GitHub's or the ring's, replay cache; or the hook's bearer token; 256 KB |
 | `POST /bots/deliver` | a linked machine | `X-Backplane-Peer` + signature with its secret, replay cache |
 | `POST /bots/link` | the holder of an invite | the same; once per peer id |
 | `GET /bots/dir` | a linked machine | the same, over the empty body |

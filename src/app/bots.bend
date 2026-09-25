@@ -315,13 +315,15 @@ def Bv.rtab(+ty: L.Ty, +f: F.FS, +bot: String, +c: D.Clip, +x: U32, +w: U32, +y:
 def Bv.hook(+ty: L.Ty, h: BT.Hook, +now: Nat, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
   match h:
     case BT.Hook{+id, _, +name, _, +revoked, +last, +k}:
-      +rw = L.Lay.button.w(ty, "Revoke")
+      +rw = (L.Lay.button.w(ty, "Revoke") + L.Lay.button.w(ty, "Token") + 8 : U32)
+      +tw = L.Lay.button.w(ty, "Token")
       L.Col{L.Out.all([
           L.Out.ops(L.Lay.box(c, x, y, w, 66, 0, T.Th.panel(), T.Th.line())),
           L.Out.ops(L.Ty.text(ty, 0n, L.Ty.fit(ty, 0n, name, (w - rw - 40 : U32)), c, (x + 12 : U32), (y + 6 : U32), 28, Bool.pick(U32, revoked, T.Th.dim(), T.Th.text()))),
           Bv.faint(ty, c, "POST /hook/" ++ id ++ " · " ++ Bool.pick(String, revoked, "revoked", Bool.pick(String, Nat.is_eq(k, 0n), "never called", Nat.show(k) ++ " calls, last " ++ U.Time.ago(now, last) ++ " ago")),
             (x + 12 : U32), (w - rw - 40 : U32), (y + 36 : U32)),
-          Bool.pick(L.Out, revoked, L.Out.none(), F.Fm.button(ty, c, (x + w - rw - 12 : U32), (y + 19 : U32), "Revoke", T.Th.soft(), "hook-revoke", id))]),
+          Bool.pick(L.Out, revoked, L.Out.none(), F.Fm.button(ty, c, (x + w - rw - 12 : U32), (y + 19 : U32), "Token", T.Th.soft(), "hook-token", id)),
+          Bool.pick(L.Out, revoked, L.Out.none(), F.Fm.button(ty, c, (x + w - rw + tw - 4 : U32), (y + 19 : U32), "Revoke", T.Th.soft(), "hook-revoke", id))]),
         (y + 74 : U32)}
 
 def Bv.hooks(hs: List<&2, BT.Hook>, +ty: L.Ty, +now: Nat, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
@@ -348,16 +350,40 @@ def Bv.secret.k(none: Bool, +ty: L.Ty, +label: String, +s: String, +c: D.Clip, +
 def Bv.secret(+ty: L.Ty, +label: String, +s: String, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
   Bv.secret.k(String.is_empty(s), ty, label, s, c, x, w, y)
 
+def Bv.token.btns(+ty: L.Ty, +hid: String, +c: D.Clip, +x: U32, +y: U32) -> L.Col:
+  +nw = L.Lay.button.w(ty, "New token")
+  +ow = L.Lay.button.w(ty, "Turn off")
+  L.Col{L.Out.all([F.Fm.button(ty, c, x, y, "New token", T.Th.soft(), "hook-retoken", hid),
+      F.Fm.button(ty, c, (x + nw + 8 : U32), y, "Turn off", T.Th.soft(), "hook-untoken", hid),
+      F.Fm.button(ty, c, (x + nw + ow + 16 : U32), y, "Done", T.Th.soft(), "hook-done", "")]),
+    (y + 40 : U32)}
+
+# a webhook's bearer token (for senders that cannot sign, like a Pebble
+# Index ring's app) and the URL to post to, shown until hidden
+def Bv.token.k(none: Bool, +ty: L.Ty, +url: String, +tok: String, +hid: String, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
+  match none:
+    case True{}:
+      L.Col{L.Out.none(), y}
+    case False{}:
+      L.Lay.col.then(Bv.secret(ty, Bool.pick(String, String.starts_with(url, "https://"), "Post to", "Post to (plain HTTP: the ring's app wants HTTPS, see tailscale serve)"), url, c, x, w, y), y2 =>
+        L.Lay.col.then(Bv.secret(ty, "Header for the Pebble app (Index 01 settings, Webhook); send Transcription", "Authorization: Bearer " ++ tok, c, x, w, y2), y3 =>
+          L.Lay.col.then(Bv.secret(ty, "Bearer token", tok, c, x, w, y3), y4 => Bv.token.btns(ty, hid, c, x, y4))))
+
+def Bv.token(+ty: L.Ty, +u: U.Ui, +bot: String, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
+  Bv.token.k(Bool.or(String.is_empty(U.Ui.scratch(u, "@hook.token")),
+      Bool.not(String.eq(BT.Hook.bot(BT.World.hook(M.State.bots(U.Ui.state(u)), U.Ui.scratch(u, "@hook.tokfor"))), bot))),
+    ty, U.Ui.scratch(u, "@hook.tokurl"), U.Ui.scratch(u, "@hook.token"), U.Ui.scratch(u, "@hook.tokfor"), c, x, w, y)
+
 def Bv.htab(+ty: L.Ty, +f: F.FS, +bot: String, +c: D.Clip, +x: U32, +w: U32, +y: U32) -> L.Col:
   +u = F.FS.ui(f)
   +hs = BU.BU.hooks(u, bot)
   +nw = L.Lay.button.w(ty, "New webhook")
   L.Lay.col.cat(L.Out.all([Bv.h2(ty, c, "Webhooks", x, y),
-      Bv.faint(ty, c, "Signed POSTs start a turn; the body reaches it as data, never as instructions.", x, w, (y + 30 : U32)),
+      Bv.faint(ty, c, "Signed POSTs, or ones with the hook's bearer token, start a turn; the body reaches it as data, never as instructions.", x, w, (y + 30 : U32)),
       F.Fm.field(ty, f, c, x, (y + 58 : U32), (w - nw - 8 : U32), "hname", "hook-new", "", "Name, e.g. GitHub pushes"),
       F.Fm.button(ty, c, (x + w - nw : U32), (y + 58 : U32), "New webhook", T.Th.accent(), "hook-new", "")]),
     L.Lay.col.then(Bv.secret(ty, "Secret for /hook/" ++ U.Ui.scratch(u, "@hook.id") ++ ", shown once. Sign with HMAC-SHA256.", U.Ui.scratch(u, "@hook.secret"), c, x, w, (y + 98 : U32)), y2 =>
-      Bv.hooks(hs, ty, U.Side.now(u), c, x, w, y2)))
+      L.Lay.col.then(Bv.token(ty, u, bot, c, x, w, y2), y3 => Bv.hooks(hs, ty, U.Side.now(u), c, x, w, y3))))
 
 # Settings
 # --------

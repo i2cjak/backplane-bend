@@ -109,3 +109,36 @@ def Hello.version.k(+cbor: String, +bs: List<&2, U32>) -> String:
 
 def Hello.version(+bs: List<&2, U32>) -> String:
   Hello.version.k(J.Json.get_str(Maybe.default(&2, J.Json, CB.Cbor.decode(bs), J.Null{}), "backplane", ""), bs)
+
+# Where phones reach this hub over HTTPS
+# --------------------------------------
+# `tailscale serve status --json` lists "Web" entries by "host:port"; the
+# one whose "/" handler proxies to the hub's port is its HTTPS address
+# ("https://host", with ":port" unless it is 443).
+
+def Tailnet.serve.to(+proxy: String, +port: String) -> Bool:
+  Bool.or(String.ends_with(proxy, ":" ++ port), String.ends_with(proxy, ":" ++ port ++ "/"))
+
+def Tailnet.serve.url(+hp: String) -> String:
+  Bool.pick(String, String.ends_with(hp, ":443"), "https://" ++ String.take(hp, Nat.sub(String.length(hp), 4n)), "https://" ++ hp)
+
+def Tailnet.serve.pick(+acc: String, hit: Bool, +hp: String) -> String:
+  Bool.pick(String, String.is_empty(acc), Bool.pick(String, hit, Tailnet.serve.url(hp), ""), acc)
+
+def Tailnet.serve.go(fs: J.Json, +port: String, +acc: String) -> String:
+  match fs:
+    case J.Field{+hp, +w, t}:
+      Tailnet.serve.go(t, port, Tailnet.serve.pick(acc, Tailnet.serve.to(J.Json.get_str(J.Json.get_obj(J.Json.get_obj(w, "Handlers"), "/"), "Proxy", ""), port), hp))
+    case _:
+      acc
+
+def Tailnet.serve.of(o: J.Json, +port: String) -> String:
+  match o:
+    case J.Obj{fs}:
+      Tailnet.serve.go(fs, port, "")
+    case _:
+      ""
+
+# the hub's HTTPS address, "" when no entry proxies to its port
+def Tailnet.serve(+status: String, +port: String) -> String:
+  Tailnet.serve.of(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Web"), port)

@@ -212,6 +212,20 @@ def main() -> IO(Unit):
     C.Check.str("ring wakes", st.tags(BH.Bots.ring(h, 1010n, hook.of(h), ring.body())), "HookHit BotWoke MessagePosted TurnChanged | out out ")
     C.Check.str("ring words reach the bot", yes(String.contains(changes.show(tags.cs(BH.Bots.ring(h, 1010n, hook.of(h), ring.body()))), "[voice note from your Pebble ring]\\nremind me to order stencils")), "yes")
     C.Check.str("ring test wakes no one", st.tags(BH.Bots.ring(h, 1010n, hook.of(h), ring.test())), "HookHit | ")
+    # a bearer token's form, as JSON for the bot
+    C.Check.str("form json", RG.Ring.form(ring.body(), ""), "{\"source\":\"pebble-index-01\",\"transcription\":\"remind me to order stencils\",\"recordedAt\":1790000000000,\"client\":\"ring\"}")
+    C.Check.str("form audio", RG.Ring.form("--z\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"a.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n\u{0}\u{1}m4a\r\n--z\r\nContent-Disposition: form-data; name=\"recordedAt\"\r\n\r\n12\r\n--z--\r\n", " 5 "), "{\"source\":\"form-data\",\"recordedAt\":12,\"audio\":\"omitted, 5 bytes\"}")
+    C.Check.str("form audio no size", RG.Ring.form("--z\r\nContent-Disposition: form-data; name=\"audio\"\r\n\r\nxx\r\n--z--\r\n", ""), "{\"source\":\"form-data\",\"audio\":\"omitted\"}")
+    C.Check.str("form quotes", RG.Ring.form("--q\r\nContent-Disposition: form-data; name=\"transcription\"\r\n\r\nsay \"hi\"\nnow\r\n--q--\r\n", ""), "{\"source\":\"form-data\",\"transcription\":\"say \\\"hi\\\"\\nnow\"}")
+    C.Check.str("form is form", yes(RG.Ring.is_form("multipart/form-data; boundary=abc")), "yes")
+    C.Check.str("json is not form", yes(RG.Ring.is_form("application/json")), "no")
+    C.Check.str("form reaches the bot as data", yes(String.contains(changes.show(tags.cs(BH.Bots.hooked(h, 1010n, hook.of(h), RG.Ring.form(ring.body(), "")))), "untrusted data")), "yes")
+    # a webhook's bearer token: kept by the server, asked for by a client
+    C.Check.str("token show", st.tags(ask(h, 1010n, "bots.hook_token", "{\"hook\":\"" ++ hook.of(h) ++ "\"}")), "| fx:token ")
+    C.Check.str("token new", st.tags(ask(h, 1010n, "bots.hook_token", "{\"hook\":\"" ++ hook.of(h) ++ "\",\"op\":\"new\"}")), "| fx:retoken ")
+    C.Check.str("token off", st.tags(ask(h, 1010n, "bots.hook_token", "{\"hook\":\"" ++ hook.of(h) ++ "\",\"op\":\"off\"}")), "| fx:untoken ")
+    C.Check.str("token no hook", st.tags(ask(h, 1010n, "bots.hook_token", "{\"hook\":\"h0-0\"}")), "| send:reply ")
+    C.Check.str("token revoked", st.tags(ask(made(h, 1011n, "bots.hook_revoke", "{\"hook\":\"" ++ hook.of(h) ++ "\"}"), 1012n, "bots.hook_token", "{\"hook\":\"" ++ hook.of(h) ++ "\"}")), "| send:reply ")
     C.Check.str("ring revoked", st.tags(BH.Bots.ring(made(h, 1011n, "bots.hook_revoke", "{\"hook\":\"" ++ hook.of(h) ++ "\"}"), 1012n, hook.of(h), ring.body())), "| ")
     # sub-bots
     C.Check.str("bot_create", st.tags(call.step(s, 1500n, th.of(s, "Miso"), "bot_create", "{\"name\":\"Kit\",\"persona\":\"watches CI\"}")), "ThreadCreated BotSet SettingSet | fx:home ")

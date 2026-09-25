@@ -1,4 +1,5 @@
 import Base
+import ./json.bend as J
 
 # The Pebble Index ring's webhook body (docs/bots.md, "Webhooks"): a
 # multipart/form-data body with a `transcription` part (the voice note as
@@ -79,3 +80,45 @@ def Ring.text(+body: String) -> String:
 # the app's "Send test event"
 def Ring.test(+body: String) -> Bool:
   String.eq(String.trim(Ring.part(body, "test")), "true")
+
+# The same body under a bearer token (docs/bots.md, "A Pebble Index
+# ring"): its text fields as a JSON object for the bot, which reads it as
+# untrusted data like any webhook's. The recording stays out: a bot
+# cannot hear M4A bytes, so it gets a note with their size
+# (X-Audio-Size) in its place.
+
+def Ring.is_form(+ctype: String) -> Bool:
+  String.starts_with(String.trim(ctype), "multipart/form-data")
+
+def Ring.kv(+k: String, +v: String, +rest: List<&2, J.KV>) -> List<&2, J.KV>:
+  Bool.pick(List<&2, J.KV>, String.is_empty(v), rest, J.KV{k, J.Str{v}} <> rest)
+
+def Ring.num.k(m: Maybe<&2, Nat>, +k: String, +v: String, +rest: List<&2, J.KV>) -> List<&2, J.KV>:
+  match m:
+    case Some{n}:
+      J.KV{k, J.Num{Nat.show(n)}} <> rest
+    case None{}:
+      Ring.kv(k, v, rest)
+
+# recordedAt (ms since the epoch) as a number when it is one
+def Ring.num(+k: String, +v: String, rest: List<&2, J.KV>) -> List<&2, J.KV>:
+  Ring.num.k(Nat.read(v), k, v, rest)
+
+def Ring.audio(has: Bool, +size: String) -> String:
+  match has:
+    case True{}:
+      Bool.pick(String, String.is_empty(size), "omitted", "omitted, " ++ size ++ " bytes")
+    case False{}:
+      ""
+
+def Ring.source(+client: String) -> String:
+  Bool.pick(String, String.eq(client, "ring"), "pebble-index-01", "form-data")
+
+# the form's fields as JSON text; `size` is X-Audio-Size ("" when absent)
+def Ring.form(+body: String, +size: String) -> String:
+  J.Json.show(J.Json.obj(J.KV{"source", J.Str{Ring.source(String.trim(Ring.part(body, "client")))}} <>
+    Ring.kv("transcription", Ring.text(body),
+      Ring.num("recordedAt", String.trim(Ring.part(body, "recordedAt")),
+        Ring.kv("client", String.trim(Ring.part(body, "client")),
+          Ring.kv("test", Bool.pick(String, Ring.test(body), "true", ""),
+            Ring.kv("audio", Ring.audio(String.contains(body, "name=\"audio\""), String.trim(size)), Nil{})))))))

@@ -289,7 +289,7 @@ def Bots.fire(+s: M.State, +now: Nat, +i: Nat, r: BT.Routine) -> B.Step:
 def Bots.methods() -> List<&2, String>:
   ["bots.create", "bots.edit", "bots.delete", "bots.say", "bots.room", "bots.room_delete", "bots.post", "bots.routine", "bots.routine_delete",
    "bots.routine_run", "bots.hook", "bots.hook_revoke", "bots.forget", "bots.remember", "bots.space", "bots.invite", "bots.join", "bots.unpeer",
-   "bots.google", "bots.tell"]
+   "bots.google", "bots.tell", "bots.hook_token"]
 
 def Bots.is(+m: String) -> Bool:
   String.starts_with(m, "bots.")
@@ -325,6 +325,23 @@ def Bots.hook.new(live: Bool, +s: M.State, +now: Nat, +client: U32, +id: String,
       Bots.hook.go(B.Hub.id("h", now, B.Hub.seq(s)), now, client, id, J.Json.get_str(p, "bot", ""), J.Json.get_str(p, "name", "webhook"))
     case False{}:
       Bots.err(client, id, "no such bot")
+
+def Bots.token.go(ok: Bool, +hid: String, +op: String, +client: U32, +id: String) -> B.Step:
+  match ok:
+    case True{}:
+      B.Step.outs([B.BotFx{Bool.pick(String, String.eq(op, "new"), "retoken", Bool.pick(String, String.eq(op, "off"), "untoken", "token")), hid, U32.show(client), id}])
+    case False{}:
+      Bots.err(client, id, "no such webhook")
+
+def Bots.token.k(h: BT.Hook, +s: M.State, +op: String, +client: U32, +id: String) -> B.Step:
+  match h:
+    case BT.Hook{+hid, +bot, _, _, revoked, _, _}:
+      Bots.token.go(Bool.and(Bool.not(revoked), Bool.and(Bool.not(String.is_empty(hid)), Bots.live(s, bot))), hid, op, client, id)
+
+# a webhook's bearer token (op "show", made the first time; "new"; "off"):
+# kept by the server like its secret, so the log never holds it
+def Bots.token(+s: M.State, +client: U32, +id: String, +p: J.Json) -> B.Step:
+  Bots.token.k(BT.World.hook(M.State.bots(s), J.Json.get_str(p, "hook", "")), s, J.Json.get_str(p, "op", "show"), client, id)
 
 def Bots.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json) -> B.Step:
   match i:
@@ -370,6 +387,8 @@ def Bots.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p
       B.Step.outs([B.BotFx{"google", J.Json.show(p), U32.show(client), id}])
     case 19n:
       Bots.tell(Bots.remote(J.Json.get_str(p, "to", "")), s, now, client, id, J.Json.get_str(p, "to", ""), J.Json.get_str(p, "text", ""))
+    case 20n:
+      Bots.token(s, client, id, p)
     case _:
       Bots.err(client, id, "unknown bots request")
 

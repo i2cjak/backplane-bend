@@ -1,6 +1,6 @@
 // End to end: bots on two headless hubs (docs/bots.md). Starts two hubs on
 // temporary homes and free ports, then checks webhooks (signed, GitHub's,
-// wrong, replayed, stale, too big), linking the hubs with an invite, a
+// wrong, replayed, stale, too big; bearer tokens and forms), linking the hubs with an invite, a
 // person on one hub writing to a bot on the other, the signed bot
 // directory, and (on the minute tick) a routine and the linked machine's
 // bots in the hub info. Agents never answer: `claude`, `codex` and `grok`
@@ -161,6 +161,70 @@ try {
   const r10 = await post(url, gbody, { ...gh, "x-github-delivery": "d-other", "x-hub-signature-256": "sha256=" + hmac("wrong", gbody) });
   check("a wrong GitHub signature is refused (401)", r10.status === 401, r10);
 
+  // bearer tokens: for senders that cannot sign (a Pebble Index ring)
+  const form = (fields: Record<string, string>, audio?: Uint8Array) => {
+    const fd = new FormData();
+    for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+    if (audio) fd.append("audio", new Blob([audio], { type: "audio/mp4" }), "note.m4a");
+    return fd;
+  };
+  const postForm = async (u: string, fd: FormData, headers: Record<string, string>) => {
+    const r = await fetch(u, { method: "POST", body: fd, headers });
+    return { status: r.status, text: await r.text() };
+  };
+  const b0 = await postForm(url, form({ transcription: "no token yet" }), { authorization: "Bearer 0123" });
+  check("a bearer before the hook has a token is refused (401)", b0.status === 401 && b0.text.includes("no bearer token"), b0);
+  const tk = await rpc(a, "bots.hook_token", { hook: hk.hook });
+  const token: string = tk?.token ?? "";
+  check("bots.hook_token makes a token and gives the URL", tk?.ok && /^[0-9a-f]{32}$/.test(token) && tk.tokenHook === hk.hook && String(tk.tokenUrl).endsWith(`/hook/${hk.hook}`), tk);
+  const tokenFile = join(a.home, "secrets", "hooks", `${hk?.hook}.token`);
+  check("the token file is 0600 and holds the token", (statSync(tokenFile).mode & 0o777) === 0o600 && readFileSync(tokenFile, "utf8").trim() === token);
+  const tk2 = await rpc(a, "bots.hook_token", { hook: hk.hook });
+  check("asking again shows the same token", tk2?.ok && tk2.token === token, tk2);
+  const before = a.seen.filter((c) => c.$ === "MessagePosted").length;
+  const bf = await postForm(url, form({ transcription: "hello pebble", recordedAt: "1790300000000", client: "ring" }), { authorization: `Bearer ${token}` });
+  check("a form with the right bearer token is accepted (202)", bf.status === 202, bf);
+  const msg = await change(a, "MessagePosted", (c) => JSON.stringify(c).includes("hello pebble"));
+  const mtext = JSON.stringify(msg ?? "");
+  check("the bot gets the form as JSON", mtext.includes('\\"source\\":\\"pebble-index-01\\"') && mtext.includes('\\"recordedAt\\":1790300000000'), mtext.slice(0, 600));
+  check("framed as untrusted data", mtext.includes("untrusted data"), mtext.slice(0, 300));
+  const bf2 = await postForm(url, form({ transcription: "hello again", recordedAt: "1790300000001" }), { authorization: `Bearer ${token}` });
+  check("a second call with the same token is accepted too (202)", bf2.status === 202, bf2);
+  const ba = await postForm(url, form({ transcription: "with audio", recordedAt: "1790300000002", client: "ring" }, new Uint8Array(4000).fill(7)), { authorization: `Bearer ${token}`, "x-audio-size": "4000" });
+  check("a form with audio is accepted (202)", ba.status === 202, ba);
+  const am = await change(a, "MessagePosted", (c) => JSON.stringify(c).includes("with audio"));
+  check("the audio is left out, with its size", JSON.stringify(am ?? "").includes("omitted, 4000 bytes"), JSON.stringify(am ?? "").slice(0, 400));
+  const bj = await post(url, JSON.stringify({ text: "json body" }), { authorization: `Bearer ${token}` });
+  check("JSON with the bearer token is accepted (202)", bj.status === 202, bj);
+  const jm = await change(a, "MessagePosted", (c) => JSON.stringify(c).includes("json body"));
+  check("JSON reaches the bot as it came", JSON.stringify(jm ?? "").includes('{\\"text\\":\\"json body\\"}'), JSON.stringify(jm ?? "").slice(0, 400));
+  const bw = await postForm(url, form({ transcription: "forged" }), { authorization: `Bearer ${"0".repeat(32)}` });
+  check("a wrong bearer token is refused (401)", bw.status === 401 && bw.text.includes("wrong bearer token"), bw);
+  const bn = await postForm(url, form({ transcription: "anonymous" }), {});
+  check("no credentials is refused (401) and says so", bn.status === 401 && bn.text.includes("no credentials"), bn);
+  const bsig = await post(url, body, { authorization: `Bearer ${token}`, "x-backplane-timestamp": String(now()), "x-backplane-signature": sign("00".repeat(32), now(), body) });
+  check("a wrong signature is refused even with the token (401)", bsig.status === 401 && bsig.text.includes("signature"), bsig);
+  const bbig = await postForm(url, form({ transcription: "big" }, new Uint8Array(300000)), { authorization: `Bearer ${token}` });
+  check("a form over 256 KB is refused (413)", bbig.status === 413, bbig.status);
+  const tk3 = await rpc(a, "bots.hook_token", { hook: hk.hook, op: "new" });
+  check("a new token replaces the old one", tk3?.ok && /^[0-9a-f]{32}$/.test(tk3.token) && tk3.token !== token, tk3);
+  const bold = await postForm(url, form({ transcription: "old token" }), { authorization: `Bearer ${token}` });
+  check("the old token is refused (401)", bold.status === 401, bold);
+  const bnew = await postForm(url, form({ transcription: "new token" }), { authorization: `bearer ${tk3?.token}` });
+  check("the new token is accepted (202)", bnew.status === 202, bnew);
+  const off = await rpc(a, "bots.hook_token", { hook: hk.hook, op: "off" });
+  const boff = await postForm(url, form({ transcription: "after off" }), { authorization: `Bearer ${tk3?.token}` });
+  check("turned off, the token is refused (401)", off?.ok && boff.status === 401, [off, boff]);
+  const ts2 = now();
+  const b2 = JSON.stringify({ action: "closed", n: 2 });
+  const rs = await post(url, b2, { "x-backplane-timestamp": String(ts2), "x-backplane-signature": sign(secret, ts2, b2) });
+  check("signed calls still work beside tokens (202)", rs.status === 202, rs);
+  const tk4 = await rpc(a, "bots.hook_token", { hook: hk.hook });
+  check("the token is back on for the revoke check", tk4?.ok && tk4.token.length === 32, tk4);
+  const unknownTok = await rpc(a, "bots.hook_token", { hook: "h0-0" });
+  check("no token for an unknown hook", unknownTok && !unknownTok.ok, unknownTok);
+  check("no token in the event log", !readFileSync(join(a.home, "events.jsonl"), "utf8").includes(tk4?.token ?? "zzz") && !readFileSync(join(a.home, "events.jsonl"), "utf8").includes(tk3?.token ?? "zzz"));
+
   // linking the hubs
   const inv = await rpc(a, "bots.invite", { url: A });
   check("bots.invite answers an invite", inv?.ok && typeof inv.invite === "string" && inv.invite.startsWith(`bp1:${A}:`), inv);
@@ -214,6 +278,9 @@ try {
   const r11 = await post(url, body, { "x-backplane-timestamp": String(now()), "x-backplane-signature": sign(secret, now(), body) });
   check("a revoked webhook is refused (401)", r11.status === 401, r11);
   check("a revoked webhook's secret file is gone", (() => { try { statSync(hookFile); return false; } catch { return true; } })());
+  check("a revoked webhook's token file is gone", (() => { try { statSync(join(a.home, "secrets", "hooks", `${hk.hook}.token`)); return false; } catch { return true; } })());
+  const rtok = await postForm(url, form({ transcription: "revoked" }), { authorization: `Bearer ${tk4?.token}` });
+  check("a revoked webhook's token is refused (401)", rtok.status === 401, rtok);
 
   if (!quick) {
     // the minute tick: a routine fires; beta lists alpha's bots
