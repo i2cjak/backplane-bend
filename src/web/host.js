@@ -7,6 +7,7 @@
 
 import App from "./app.bend";
 import * as Solid from "./solid.js";
+import * as Plot2d from "./plot2d.js";
 
 // JSON <-> Bend Json
 // ------------------
@@ -197,6 +198,7 @@ function render() {
   if (tl2 && (scroll || pinned)) tl2.scrollTop = tl2.scrollHeight;
   scroll = false;
   Solid.mount(document.getElementById("solid"));
+  Plot2d.mount(document.getElementById("plot"));
   if (focus) {
     document.getElementById(focus)?.focus();
     focus = null;
@@ -572,6 +574,13 @@ function lbOpen(url) {
   if (img.complete) lbDraw();
 }
 
+// a viewer's Fit button
+document.addEventListener("click", (e) => {
+  if (!e.target.closest?.('[data-view="fit"]')) return;
+  Plot2d.fit();
+  Solid.fit();
+});
+
 document.addEventListener("click", (e) => {
   if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey) return;
   const a = e.target.closest?.("[data-lightbox]");
@@ -661,10 +670,14 @@ function connect() {
   s.onmessage = (e) => {
     // the hub sends only binary CBOR frames
     if (typeof e.data === "string") return;
-    // a part's model goes straight to the 3D view (solid.js), not through Bend
+    // plots go straight to the viewers, not through Bend: a 3D model
+    // ("2|", "3|" or "4|...") to solid.js, a board or schematic to plot2d.js
     const bytes = new Uint8Array(e.data);
     if (Solid.isPlot(bytes)) {
-      Solid.got(bytes);
+      const o = Solid.cbor(bytes);
+      const key = typeof o?.key === "string" ? o.key : "";
+      if (key.startsWith("2|") || key.startsWith("3|") || key.startsWith("4|")) Solid.got(o);
+      else if (o) Plot2d.got(o);
       return;
     }
     const j = App.wire_in(toList(bytes));
@@ -676,6 +689,9 @@ function connect() {
   };
   s.onclose = () => {
     if (socket === s) socket = null;
+    // a new connection holds no plots
+    Plot2d.reset();
+    Solid.reset();
     ui = App.online(ui, false);
     later();
     setTimeout(connect, backoff);

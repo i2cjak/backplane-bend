@@ -10,7 +10,7 @@
 
 // CBOR, as much as plots use (ints, byte and text strings, arrays, maps;
 // keys 1 and 31 are the hub's dictionary words "t" and "key")
-function cbor(b) {
+export function cbor(b) {
   let i = 0;
   const arg = (ai) => {
     if (ai < 24) return ai;
@@ -102,18 +102,37 @@ function mesh(o) {
 // the newest model of each source, by its key
 const models = new Map();
 
-export function got(b) {
-  const o = cbor(b);
-  if (!o || !o.mesh || typeof o.key !== "string") return;
+// why a source has no model ("" while it may yet come)
+const nones = new Map();
+
+// a 3D source's plot (key "2|..." or "3|..."): its model, or why there is none
+export function got(o) {
+  if (!o || typeof o.key !== "string") return;
+  if (typeof o.none === "string") {
+    nones.set(o.key, o.none);
+    if (view && view.key === o.key) view.later();
+    return;
+  }
+  if (!o.mesh) return; // a note about the model, not the model
+  nones.delete(o.key);
   models.set(o.key, mesh(o));
   if (view && view.key === o.key) view.show(models.get(o.key));
+}
+
+export function reset() {
+  models.clear();
+  nones.clear();
+}
+
+export function fit() {
+  if (view && view.box) { view.fit(); view.later(); }
 }
 
 const VS = `attribute vec3 p; attribute vec3 n; attribute vec3 c; uniform mat4 m; uniform vec3 eye;
 varying vec3 vc; varying float vl;
 void main() { gl_Position = m * vec4(p, 1.0); vc = c; vl = abs(dot(normalize(n), normalize(eye - p))); }`;
 const FS = `precision mediump float; varying vec3 vc; varying float vl;
-void main() { gl_FragColor = vec4(vc * (0.35 + 0.65 * vl), 1.0); }`;
+void main() { gl_FragColor = vec4(min(vc * (0.5 + 0.6 * vl), 1.0), 1.0); }`;
 
 function persp(fov, a, near, far) {
   const f = 1 / Math.tan(fov / 2), nf = 1 / (near - far);
@@ -211,6 +230,7 @@ class View {
     gl.viewport(0, 0, w, h);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    if (this.note) this.note.textContent = this.count ? "" : nones.get(this.key) || "Loading the model…";
     if (!this.count) return;
     gl.enable(gl.DEPTH_TEST);
     gl.useProgram(this.prog);
@@ -235,6 +255,7 @@ let view = null;
 export function mount(canvas) {
   if (!canvas) { view = null; return; }
   if (!view || view.canvas !== canvas) view = new View(canvas);
+  view.note = canvas.parentElement?.querySelector(".viewer-note") ?? null;
   const key = canvas.dataset.key || "";
   if (key !== view.key) {
     view.key = key;

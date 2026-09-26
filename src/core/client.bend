@@ -802,7 +802,7 @@ def Ui.actions() -> List<&2, String>:
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
    "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link",
-   "mech", "mech-part", "mech-3d", "mech-refresh", "mech-renders", "mech-render"]
+   "mech", "mech-part", "mech-3d", "mech-refresh", "mech-renders", "mech-render", "view-kind", "view-sheet"]
 
 # Reading the client state
 # ------------------------
@@ -2828,8 +2828,10 @@ def Mpage.part.k(three: Bool, +u: Ui, +value: String) -> Ui:
 
 # "mech" opens Mech (the part in 3D), "mech-part" shows another part,
 # "mech-3d" a part in 3D, "mech-refresh" asks for the parts again,
-# "mech-renders" shows a part's pictures, and "mech-render" asks the hub
-# to draw them
+# "mech-renders" shows a part's pictures, "mech-render" asks the hub to
+# draw them, "view-kind" shows the project's own board, schematic or 3D
+# model (a web tab), and "view-sheet" a sheet of its schematic (its file;
+# "" the root)
 def Mpage.act(i: Nat, +u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2845,6 +2847,10 @@ def Mpage.act(i: Nat, +u: Ui, +value: String) -> Act:
     case 5n:
       Ui.rpc(Ui.scratch_set(Ui.scratch_set(u, "@mech.busy:" ++ Ui.sel(u), value), "@mech.err:" ++ Ui.sel(u), ""), "mech.render",
         [J.KV{"thread", J.Str{Ui.sel(u)}}, J.KV{"path", J.Str{value}}])
+    case 6n:
+      Act{Ui.view_put(u, value, ""), Nil{}}
+    case 7n:
+      Act{Ui.view_put(u, "schematic", value), Nil{}}
     # (past the table: an action no one takes)
     case _:
       Act{u, Nil{}}
@@ -2874,26 +2880,41 @@ def Mpage.sync(a: Act) -> Act:
     case Act{+u, cmds}:
       Mpage.sync.if(Bool.or(String.eq(Ui.view_get(u, "view.kind"), "mech"), Mpage.onpart(u)), Act{u, cmds})
 
-# A part in 3D on the web: the page asks the hub for the part's model as
-# the phones do (kicad.watch, kind "3d" with its path) whenever the source
-# on screen changes, and host.js draws the mesh that comes back under the
-# source's key "2|<root>|<path>" ("" when no part is on show)
-def Solid.want(+u: Ui) -> String:
-  Bool.pick(String, Bool.and(Bool.and(Ui.panel(u), String.eq(Ui.view_get(u, "view.kind"), "3d")), Bool.and(Bool.not(String.is_empty(Ui.view_get(u, "view.path"))), Bool.not(String.is_empty(Ui.root(u))))),
-    "2|" ++ Ui.root(u) ++ "|" ++ Ui.view_get(u, "view.path"), "")
+# The web's viewer: the board, the schematic and a 3D model (the board's,
+# or a part's) come as they come to the phones. The page asks the hub for
+# the source on screen (kicad.watch) whenever it changes, and host.js
+# draws the plots that come back under the source's key
+# "<kind>|<root>|<path>" (0 board, 1 schematic, 4 3D; path "" for the
+# project's own file). "" when the pane shows something else.
 
-def Solid.sync.k(same: Bool, u: Ui, +want: String, +path: String, +root: String, cmds: List<&2, Cmd>) -> Act:
+# the viewer's kind on the web: the thread's, the board before any
+def Solid.kind(+u: Ui) -> String:
+  Bool.pick(String, String.is_empty(Ui.view_get(u, "view.kind")), "board", Ui.view_get(u, "view.kind"))
+
+# (the web's 3D is kind 4: the board's copper, mask and silk come with
+# its model, as the page lays no board plot over it)
+def Solid.num(+k: String) -> String:
+  Bool.pick(String, String.eq(k, "board"), "0", Bool.pick(String, String.eq(k, "schematic"), "1", Bool.pick(String, String.eq(k, "3d"), "4", "")))
+
+def Solid.ask(+k: String) -> String:
+  Bool.pick(String, String.eq(k, "3d"), "3d-full", k)
+
+def Solid.want(+u: Ui) -> String:
+  Bool.pick(String, Bool.or(Bool.or(Bool.not(Ui.panel(u)), String.is_empty(Ui.root(u))), String.is_empty(Solid.num(Solid.kind(u)))), "",
+    Solid.num(Solid.kind(u)) ++ "|" ++ Ui.root(u) ++ "|" ++ Ui.view_get(u, "view.path"))
+
+def Solid.sync.k(same: Bool, u: Ui, +want: String, +kind: String, +path: String, +root: String, cmds: List<&2, Cmd>) -> Act:
   match same:
     case True{}:
       Act{u, cmds}
     case False{}:
       Ui.also(Ui.rpc(Ui.scratch_set(u, "@solid.at", want), "kicad.watch",
-        [J.KV{"kind", J.Str{Bool.pick(String, String.is_empty(want), "", "3d")}}, J.KV{"root", J.Str{root}}, J.KV{"path", J.Str{path}}]), cmds)
+        [J.KV{"kind", J.Str{Bool.pick(String, String.is_empty(want), "", Solid.ask(kind))}}, J.KV{"root", J.Str{root}}, J.KV{"path", J.Str{path}}]), cmds)
 
 def Solid.sync(a: Act) -> Act:
   match a:
     case Act{+u, cmds}:
-      Solid.sync.k(String.eq(Solid.want(u), Ui.scratch(u, "@solid.at")), u, Solid.want(u), Ui.view_get(u, "view.path"), Ui.root(u), cmds)
+      Solid.sync.k(String.eq(Solid.want(u), Ui.scratch(u, "@solid.at")), u, Solid.want(u), Solid.kind(u), Ui.view_get(u, "view.path"), Ui.root(u), cmds)
 
 # what the page says under its parts: where to get FreeCAD when the hub
 # has none, else nothing

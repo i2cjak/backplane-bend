@@ -26,9 +26,28 @@ def recv.k(shot: Bool, u: U.Ui, +o: J.Json) -> U.Act:
     case False{}:
       U.Ui.recv_act(u, o)
 
-# (a part in 3D asks the hub for its model when the source changes)
+# a 3D model's note ({"t":"plotnote", key, text}: parts with no model),
+# kept under its source's key for the 3D pane
+# a schematic's sheets ({"t":"sheets", root, rows}: core/hier.bend's rows),
+# kept under the project root for the Schematic tab's sheet chips
+def recv.sheets(hit: Bool, u: U.Ui, +o: J.Json) -> U.Act:
+  match hit:
+    case True{}:
+      U.Act{U.Ui.info_set(u, "sheets:" ++ J.Json.get_str(o, "root", ""), J.Json.get_str(o, "rows", "")), Nil{}}
+    case False{}:
+      recv.k(String.eq(J.Json.get_str(o, "t", ""), "shot"), u, o)
+
+def recv.note(note: Bool, u: U.Ui, +o: J.Json) -> U.Act:
+  match note:
+    case True{}:
+      U.Act{U.Ui.info_set(u, "plotnote:" ++ J.Json.get_str(o, "key", ""), J.Json.get_str(o, "text", "")), Nil{}}
+    case False{}:
+      recv.sheets(String.eq(J.Json.get_str(o, "t", ""), "sheets"), u, o)
+
+# (the viewer asks the hub for its board, schematic or model when the
+# source on screen changes)
 def recv(u: U.Ui, +o: J.Json) -> U.Act:
-  U.Solid.sync(recv.k(String.eq(J.Json.get_str(o, "t", ""), "shot"), u, o))
+  U.Solid.sync(recv.note(String.eq(J.Json.get_str(o, "t", ""), "plotnote"), u, o))
 
 # a bot's cat for an <img data-cat="<look>:<mood>:<px>"> (host.js keeps
 # each answer)

@@ -54,9 +54,11 @@ type Sub is Data:
 type PSt is Data:
   PSt{srcs: List<&2, Src>, subs: List<&2, Sub>, polling: Bool}
 
-# a source drawn as a 3D model: 2 with its parts, 3 its board alone
+# a source drawn as a 3D model: 2 with its parts, 3 its board alone, 4
+# with its parts and its copper, mask and silk (the web, which lays no
+# board plot over the faces as the phones do)
 def Pv.solid.kind(+kind: U32) -> Bool:
-  Bool.or(U32.is_eq(kind, 2), U32.is_eq(kind, 3))
+  Bool.or(Bool.or(U32.is_eq(kind, 2), U32.is_eq(kind, 3)), U32.is_eq(kind, 4))
 
 def Pv.fuel() -> Nat:
   U32.to_nat(4294967295)
@@ -367,22 +369,24 @@ def Pv.is_step(+p: String) -> Bool:
 # a 3D model as a GLB: a .glb as it is; a STEP through step2glb; a board's
 # body and parts through kicad-cli (its copper, mask and silk the phone
 # draws from the board's plot), or its body alone (kind 3: parts off)
-def Pv.glb.flags(+bare: Bool, +out: String, +path: String) -> List<&2, String>:
-  List.append(&2, String, ["pcb", "export", "glb"], List.append(&2, String, Bool.pick(List<&2, String>, bare, ["--no-components"], ["--subst-models"]), ["-f", "-o", out, path]))
+def Pv.glb.flags(+bare: Bool, +full: Bool, +out: String, +path: String) -> List<&2, String>:
+  List.append(&2, String, ["pcb", "export", "glb"], List.append(&2, String, Bool.pick(List<&2, String>, bare, ["--no-components"],
+    Bool.pick(List<&2, String>, full, ["--subst-models", "--include-tracks", "--include-pads", "--include-zones", "--include-soldermask", "--include-silkscreen"], ["--subst-models"])),
+    ["-f", "-o", out, path]))
 
 # a STEP's GLB is written beside and moved in whole: a reader never meets
 # half of one
 def Pv.step.ran(r: PR.Ran, +out: String) -> IO(PR.Ran):
   IO.bind(Result<&1, &1, U32 & String, Unit>, PR.Ran, H.FS.rename(out ++ ".part", out), m => IO.pure(PR.Ran, r))
 
-def Pv.glb.run(glb: Bool, step: Bool, +bare: Bool, +path: String, +out: String) -> IO(PR.Ran):
+def Pv.glb.run(glb: Bool, step: Bool, +bare: Bool, +full: Bool, +path: String, +out: String) -> IO(PR.Ran):
   match glb step:
     case True{} _:
       IO.pure(PR.Ran, PR.Ran{0, ""})
     case False{} True{}:
       IO.bind(String, PR.Ran, Pv.step2glb(), x => IO.bind(PR.Ran, PR.Ran, PR.Proc.run(x, [path, out ++ ".part"], "/"), r => Pv.step.ran(r, out)))
     case False{} False{}:
-      IO.bind(String, PR.Ran, Pv.cli(), c => K.KiCad.run(c, Pv.glb.flags(bare, out, path)))
+      IO.bind(String, PR.Ran, Pv.cli(), c => K.KiCad.run(c, Pv.glb.flags(bare, full, out, path)))
 
 # how many parts kicad-cli found no 3D model for ("Could not add 3D model
 # for R1."): the phone says so, else a bare board looks like a bug
@@ -449,21 +453,21 @@ def Pv.step.out(+path: String) -> IO(String):
 
 # where a model's GLB comes from: a .glb is its own; a STEP's is cached; a
 # board's is exported for this view
-def Pv.solid.out(isglb: Bool, step: Bool, +bare: Bool, +path: String) -> IO(String):
+def Pv.solid.out(isglb: Bool, step: Bool, +bare: Bool, +full: Bool, +path: String) -> IO(String):
   match isglb step:
     case True{} _:
       IO.pure(String, path)
     case False{} True{}:
       Pv.step.out(path)
     case False{} False{}:
-      IO.pure(String, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", "") ++ path, 2166136261)) ++ ".glb")
+      IO.pure(String, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", Bool.pick(String, full, "full|", "")) ++ path, 2166136261)) ++ ".glb")
 
-def Pv.child.solid(+bare: Bool, +path: String, +note: String) -> IO(Unit):
+def Pv.child.solid(+bare: Bool, +full: Bool, +path: String, +note: String) -> IO(Unit):
   do IO<Unit>:
     +isglb : Bool = String.ends_with(path, ".glb")
-    +out : String <- Pv.solid.out(isglb, Pv.is_step(path), bare, path)
+    +out : String <- Pv.solid.out(isglb, Pv.is_step(path), bare, full, path)
     have : Bool <- K.Io.is_file(out)
-    r : PR.Ran <- Pv.glb.run(Bool.or(isglb, Bool.and(have, Pv.is_step(path))), Pv.is_step(path), bare, path, out)
+    r : PR.Ran <- Pv.glb.run(Bool.or(isglb, Bool.and(have, Pv.is_step(path))), Pv.is_step(path), bare, full, path, out)
     Pv.solid.done(r, out, note, Pv.is_step(path))
 
 def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
@@ -472,7 +476,7 @@ def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
     Pv.child.k(Pv.plot(Pv.parse.k(U32.is_eq(kind, 1), bs), kind), Bool.pick(U32, U32.is_eq(kind, 0), Pv.thick(bs), 0), infos)
 
 def Pv.child(+kind: U32, +path: String, +infos: String) -> IO(Unit):
-  Bool.pick(IO(Unit), Pv.solid.kind(kind), Pv.child.solid(U32.is_eq(kind, 3), path, infos), Pv.child.plot(kind, path, infos))
+  Bool.pick(IO(Unit), Pv.solid.kind(kind), Pv.child.solid(U32.is_eq(kind, 3), U32.is_eq(kind, 4), path, infos), Pv.child.plot(kind, path, infos))
 
 # `backplane --plot-info FILE SIG IDX`: one piece's info from an info file
 def Pv.child.info(+file: String, +sig: U32, +idx: Nat) -> IO(Unit):

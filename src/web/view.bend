@@ -7,6 +7,7 @@ import ../core/attach.bend as AT
 import ../core/vt.bend as VT
 import ../core/diff.bend as DF
 import ../core/mech.bend as MC
+import ../core/hier.bend as HI
 import ../core/images.bend as IM
 import ../core/fold.bend as FO
 import ../core/badge.bend as BG
@@ -323,9 +324,7 @@ def View.header(t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking:
            D.Dom.button("", "fork", "", "A new thread that goes on from here", "Fork")],
           D.Dom.when(Bool.not(String.is_empty(M.Fork.source(st, id))), D.Dom.button("", "back", "", "Send what this fork did to the thread it came from, with its next message", "Bring back")), [
            D.Dom.button(Bool.pick(String, term, "on", ""), "term-toggle", "@term-size", "Terminal (ctrl+j)", "Terminal"),
-           D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
-           D.Dom.button("", "mech", "", "This project's mechanical parts: their renders, and each in 3D", "Mech"),
-           D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")]])}]}
+           D.Dom.button(Bool.pick(String, panel, "on", ""), "panel", "", "The board, schematic, 3D model, parts and diff, beside the thread", "Viewer")]])}]}
 
 # the model menu's rows: each model's name, then what its CLI calls it,
 # in two columns (the names' as wide as the longest, --namew)
@@ -805,17 +804,15 @@ def View.dfiles(fs: List<&2, DF.DFile>) -> List<&2, D.Node>:
       D.El{"div", nw, [D.At{"class", "dfile"}], D.El{"div", "", [D.At{"class", "dhead"}], [D.Dom.span("name", nw), D.Dom.span("status", st)]} <> View.dhunks(hs)} <> View.dfiles(t)
 
 # what this thread changed, with the git actions (as the native Lay.diff)
-def View.diff(+text: String) -> D.Node:
+def View.diff(+text: String) -> List<&2, D.Node>:
   +fs = DF.Diff.parse(text)
-  D.El{"aside", "diff", [D.At{"class", "viewer diff"}, D.At{"id", "viewer"}], [
-    D.El{"div", "", [D.At{"class", "diff-head"}], [
+  [D.El{"div", "", [D.At{"class", "diff-head"}], [
       D.Dom.span("summary", Bool.pick(String, List.is_empty(&2, DF.DFile, fs), "No changes since this thread began.", DF.Diff.summary(fs))),
       D.El{"div", "", [D.At{"class", "diff-btns"}], [
         D.Dom.button("", "revert", "0", "Put the files back as they were when this thread began", "Revert thread"),
         D.Dom.button("", "git", "commit_push_pr", "Commit, push and open a pull request", "Open PR"),
-        D.Dom.button("primary", "git", "commit_push", "Commit and push", "Commit & push"),
-        WI.WIcon.button("icon", "panel", "", "Close", "x", 16, "")]}]},
-    D.El{"div", "", [D.At{"class", "diff-body"}], View.dfiles(fs)}]}
+        D.Dom.button("primary", "git", "commit_push", "Commit and push", "Commit & push")]}]},
+    D.El{"div", "", [D.At{"class", "diff-body"}], View.dfiles(fs)}]
 
 def View.pending(ps: List<&2, String>) -> List<&2, D.Node>:
   match ps:
@@ -998,9 +995,8 @@ def View.main.b(settings: Bool, bv: BI.View, +u: U.Ui, +sel: String, +n: Nat) ->
 
 # the thread's own browser page (a bot's is the bot's), as a bot's
 # Browser tab shows it
-def View.browser(+u: U.Ui) -> D.Node:
-  D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [
-    WB.WB.browser.k(String.is_empty(U.Ui.info(u, "shot." ++ U.Ui.page(u))), U.Ui.info(u, "shot." ++ U.Ui.page(u)), U.Ui.page(u), "This thread")]}
+def View.browser(+u: U.Ui) -> List<&2, D.Node>:
+  [WB.WB.browser.k(String.is_empty(U.Ui.info(u, "shot." ++ U.Ui.page(u))), U.Ui.info(u, "shot." ++ U.Ui.page(u)), U.Ui.page(u), "This thread")]
 
 # The Mechanical page (client.bend's Mpage): a chip per part, Open in 3D
 # and Refresh, the part's renders (a click opens one in the lightbox), and
@@ -1040,34 +1036,76 @@ def View.mech.k(state: Nat, +u: U.Ui) -> List<&2, D.Node>:
         [D.Dom.button("", "mech-3d", MC.Mech.abs(U.Mpage.root(u), U.Mpage.cur.path(u)), "Turn the part in the 3D viewer", "3D"),
          D.Dom.button(Bool.pick(String, String.is_empty(U.Mpage.busy(u)), "primary", "busy"), Bool.pick(String, String.is_empty(U.Mpage.busy(u)), "mech-render", ""),
            U.Mpage.cur.path(u), "Draw the part's iso, front, top and right views on the hub", U.Mpage.render.label(u)),
-         D.Dom.button("", "mech-refresh", "", "Look for parts and renders again", "Refresh"), D.Dom.button("", "panel", "", "Close the panel", "Close")])}
+         D.Dom.button("", "mech-refresh", "", "Look for parts and renders again", "Refresh")])}
       <> List.append(&2, D.Node, D.Dom.when(Bool.not(String.is_empty(U.Mpage.err(u))), D.Dom.span("mech-say", "Rendering failed: " ++ U.Mpage.err(u))),
         View.mech.part(U.Mpage.cur(u), U.Mpage.root(u)))
 
-def View.mech(+u: U.Ui) -> D.Node:
-  D.El{"aside", "mech", [D.At{"class", "viewer mech"}, D.At{"id", "viewer"}],
-    List.append(&2, D.Node, View.mech.k(U.Mpage.state(u), u), D.Dom.when(Bool.not(String.is_empty(U.Mpage.note(u))), D.Dom.span("mech-note", U.Mpage.note(u))))}
+def View.mech(+u: U.Ui) -> List<&2, D.Node>:
+  [D.El{"div", "", [D.At{"class", "mech-page"}],
+    List.append(&2, D.Node, View.mech.k(U.Mpage.state(u), u), D.Dom.when(Bool.not(String.is_empty(U.Mpage.note(u))), D.Dom.span("mech-note", U.Mpage.note(u))))}]
 
-# a part turned in 3D: host.js draws the hub's model of it (a "plot" with
-# a mesh, as the phones get) on the canvas whose data-key it carries
-# over a part in 3D: the thread's parts and Renders; another model, its name
-def View.solid.parts(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
+# A fit button: host.js fits the board, schematic or model on show
+def View.fit() -> D.Node:
+  D.El{"button", "", [D.At{"class", "fit"}, D.At{"title", "Show the whole thing (or double-click it)"}, D.At{"data-view", "fit"}], [D.Txt{"Fit"}]}
+
+def View.bar(kids: List<&2, D.Node>, +hint: String) -> D.Node:
+  D.El{"div", "", [D.At{"class", "viewer-bar"}], List.append(&2, D.Node, kids, [D.Dom.span("hint", hint), View.fit()])}
+
+# a hierarchical schematic's sheets as chips (the one on show lit; the
+# root's value is "", the project's own file); none with one sheet
+def View.sheet.chips(rs: List<&2, HI.Row>, +i: Nat, +cur: String) -> List<&2, D.Node>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case HI.Row{+d, +n, +f, _} <> t:
+      D.Dom.button(Bool.pick(String, String.eq(Bool.pick(String, Nat.is_eq(i, 0n), "", f), cur), "on", ""), "view-sheet", Bool.pick(String, Nat.is_eq(i, 0n), "", f), f,
+        Bool.pick(String, Nat.is_eq(i, 0n), "Top sheet", String.repeat("› ", d) ++ n)) <> View.sheet.chips(t, 1n+i, cur)
+
+def View.sheets(+u: U.Ui) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, Nat.is_gt(List.length(&2, HI.Row, HI.Hier.read(U.Ui.info(u, "sheets:" ++ U.Ui.root(u)))), 1n),
+    View.sheet.chips(HI.Hier.read(U.Ui.info(u, "sheets:" ++ U.Ui.root(u))), 0n, U.Ui.view_get(u, "view.path")), [D.Dom.span("what", "The project's schematic")])
+
+# a board or schematic: host.js (plot2d.js) draws the hub's plot of it on
+# the canvas whose data-key it carries
+def View.plot(+u: U.Ui, +what: List<&2, D.Node>) -> List<&2, D.Node>:
+  [View.bar(what, "drag to pan · wheel to zoom · double-click to fit"),
+   D.El{"div", "", [D.At{"class", "viewer-stage"}], [D.El{"canvas", "plot", [D.At{"id", "plot"}, D.At{"data-key", U.Solid.want(u)}], Nil{}}]}]
+
+# over a part in 3D: the thread's parts and Renders; the board: its name
+def View.solid.what(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
   match on:
     case True{}:
       List.append(&2, D.Node, View.mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)),
         [D.Dom.button("", "mech-renders", U.Ui.view_get(u, "view.path"), "The part's pictures, and drawing them", "Renders")])
     case False{}:
-      [D.Dom.span("mech-name", MC.Mech.stem(U.Ui.view_get(u, "view.path")))]
+      [D.Dom.span("what", Bool.pick(String, String.is_empty(U.Ui.view_get(u, "view.path")), "The board with its parts", MC.Mech.stem(U.Ui.view_get(u, "view.path"))))]
 
-def View.solid(+u: U.Ui) -> D.Node:
-  D.El{"aside", "solid", [D.At{"class", "viewer solid"}, D.At{"id", "viewer"}], [
-    D.El{"div", "", [D.At{"class", "mech-head"}], List.append(&2, D.Node, View.solid.parts(U.Mpage.onpart(u), u),
-      [D.Dom.span("mech-hint", "drag turn · shift drag pan · wheel zoom"), D.Dom.button("", "panel", "", "Close the panel", "Close")])},
-    D.El{"canvas", "solid", [D.At{"id", "solid"}, D.At{"data-key", U.Solid.want(u)}], Nil{}}]}
+# a model turned in 3D: host.js (solid.js) draws the hub's model (a "plot"
+# with a mesh, as the phones get) on the canvas whose data-key it carries,
+# and says in the note why there is none
+def View.solid(+u: U.Ui) -> List<&2, D.Node>:
+  View.bar(View.solid.what(U.Mpage.onpart(u), u), "drag to turn · shift-drag to pan · wheel to zoom")
+    <> List.append(&2, D.Node, D.Dom.when(Bool.not(String.is_empty(U.Ui.info(u, "plotnote:" ++ U.Solid.want(u)))), D.Dom.span("viewer-say", U.Ui.info(u, "plotnote:" ++ U.Solid.want(u)))),
+      [D.El{"div", "", [D.At{"class", "viewer-stage"}], [D.El{"canvas", "solid", [D.At{"id", "solid"}, D.At{"data-key", U.Solid.want(u)}], Nil{}},
+        D.El{"div", "", [D.At{"class", "viewer-note"}], Nil{}}]}])
 
-# the side pane of the selected thread: its diff, its browser, its parts,
-# a part in 3D, or the board canvas
-def View.aside.k(i: Nat, +u: U.Ui) -> D.Node:
+# The viewer pane: a tab for each thing it shows (the one on show lit),
+# Close, then that thing
+def View.tab(+cur: String, +kind: String, +action: String, +value: String, +title: String, +label: String) -> D.Node:
+  D.Dom.button(Bool.pick(String, String.eq(cur, kind), "tab on", "tab"), action, value, title, label)
+
+def View.tabs(+cur: String) -> D.Node:
+  D.El{"nav", "", [D.At{"class", "viewer-tabs"}], [
+    View.tab(cur, "board", "view-kind", "board", "The project's board", "Board"),
+    View.tab(cur, "schematic", "view-kind", "schematic", "The project's schematic", "Schematic"),
+    View.tab(cur, "3d", "view-kind", "3d", "The board in 3D, with its parts", "3D"),
+    View.tab(cur, "mech", "mech", "", "Mechanical parts: their renders, and each in 3D", "Mech"),
+    View.tab(cur, "diff", "diff", "", "What this thread changed (ctrl+d)", "Diff"),
+    View.tab(cur, "browser", "view-kind", "browser", "What this thread's browser shows", "Browser"),
+    D.El{"span", "", [D.At{"class", "grow"}], Nil{}},
+    WI.WIcon.button("icon", "panel", "", "Close the viewer", "x", 16, "")]}
+
+def View.aside.k(i: Nat, +u: U.Ui) -> List<&2, D.Node>:
   match i:
     case 0n:
       View.diff(U.Ui.view_get(u, "diff"))
@@ -1077,12 +1115,19 @@ def View.aside.k(i: Nat, +u: U.Ui) -> D.Node:
       View.mech(u)
     case 3n:
       View.solid(u)
+    case 4n:
+      View.plot(u, View.sheets(u))
     case _:
-      D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}
+      View.plot(u, [D.Dom.span("what", "The project's board")])
 
+def View.aside.n(+kind: String) -> Nat:
+  Bool.pick(Nat, String.eq(kind, "diff"), 0n, Bool.pick(Nat, String.eq(kind, "browser"), 1n, Bool.pick(Nat, String.eq(kind, "mech"), 2n,
+    Bool.pick(Nat, String.eq(kind, "3d"), 3n, Bool.pick(Nat, String.eq(kind, "schematic"), 4n, 5n)))))
+
+# the side pane of the selected thread: the tabs, then what they show
 def View.aside(+kind: String, +u: U.Ui) -> D.Node:
-  View.aside.k(Bool.pick(Nat, String.eq(kind, "diff"), 0n, Bool.pick(Nat, String.eq(kind, "browser"), 1n, Bool.pick(Nat, String.eq(kind, "mech"), 2n,
-    Bool.pick(Nat, Bool.and(String.eq(kind, "3d"), Bool.not(String.is_empty(U.Ui.view_get(u, "view.path")))), 3n, 4n)))), u)
+  D.El{"aside", "viewer", [D.At{"class", "viewer " ++ Bool.pick(String, String.is_empty(kind), "board", kind)}, D.At{"id", "viewer"}],
+    View.tabs(Bool.pick(String, U.Mpage.onpart(u), "mech", U.Solid.kind(u))) <> View.aside.k(View.aside.n(kind), u)}
 
 def View.aside.if(open: Bool, +kind: String, +u: U.Ui) -> List<&2, D.Node>:
   match open:

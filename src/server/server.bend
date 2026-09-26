@@ -2068,12 +2068,14 @@ def Hub.leave(h: Hub, +client: U32) -> IO(Hub):
         Plot.put(Cfg.pv(cfg), PV.PStop{client})
         return Hub{st, f, ls, Clients.drop(cl, client), as, inbox, cfg, note}
 
-# kicad.watch: kind "board", "schematic" or "3d" shows it, anything else stops
+# kicad.watch: kind "board", "schematic", "3d", "3d-bare" or "3d-full"
+# shows it, anything else stops
 def Plot.watch(+client: U32, +kind: String, +root: String, +path: String) -> PV.PMsg:
   Bool.pick(PV.PMsg, String.eq(kind, "board"), PV.PWatch{client, 0, root, path},
     Bool.pick(PV.PMsg, String.eq(kind, "schematic"), PV.PWatch{client, 1, root, path},
       Bool.pick(PV.PMsg, String.eq(kind, "3d"), PV.PWatch{client, 2, root, path},
-        Bool.pick(PV.PMsg, String.eq(kind, "3d-bare"), PV.PWatch{client, 3, root, path}, PV.PStop{client}))))
+        Bool.pick(PV.PMsg, String.eq(kind, "3d-bare"), PV.PWatch{client, 3, root, path},
+          Bool.pick(PV.PMsg, String.eq(kind, "3d-full"), PV.PWatch{client, 4, root, path}, PV.PStop{client})))))
 
 def Term.msg(+op: String, +thread: String, +cwd: String, data: List<&2, U32>, +cols: U32, +rows: U32) -> TM.TMsg:
   Bool.pick(TM.TMsg, String.eq(op, "open"), TM.TOpen{thread, cwd, cols, rows},
