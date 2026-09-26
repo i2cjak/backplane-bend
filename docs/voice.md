@@ -46,6 +46,11 @@ device, label), `part` (words so far), `text` (a finished segment and its
 speech comes), `stopping`, `error`, and `idle` last. Each segment joins the
 thread's draft; nothing is sent until the person sends it.
 
+The helper opens the recorder and the OpenAI session at once: `live` goes
+out as soon as the microphone gives audio (waiting at most 150 ms more for
+its name, and sent again with the name if that comes later), and what is
+heard before the session opens is kept and sent the moment it does.
+
 The words to clarify show one at a time above the composer: use the guess,
 Fix… (type the right spelling: it replaces the word and joins the
 dictionary), add the word as heard to the dictionary, or skip it (not asked

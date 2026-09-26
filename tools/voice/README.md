@@ -79,8 +79,10 @@ NDJSON on stdout, one object a line, written at once; diagnostics on stderr.
 ```
 {"event":"devices","default":"<name>","devices":[{"name":"<source>","label":"<description>"}]}
 {"event":"ready","recorder":"pw-record","device":"<source>","label":"<description>"}
-                                            live: connected, session sent, recorder running;
-                                            device is --device or the default ("" unknown)
+                                            live: recorder running (the OpenAI session opens
+                                            alongside; audio waits for it); device is --device
+                                            or the default ("" unknown); sent again once if the
+                                            name comes after 150 ms
 {"event":"ready"}                           file: started
 {"event":"level","v":0..100}                live, every 250 ms while recording
 {"event":"hint","hint":"no-audio|silent|ok"}  live
