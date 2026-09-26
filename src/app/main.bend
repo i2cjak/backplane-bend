@@ -1788,17 +1788,42 @@ def Start.fonts(+fq: Chan(L.Ty)) -> IO(Unit):
     ok : Bool <- Chan.send(L.Ty, fq, ty)
     return Unit{}
 
+# `--headless`: no window even with a display; the hub, the web client and
+# the tailnet listener run as they would without one, for the phones and
+# browsers that connect
+def Start.headless(xs: List<&2, String>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +x <> t:
+      Bool.or(String.eq(x, "--headless"), Start.headless(t))
+
+def Start.args(xs: List<&2, String>) -> List<String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      x <> Start.args(t)
+
+def Start.window(headless: Bool) -> IO(Result<&1, &1, U32 & String, Window>):
+  match headless:
+    case True{}:
+      IO.pure(Result<&1, &1, U32 & String, Window>, Fail{(0, "--headless")})
+    case False{}:
+      W.Win.open("Backplane", 1400, 900)
+
 # the window opens first and the fonts load beside the hub's start, so
 # the first frame waits only for the log
 def start(args: List<String>) -> IO(Unit):
   do IO<Unit>:
+    +xs : List<&2, String> = S.Names.copy(args)
     +fq : Chan(L.Ty) <- Chan.new(L.Ty, 1)
     IO.spawn(Unit, Start.fonts(fq))
-    r : Result<&1, &1, U32 & String, Window> <- W.Win.open("Backplane", 1400, 900)
+    r : Result<&1, &1, U32 & String, Window> <- Start.window(Start.headless(xs))
     +user : String <- S.Env.get("HOME", "/tmp")
     +exe : String <- S.Sys.exe_dir.io()
     b : S.Boot <- S.Main.prepare(user, exe)
-    +cfg : S.Cfg = S.Main.config(user, exe, args, b)
+    +cfg : S.Cfg = S.Main.config(user, exe, Start.args(xs), b)
     +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
     S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq))
 
