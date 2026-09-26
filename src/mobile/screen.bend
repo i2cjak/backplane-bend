@@ -234,6 +234,12 @@ def Mob.role(r: FO.Role, xs: List<&2, J.Json>, acc: List<&2, J.Json>) -> List<&2
       Mob.shown(open, xs, Mob.fold(id, label, open) <> acc)
     case FO.RIn{open}:
       Mob.shown(open, xs, acc)
+    case FO.RWork{+id, +label, open, inner}:
+      match open:
+        case True{}:
+          Mob.role(inner, xs, Mob.fold(id, label, True{}) <> acc)
+        case False{}:
+          Mob.fold(id, label, False{}) <> acc
 
 # a thread's entries, tail-recursive (a thread can hold thousands)
 def Mob.entries.go(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +sel: String, +left: Nat, acc: List<&2, J.Json>) -> List<&2, J.Json>:

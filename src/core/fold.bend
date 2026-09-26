@@ -12,6 +12,12 @@ import ./model.bend as M
 # A run is open when the user opened it ("fold:<first id>" is "1" in the
 # client's info map), shut when they shut it ("0"), and otherwise open only
 # while it is the live one: the last thing in a thread whose turn runs.
+#
+# A turn folds the same way, one level up: what the agent did between a
+# user's message and its last reply shows as one row, "Worked for 2m 13s ·
+# 5m ago", open while the turn runs and shut once it is done
+# ("fold:work:<the user message's id>"). Inside it the tool runs fold as
+# before; the message and the reply are never in it (laws work_*).
 
 type Grp is Data:
   GOne{e: M.Entry}
@@ -182,6 +188,9 @@ type Role is Data:
   RShow{}
   RHead{id: String, label: String, open: Bool}
   RIn{open: Bool}
+  # the first entry of a turn's work: the turn's row, then (when open) the
+  # entry as its own role says
+  RWork{id: String, label: String, open: Bool, inner: Role}
 
 def Fold.ins(es: List<&2, M.Entry>, +open: Bool) -> List<&2, Role>:
   match es:
@@ -218,7 +227,182 @@ def Fold.roles.go(gs: List<&2, Grp>, +info: Map<&2, String>, +running: Bool) -> 
     case g <> +t:
       List.append(&2, Role, Fold.grp.roles(g, Fold.last(t), info, running), Fold.roles.go(t, info, running))
 
+# Turns
+# -----
+# The entries cut at each user message: a turn is the message and what
+# came after it (a page may start mid-turn: that part has no message, and
+# never folds).
+
+type Seg is Data:
+  Seg{head: List<&2, M.Entry>, body: List<&2, M.Entry>}
+
+def Work.is_user(e: M.Entry) -> Bool:
+  match e:
+    case M.Msg{_, _, M.User{}, _, _}:
+      True{}
+    case _:
+      False{}
+
+def Work.is_reply(e: M.Entry) -> Bool:
+  match e:
+    case M.Msg{_, _, M.Assistant{}, _, _}:
+      True{}
+    case _:
+      False{}
+
+def Work.at(e: M.Entry) -> Nat:
+  match e:
+    case M.Msg{_, _, _, _, at}:
+      at
+    case M.Act{_, _, _, _, _, at}:
+      at
+
+def Work.push.k(u: Bool, e: M.Entry, ss: List<&2, Seg>) -> List<&2, Seg>:
+  match u ss:
+    case True{} Seg{Nil{}, b} <> t:
+      Seg{[e], b} <> t
+    case True{} _:
+      Seg{[e], Nil{}} <> ss
+    case False{} Seg{Nil{}, b} <> t:
+      Seg{Nil{}, e <> b} <> t
+    case False{} _:
+      Seg{Nil{}, [e]} <> ss
+
+def Work.segs(es: List<&2, M.Entry>) -> List<&2, Seg>:
+  match es:
+    case Nil{}:
+      Nil{}
+    case +e <> t:
+      Work.push.k(Work.is_user(e), e, Work.segs(t))
+
+# where a turn's last reply is among what followed the message
+def Work.last.k(r: Bool, +i: Nat, m: Maybe<&2, Nat>) -> Maybe<&2, Nat>:
+  match r:
+    case True{}:
+      Some{i}
+    case False{}:
+      m
+
+def Work.last(b: List<&2, M.Entry>, +i: Nat, m: Maybe<&2, Nat>) -> Maybe<&2, Nat>:
+  match b:
+    case Nil{}:
+      m
+    case +e <> t:
+      Work.last(t, 1n+i, Work.last.k(Work.is_reply(e), i, m))
+
+# what each entry of a turn is to its fold
+type WRole is Data:
+  WPlain{}
+  WHead{id: String, label: String, open: Bool}
+  WIn{open: Bool}
+
+def Work.plain(xs: List<&2, M.Entry>) -> List<&2, WRole>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case _ <> t:
+      WPlain{} <> Work.plain(t)
+
+def Work.ins(xs: List<&2, M.Entry>, +open: Bool) -> List<&2, WRole>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case _ <> t:
+      WIn{open} <> Work.ins(t, open)
+
+def Work.block(xs: List<&2, M.Entry>, +id: String, +label: String, +open: Bool) -> List<&2, WRole>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case _ <> t:
+      WHead{id, label, open} <> Work.ins(t, open)
+
+def Work.ago(+a: String) -> String:
+  Bool.pick(String, String.eq(a, "now"), "just now", a ++ " ago")
+
+def Work.id(+u: M.Entry) -> String:
+  "work:" ++ Fold.id(u)
+
+# when the reply came (d with none)
+def Work.end(m: Maybe<&2, M.Entry>, +d: Nat) -> Nat:
+  match m:
+    case Some{e}:
+      Work.at(e)
+    case None{}:
+      d
+
+# a finished turn: the work before its last reply folds (a turn with no
+# reply, stopped or failed, shows all of it)
+def Work.done(+m: Maybe<&2, Nat>, +b: List<&2, M.Entry>, +u: M.Entry, +info: Map<&2, String>, +now: Nat) -> List<&2, WRole>:
+  match m:
+    case Some{1n+j}:
+      +end = Work.end(List.head(&2, M.Entry, List.drop(&2, M.Entry, b, 1n+j)), Work.at(u))
+      List.append(&2, WRole, Work.block(List.take(&2, M.Entry, b, 1n+j), Work.id(u),
+          "Worked for " ++ M.Time.took(Nat.sub(end, Work.at(u))) ++ " · " ++ Work.ago(M.Time.ago(now, end)), Fold.open(Fold.user(info, Work.id(u)), False{})),
+        Work.plain(List.drop(&2, M.Entry, b, 1n+j)))
+    case _:
+      Work.plain(b)
+
+# the turn still running: all of it is work, open unless shut
+def Work.turn(live: Bool, +u: M.Entry, +b: List<&2, M.Entry>, +info: Map<&2, String>, +now: Nat) -> List<&2, WRole>:
+  match live:
+    case True{}:
+      WPlain{} <> Work.block(b, Work.id(u), "Working · started " ++ Work.ago(M.Time.ago(now, Work.at(u))), Fold.open(Fold.user(info, Work.id(u)), True{}))
+    case False{}:
+      WPlain{} <> Work.done(Work.last(b, 0n, None{}), b, u, info, now)
+
+def Work.seg(s: Seg, live: Bool, +info: Map<&2, String>, +now: Nat) -> List<&2, WRole>:
+  match s:
+    case Seg{+u <> _, +b}:
+      Work.turn(live, u, b, info, now)
+    case Seg{Nil{}, +b}:
+      Work.plain(b)
+
+def Work.lastseg(ss: List<&2, Seg>) -> Bool:
+  match ss:
+    case Nil{}:
+      True{}
+    case _ <> _:
+      False{}
+
+def Work.roles.go(ss: List<&2, Seg>, +info: Map<&2, String>, +running: Bool, +now: Nat) -> List<&2, WRole>:
+  match ss:
+    case Nil{}:
+      Nil{}
+    case s <> +t:
+      List.append(&2, WRole, Work.seg(s, Bool.and(Work.lastseg(t), running), info, now), Work.roles.go(t, info, running, now))
+
+def Work.hide(open: Bool, r: Role) -> Role:
+  match open:
+    case True{}:
+      r
+    case False{}:
+      RIn{False{}}
+
+# an entry's turn role over its tool-run role
+def Work.with(w: WRole, r: Role) -> Role:
+  match w:
+    case WPlain{}:
+      r
+    case WHead{id, label, open}:
+      RWork{id, label, open, r}
+    case WIn{open}:
+      Work.hide(open, r)
+
+def Work.zip(ws: List<&2, WRole>, rs: List<&2, Role>) -> List<&2, Role>:
+  match ws rs:
+    case w <> wt r <> rt:
+      Work.with(w, r) <> Work.zip(wt, rt)
+    case Nil{} r:
+      r
+    case +w <> +wt Nil{}:
+      Nil{}
+
+# the time the client last ticked ("clock" in its info map), for "5m ago"
+def Fold.now(m: Map<&2, String>) -> Nat:
+  M.Switch.num(Fold.user.k(Map.get(String, "", m, "clock")), 0n)
+
 # the roles of a thread's entries, with the client's info map and whether
 # its turn runs
-def Fold.roles(es: List<&2, M.Entry>, +info: Map<&2, String>, +running: Bool) -> List<&2, Role>:
-  Fold.roles.go(Fold.groups(es), info, running)
+def Fold.roles(+es: List<&2, M.Entry>, +info: Map<&2, String>, +running: Bool) -> List<&2, Role>:
+  Work.zip(Work.roles.go(Work.segs(es), info, running, Fold.now(info)), Fold.roles.go(Fold.groups(es), info, running))

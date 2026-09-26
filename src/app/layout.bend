@@ -2780,6 +2780,12 @@ def TL.role(r: FO.Role, +ty: Ty, ls: List<&2, TLine>, +px: U32) -> List<&2, TLin
       TL.fold.line(ty, id, label, open, px) <> TL.fold.shown(open, ls)
     case FO.RIn{open}:
       TL.fold.shown(open, ls)
+    case FO.RWork{+id, +label, open, inner}:
+      match open:
+        case True{}:
+          TL.fold.line(ty, id, label, True{}, px) <> TL.role(inner, ty, ls, px)
+        case False{}:
+          [TL.fold.line(ty, id, label, False{}, px)]
 
 def TL.turn(t: M.Thread) -> Bool:
   match t:

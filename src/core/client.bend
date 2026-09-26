@@ -104,21 +104,9 @@ def Ui.entries(s: M.State) -> List<&2, M.Entry>:
 # Time
 # ----
 
-def Time.ago.k(m: Bool, h: Bool, d: Bool, +s: Nat) -> String:
-  match m h d:
-    case True{} _ _:
-      "now"
-    case False{} True{} _:
-      Nat.show(Nat.div(s, 60n)) ++ "m"
-    case False{} False{} True{}:
-      Nat.show(Nat.div(s, 3600n)) ++ "h"
-    case False{} False{} False{}:
-      Nat.show(Nat.div(s, 86400n)) ++ "d"
-
-# "now", "5m", "3h", "2d"
+# "now", "5m", "3h", "2d" (model.bend's, which folded turns use too)
 def Time.ago(+now: Nat, +at: Nat) -> String:
-  +s = Nat.sub(now, at)
-  Time.ago.k(Nat.is_lt(s, 60n), Nat.is_lt(s, 3600n), Nat.is_lt(s, 86400n), s)
+  M.Time.ago(now, at)
 
 def Ui.decode.k(m: Maybe<&2, M.Change>, rest: List<&2, M.Change>) -> List<&2, M.Change>:
   match m:
@@ -479,10 +467,12 @@ def Ui.online(u: Ui, b: Bool) -> Ui:
     case Ui{st, sel, dr, live, op, _, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, dr, live, op, b, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
-def Ui.tick(u: Ui, now: Nat) -> Ui:
+# the clock goes in the info map too, where a thread's folded turns read
+# it ("5m ago", FO.Fold.roles)
+def Ui.tick(u: Ui, +now: Nat) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Map.set(&2, String, nf, "clock", Nat.show(now)), ob, tr}
 
 # Acting
 # ------

@@ -1280,6 +1280,34 @@ law fold_default_live:
   for +live: Bool
   {FO.Fold.open("", live) == live : Bool}
 
+# a turn's work folds under its message: the message itself is never in
+# it, and while the turn runs its work stays open until shut by hand
+law work_message_shown:
+  for live: Bool
+  for +u: M.Entry
+  for +b: List<&2, M.Entry>
+  for +info: Map<&2, String>
+  for +now: Nat
+  {List.head(&2, FO.WRole, FO.Work.turn(live, u, b, info, now)) == Some{FO.WPlain{}} : Maybe<&2, FO.WRole>}
+
+law work_live_open:
+  for +u: M.Entry
+  for +e: M.Entry
+  for +t: List<&2, M.Entry>
+  for +now: Nat
+  {FO.Work.turn(True{}, u, e <> t, Map.new(&2, String), now)
+    == FO.WPlain{} <> FO.WHead{FO.Work.id(u), "Working · started " ++ FO.Work.ago(M.Time.ago(now, FO.Work.at(u))), True{}} <> FO.Work.ins(t, True{}) : List<&2, FO.WRole>}
+
+# how long a turn took, as its row says it
+law took_seconds:
+  {M.Time.took(45n) == "45s" : String}
+
+law took_minutes:
+  {M.Time.took(133n) == "2m 13s" : String}
+
+law took_hours:
+  {M.Time.took(3900n) == "1h 5m" : String}
+
 # every frame the hub sends is binary (opcode 2, final): CBOR, never text
 law hub_frames_cbor:
   for +t: String

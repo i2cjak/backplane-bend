@@ -4028,6 +4028,25 @@ def Laws.follow_alt_flips(s, p):
 def Laws.tailnet_link_token():
   {==}
 
+def Laws.work_message_shown(live, u, b, info, now):
+  match live:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.work_live_open(u, e, t, now):
+  {==}
+
+def Laws.took_seconds():
+  {==}
+
+def Laws.took_minutes():
+  {==}
+
+def Laws.took_hours():
+  {==}
+
 def Laws.follow_stop_idle(b):
   {==}
 

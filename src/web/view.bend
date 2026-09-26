@@ -638,10 +638,11 @@ def View.entry.k(mine: Bool, e: M.Entry, +st: M.State) -> List<&2, D.Node>:
 def View.entry(+e: M.Entry, +st: M.State, +sel: String) -> List<&2, D.Node>:
   View.entry.k(String.eq(View.entry_thread(e), sel), e, st)
 
-# a run of tool calls folded into one row (FO.Fold decides the runs, their
-# labels and which are open); a click opens or shuts it
+# a run of tool calls, or a turn's work, folded into one row (FO.Fold
+# decides the runs, their labels and which are open); a click opens or
+# shuts it
 def View.fold.row(+id: String, +label: String, +open: Bool) -> D.Node:
-  WI.WIcon.button("fold", "fold", FO.Fold.ask(open, id), Bool.pick(String, open, "Hide these tool calls", "Show these tool calls"),
+  WI.WIcon.button("fold", "fold", FO.Fold.ask(open, id), Bool.pick(String, open, "Hide ", "Show ") ++ Bool.pick(String, String.starts_with(id, "work:"), "what the agent did", "these tool calls"),
     Bool.pick(String, open, "chevron-down", "chevron-right"), 14, label)
 
 def View.fold.shown(open: Bool, ns: List<&2, D.Node>) -> List<&2, D.Node>:
@@ -660,6 +661,12 @@ def View.role(r: FO.Role, ns: List<&2, D.Node>) -> List<&2, D.Node>:
       View.fold.row(id, label, open) <> View.fold.shown(open, ns)
     case FO.RIn{open}:
       View.fold.shown(open, ns)
+    case FO.RWork{+id, +label, open, inner}:
+      match open:
+        case True{}:
+          View.fold.row(id, label, True{}) <> View.role(inner, ns)
+        case False{}:
+          [View.fold.row(id, label, False{})]
 
 def View.entries.r(es: List<&2, M.Entry>, rs: List<&2, FO.Role>, +st: M.State, +sel: String) -> List<&2, D.Node>:
   match es rs:
