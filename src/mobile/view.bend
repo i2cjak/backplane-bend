@@ -56,26 +56,38 @@ def View.key.at(+kind: String, +root: String, +path: String, bare: Bool) -> Stri
 def View.layers.at(+kind: String, +root: String, +path: String) -> String:
   Bool.pick(String, String.eq(kind, "schematic"), View.key.at(kind, root, path, False{}), View.layers(kind, root))
 
-# a mechanical part the 3D view shows ("@view.part:<thread>", its absolute
-# path; "" for the project's board): the Mechanical page's Open in 3D
+# Mech ("mech") shows the part on show in 3D, with the parts over it;
+# Renders ("renders") its pictures (client.bend's Mpage decides the part)
+def View.mech(+u: U.Ui) -> Bool:
+  Bool.or(String.eq(View.kind(u), "mech"), String.eq(View.kind(u), "renders"))
+
+def View.part.k(on: Bool, +u: U.Ui) -> String:
+  match on:
+    case True{}:
+      Bool.pick(String, String.is_empty(U.Mpage.cur.path(u)), "", MC.Mech.abs(U.Mpage.root(u), U.Mpage.cur.path(u)))
+    case False{}:
+      ""
+
+# the part in 3D (its absolute path), "" when Mech is not open or has none
 def View.part(+u: U.Ui) -> String:
-  U.Ui.scratch(u, "@view.part:" ++ U.Ui.sel(u))
+  View.part.k(String.eq(View.kind(u), "mech"), u)
 
 def View.on_part(+u: U.Ui) -> Bool:
-  Bool.and(String.eq(View.kind(u), "3d"), Bool.not(String.is_empty(View.part(u))))
+  Bool.not(String.is_empty(View.part(u)))
 
 # the source the screen shows now
 def View.want(+u: U.Ui) -> String:
   Bool.pick(String, Bool.and(View.on_part(u), Bool.not(String.is_empty(U.Ui.root(u)))), "2|" ++ U.Ui.root(u) ++ "|" ++ View.part(u),
     View.key.at(View.kind(u), U.Ui.root(u), View.sheet(u), Bool.and(String.eq(View.kind(u), "3d"), View.bare(u))))
 
-# the file a source names: a schematic's sheet, or a 3D view's part
+# the file a source names: a schematic's sheet, or Mech's part
 def View.path(+u: U.Ui) -> String:
-  Bool.pick(String, String.eq(View.kind(u), "3d"), View.part(u), View.sheet(u))
+  Bool.pick(String, String.eq(View.kind(u), "mech"), View.part(u), View.sheet(u))
 
+# (Mech's part is a 3D model to the hub)
 def View.ask(+want: String, +kind: String, +root: String, +path: String) -> List<&2, J.KV>:
-  [J.KV{"kind", J.Str{Bool.pick(String, String.is_empty(want), "", Bool.pick(String, String.starts_with(want, "3|"), "3d-bare", kind))}}, J.KV{"root", J.Str{root}},
-   J.KV{"path", J.Str{Bool.pick(String, Bool.or(String.eq(kind, "schematic"), String.eq(kind, "3d")), path, "")}}]
+  [J.KV{"kind", J.Str{Bool.pick(String, String.is_empty(want), "", Bool.pick(String, String.starts_with(want, "3|"), "3d-bare", Bool.pick(String, String.eq(kind, "mech"), "3d", kind)))}}, J.KV{"root", J.Str{root}},
+   J.KV{"path", J.Str{Bool.pick(String, Bool.or(String.eq(kind, "schematic"), String.eq(kind, "mech")), path, "")}}]
 
 def View.join(a: U.Act, cmds: List<&2, U.Cmd>) -> U.Act:
   match a:
@@ -99,7 +111,7 @@ def View.sync.u(+u: U.Ui, cmds: List<&2, U.Cmd>) -> U.Act:
 def View.sync(a: U.Act) -> U.Act:
   match a:
     case U.Act{+u, cmds}:
-      U.Mpage.sync.if(String.eq(View.kind(u), "mech"), View.sync.u(u, cmds))
+      U.Mpage.sync.if(View.mech(u), View.sync.u(u, cmds))
 
 # open a viewer ("board", "schematic", "3d") or close it (""); what was
 # picked is let go
@@ -117,11 +129,17 @@ def View.open.mech(mech: Bool, a: U.Act) -> U.Act:
       a
 
 def View.open(+u: U.Ui, +v: String) -> U.Act:
-  View.open.mech(String.eq(v, "mech"), View.open.k(U.Ui.scratch_set(u, "@view.part:" ++ U.Ui.sel(u), ""), v))
+  View.open.mech(String.eq(v, "mech"), View.open.k(u, v))
 
-# a part opened in 3D from the Mechanical page (its absolute path)
-def View.part.open(+u: U.Ui, +path: String) -> U.Act:
-  View.open.k(U.Ui.scratch_set(u, "@view.part:" ++ U.Ui.sel(u), path), "3d")
+# a Mech action the client takes (the part, its view), then the phone's
+# view on Mech ("mech") or Renders ("renders")
+def View.mech.to(a: U.Act, v: String) -> U.Act:
+  match a:
+    case U.Act{u, cs}:
+      View.join(View.open.k(u, v), cs)
+
+def View.mech.act(+u: U.Ui, +action: String, +value: String, v: String) -> U.Act:
+  View.mech.to(U.Ui.act(u, action, value), v)
 
 # a new connection watches nothing: ask again once online
 def View.online.k(on: Bool, u: U.Ui) -> U.Act:
@@ -436,11 +454,14 @@ def Mech.part(m: Maybe<&2, MC.MPart>, +root: String) -> List<&2, J.KV>:
 def Mech.say(+state: Nat) -> String:
   Bool.pick(String, Nat.is_eq(state, 0n), "Loading the parts…", Bool.pick(String, Nat.is_eq(state, 1n), MC.Mech.none(), ""))
 
+# (busy: a render job runs; render: its button's label; err: why the last failed)
 def Mech.json(on: Bool, +u: U.Ui) -> J.Json:
   match on:
     case True{}:
       J.Json.obj(List.append(&2, J.KV, [J.KV{"say", J.Str{Mech.say(U.Mpage.state(u))}}, J.KV{"note", J.Str{U.Mpage.note(u)}},
-        J.KV{"parts", J.Json.arr(Mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)))}], Mech.part(U.Mpage.cur(u), U.Mpage.root(u))))
+        J.KV{"parts", J.Json.arr(Mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)))}, J.KV{"rel", J.Str{U.Mpage.cur.path(u)}},
+        J.KV{"busy", J.Flag{Bool.not(String.is_empty(U.Mpage.busy(u)))}}, J.KV{"render", J.Str{U.Mpage.render.label(u)}}, J.KV{"err", J.Str{U.Mpage.err(u)}}],
+        Mech.part(U.Mpage.cur(u), U.Mpage.root(u))))
     case False{}:
       J.Null{}
 
@@ -452,13 +473,13 @@ def Mech.json(on: Bool, +u: U.Ui) -> J.Json:
 # and for 3D the faces' layers, the board's colour before its model
 # arrives, and the field of view (degrees)
 def View.json(+u: U.Ui) -> J.Json:
-  J.Json.obj([J.KV{"open", J.Str{Bool.pick(String, Bool.or(Bool.not(String.is_empty(View.want(u))), String.eq(View.kind(u), "mech")), View.kind(u), "")}}, J.KV{"key", J.Str{View.want(u)}},
-    J.KV{"layers", J.Str{Bool.pick(String, View.on_part(u), "", View.layers.at(View.kind(u), U.Ui.root(u), View.sheet(u)))}},
-    J.KV{"mech", Mech.json(String.eq(View.kind(u), "mech"), u)},
+  J.Json.obj([J.KV{"open", J.Str{Bool.pick(String, Bool.or(Bool.not(String.is_empty(View.want(u))), View.mech(u)), View.kind(u), "")}}, J.KV{"key", J.Str{View.want(u)}},
+    J.KV{"layers", J.Str{Bool.pick(String, View.mech(u), "", View.layers.at(View.kind(u), U.Ui.root(u), View.sheet(u)))}},
+    J.KV{"mech", Mech.json(View.mech(u), u)},
     J.KV{"sheets", J.Json.arr(View.sheet.list(u))}, J.KV{"layerList", J.Json.arr(View.layer.list(u))}, J.KV{"off", J.Num{U32.show(View.off(u))}},
     J.KV{"parts", J.Flag{Bool.not(View.bare(u))}}, J.KV{"note", J.Str{View.note(u)}},
     J.KV{"choices", J.Json.arr(Bool.pick(List<&2, J.Json>, String.is_empty(U.Ui.root(u)), Nil{},
-      [View.choice("Board", "board", View.kind(u)), View.choice("Schematic", "schematic", View.kind(u)), View.choice("3D", "3d", View.kind(u)), View.choice("Mech", "mech", View.kind(u))]))},
+      [View.choice("Board", "board", View.kind(u)), View.choice("Schematic", "schematic", View.kind(u)), View.choice("3D", "3d", View.kind(u)), View.choice("Mech", "mech", Bool.pick(String, View.mech(u), "mech", ""))]))},
     J.KV{"bg", J.Num{U32.show(View.bg(View.kind(u), View.light(u)))}}, J.KV{"light", J.Json.bool(View.light(u))}, J.KV{"look", J.Json.arr(View.look(View.light(u), View.kind(u)))}, J.KV{"fade", J.Num{Nat.show(V.Fade.ms())}}, J.KV{"margin", J.Num{"0.9"}},
     J.KV{"zmin", J.Num{"0.5"}}, J.KV{"zmax", J.Num{"0.5"}}, J.KV{"tap", J.Num{"14"}},
     J.KV{"top", J.Json.arr(View.nums(View.top()))}, J.KV{"bottom", J.Json.arr(View.nums(View.bottom()))},

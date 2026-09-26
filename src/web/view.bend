@@ -1037,8 +1037,12 @@ def View.mech.k(state: Nat, +u: U.Ui) -> List<&2, D.Node>:
       [D.Dom.span("mech-say", MC.Mech.none())]
     case _:
       D.El{"div", "", [D.At{"class", "mech-head"}], List.append(&2, D.Node, View.mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)),
-        [D.Dom.button("primary", "mech-3d", MC.Mech.abs(U.Mpage.root(u), U.Mpage.cur.path(u)), "Turn the part in the 3D viewer", "Open in 3D"),
-         D.Dom.button("", "mech-refresh", "", "Look for parts and renders again", "Refresh"), D.Dom.button("", "panel", "", "Close the panel", "Close")])} <> View.mech.part(U.Mpage.cur(u), U.Mpage.root(u))
+        [D.Dom.button("", "mech-3d", MC.Mech.abs(U.Mpage.root(u), U.Mpage.cur.path(u)), "Turn the part in the 3D viewer", "3D"),
+         D.Dom.button(Bool.pick(String, String.is_empty(U.Mpage.busy(u)), "primary", "busy"), Bool.pick(String, String.is_empty(U.Mpage.busy(u)), "mech-render", ""),
+           U.Mpage.cur.path(u), "Draw the part's iso, front, top and right views on the hub", U.Mpage.render.label(u)),
+         D.Dom.button("", "mech-refresh", "", "Look for parts and renders again", "Refresh"), D.Dom.button("", "panel", "", "Close the panel", "Close")])}
+      <> List.append(&2, D.Node, D.Dom.when(Bool.not(String.is_empty(U.Mpage.err(u))), D.Dom.span("mech-say", "Rendering failed: " ++ U.Mpage.err(u))),
+        View.mech.part(U.Mpage.cur(u), U.Mpage.root(u)))
 
 def View.mech(+u: U.Ui) -> D.Node:
   D.El{"aside", "mech", [D.At{"class", "viewer mech"}, D.At{"id", "viewer"}],
@@ -1046,10 +1050,19 @@ def View.mech(+u: U.Ui) -> D.Node:
 
 # a part turned in 3D: host.js draws the hub's model of it (a "plot" with
 # a mesh, as the phones get) on the canvas whose data-key it carries
+# over a part in 3D: the thread's parts and Renders; another model, its name
+def View.solid.parts(on: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match on:
+    case True{}:
+      List.append(&2, D.Node, View.mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)),
+        [D.Dom.button("", "mech-renders", U.Ui.view_get(u, "view.path"), "The part's pictures, and drawing them", "Renders")])
+    case False{}:
+      [D.Dom.span("mech-name", MC.Mech.stem(U.Ui.view_get(u, "view.path")))]
+
 def View.solid(+u: U.Ui) -> D.Node:
   D.El{"aside", "solid", [D.At{"class", "viewer solid"}, D.At{"id", "viewer"}], [
-    D.El{"div", "", [D.At{"class", "mech-head"}], [D.Dom.button("", "mech", U.Ui.view_get(u, "view.path"), "Back to the part's renders", "Renders"),
-      D.Dom.span("mech-name", MC.Mech.stem(U.Ui.view_get(u, "view.path"))), D.Dom.span("mech-hint", "drag turn · shift drag pan · wheel zoom"), D.Dom.button("", "panel", "", "Close the panel", "Close")]},
+    D.El{"div", "", [D.At{"class", "mech-head"}], List.append(&2, D.Node, View.solid.parts(U.Mpage.onpart(u), u),
+      [D.Dom.span("mech-hint", "drag turn · shift drag pan · wheel zoom"), D.Dom.button("", "panel", "", "Close the panel", "Close")])},
     D.El{"canvas", "solid", [D.At{"id", "solid"}, D.At{"data-key", U.Solid.want(u)}], Nil{}}]}
 
 # the side pane of the selected thread: its diff, its browser, its parts,

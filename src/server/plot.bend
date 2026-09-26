@@ -411,7 +411,7 @@ def Pv.solid.done(r: PR.Ran, +glb: String, +note: String, +step: Bool) -> IO(Uni
       do IO<Unit>:
         Pv.write(note, Pv.missing.note(Pv.missing(String.lines(log), 0n)))
         bs : List<&2, U32> <- K.Io.bytes(glb)
-        IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(Pv.solid.up(step, G.Mesh.tris(G.Glb.parse(bs)))))))
+        IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(P.Solid.thin(Pv.solid.up(step, G.Mesh.tris(G.Glb.parse(bs))))))))
     case PR.Ran{_, out}:
       IO.die(Unit, 3, "3D export failed: " ++ String.take(String.trim(out), 160n))
 

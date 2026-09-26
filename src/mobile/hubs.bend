@@ -226,12 +226,14 @@ def One.act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
     case 13n:
       VW.View.parts(u)
     case 14n:
-      VW.View.part.open(u, value)
+      VW.View.mech.act(u, action, value, "mech")
+    case 15n:
+      VW.View.mech.act(u, action, value, "renders")
     case _:
       VW.View.sync(U.Ui.act(u, action, value))
 
 def One.act(+u: U.Ui, +action: String, +value: String) -> U.Act:
-  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close", "form-close", "view-sheet", "view-layer", "view-parts", "mech-3d"], action), u, action, value)
+  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close", "form-close", "view-sheet", "view-layer", "view-parts", "mech-3d", "mech-renders"], action), u, action, value)
 
 # what a step does to one hub's client
 type Op is Data:

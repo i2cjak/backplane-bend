@@ -573,6 +573,72 @@ def SE.fin(st: SE) -> Solid:
     case SE{e, _, _, n, b}:
       Solid{n, b, Enc.rev(e)}
 
+# Thinning for the phones and the web: a triangle whose corners fall two in
+# one cell of a grid a thousandth of the model's size is dropped (smaller
+# than a pixel there; a case assembly with its board went from 880k
+# triangles to 134k, 12 MB to 2). The window draws the whole model.
+type Grid is Data:
+  Grid{x0: F32, y0: F32, z0: F32, x1: F32, y1: F32, z1: F32}
+
+def Grid.put(g: Grid, +x: F32, +y: F32, +z: F32) -> Grid:
+  match g:
+    case Grid{x0, y0, z0, x1, y1, z1}:
+      Grid{F32.min(x0, x), F32.min(y0, y), F32.min(z0, z), F32.max(x1, x), F32.max(y1, y), F32.max(z1, z)}
+
+def Grid.go(ts: List<&2, G.Tri3>, g: Grid) -> Grid:
+  match ts:
+    case Nil{}:
+      g
+    case G.Tri3{ax, ay, az, bx, by, bz, cx, cy, cz, _} <> t:
+      Grid.go(t, Grid.put(Grid.put(Grid.put(g, ax, ay, az), bx, by, bz), cx, cy, cz))
+
+# the cell size: a thousandth of the box's diagonal (0 for an empty model)
+def Grid.cell(g: Grid) -> F32:
+  match g:
+    case Grid{+x0, +y0, +z0, +x1, +y1, +z1}:
+      +dx = F32.max(F32.sub(x1, x0), 0.0)
+      +dy = F32.max(F32.sub(y1, y0), 0.0)
+      +dz = F32.max(F32.sub(z1, z0), 0.0)
+      F32.div(F32.sqrt(F32.add(F32.mul(dx, dx), F32.add(F32.mul(dy, dy), F32.mul(dz, dz)))), 1000.0)
+
+def Grid.at(+v: F32, +o: F32, +s: F32) -> U32:
+  F32.to_u32(F32.floor(F32.div(F32.sub(v, o), s)))
+
+# two corners in one cell
+def Grid.same(+ax: F32, +ay: F32, +az: F32, +bx: F32, +by: F32, +bz: F32, +x0: F32, +y0: F32, +z0: F32, +s: F32) -> Bool:
+  Bool.and(U32.is_eq(Grid.at(ax, x0, s), Grid.at(bx, x0, s)), Bool.and(U32.is_eq(Grid.at(ay, y0, s), Grid.at(by, y0, s)), U32.is_eq(Grid.at(az, z0, s), Grid.at(bz, z0, s))))
+
+def Grid.keep(+t: G.Tri3, +x0: F32, +y0: F32, +z0: F32, +s: F32) -> Bool:
+  match t:
+    case G.Tri3{+ax, +ay, +az, +bx, +by, +bz, +cx, +cy, +cz, _}:
+      Bool.not(Bool.or(Grid.same(ax, ay, az, bx, by, bz, x0, y0, z0, s), Bool.or(Grid.same(bx, by, bz, cx, cy, cz, x0, y0, z0, s), Grid.same(ax, ay, az, cx, cy, cz, x0, y0, z0, s))))
+
+def Grid.put.k(keep: Bool, t: G.Tri3, acc: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  match keep:
+    case True{}:
+      t <> acc
+    case False{}:
+      acc
+
+def Grid.thin(ts: List<&2, G.Tri3>, +x0: F32, +y0: F32, +z0: F32, +s: F32, acc: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  match ts:
+    case Nil{}:
+      List.reverse(&2, G.Tri3, acc)
+    case +t <> r:
+      Grid.thin(r, x0, y0, z0, s, Grid.put.k(Grid.keep(t, x0, y0, z0, s), t, acc))
+
+def Solid.thin.go(+s: F32, +x0: F32, +y0: F32, +z0: F32, +ts: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  Bool.pick(List<&2, G.Tri3>, F32.is_gt(s, 0.0), Grid.thin(ts, x0, y0, z0, s, Nil{}), ts)
+
+def Solid.thin.k(g: Grid, +ts: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  match g:
+    case Grid{+x0, +y0, +z0, x1, y1, z1}:
+      Solid.thin.go(Grid.cell(Grid{x0, y0, z0, x1, y1, z1}), x0, y0, z0, ts)
+
+def Solid.thin(+ts: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  +big = {1000000000.0 : F32}
+  Solid.thin.k(Grid.go(ts, Grid{big, big, big, F32.neg(big), F32.neg(big), F32.neg(big)}), ts)
+
 # a model's triangles as a solid
 def Solid.of(ts: List<&2, G.Tri3>) -> Solid:
   SE.fin(SE.go(ts, SE{Enc.new(), 0, 0, 0, Nil{}}))

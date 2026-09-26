@@ -1282,6 +1282,30 @@ def Mech.sent(r: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String, +thread: S
 def Mech.list(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String) -> IO(Unit):
   IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", Mech.cmd()], cwd), r => Mech.sent(r, inbox, client, id, thread, cwd))
 
+# a part's renders, drawn on request (mech.render: the Mech page's
+# Create renders): `backplane --render` beside this program, in the
+# project, then the parts listed again; the answer is a listing that also
+# names what was rendered and why it failed ("" when it did not)
+def Mech.said(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, _}:
+      ""
+    case P.Ran{_, out}:
+      String.take(String.trim(out), 300n)
+
+def Mech.rendered(+err: String, l: P.Ran, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +path: String) -> IO(Unit):
+  match l:
+    case P.Ran{_, out}:
+      GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"mech", J.Str{out}}, J.KV{"root", J.Str{cwd}}, J.KV{"thread", J.Str{thread}},
+        J.KV{"rendered", J.Str{path}}, J.KV{"error", J.Str{err}}]))
+
+def Mech.render(+inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +path: String) -> IO(Unit):
+  do IO<Unit>:
+    exe : String <- H.Sys.exe_dir()
+    r : P.Ran <- P.Proc.run(exe ++ "/backplane", ["--render", path], cwd)
+    l : P.Ran <- P.Proc.run("sh", ["-c", Mech.cmd()], cwd)
+    Mech.rendered(Mech.said(r), l, inbox, client, id, thread, cwd, path)
+
 def Snooze.tz(r: P.Ran) -> String:
   match r:
     case P.Ran{0, out}:
@@ -1352,12 +1376,14 @@ def GitJob.run.k(i: Nat, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U
       BtwJob.run(tx, inbox, client, id, thread, a, b)
     case 8n:
       Mech.list(inbox, client, id, thread, cwd)
+    case 9n:
+      Mech.render(inbox, client, id, thread, cwd, a)
     case _:
       GitJob.run.git(tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # a job the hub asked for: a git job, or one of the sidebar's
 def GitJob.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad", "title", "btw", "mech"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
+  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad", "title", "btw", "mech", "render"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------

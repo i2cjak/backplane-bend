@@ -204,6 +204,12 @@ struct MechPage: Decodable {
     let name, path: String
     let shots: [MechShot]
     let empty: String
+    // the part's path from the project ("mech-render", "mech-renders"), a
+    // render job running, the render button's label, why the last failed
+    let rel: String?
+    let busy: Bool?
+    let render: String?
+    let err: String?
 }
 
 struct MechShot: Decodable, Hashable {

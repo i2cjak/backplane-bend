@@ -118,7 +118,7 @@ fun App(m: AppModel) {
             BackHandler { pairing = false }
             Hubs(m, s) { pairing = false }
         }
-        s.thread != null && s.thread.viewer.open == "mech" && s.thread.viewer.mech != null -> {
+        s.thread != null && s.thread.viewer.open == "renders" && s.thread.viewer.mech != null -> {
             BackHandler { m.act("view", "") }
             MechScreen(m, s.thread.viewer, s.thread.viewer.mech)
         }
@@ -741,14 +741,16 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             s.renderer.top = v.top
             s.renderer.bottom = v.bottom
             s.renderer.orbit.fov = v.fov
-            s.setThree(v.open == "3d")
+            s.setThree(v.open == "3d" || v.open == "mech")
             if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab, v.look)
             if (s.renderer.off != v.off) { s.renderer.off = v.off; s.requestRender() }
-            if (v.open == "3d") s.mesh(mesh)
+            if (v.open == "3d" || v.open == "mech") s.mesh(mesh)
             s.mark(v.picked)
         })
         }
         when {
+            // Mech with no part to show: what the page says
+            v.open == "mech" && v.key.isEmpty() -> Text(v.mech?.say?.ifEmpty { null } ?: v.mech?.note ?: "", Modifier.align(Alignment.Center).padding(24.dp), color = Color.Gray)
             // a part alone (from the Mechanical page) has no board plot under it
             v.layers.isEmpty() && mesh == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             v.layers.isEmpty() && mesh!!.none.isNotEmpty() -> Text(mesh.none, Modifier.align(Alignment.Center), color = Color.Gray)
@@ -773,7 +775,20 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = if (v.light) Color.Black else Color.White) }
         }
         ViewerControls(m, v, f?.chunks?.map { it.layer }?.toSet() ?: emptySet(), Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 56.dp))
+        if (v.open == "mech") v.mech?.let { p -> MechBar(m, p, v.light, Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 108.dp)) }
         v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+// over a part in 3D: the thread's parts (a tap shows another) and Renders
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MechBar(m: AppModel, p: MechPage, light: Boolean, modifier: Modifier) {
+    val fg = if (light) Color.Black else Color.White
+    FlowRow(modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (c in p.parts) FilterChip(c.on, onClick = { m.act("mech-part", c.value) },
+            label = { Text(c.label, color = if (c.on) MaterialTheme.colorScheme.onSecondaryContainer else fg) })
+        OutlinedButton(onClick = { m.act("mech-renders", p.rel) }) { Text("Renders", color = fg) }
     }
 }
 
@@ -801,10 +816,16 @@ private fun MechScreen(m: AppModel, v: Viewer, p: MechPage) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     for (c in p.parts) FilterChip(c.on, onClick = { m.act("mech-part", c.value) }, label = { Text(c.label) })
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { m.act("mech-3d", p.path) }, enabled = p.path.isNotEmpty()) { Text("Open in 3D") }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { m.act("mech-3d", p.path) }, enabled = p.path.isNotEmpty()) { Text("3D") }
+                    // the render job: queued on the hub, its pictures in when done
+                    Button(onClick = { m.act("mech-render", p.rel) }, enabled = !p.busy && p.rel.isNotEmpty()) {
+                        if (p.busy) CircularProgressIndicator(Modifier.size(16.dp).padding(end = 6.dp), strokeWidth = 2.dp)
+                        Text(p.render)
+                    }
                     OutlinedButton(onClick = { m.act("mech-refresh") }) { Text("Refresh") }
                 }
+                if (p.err.isNotEmpty()) Text("Rendering failed: ${p.err}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
             }
             if (p.empty.isNotEmpty()) Text(p.empty, color = MaterialTheme.colorScheme.outline)
             for (s in p.shots) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

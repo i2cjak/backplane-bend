@@ -2359,11 +2359,11 @@ def Lay.kicad(on: Bool, +ty: Ty, +x1: U32) -> Out:
     case False{}:
       Out.none()
 
-def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32) -> Out:
+def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32, +mech: Bool) -> Out:
   match x:
     case V.Vx{+k, +p, +ts, _, _, +busy, _, _, _, _, +bm}:
       +help = Lay.help(k)
-      +ko = Bool.and(Lay.kicad.on(k, empty, ts, bm), Bool.not(MC.Mech.is_model(p)))
+      +ko = Bool.and(Lay.kicad.on(k, empty, ts, bm), Bool.and(Bool.not(MC.Mech.is_model(p)), Bool.not(mech)))
       +kw = Lay.kicad.w(ty, ko)
       +bw = Lay.button.w(ty, "Board")
       +sw = Lay.button.w(ty, "Schematic")
@@ -2374,8 +2374,8 @@ def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +i
           D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)]),
         Lay.tab(ty, "Board", 0, k, (x0 + 16 : U32)),
         Lay.tab(ty, "Schematic", 1, k, (x0 + 24 + bw : U32)),
-        Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
-        Lay.chip(ty, (x0 + 40 + bw + sw + tw : U32), 12, "Mech", U32.is_eq(k, 5), "mech", ""),
+        Lay.chip(ty, (x0 + 32 + bw + sw : U32), 12, "3D", Bool.and(U32.is_eq(k, 2), Bool.not(mech)), "vw-kind", "2"),
+        Lay.chip(ty, (x0 + 40 + bw + sw + tw : U32), 12, "Mech", Bool.or(U32.is_eq(k, 5), mech), "mech", ""),
         Lay.tab(ty, "Browser", 3, k, (x0 + 48 + bw + sw + tw + mw : U32)),
         Lay.tab(ty, "Diff", 4, k, (x0 + 56 + bw + sw + tw + mw + Lay.button.w(ty, "Browser") : U32)),
         Lay.diff.if(U32.is_eq(k, 4), ty, diff, x0, x1, h, scroll),
@@ -2391,10 +2391,10 @@ def Lay.picked(x: V.Vx) -> String:
     case V.Vx{_, p, _, _, _, _, _, _, _, _, bm}:
       p
 
-def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +x0: U32, +x1: U32, +h: U32) -> Out:
+def Lay.viewer.vw(+ty: Ty, v: V.Vw, +draft: String, +diff: String, +mech: Bool, +x0: U32, +x1: U32, +h: U32) -> Out:
   match v:
     case V.Vw{+ss, V.View{_, _, oy}, _, _, _, _, _, _, _, _, +vx}:
-      Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft, diff, D.Draw.floor(F32.max(oy, 0.0)))
+      Lay.viewer.k(ty, x0, x1, h, List.is_empty(&2, V.Seen, ss), vx, V.Pick.info(ss, Lay.picked(vx)), draft, diff, D.Draw.floor(F32.max(oy, 0.0)), mech)
 
 # Layers and sheets
 # -----------------
@@ -2672,15 +2672,33 @@ def Mech.page.k(state: Nat, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> O
       Mech.say(ty, MC.Mech.none(), x0, x1, 68)
     case _:
       +cur = U.Mpage.cur.path(u)
-      +bw = Lay.button.w(ty, "Open in 3D")
+      +bw = Lay.button.w(ty, "3D")
+      +gl = U.Mpage.render.label(u)
+      +gw = Lay.button.w(ty, gl)
       +rw = Lay.button.w(ty, "Refresh")
-      +cx1 = {(x1 - 32 - bw - rw : U32) : U32}
+      +cx1 = {(x1 - 40 - bw - gw - rw : U32) : U32}
       +top = {(Mech.chips.h(U.Mpage.parts(u), ty, (x0 + 16 : U32), cx1, (x0 + 16 : U32), 64) + 16 : U32) : U32}
+      +err = U.Mpage.err(u)
       Out.all([
         Mech.chips(U.Mpage.parts(u), ty, cur, (x0 + 16 : U32), cx1, (x0 + 16 : U32), 64),
-        Lay.button(ty, D.Clip.all(), (x1 - 24 - bw - rw : U32), 64, "Open in 3D", T.Th.accent(), "mech-3d", MC.Mech.abs(U.Mpage.root(u), cur)),
+        Lay.button(ty, D.Clip.all(), (x1 - 32 - bw - gw - rw : U32), 64, "3D", T.Th.text(), "mech-3d", MC.Mech.abs(U.Mpage.root(u), cur)),
+        Lay.button(ty, D.Clip.all(), (x1 - 24 - gw - rw : U32), 64, gl, Bool.pick(U32, String.is_empty(U.Mpage.busy(u)), T.Th.accent(), T.Th.faint()),
+          Bool.pick(String, String.is_empty(U.Mpage.busy(u)), "mech-render", ""), cur),
         Lay.button(ty, D.Clip.all(), (x1 - 16 - rw : U32), 64, "Refresh", T.Th.text(), "mech-refresh", ""),
-        Mech.part(U.Mpage.cur(u), ty, u, x0, x1, top, h)])
+        Out.when(Bool.not(String.is_empty(err)), Mech.say(ty, "Rendering failed: " ++ err, x0, x1, (top - 6 : U32))),
+        Mech.part(U.Mpage.cur(u), ty, u, x0, x1, Bool.pick(U32, String.is_empty(err), top, (top + 28 : U32)), h)])
+
+# over a part in 3D: the thread's parts (a click shows another in 3D) and
+# Renders, its pictures
+def Mech.bar.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32) -> Out:
+  match on:
+    case True{}:
+      +rw = Lay.button.w(ty, "Renders")
+      Out.all([
+        Mech.chips(U.Mpage.parts(u), ty, U.Mpage.cur.path(u), (x0 + 16 : U32), (x1 - 68 - rw : U32), (x0 + 16 : U32), 64),
+        Lay.button(ty, D.Clip.all(), (x1 - 60 - rw : U32), 64, "Renders", T.Th.text(), "mech-renders", U.Ui.view_get(u, "view.path"))])
+    case False{}:
+      Out.none()
 
 # the Mechanical tab: the page, and where to get FreeCAD when the hub has none
 def Lay.mech.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out:
@@ -2695,7 +2713,8 @@ def Lay.mech.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
   Out.all([
     Lay.mech.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 5), ty, S.Nui.ui(n), x0, x1, h),
-    Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h),
+    Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), U.Mpage.onpart(S.Nui.ui(n)), x0, x1, h),
+    Mech.bar.if(U.Mpage.onpart(S.Nui.ui(n)), ty, S.Nui.ui(n), x0, x1),
     Lay.page.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 3), ty, S.Nui.ui(n), x0, x1, h),
     Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h),
     Side.ground.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, x1)])

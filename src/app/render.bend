@@ -117,7 +117,7 @@ def Render.run(+model: String, +size: String) -> IO(Unit):
     +cache : String <- PT.Parts.cache()
     mk : P.Ran <- P.Proc.run("mkdir", ["-p", cache], "/")
     +glb : String <- PT.Parts.glb(path, cache, step)
-    Render.go(path, glb, Render.num(size, 0n, 1200), Render.num(size, 1n, 900))
+    Render.go(path, glb, Render.num(size, 0n, 800), Render.num(size, 1n, 600))
 
 def Render.usage() -> IO(Unit):
   IO.die(Unit, 2, "usage: backplane --render MODEL.step [MORE.step ...] [--size WxH]  (writes renders/<name>.<view>.png beside each)")

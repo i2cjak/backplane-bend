@@ -783,7 +783,7 @@ struct PlotCanvasView: UIViewRepresentable {
         c.renderer.top = viewer.top
         c.renderer.bottom = viewer.bottom
         c.renderer.orbit.fov = viewer.fov
-        let three = viewer.open == "3d"
+        let three = viewer.open == "3d" || viewer.open == "mech"
         if c.renderer.three != three {
             c.renderer.three = three
             c.refit()
@@ -921,8 +921,10 @@ struct PlotScreen: View {
             PlotCanvasView(frame: f?.none.isEmpty == true ? f : nil, mesh: m, viewer: viewer) { model.act("view-pick", $0) }
                 .id(viewer.layers.isEmpty ? viewer.key : "")
                 .ignoresSafeArea()
-            // a part alone (from the Mechanical page) has no board plot under it
-            if viewer.layers.isEmpty, m == nil {
+            // Mech with no part to show: what the page says
+            if viewer.open == "mech", viewer.key.isEmpty {
+                Text(viewer.mech.map { $0.say.isEmpty ? $0.note : $0.say } ?? "").foregroundStyle(.secondary).padding().frame(maxHeight: .infinity)
+            } else if viewer.layers.isEmpty, m == nil {
                 ProgressView().tint(.white).frame(maxHeight: .infinity)
             } else if viewer.layers.isEmpty, let why = m?.none, !why.isEmpty {
                 Text(why).foregroundStyle(.secondary).frame(maxHeight: .infinity)
@@ -954,6 +956,7 @@ struct PlotScreen: View {
             .padding(.horizontal)
             .padding(.top, 6)
             ViewerControls(model: model, viewer: viewer, present: Set(f?.chunks.map { $0.layer } ?? []))
+            if viewer.open == "mech", let p = viewer.mech { MechBar(model: model, page: p) }
             }
             if let c = viewer.card {
                 CardView(card: c, model: model).frame(maxHeight: .infinity, alignment: .bottom)
@@ -961,6 +964,26 @@ struct PlotScreen: View {
         }
         .preferredColorScheme(viewer.light == true ? .light : .dark)
         .statusBarHidden()
+    }
+}
+
+// over a part in 3D: the thread's parts (a tap shows another) and Renders
+struct MechBar: View {
+    let model: AppModel
+    let page: MechPage
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(page.parts, id: \.value) { c in
+                    Button(c.label) { model.act("mech-part", c.value) }
+                        .buttonStyle(.bordered)
+                        .tint(c.on ? .accentColor : .secondary)
+                }
+                Button("Renders") { model.act("mech-renders", page.rel ?? "") }.buttonStyle(.bordered)
+            }
+            .padding(.horizontal)
+        }
     }
 }
 
@@ -1001,9 +1024,17 @@ struct MechScreen: View {
                             }
                         }
                         HStack(spacing: 8) {
-                            Button("Open in 3D") { model.act("mech-3d", page.path) }.buttonStyle(.borderedProminent).disabled(page.path.isEmpty)
+                            Button("3D") { model.act("mech-3d", page.path) }.buttonStyle(.bordered).disabled(page.path.isEmpty)
+                            // the render job: queued on the hub, its pictures in when done
+                            Button { model.act("mech-render", page.rel ?? "") } label: {
+                                HStack(spacing: 6) {
+                                    if page.busy == true { ProgressView() }
+                                    Text(page.render ?? "Create renders")
+                                }
+                            }.buttonStyle(.borderedProminent).disabled(page.busy == true || (page.rel ?? "").isEmpty)
                             Button("Refresh") { model.act("mech-refresh") }.buttonStyle(.bordered)
                         }
+                        if let e = page.err, !e.isEmpty { Text("Rendering failed: \(e)").font(.caption).foregroundStyle(.red) }
                     }
                     if !page.empty.isEmpty { Text(page.empty).foregroundStyle(.secondary) }
                     ForEach(page.shots, id: \.url) { s in

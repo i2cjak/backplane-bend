@@ -129,6 +129,9 @@ data class Viewer(
 data class MechPage(
     val say: String, val note: String, val parts: List<Choice>, val name: String, val path: String,
     val shots: List<MechShot>, val empty: String,
+    // the part's path from the project ("mech-render", "mech-renders"), a
+    // render job running, the render button's label, why the last failed
+    val rel: String = "", val busy: Boolean = false, val render: String = "", val err: String = "",
 )
 
 data class MechShot(val view: String, val url: String)
@@ -376,7 +379,8 @@ private fun viewer(o: JSONObject) = Viewer(
     o.optInt("off"), o.optBoolean("parts", true), o.optString("note"),
     o.optJSONObject("mech")?.let { p ->
         MechPage(p.optString("say"), p.optString("note"), choices(p.optJSONArray("parts")), p.optString("name"), p.optString("path"),
-            p.optJSONArray("shots").map { MechShot(it.optString("view"), it.optString("url")) }, p.optString("empty"))
+            p.optJSONArray("shots").map { MechShot(it.optString("view"), it.optString("url")) }, p.optString("empty"),
+            p.optString("rel"), p.optBoolean("busy"), p.optString("render"), p.optString("err"))
     },
 )
 
