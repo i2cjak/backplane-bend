@@ -59,8 +59,8 @@ def Th.code() -> U32:
   1052174
 
 # The light theme (Settings, Appearance): each colour of the palette above
-# has a light twin, swapped into every op a frame draws (main.bend's
-# Pal.ops); the diff's row grounds too. Colours not in the palette (a
+# has a light twin, swapped into every op a frame draws (layout.bend's
+# Theme.ops); the diff's row grounds too. Colours not in the palette (a
 # project's badge, a picture, the board viewer's scene) are left alone.
 
 def Th.swap.to(same: Bool, +to: U32, rest: U32) -> U32:

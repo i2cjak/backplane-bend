@@ -9,7 +9,7 @@ import ../../src/gfx/draw.bend as D
 import ../../src/app/theme.bend as T
 
 # A frame of the window from an event log and an info message, as a PPM,
-# with no window: `ui_snap EVENTS INFO THREAD FLAGS OUT` (the INFO file may hold
+# with no window (its timeline and its theme as the window draws them): `ui_snap EVENTS INFO THREAD FLAGS OUT` (the INFO file may hold
 # more messages, a line each, received in order: voice messages, say;
 # FLAGS is a
 # comma-separated list of Ui flags to open, e.g. "models" or "-"; then
@@ -102,8 +102,8 @@ def go(+as: List<&2, String>) -> IO(Unit):
     +ww : U32 = Maybe.default(&2, U32, U32.read(arg(as, 5n)), 1400)
     +hh : U32 = Maybe.default(&2, U32, U32.read(arg(as, 6n)), 860)
     +n : S.Nui = S.Nui.init(ui_of(bs, U8.Utf8.decode(ib), arg(as, 2n), arg(as, 3n)), ww, hh)
-    +os : List<&2, R.Op> = ops(L.Lay.frame(ty, L.TL.memo.none(), n))
-    +img : Image = R.Frame.render(ww, hh, os, T.Th.bg())
+    +os : List<&2, R.Op> = L.Theme.ops(S.Nui.light(n), ops(L.Lay.frame(ty, L.TL.memos.now(L.Lay.memos(ty, n, Nil{})), n)))
+    +img : Image = R.Frame.render(ww, hh, os, L.Theme.ground(S.Nui.look(n)))
     g : File <- IO.try(File, File.open(arg(as, 4n), "w"))
     w : File & Result<&1, &1, U32 & String, Unit> <- File.write_bytes(g, D.Snap.ppm(img, ww, hh))
     IO.print("wrote " ++ arg(as, 4n))

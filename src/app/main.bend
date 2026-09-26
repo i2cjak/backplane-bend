@@ -1327,32 +1327,6 @@ def Vx.kind(x: V.Vx) -> U32:
     case V.Vx{k, _, _, _, _, _, _, _, _, _, bm}:
       k
 
-# The light theme: every op of the UI in the palette's light twin
-# (theme.bend's Th.light); the dark theme draws them as they are
-def Pal.op(o: R.Op) -> R.Op:
-  match o:
-    case R.Op{x0, y0, x1, y1, +c, a, sh}:
-      R.Op{x0, y0, x1, y1, T.Th.light(c), a, sh}
-
-# (onto a reversed accumulator: a frame holds many ops)
-def Pal.onto(os: List<&2, R.Op>, acc: List<&2, R.Op>) -> List<&2, R.Op>:
-  match os:
-    case Nil{}:
-      acc
-    case o <> t:
-      Pal.onto(t, Pal.op(o) <> acc)
-
-def Pal.ops(light: Bool, os: List<&2, R.Op>) -> List<&2, R.Op>:
-  match light:
-    case True{}:
-      List.reverse(&2, R.Op, Pal.onto(os, Nil{}))
-    case False{}:
-      os
-
-# the window's plain ground in its theme
-def Pal.ground(+flip: U32) -> U32:
-  T.Th.of(V.Look.ui(flip), T.Th.bg())
-
 # the browser's frame, scaled down to fit the panel and centred
 def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, +flip: U32, b: BM.Bitmap) -> Image:
   match b:
@@ -1363,7 +1337,7 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, +flip: U32, b: BM.Bitmap) -> I
       +fw = {D.Draw.floor(F32.mul(U32.to_f32(w), sc)) : U32}
       +fh = {D.Draw.floor(F32.mul(U32.to_f32(h), sc)) : U32}
       BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{w, h, d, t, 0, 0, 0, 0}, (x0 + U32.shr((pw - fw : U32)) : U32), (52 + U32.shr((ph - fh : U32)) : U32), fw, fh),
-        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, V.Look.ground(flip), 255)], Pal.ground(flip)))
+        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, V.Look.ground(flip), 255)], L.Theme.ground(flip)))
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base,
 # plain background left of the panel, so frames compare it unchanged):
@@ -1387,12 +1361,12 @@ def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
-      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, Pal.ground(flip), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now, V.Look.ground(flip)))
+      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, L.Theme.ground(flip), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now, V.Look.ground(flip)))
     case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
       Shell.shot.base(ww, hh, x0, flip, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
       FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, V.Look.ground(flip), 255)
-        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), Pal.ground(flip))
+        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), L.Theme.ground(flip))
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match redraw vw:
@@ -1424,7 +1398,7 @@ def Vx.pick(x: V.Vx) -> String:
 def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Plan:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
-      TI.Frame.plan(ww, hh, List.append(&2, R.Op, Pal.ops(V.Look.ui(flip), ops), List.reverse(&2, R.Op,
+      TI.Frame.plan(ww, hh, List.append(&2, R.Op, L.Theme.ops(V.Look.ui(flip), ops), List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
           V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh}, flip)))),
         Pics.over(hs, pics, Nil{}, ww, hh, b), prev, dy)
@@ -1437,7 +1411,7 @@ def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +
     case True{}:
       Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev, dy)
     case False{}:
-      TI.Frame.plan(ww, hh, Pal.ops(V.Look.ui(flip), ops), Pics.over(hs, pics, Nil{}, ww, hh, Pix{Pal.ground(flip)}), prev, dy)
+      TI.Frame.plan(ww, hh, L.Theme.ops(V.Look.ui(flip), ops), Pics.over(hs, pics, Nil{}, ww, hh, Pix{L.Theme.ground(flip)}), prev, dy)
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:

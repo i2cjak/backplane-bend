@@ -84,6 +84,32 @@ def Out.when(on: Bool, o: Out) -> Out:
     case False{}:
       Out.none()
 
+# The light theme: every op of the UI in the palette's light twin
+# (theme.bend's Th.light); the dark theme draws them as they are
+def Theme.op(o: R.Op) -> R.Op:
+  match o:
+    case R.Op{x0, y0, x1, y1, +c, a, sh}:
+      R.Op{x0, y0, x1, y1, T.Th.light(c), a, sh}
+
+# (onto a reversed accumulator: a frame holds many ops)
+def Theme.onto(os: List<&2, R.Op>, acc: List<&2, R.Op>) -> List<&2, R.Op>:
+  match os:
+    case Nil{}:
+      acc
+    case o <> t:
+      Theme.onto(t, Theme.op(o) <> acc)
+
+def Theme.ops(light: Bool, os: List<&2, R.Op>) -> List<&2, R.Op>:
+  match light:
+    case True{}:
+      List.reverse(&2, R.Op, Theme.onto(os, Nil{}))
+    case False{}:
+      os
+
+# the window's plain ground in its theme
+def Theme.ground(+flip: U32) -> U32:
+  T.Th.of(V.Look.ui(flip), T.Th.bg())
+
 # Typography
 # ----------
 
@@ -2061,7 +2087,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
   +tms = U.Models.menu(U.Str.get(info, "models"), tp)
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
-  +total = {(1020 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
+  +total = {(1040 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
   +pair = U.Pair.link(info)
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
@@ -2104,19 +2130,19 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
     Set.row.r(ty, "Theme", "The window and the web page (phones unset follow their own system).", x, (b2 + 604 + dy + ey : U32), w, 150),
     Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") - 6 - Lay.button.w(ty, "Dark") : U32), (b2 + 618 + dy + ey : U32), "Dark", Bool.not(String.eq(M.Setting.get(st, "ui.theme", ""), "light")), "setting", "ui.theme=dark"),
     Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") : U32), (b2 + 618 + dy + ey : U32), "Light", String.eq(M.Setting.get(st, "ui.theme", ""), "light"), "setting", "ui.theme=light"),
-    Set.head(ty, "Network and updates", x, (b2 + 670 + dy + ey : U32)),
-    Set.card(x, (b2 + 702 + dy + ey : U32), w, 216),
+    Set.head(ty, "Network and updates", x, (b2 + 690 + dy + ey : U32)),
+    Set.card(x, (b2 + 722 + dy + ey : U32), w, 216),
     Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), Bool.pick(String, String.eq(U.Str.get(info, "tailnet"), "off"), "Listening on " ++ U.Str.get(info, "listen") ++ " only (started with --no-tailscale, or Tailscale is not up).",
-      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 704 + dy + ey : U32), w),
-    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 756 + dy + ey : U32), w, 80),
-    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 766 + dy + ey : U32), "Copy", T.Th.soft(), "copy", pair)),
-    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 808 + dy + ey : U32), w, 150),
-    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 818 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
-      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 818 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", ""))),
-    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 860 + dy + ey : U32), w, 190),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 874 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 874 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
-    Set.voice(ty, st, n, x, w, (b2 + 938 + dy + ey : U32))])),
+      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 724 + dy + ey : U32), w),
+    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 776 + dy + ey : U32), w, 80),
+    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 786 + dy + ey : U32), "Copy", T.Th.soft(), "copy", pair)),
+    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 828 + dy + ey : U32), w, 150),
+    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 838 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
+      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 838 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", ""))),
+    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 880 + dy + ey : U32), w, 190),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 894 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 894 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
+    Set.voice(ty, st, n, x, w, (b2 + 958 + dy + ey : U32))])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])
