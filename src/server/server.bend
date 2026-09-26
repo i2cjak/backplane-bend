@@ -4485,6 +4485,34 @@ def Hub.loop(fuel: Nat, h: Hub) -> IO(Unit):
       Hub.inbox(h, inbox => h2 =>
         IO.bind(Maybe<&1, Msg>, Unit, Chan.recv(Msg, inbox), m => Hub.got(m, h2, h3 => Hub.loop(f, h3))))
 
+# The web port was taken at start (often only for a moment, by the process
+# this one replaces): try it again every few seconds, and once it is ours,
+# start what Main.serve starts beside the hub, so a restart never leaves the
+# hub unreachable from other machines and phones
+def Listen.up(l: Listener, +web: String, +inbox: Chan(Msg), +cfg: Cfg, +addr: String) -> IO(Unit):
+  do IO<Unit>:
+    Log.info("web server on: " ++ addr)
+    IO.spawn(Unit, Accept.loop(Fuel.forever(), l, 1, web, inbox, True{}, Net.token(Cfg.net(cfg)), ""))
+    Tailnet.start(Cfg.net(cfg), Cfg.port(cfg), web, inbox)
+    Machines.start(inbox, Cfg.port(cfg))
+
+def Listen.got(r: Result<&1, &1, U32 & String, Listener>, +web: String, +inbox: Chan(Msg), +cfg: Cfg, +addr: String, k: Unit -> IO(Unit)) -> IO(Unit):
+  match r:
+    case Done{l}:
+      Listen.up(l, web, inbox, cfg, addr)
+    case Fail{_}:
+      k(Unit{})
+
+def Listen.retry(fuel: Nat, +web: String, +inbox: Chan(Msg), +cfg: Cfg, +addr: String) -> IO(Unit):
+  match fuel:
+    case 0n:
+      IO.pure(Unit, Unit{})
+    case 1n+f:
+      do IO<Unit>:
+        IO.sleep(2000)
+        l : Result<&1, &1, U32 & String, Listener> <- H.Net.listen(Cfg.host(cfg), Cfg.port(cfg))
+        Listen.got(l, web, inbox, cfg, addr, _ => Listen.retry(f, web, inbox, cfg, addr))
+
 # without the web server (its port was taken): hub and ticker only
 def Main.headless(h: Hub, +inbox: Chan(Msg), +cfg: Cfg, front: Chan(Msg) -> IO(Unit)) -> IO(Unit):
   do IO<Unit>:
@@ -4515,7 +4543,8 @@ def Main.listened(r: Result<&1, &1, U32 & String, Listener>, h: Hub, +web: Strin
       Main.failed(e, h, addr)
     case Fail{_} False{}:
       do IO<Unit>:
-        Log.info("web server off: " ++ addr ++ " is taken")
+        Log.info("web server off: " ++ addr ++ " is taken; trying again every 2 s")
+        IO.spawn(Unit, Listen.retry(Fuel.forever(), web, inbox, cfg, addr))
         Main.headless(h, inbox, cfg, front)
 
 # Browser frames
