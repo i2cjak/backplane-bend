@@ -923,6 +923,19 @@ def Watch.glb.done(r: P.Ran, +glb: String, +key: String, +q: Chan(ShellMsg)) -> 
     case P.Ran{_, out}:
       Watch.say(key, "3D export failed: " ++ String.take(String.trim(out), 160n), q)
 
+# a STEP's GLB from the models cache (converted once per version, shared
+# with `backplane --render` and the phones' view)
+def Watch.stepfile.got(+glb: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(glb), Watch.say(key, "Could not mesh this STEP file (installing FreeCAD lets Backplane mesh large ones)", q), Watch.glb.done(P.Ran{0, ""}, glb, key, q))
+
+def Watch.stepfile(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  do IO<Unit>:
+    +step : String <- PT.Parts.step2glb()
+    +cache : String <- PT.Parts.cache()
+    mk : P.Ran <- P.Proc.run("mkdir", ["-p", cache], "/")
+    +glb : String <- PT.Parts.glb(path, cache, step)
+    Watch.stepfile.got(glb, key, q)
+
 def Watch.mesh.k(glb: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match glb:
     case True{}:
@@ -1076,12 +1089,19 @@ def Watch.pcb3(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
     now : Nat <- IO.now()
     Watch.pcb3.r(Read3.of(bs), path, key, now, q)
 
+def Watch.mesh.s(step: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
+  match step:
+    case True{}:
+      Watch.stepfile(path, key, q)
+    case False{}:
+      Watch.mesh.k(String.ends_with(path, ".glb"), path, key, q)
+
 def Watch.mesh.b(pcb: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match pcb:
     case True{}:
       Watch.pcb3(path, key, q)
     case False{}:
-      Watch.mesh.k(String.ends_with(path, ".glb"), path, key, q)
+      Watch.mesh.s(MC.Mech.is_step(path), path, key, q)
 
 # a 3D model: a board drawn from its file; a .glb as it is; a STEP
 # converted to GLB first

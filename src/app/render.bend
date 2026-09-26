@@ -87,7 +87,7 @@ def Render.tris(+step: Bool, bs: List<&2, U32>) -> List<&2, G.Tri3>:
 def Render.go.k(none: Bool, +model: String, +glb: String, +w: U32, +h: U32) -> IO(Unit):
   match none:
     case True{}:
-      IO.die(Unit, 1, "backplane --render: could not read " ++ model ++ " (a STEP or GLB file)")
+      IO.print_err("backplane --render: could not mesh " ++ model ++ " (a STEP or GLB file; a large STEP needs FreeCAD installed). Nothing was drawn.")
     case False{}:
       do IO<Unit>:
         bs : List<&2, U32> <- K.Io.bytes(glb)
@@ -120,12 +120,44 @@ def Render.run(+model: String, +size: String) -> IO(Unit):
     Render.go(path, glb, Render.num(size, 0n, 1200), Render.num(size, 1n, 900))
 
 def Render.usage() -> IO(Unit):
-  IO.die(Unit, 2, "usage: backplane --render MODEL.step [--size WxH]  (writes renders/<name>.<view>.png beside it)")
+  IO.die(Unit, 2, "usage: backplane --render MODEL.step [MORE.step ...] [--size WxH]  (writes renders/<name>.<view>.png beside each)")
+
+# the models named (every argument but --size and its value)
+def Render.keep(drop: Bool, +a: String, acc: List<&2, String>) -> List<&2, String>:
+  match drop:
+    case True{}:
+      acc
+    case False{}:
+      a <> acc
+
+def Render.models.go(xs: List<&2, String>, +skip: Bool, acc: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      List.reverse(&2, String, acc)
+    case +a <> t:
+      Render.models.go(t, String.eq(a, "--size"), Render.keep(Bool.or(skip, String.eq(a, "--size")), a, acc))
+
+def Render.models(xs: List<&2, String>) -> List<&2, String>:
+  Render.models.go(xs, False{}, Nil{})
+
+def Render.all(ms: List<&2, String>, +size: String) -> IO(Unit):
+  match ms:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case +m <> t:
+      IO.bind(Unit, Unit, Render.run(m, size), u => Render.all(t, size))
+
+def Render.main.k(ms: List<&2, String>, +size: String) -> IO(Unit):
+  match ms:
+    case Nil{}:
+      Render.usage()
+    case _ <> _:
+      Render.all(ms, size)
 
 def Render.main(xs: List<&2, String>) -> IO(Unit):
   match xs:
-    case _ <> +model <> +rest:
-      Bool.pick(IO(Unit), String.starts_with(model, "--"), Render.usage(), Render.run(model, Render.opt(rest, "--size")))
+    case _ <> +rest:
+      Render.main.k(Render.models(rest), Render.opt(rest, "--size"))
     case _:
       Render.usage()
 

@@ -47,4 +47,5 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("wang.harlon.quickjs:wrapper-android:3.2.3")
+    implementation("androidx.javascriptengine:javascriptengine:1.0.0")
 }

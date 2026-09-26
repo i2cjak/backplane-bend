@@ -370,12 +370,17 @@ def Pv.is_step(+p: String) -> Bool:
 def Pv.glb.flags(+bare: Bool, +out: String, +path: String) -> List<&2, String>:
   List.append(&2, String, ["pcb", "export", "glb"], List.append(&2, String, Bool.pick(List<&2, String>, bare, ["--no-components"], ["--subst-models"]), ["-f", "-o", out, path]))
 
+# a STEP's GLB is written beside and moved in whole: a reader never meets
+# half of one
+def Pv.step.ran(r: PR.Ran, +out: String) -> IO(PR.Ran):
+  IO.bind(Result<&1, &1, U32 & String, Unit>, PR.Ran, H.FS.rename(out ++ ".part", out), m => IO.pure(PR.Ran, r))
+
 def Pv.glb.run(glb: Bool, step: Bool, +bare: Bool, +path: String, +out: String) -> IO(PR.Ran):
   match glb step:
     case True{} _:
       IO.pure(PR.Ran, PR.Ran{0, ""})
     case False{} True{}:
-      IO.bind(String, PR.Ran, Pv.step2glb(), x => PR.Proc.run(x, [path, out], "/"))
+      IO.bind(String, PR.Ran, Pv.step2glb(), x => IO.bind(PR.Ran, PR.Ran, PR.Proc.run(x, [path, out ++ ".part"], "/"), r => Pv.step.ran(r, out)))
     case False{} False{}:
       IO.bind(String, PR.Ran, Pv.cli(), c => K.KiCad.run(c, Pv.glb.flags(bare, out, path)))
 
@@ -410,11 +415,55 @@ def Pv.solid.done(r: PR.Ran, +glb: String, +note: String, +step: Bool) -> IO(Uni
     case PR.Ran{_, out}:
       IO.die(Unit, 3, "3D export failed: " ++ String.take(String.trim(out), 160n))
 
+# the models cache the window and `backplane --render` keep (parts3.bend's
+# Parts.out: the path, size and time name a STEP's GLB), so a part already
+# rendered or seen opens at once, and a STEP is converted once per version
+def Pv.cache() -> IO(String):
+  do IO<String>:
+    +home : String <- Pv.home()
+    r : Result<&1, &1, U32 & String, String> <- IO.get_env("XDG_CACHE_HOME")
+    +dir : String = Result.default(&1, &1, U32 & String, String, r, home ++ "/.cache") ++ "/backplane-bend/models"
+    mk : PR.Ran <- PR.Proc.run("mkdir", ["-p", dir], "/")
+    return dir
+
+def Pv.ver.m(sm: U32 & U32) -> String:
+  (sz, mt) = sm
+  U32.show(sz) ++ "." ++ U32.show(mt)
+
+def Pv.ver.k(v: U32 & U32 & U32) -> String:
+  (_, sm) = v
+  Pv.ver.m(sm)
+
+def Pv.ver(r: Result<&1, &1, U32 & String, U32 & U32 & U32>) -> String:
+  match r:
+    case Done{v}:
+      Pv.ver.k(v)
+    case Fail{_}:
+      "0"
+
+def Pv.step.out(+path: String) -> IO(String):
+  do IO<String>:
+    +dir : String <- Pv.cache()
+    st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
+    return dir ++ "/" ++ U32.show(P.Key.hash(path ++ "|" ++ Pv.ver(st), 2166136261)) ++ ".glb"
+
+# where a model's GLB comes from: a .glb is its own; a STEP's is cached; a
+# board's is exported for this view
+def Pv.solid.out(isglb: Bool, step: Bool, +bare: Bool, +path: String) -> IO(String):
+  match isglb step:
+    case True{} _:
+      IO.pure(String, path)
+    case False{} True{}:
+      Pv.step.out(path)
+    case False{} False{}:
+      IO.pure(String, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", "") ++ path, 2166136261)) ++ ".glb")
+
 def Pv.child.solid(+bare: Bool, +path: String, +note: String) -> IO(Unit):
   do IO<Unit>:
     +isglb : Bool = String.ends_with(path, ".glb")
-    +out : String = Bool.pick(String, isglb, path, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", "") ++ path, 2166136261)) ++ ".glb")
-    r : PR.Ran <- Pv.glb.run(isglb, Pv.is_step(path), bare, path, out)
+    +out : String <- Pv.solid.out(isglb, Pv.is_step(path), bare, path)
+    have : Bool <- K.Io.is_file(out)
+    r : PR.Ran <- Pv.glb.run(Bool.or(isglb, Bool.and(have, Pv.is_step(path))), Pv.is_step(path), bare, path, out)
     Pv.solid.done(r, out, note, Pv.is_step(path))
 
 def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):

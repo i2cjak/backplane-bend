@@ -361,10 +361,97 @@ class Glb {
   }
 }
 
+// ---- FreeCAD, for what OCCT's WASM build cannot mesh ------------------------
+//
+// occt-import-js reads some large STEP files (a whole KiCad board with its
+// parts, a case assembly) but meshes none of their faces: every mesh comes
+// back empty. FreeCAD's native OpenCascade meshes them, and quickly, so a big
+// file goes straight to it when it is installed, and any file OCCT leaves
+// empty goes there after. Solids are grouped into a few tints (FreeCAD without
+// its GUI has no colours) so an assembly's parts tell apart. Nothing is
+// written when neither can mesh the file: a caller never gets an empty model.
+
+const BIG = 12 << 20;
+
+const FREECAD_PY = `
+import os, struct, json, array, Part
+src, out, tol = os.environ["BP_IN"], os.environ["BP_OUT"], float(os.environ.get("BP_TOL", "0.1"))
+s = Part.read(src)
+shapes = list(s.Solids) or [s]
+pal = [(0.8, 0.8, 0.8), (0.6, 0.65, 0.72), (0.74, 0.68, 0.58), (0.52, 0.62, 0.52), (0.7, 0.58, 0.64), (0.58, 0.7, 0.72)]
+groups = [[] for _ in pal]
+for i, so in enumerate(shapes):
+    groups[i % len(pal)].append(so)
+buf = bytearray(); views = []; accs = []; prims = []; mats = []; tris = 0
+for gi, g in enumerate(groups):
+    pts = []; idx = []
+    for so in g:
+        p, f = so.tessellate(tol)
+        base = len(pts); pts.extend(p)
+        for t in f: idx.extend((base + t[0], base + t[1], base + t[2]))
+    if not idx: continue
+    tris += len(idx) // 3
+    flat = [c for v in pts for c in (v.x, v.y, v.z)]
+    lo = [min(flat[k::3]) for k in range(3)]; hi = [max(flat[k::3]) for k in range(3)]
+    views.append({"buffer": 0, "byteOffset": len(buf), "byteLength": 12 * len(pts), "target": 34962})
+    buf += array.array("f", flat).tobytes()
+    accs.append({"bufferView": len(views) - 1, "componentType": 5126, "count": len(pts), "type": "VEC3", "min": lo, "max": hi})
+    views.append({"buffer": 0, "byteOffset": len(buf), "byteLength": 4 * len(idx), "target": 34963})
+    buf += array.array("I", idx).tobytes()
+    accs.append({"bufferView": len(views) - 1, "componentType": 5125, "count": len(idx), "type": "SCALAR"})
+    mats.append({"pbrMetallicRoughness": {"baseColorFactor": list(pal[gi]) + [1.0], "metallicFactor": 0.0, "roughnessFactor": 0.8}})
+    prims.append({"attributes": {"POSITION": len(accs) - 2}, "indices": len(accs) - 1, "material": len(mats) - 1})
+if tris == 0: raise SystemExit("no faces could be meshed")
+gl = {"asset": {"version": "2.0", "generator": "backplane-step2glb (FreeCAD)", "extras": {"unit": "mm", "up": "Z"}},
+      "buffers": [{"byteLength": len(buf)}], "bufferViews": views, "accessors": accs, "materials": mats,
+      "meshes": [{"primitives": prims}], "nodes": [{"name": os.path.basename(src), "mesh": 0}], "scenes": [{"nodes": [0]}], "scene": 0}
+js = json.dumps(gl).encode()
+js += b" " * (-len(js) % 4); buf += b"\\0" * (-len(buf) % 4)
+total = 12 + 8 + len(js) + 8 + len(buf)
+with open(out, "wb") as o:
+    o.write(struct.pack("<III", 0x46546C67, 2, total))
+    o.write(struct.pack("<II", len(js), 0x4E4F534A)); o.write(js)
+    o.write(struct.pack("<II", len(buf), 0x004E4942)); o.write(bytes(buf))
+print("TRIS", tris)
+`;
+
+// FreeCAD's command, as the hub finds it (BACKPLANE_FREECAD, then PATH)
+function freecad(): string {
+  for (const c of [process.env.BACKPLANE_FREECAD, "freecadcmd", "FreeCADCmd", "freecad.cmd", "/Applications/FreeCAD.app/Contents/Resources/bin/freecadcmd"]) {
+    if (!c) continue;
+    const p = c.includes("/") ? (Bun.file(c).size > 0 ? c : null) : Bun.which(c);
+    if (p) return p;
+  }
+  return "";
+}
+
+// the file meshed by FreeCAD into out: its triangle count, or 0
+async function viaFreecad(input: string, out: string, linear: number): Promise<number> {
+  const fc = freecad();
+  if (!fc) return 0;
+  const py = `${out}.py`;
+  await Bun.write(py, FREECAD_PY);
+  const p = Bun.spawnSync([fc, "-c", `exec(open(${JSON.stringify(py)}).read())`], {
+    env: { ...process.env, BP_IN: input, BP_OUT: out, BP_TOL: String(Math.max(linear, 0.25)) },
+    stdout: "pipe", stderr: "pipe",
+  });
+  await Bun.file(py).delete().catch(() => {});
+  const m = /TRIS (\d+)/.exec(p.stdout.toString());
+  return p.exitCode === 0 && m ? Number(m[1]) : 0;
+}
+
 // ---- main ------------------------------------------------------------------
 
 const args = parseArgs(process.argv.slice(2));
 const t0 = performance.now();
+const said = (how: string, tris: number) =>
+  console.error(`step2glb: ${args.input.split(/[\\/]/).pop()} -> ${args.output}: ${tris} triangles by ${how}, ${Math.round(performance.now() - t0)} ms`);
+// a big file goes to FreeCAD first when there is one (OCCT's WASM build is
+// slow on it and often meshes nothing)
+if (!args.tree && Bun.file(args.input).size > BIG && freecad()) {
+  const n = await viaFreecad(args.input, args.output!, args.linear);
+  if (n > 0) { said("FreeCAD", n); process.exit(0); }
+}
 const [result, content] = await readStep(args.input, args.linear, args.angular);
 annotateInstances(result.root, content);
 const source = args.input.split(/[\\/]/).pop()!;
@@ -373,12 +460,17 @@ if (args.tree) {
   const round = (_k: string, v: unknown) => (typeof v === "number" ? Math.round(v * 1e4) / 1e4 : v);
   console.log(JSON.stringify(tree(result.root, result.meshes), round));
 } else {
+  const tris = result.meshes.reduce((s, m) => s + triCount(m), 0);
+  if (tris === 0) {
+    const n = await viaFreecad(args.input, args.output!, args.linear);
+    if (n > 0) { said("FreeCAD", n); process.exit(0); }
+    fail(`${args.input}: no faces could be meshed` + (freecad() ? "" : " (installing FreeCAD lets Backplane mesh large STEP files)"));
+  }
   const glb = new Glb();
   const meshIds = result.meshes.map((m) => glb.mesh(m));
   const root = glb.node(result.root, result.meshes, meshIds);
   const bytes = glb.encode(root, source);
   await Bun.write(args.output!, bytes);
-  const tris = result.meshes.reduce((s, m) => s + triCount(m), 0);
   console.error(
     `step2glb: ${source} -> ${args.output}: ${result.meshes.length} meshes, ${tris} triangles, ` +
       `${bytes.byteLength} bytes, ${Math.round(performance.now() - t0)} ms`,
