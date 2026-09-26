@@ -522,7 +522,9 @@ struct ThreadScreen: View {
         .navigationTitle(thread.title)
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(isPresented: Binding(get: { !thread.viewer.open.isEmpty }, set: { if !$0 { model.act("view", "") } })) {
-            if let v = model.screen?.thread?.viewer { PlotScreen(model: model, viewer: v) }
+            if let v = model.screen?.thread?.viewer {
+                if v.open == "mech", let p = v.mech { MechScreen(model: model, viewer: v, page: p) } else { PlotScreen(model: model, viewer: v) }
+            }
         }
         .fullScreenCover(item: $shown) { s in Lightbox(shown: s) { shown = nil } }
         .sheet(isPresented: Binding(get: { thread.diff != nil }, set: { if !$0, model.screen?.thread?.diff != nil { model.act("panel") } })) {

@@ -555,9 +555,26 @@ final class PlotCanvas: MTKView {
         setNeedsDisplay()
     }
 
+    // the camera round a model's 3D box (x0 y0 z0 x1 y1 z1, the mesh's own
+    // axes; the pivot's y is flipped, as refit's is)
+    // a part alone: its box, fitted once there is room
+    var solid: [Float] = []
+
+    func fitSolid(_ b: [Float]) {
+        guard bounds.width > 0 else { return }
+        var o = Orbit(fov: renderer.orbit.fov)
+        o.pivot = SIMD3((b[0] + b[3]) / 2, -(b[1] + b[4]) / 2, (b[2] + b[5]) / 2)
+        o.aim(yaw: 0.5, pitch: 0.75)
+        let diag = simd_length(SIMD3(b[3] - b[0], b[4] - b[1], b[5] - b[2]))
+        let half = tan(o.fov * .pi / 360), aspect = Float(bounds.width) / Float(max(bounds.height, 1))
+        o.dist = diag / 2 / (half * min(aspect, 1)) * 1.1
+        renderer.orbit = o
+        fitted = true
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
-        if !fitted { refit() }
+        if !fitted { if box.count < 4, solid.count == 6 { fitSolid(solid) } else { refit() } }
     }
 
     func show(_ f: PlotFrame, bg: UInt32, slab: UInt32, look: [UInt32]) {
@@ -791,6 +808,8 @@ struct PlotCanvasView: UIViewRepresentable {
         if three, let m = mesh, m.at != context.coordinator.mesh {
             context.coordinator.mesh = m.at
             c.renderer.load(mesh: m.mesh)
+            // a part alone (no board plot under it) is fitted by its own box
+            if frame == nil, let b = m.mesh?.box, b.count == 6 { c.solid = b; c.fitSolid(b) }
             c.setNeedsDisplay()
         }
         if viewer.picked != context.coordinator.picked {
@@ -877,7 +896,7 @@ struct ViewerControls: View {
                 .buttonStyle(.bordered)
                 .menuActionDismissBehavior(.disabled)
             }
-            if viewer.open == "3d" {
+            if viewer.open == "3d", !viewer.layers.isEmpty {
                 Toggle(isOn: Binding(get: { viewer.parts ?? true }, set: { _ in model.act("view-parts") })) { Text("Parts") }
                     .toggleStyle(.button)
             }
@@ -900,8 +919,16 @@ struct PlotScreen: View {
         ZStack(alignment: .top) {
             Color(rgb: viewer.bg).ignoresSafeArea()
             PlotCanvasView(frame: f?.none.isEmpty == true ? f : nil, mesh: m, viewer: viewer) { model.act("view-pick", $0) }
+                .id(viewer.layers.isEmpty ? viewer.key : "")
                 .ignoresSafeArea()
-            if f == nil {
+            // a part alone (from the Mechanical page) has no board plot under it
+            if viewer.layers.isEmpty, m == nil {
+                ProgressView().tint(.white).frame(maxHeight: .infinity)
+            } else if viewer.layers.isEmpty, let why = m?.none, !why.isEmpty {
+                Text(why).foregroundStyle(.secondary).frame(maxHeight: .infinity)
+            } else if viewer.layers.isEmpty {
+                EmptyView()
+            } else if f == nil {
                 ProgressView().tint(.white).frame(maxHeight: .infinity)
             } else if let why = f?.none, !why.isEmpty {
                 Text(why).foregroundStyle(.secondary).frame(maxHeight: .infinity)
@@ -934,6 +961,75 @@ struct PlotScreen: View {
         }
         .preferredColorScheme(viewer.light == true ? .light : .dark)
         .statusBarHidden()
+    }
+}
+
+// The Mechanical page: the viewer's choices (Mech on), a chip per part,
+// Open in 3D and Refresh, then the part's renders (a tap opens one full
+// screen), and where to get FreeCAD when the hub has none
+struct MechScreen: View {
+    let model: AppModel
+    let viewer: Viewer
+    let page: MechPage
+    @State private var shown: Shown?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Picker("Source", selection: Binding(get: { viewer.open }, set: { model.act("view", $0) })) {
+                    ForEach(viewer.choices, id: \.value) { Text($0.label).tag($0.value) }
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 300)
+                Spacer()
+                Button { model.act("view", "") } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
+                    .accessibilityLabel("Close")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 6)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !page.say.isEmpty { Text(page.say).foregroundStyle(.secondary) }
+                    if !page.parts.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(page.parts, id: \.value) { c in
+                                    Button(c.label) { model.act("mech-part", c.value) }
+                                        .buttonStyle(.bordered)
+                                        .tint(c.on ? .accentColor : .secondary)
+                                }
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            Button("Open in 3D") { model.act("mech-3d", page.path) }.buttonStyle(.borderedProminent).disabled(page.path.isEmpty)
+                            Button("Refresh") { model.act("mech-refresh") }.buttonStyle(.bordered)
+                        }
+                    }
+                    if !page.empty.isEmpty { Text(page.empty).foregroundStyle(.secondary) }
+                    ForEach(page.shots, id: \.url) { s in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(s.view).font(.caption).foregroundStyle(.secondary)
+                            if let u = model.web(s.url) {
+                                AsyncImage(url: u) { phase in
+                                    switch phase {
+                                    case .success(let img): img.resizable().scaledToFit()
+                                    case .failure: Image(systemName: "photo").foregroundStyle(.tertiary)
+                                    default: ProgressView()
+                                    }
+                                }
+                                .frame(maxWidth: .infinity)
+                                .onTapGesture { shown = Shown(url: u) }
+                                .accessibilityAddTraits(.isButton)
+                            }
+                        }
+                    }
+                    if !page.note.isEmpty { Text(page.note).font(.caption).foregroundStyle(.secondary) }
+                }
+                .padding(.horizontal)
+                .padding(.bottom)
+            }
+        }
+        .fullScreenCover(item: $shown) { s in Lightbox(shown: s) { shown = nil } }
     }
 }
 

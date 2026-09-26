@@ -11,6 +11,7 @@ import ./todo.bend as TD
 import ./bot.bend as BT
 import ./voice.bend as VC
 import ./space.bend as SPC
+import ./mech.bend as MC
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -401,6 +402,17 @@ def KiCad.cli.label(+nf: Map<&2, String>) -> String:
 def KiCad.cli.note(+nf: Map<&2, String>) -> String:
   Bool.pick(String, KiCad.found(nf), Str.get(nf, "kicad.cli"), "Install KiCad from kicad.org/download, or Backplane KiCad")
 
+# FreeCAD, which agents model parts with (info "freecad": its command on
+# the hub's machine, "" when there is none); Backplane never bundles it
+def FreeCAD.found(+nf: Map<&2, String>) -> Bool:
+  Bool.not(String.is_empty(Str.get(nf, "freecad")))
+
+def FreeCAD.label(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, FreeCAD.found(nf), "FreeCAD", "FreeCAD: not found")
+
+def FreeCAD.note(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, FreeCAD.found(nf), Str.get(nf, "freecad"), "Agents model mechanical parts with it: get it from freecad.org/downloads")
+
 # KiCad IPC is the Backplane fork's api-server: without the fork the
 # setting has nothing to turn on, so Settings says where to get it instead
 # of offering it (info "kicad.fork": the fork's version, "" for none)
@@ -491,10 +503,12 @@ def Ui.pending(u: Ui, +thread: String) -> List<&2, String>:
     case Ui{st, _, _, _, _, _, _, _, _, _, _, _, _, _, _, ob, tr}:
       Pending.go(Map.values(&2, String, ob), thread, Ui.entries(st))
 
+# (a new connection has answered nothing: what the Mechanical page and a
+# part in 3D asked for is asked again)
 def Ui.online(u: Ui, b: Bool) -> Ui:
   match u:
     case Ui{st, sel, dr, live, op, _, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Ui{st, sel, dr, live, op, b, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+      Ui{st, sel, Map.set(&2, String, Map.set(&2, String, dr, "@mech.at", ""), "@solid.at", ""), live, op, b, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
 # the clock goes in the info map too, where a thread's folded turns read
 # it ("5m ago", FO.Fold.roles)
@@ -782,7 +796,8 @@ def Ui.actions() -> List<&2, String>:
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
-   "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link"]
+   "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link",
+   "mech", "mech-part", "mech-3d", "mech-refresh"]
 
 # Reading the client state
 # ------------------------
@@ -2661,8 +2676,135 @@ def Ui.reply.body(u: Ui, +o: J.Json) -> Ui:
 
 # an answer: its request leaves the outbox; a diff opens the diff view; a
 # skills list is kept for the composer
+# The Mechanical page
+# -------------------
+# A thread's parts (core/mech.bend): its viewer shows kind "mech", on the
+# part its path names (the first when none). Each thread's listing is kept
+# as "mech:<t>" (the hub's cksum lines) and "mech.root:<t>" (its project
+# root), asked for (mech.list) when the page opens, when an agent shows a
+# part (viewer_show, kind mech) and on Refresh.
+
+def Mpage.has(+o: J.Json) -> Bool:
+  Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "mech"), J.Null{})), "null"))
+
+def Mpage.got(u: Ui, +r: J.Json) -> Ui:
+  Ui.info_set(Ui.info_set(u, "mech:" ++ J.Json.get_str(r, "thread", ""), J.Json.get_str(r, "mech", "")), "mech.root:" ++ J.Json.get_str(r, "thread", ""), J.Json.get_str(r, "root", ""))
+
+def Mpage.reply(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Mpage.got(u, J.Json.get_obj(o, "result"))
+    case False{}:
+      u
+
+# ask for a thread's parts
+def Mpage.ask(u: Ui, +th: String) -> Act:
+  Ui.rpc(u, "mech.list", [J.KV{"thread", J.Str{th}}])
+
+# the selected thread's viewer set to a kind and file, its panel open
+def Ui.view_put(u: Ui, +kind: String, +path: String) -> Ui:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, _, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, True{}, v, rid, w, er, note, Map.set(&2, String, Viewer.put(nf, sel, kind, path), "panel:" ++ sel, "1"), ob, tr}
+
+# "mech" opens the page (on a part, when the value names one), "mech-part"
+# shows another part, "mech-3d" opens a part in the 3D viewer, and
+# "mech-refresh" asks for the parts again
+def Mpage.act(i: Nat, +u: Ui, +value: String) -> Act:
+  match i:
+    case 0n:
+      Act{Ui.view_put(u, "mech", value), Nil{}}
+    case 1n:
+      Act{Ui.view_put(u, "mech", value), Nil{}}
+    case 2n:
+      Act{Ui.view_put(u, "3d", value), Nil{}}
+    case 3n:
+      Mpage.ask(u, Ui.sel(u))
+    # (past the table: an action no one takes)
+    case _:
+      Act{u, Nil{}}
+
+# The page asks for its parts once for each thread and change of its view
+# ("@mech.at": the thread and view.n last asked for): opened by hand or
+# by an agent (viewer_show, kind mech), or a thread switched to that is on
+# it. Every client runs this after each action and message.
+def Mpage.at(+u: Ui) -> String:
+  Ui.sel(u) ++ "#" ++ Ui.view_get(u, "view.n")
+
+def Mpage.sync.k(want: Bool, +u: Ui, +at: String, cmds: List<&2, Cmd>) -> Act:
+  match want:
+    case True{}:
+      Ui.also(Mpage.ask(Ui.scratch_set(u, "@mech.at", at), Ui.sel(u)), cmds)
+    case False{}:
+      Act{u, cmds}
+
+# (on: the page is on screen; the phones keep their viewer apart)
+def Mpage.sync.if(on: Bool, a: Act) -> Act:
+  match a:
+    case Act{+u, cmds}:
+      Mpage.sync.k(Bool.and(on, Bool.not(String.eq(Mpage.at(u), Ui.scratch(u, "@mech.at")))), u, Mpage.at(u), cmds)
+
+def Mpage.sync(a: Act) -> Act:
+  match a:
+    case Act{+u, cmds}:
+      Mpage.sync.if(String.eq(Ui.view_get(u, "view.kind"), "mech"), Act{u, cmds})
+
+# Reading the page: the selected thread's listing and root
+def Mpage.text(+u: Ui) -> String:
+  Ui.info(u, "mech:" ++ Ui.sel(u))
+
+def Mpage.root(+u: Ui) -> String:
+  Ui.info(u, "mech.root:" ++ Ui.sel(u))
+
+def Mpage.parts(+u: Ui) -> List<&2, MC.MPart>:
+  MC.Mech.parts(Mpage.text(u))
+
+# the part on show
+def Mpage.cur(+u: Ui) -> Maybe<&2, MC.MPart>:
+  MC.Mech.pick(Mpage.parts(u), Ui.view_get(u, "view.path"), Mpage.root(u))
+
+# 0 while the parts are asked for, 1 when there are none, 2 with parts
+def Mpage.state(+u: Ui) -> Nat:
+  Bool.pick(Nat, String.is_empty(Mpage.root(u)), 0n, Bool.pick(Nat, List.is_empty(&2, MC.MPart, Mpage.parts(u)), 1n, 2n))
+
+def Mpage.path.k(m: Maybe<&2, MC.MPart>) -> String:
+  match m:
+    case Some{p}:
+      MC.Mech.part.path(p)
+    case None{}:
+      ""
+
+def Mpage.cur.path(+u: Ui) -> String:
+  Mpage.path.k(Mpage.cur(u))
+
+# A part in 3D on the web: the page asks the hub for the part's model as
+# the phones do (kicad.watch, kind "3d" with its path) whenever the source
+# on screen changes, and host.js draws the mesh that comes back under the
+# source's key "2|<root>|<path>" ("" when no part is on show)
+def Solid.want(+u: Ui) -> String:
+  Bool.pick(String, Bool.and(Bool.and(Ui.panel(u), String.eq(Ui.view_get(u, "view.kind"), "3d")), Bool.and(Bool.not(String.is_empty(Ui.view_get(u, "view.path"))), Bool.not(String.is_empty(Ui.root(u))))),
+    "2|" ++ Ui.root(u) ++ "|" ++ Ui.view_get(u, "view.path"), "")
+
+def Solid.sync.k(same: Bool, u: Ui, +want: String, +path: String, +root: String, cmds: List<&2, Cmd>) -> Act:
+  match same:
+    case True{}:
+      Act{u, cmds}
+    case False{}:
+      Ui.also(Ui.rpc(Ui.scratch_set(u, "@solid.at", want), "kicad.watch",
+        [J.KV{"kind", J.Str{Bool.pick(String, String.is_empty(want), "", "3d")}}, J.KV{"root", J.Str{root}}, J.KV{"path", J.Str{path}}]), cmds)
+
+def Solid.sync(a: Act) -> Act:
+  match a:
+    case Act{+u, cmds}:
+      Solid.sync.k(String.eq(Solid.want(u), Ui.scratch(u, "@solid.at")), u, Solid.want(u), Ui.view_get(u, "view.path"), Ui.root(u), cmds)
+
+# what the page says under its parts: where to get FreeCAD when the hub
+# has none, else nothing
+def Mpage.note(+u: Ui) -> String:
+  Bool.pick(String, Bool.not(String.is_empty(Ui.info(u, "freecad"))), "", "FreeCAD is not installed on this hub's machine, and agents need it to model parts: get it from freecad.org/downloads.")
+
 def Ui.reply.skills(u: Ui, +o: J.Json) -> Ui:
-  Skills.got(Skills.has(o), Ui.reply.body(u, o), o)
+  Skills.got(Skills.has(o), Mpage.reply(Mpage.has(o), Ui.reply.body(u, o), o), o)
 
 def Ui.error_set(u: Ui, e: String) -> Ui:
   match u:
@@ -3541,6 +3683,18 @@ def Voice.fixed.k(none: Bool, +u: Ui, +x: VC.Unsure, +r: String) -> Act:
 def Voice.fixed(+u: Ui) -> Act:
   Voice.fixed.k(String.is_empty(String.trim(Ui.scratch(u, "@f.vfix"))), u, Voice.at(Voice.unsure(u), Ui.scratch(u, "@voice.fix")), String.trim(Ui.scratch(u, "@f.vfix")))
 
+# past the table's own: the project picker's (14-17), then the Mechanical
+# page's (19 on; client.bend's Mpage.act)
+def Voice.act.tail.k(picker: Bool, +i: Nat, +u: Ui, +value: String) -> Act:
+  match picker:
+    case True{}:
+      Proj.run.k(Nat.add(Nat.sub(i, 14n), 4n), u, value)
+    case False{}:
+      Mpage.act(Nat.sub(i, 19n), u, value)
+
+def Voice.act.tail(+i: Nat, +u: Ui, +value: String) -> Act:
+  Voice.act.tail.k(Nat.is_lt(i, 19n), i, u, value)
+
 def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -3579,7 +3733,7 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
     # and the project picker's own: go to a project, add one found, browse
     # folders, back to the projects
     case _:
-      Proj.run.k(Nat.add(Nat.sub(i, 14n), 4n), u, value)
+      Voice.act.tail(i, u, value)
 
 # opening Settings asks for the voice settings
 def Voice.flag.k(ask: Bool, a: Act) -> Act:
@@ -3673,8 +3827,11 @@ def Ui.recv(+u: Ui, +o: J.Json) -> Ui:
 # a message from the server, with what to send: a (re)connection (the
 # server's log arrives first on each) sends the outbox again, so nothing
 # the user sent is lost to a dropped link
-def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+def Ui.recv_act.go(u: Ui, +o: J.Json) -> Act:
   Ui.recv_act.t(String.eq(J.Json.get_str(o, "t", ""), "term"), J.Json.get_str(o, "thread", ""), Ui.recv_act.k(String.eq(J.Json.get_str(o, "t", ""), "log"), Ui.recv(u, o)))
+
+def Ui.recv_act(u: Ui, +o: J.Json) -> Act:
+  Mpage.sync(Ui.recv_act.go(u, o))
 
 # Pages of a timeline
 # -------------------
@@ -3937,7 +4094,7 @@ def Ui.act.k(i: Nat, u: Ui, +value: String) -> Act:
 
 # a user action with its value
 def Ui.act(+u: Ui, +action: String, +value: String) -> Act:
-  Ui.reselect.act(Ui.sel(u), Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value))
+  Mpage.sync(Ui.reselect.act(Ui.sel(u), Ui.act.k(C.Codec.pos(Ui.actions(), action), u, value)))
 
 # the newest n of a list (oldest first), and how many are left out
 type Win is Data:

@@ -19,6 +19,7 @@ import kotlin.math.exp
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sqrt
 import kotlin.math.sin
 import kotlin.math.tan
 
@@ -662,7 +663,8 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         super.onSizeChanged(w, h, ow, oh)
-        if (!fitted) refit()
+        val b = shownMesh?.mesh?.box
+        if (!fitted) { if (box.size < 4 && b != null && b.size == 6) fitSolid(b) else refit() }
     }
 
     fun setThree(on: Boolean) {
@@ -694,7 +696,21 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
         if (m == null || m === shownMesh) return
         shownMesh = m
         queueEvent { renderer.mesh(m.mesh) }
+        // a part alone (no board plot under it) is fitted by its own box
+        val b = m.mesh?.box
+        if (box.size < 4 && b != null && b.size == 6 && width > 0) fitSolid(b)
         requestRender()
+    }
+
+    // the camera round a model's 3D box (x0 y0 z0 x1 y1 z1, the mesh's own
+    // axes; the pivot's y is flipped, as refit's is)
+    private fun fitSolid(b: FloatArray) {
+        val o = renderer.orbit
+        val diag = sqrt((b[3] - b[0]) * (b[3] - b[0]) + (b[4] - b[1]) * (b[4] - b[1]) + (b[5] - b[2]) * (b[5] - b[2]))
+        val half = tan(o.fov * Math.PI.toFloat() / 360f)
+        renderer.orbit = Orbit(floatArrayOf((b[0] + b[3]) / 2, -(b[1] + b[4]) / 2, (b[2] + b[5]) / 2),
+            dist = diag / 2 / (half * min(width.toFloat() / max(height, 1), 1f)) * 1.1f, fov = o.fov).aim(0.5f, 0.75f)
+        fitted = true
     }
 
     // the picked piece ("chunk,info" of the held chunks), drawn bright

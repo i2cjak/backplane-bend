@@ -35,6 +35,8 @@ import ./cats.bend as CA
 import ../server/perf.bend as PS
 import ../core/perf.bend as PF
 import ../gfx/fresh.bend as FR
+import ./render.bend as RN
+import ../core/mech.bend as MC
 
 # `backplane`: the hub, the web server (for other devices), and the native
 # window as client 0. Window events and hub messages meet in one queue; a
@@ -282,8 +284,9 @@ def Shot.file(+home: String, +key: String) -> String:
 def Shot.url(+key: String) -> String:
   "/bots/" ++ Shot.bot(key) ++ "/screen.jpg"
 
+# the file an image key names: "full:" and a render's "v:<sum>:" dropped
 def Pics.src(+key: String) -> String:
-  Bool.pick(String, Pics.full(key), String.drop(key, 5n), key)
+  MC.Mech.key.path(Bool.pick(String, Pics.full(key), String.drop(key, 5n), key))
 
 def Pics.maxw.of(+key: String) -> U32:
   Bool.pick(U32, Bool.or(Pics.full(key), Shot.is(key)), 1600, Pics.maxw())
@@ -902,12 +905,20 @@ def Watch.glb.run(cmd: String & List<&2, String>) -> IO(P.Ran):
   (c, args) = cmd
   K.KiCad.run(c, args)
 
+# a part from STEP stands Z up (core/mech.bend's Mech.upright), as renders show it
+def Watch.glb.up(step: Bool, ts: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  match step:
+    case True{}:
+      MC.Mech.upright(ts)
+    case False{}:
+      ts
+
 def Watch.glb.done(r: P.Ran, +glb: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match r:
     case P.Ran{0, _}:
       do IO<Unit>:
         bs : List<&2, U32> <- S.Files.read(glb)
-        ok : Bool <- Chan.send(ShellMsg, q, Mesh3{key, FA.Scene3.of_model(MS.Model.of(G.Mesh.tris(G.Glb.parse(bs))))})
+        ok : Bool <- Chan.send(ShellMsg, q, Mesh3{key, FA.Scene3.of_model(MS.Model.of(Watch.glb.up(MC.Mech.is_step(Src.at(key, 2n)), G.Mesh.tris(G.Glb.parse(bs)))))})
         return Unit{}
     case P.Ran{_, out}:
       Watch.say(key, "3D export failed: " ++ String.take(String.trim(out), 160n), q)
@@ -1847,8 +1858,19 @@ def Start.pick(detach: Bool, +xs: List<&2, String>) -> IO(Unit):
 def Start.go(+xs: List<&2, String>) -> IO(Unit):
   Start.pick(Bool.and(Start.headless(xs), Bool.not(Start.has(xs, "--foreground"))), xs)
 
+def start.k(render: Bool, +xs: List<&2, String>) -> IO(Unit):
+  match render:
+    case True{}:
+      RN.Render.main(xs)
+    case False{}:
+      Start.go(xs)
+
+# (`--render MODEL` draws a part's views to PNG files, render.bend)
+def start.go(+xs: List<&2, String>) -> IO(Unit):
+  start.k(RN.Render.wants(xs), xs)
+
 def start(args: List<String>) -> IO(Unit):
-  Start.go(S.Names.copy(args))
+  start.go(S.Names.copy(args))
 
 # (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
 def main() -> IO(Unit):

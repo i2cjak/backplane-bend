@@ -28,6 +28,7 @@ import ../core/fold.bend as FO
 import ../core/menu.bend as MN
 import ../core/badge.bend as BG
 import ../core/voice.bend as VC
+import ../core/mech.bend as MC
 
 # Nui -> draw ops and hit regions. Ops are gathered bottom-up (paint
 # order) and reversed once into the topmost-first order the rasterizer
@@ -583,7 +584,7 @@ def Lay.sidebar.k(+ty: Ty, +c: D.Clip, +st: M.State, +sel: String, +open: Map<&2
       D.Draw.rect(top, 0, 51, 264, 1, T.Th.line(), 255),
       D.Draw.disc(top, 19.0, 26.0, 3.5, Bool.pick(U32, on, T.Th.ok(), T.Th.bad()), 255)]),
     Out.ops(List.append(&2, R.Op, Ty.text(ty, 1n, "Backplane", top, 30, 0, 52, T.Th.text()),
-      Ty.text(ty, 2n, "v" ++ v, top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
+      Ty.text(ty, 2n, Ty.fit(ty, 2n, "v" ++ v, (158 - U32.min(Ty.width(ty, 1n, "Backplane"), 158) : U32)), top, (30 + Ty.width(ty, 1n, "Backplane") + 8 : U32), 0, 52, T.Th.faint()))),
     Out{Lay.icon(ty, "search", top, 206, 18, Bool.pick(U32, find, T.Th.text(), T.Th.dim())), [Lay.hit(200, 12, 28, 28, "proj-find", "")]},
     Out{Lay.icon(ty, "plus", top, 234, 18, T.Th.dim()), [Lay.hit(228, 12, 28, 28, "vw-projo", "")]},
     Lay.adding(ty, adding, path, String.eq(focus, "project-path"), caret, mark),
@@ -2087,7 +2088,8 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
   +tms = U.Models.menu(U.Str.get(info, "models"), tp)
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
-  +total = {(1040 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
+  +fy = {(ey + 46 : U32) : U32}
+  +total = {(1040 + dy + fy + Set.voice.h(ty, n, x, w) : U32) : U32}
   +pair = U.Pair.link(info)
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
@@ -2118,32 +2120,33 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
     Set.chips(ty, tms, tm, "text.model", (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32), (b2 + 484 + dy : U32)),
     Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, Set.model_line(U.Models.label_of(U.Str.get(info, "models"), tp, tm), tm), (w - 32 : U32)),
       D.Clip.all(), (x + 16 : U32), (b2 + 520 + dy + er : U32), 24, T.Th.dim())),
-    Set.head(ty, "KiCad", x, (b2 + 368 + dy + ey : U32)),
-    Set.card(x, (b2 + 400 + dy + ey : U32), w, 150),
+    Set.head(ty, "KiCad and FreeCAD", x, (b2 + 368 + dy + ey : U32)),
+    Set.card(x, (b2 + 400 + dy + ey : U32), w, 196),
     Set.row(ty, U.KiCad.cli.label(info), U.KiCad.cli.note(info), x, (b2 + 402 + dy + ey : U32), w),
     Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (b2 + 450 + dy + ey : U32)),
     Set.row.r(ty, U.KiCad.ipc.label(info), U.KiCad.ipc.note(info), x, (b2 + 486 + dy + ey : U32), w, Bool.pick(U32, U.KiCad.ipc.ready(info), 140, 0)),
     Bool.pick(Out, U.KiCad.ipc.ready(info), Out.all([
       Lay.chip(ty, (x + w - 120 : U32), (b2 + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
       Lay.chip(ty, (x + w - 70 : U32), (b2 + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off")]), Out.none()),
-    Set.head(ty, "Appearance", x, (b2 + 570 + dy + ey : U32)),
-    Set.card(x, (b2 + 602 + dy + ey : U32), w, 64),
-    Set.row.r(ty, "Theme", "The window and the web page (phones unset follow their own system).", x, (b2 + 604 + dy + ey : U32), w, 150),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") - 6 - Lay.button.w(ty, "Dark") : U32), (b2 + 618 + dy + ey : U32), "Dark", Bool.not(String.eq(M.Setting.get(st, "ui.theme", ""), "light")), "setting", "ui.theme=dark"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") : U32), (b2 + 618 + dy + ey : U32), "Light", String.eq(M.Setting.get(st, "ui.theme", ""), "light"), "setting", "ui.theme=light"),
-    Set.head(ty, "Network and updates", x, (b2 + 690 + dy + ey : U32)),
-    Set.card(x, (b2 + 722 + dy + ey : U32), w, 216),
+    Set.row(ty, U.FreeCAD.label(info), U.FreeCAD.note(info), x, (b2 + 546 + dy + ey : U32), w),
+    Set.head(ty, "Appearance", x, (b2 + 570 + dy + fy : U32)),
+    Set.card(x, (b2 + 602 + dy + fy : U32), w, 64),
+    Set.row.r(ty, "Theme", "The window and the web page (phones unset follow their own system).", x, (b2 + 604 + dy + fy : U32), w, 150),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") - 6 - Lay.button.w(ty, "Dark") : U32), (b2 + 618 + dy + fy : U32), "Dark", Bool.not(String.eq(M.Setting.get(st, "ui.theme", ""), "light")), "setting", "ui.theme=dark"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") : U32), (b2 + 618 + dy + fy : U32), "Light", String.eq(M.Setting.get(st, "ui.theme", ""), "light"), "setting", "ui.theme=light"),
+    Set.head(ty, "Network and updates", x, (b2 + 690 + dy + fy : U32)),
+    Set.card(x, (b2 + 722 + dy + fy : U32), w, 216),
     Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), Bool.pick(String, String.eq(U.Str.get(info, "tailnet"), "off"), "Listening on " ++ U.Str.get(info, "listen") ++ " only (started with --no-tailscale, or Tailscale is not up).",
-      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 724 + dy + ey : U32), w),
-    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 776 + dy + ey : U32), w, 80),
-    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 786 + dy + ey : U32), "Copy", T.Th.soft(), "copy", pair)),
-    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 828 + dy + ey : U32), w, 150),
-    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 838 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
-      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 838 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", ""))),
-    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 880 + dy + ey : U32), w, 190),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 894 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 894 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
-    Set.voice(ty, st, n, x, w, (b2 + 958 + dy + ey : U32))])),
+      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 724 + dy + fy : U32), w),
+    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 776 + dy + fy : U32), w, 80),
+    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 786 + dy + fy : U32), "Copy", T.Th.soft(), "copy", pair)),
+    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 828 + dy + fy : U32), w, 150),
+    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 838 + dy + fy : U32), "Install update", T.Th.accent(), "update", ""),
+      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 838 + dy + fy : U32), "Check now", T.Th.soft(), "update-check", ""))),
+    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 880 + dy + fy : U32), w, 190),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 894 + dy + fy : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 894 + dy + fy : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
+    Set.voice(ty, st, n, x, w, (b2 + 958 + dy + fy : U32))])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])
@@ -2256,9 +2259,10 @@ def Lay.shown(+k: U32, +empty: Bool, +ts: FA.Scene3, b: BM.Bitmap) -> Bool:
       Bool.pick(Bool, U32.is_ge(k, 3), True{}, Bool.pick(Bool, U32.is_eq(k, 2), Bool.not(FA.Scene3.is_empty(ts)), Bool.not(empty)))
 
 def Lay.help(+k: U32) -> String:
+  Bool.pick(String, U32.is_eq(k, 5), "",
   Bool.pick(String, U32.is_eq(k, 4), "wheel scroll",
   Bool.pick(String, U32.is_eq(k, 3), "what this thread's browser shows, live",
-    Bool.pick(String, U32.is_eq(k, 2), "drag rotate · ctrl pan · shift zoom · alt roll · 1-7 views · f fit", "click inspect · drag pan · wheel zoom · f fit")))
+    Bool.pick(String, U32.is_eq(k, 2), "drag rotate · ctrl pan · shift zoom · alt roll · 1-7 views · f fit", "click inspect · drag pan · wheel zoom · f fit"))))
 
 # Diff view
 # ---------
@@ -2357,24 +2361,27 @@ def Lay.kicad(on: Bool, +ty: Ty, +x1: U32) -> Out:
 
 def Lay.viewer.k(+ty: Ty, +x0: U32, +x1: U32, +h: U32, +empty: Bool, x: V.Vx, +info: String, +draft: String, +diff: String, +scroll: U32) -> Out:
   match x:
-    case V.Vx{+k, _, +ts, _, _, +busy, _, _, _, _, +bm}:
+    case V.Vx{+k, +p, +ts, _, _, +busy, _, _, _, _, +bm}:
       +help = Lay.help(k)
-      +ko = Lay.kicad.on(k, empty, ts, bm)
+      +ko = Bool.and(Lay.kicad.on(k, empty, ts, bm), Bool.not(MC.Mech.is_model(p)))
       +kw = Lay.kicad.w(ty, ko)
       +bw = Lay.button.w(ty, "Board")
       +sw = Lay.button.w(ty, "Schematic")
       +tw = Lay.button.w(ty, "3D")
+      +mw = Lay.button.w(ty, "Mech")
       Out.all([
         Out.ops([D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 52, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255),
           D.Draw.rect(D.Clip.all(), x0, 0, 1, h, T.Th.line(), 255)]),
         Lay.tab(ty, "Board", 0, k, (x0 + 16 : U32)),
         Lay.tab(ty, "Schematic", 1, k, (x0 + 24 + bw : U32)),
         Lay.tab(ty, "3D", 2, k, (x0 + 32 + bw + sw : U32)),
-        Lay.tab(ty, "Browser", 3, k, (x0 + 40 + bw + sw + tw : U32)),
-        Lay.tab(ty, "Diff", 4, k, (x0 + 48 + bw + sw + tw + Lay.button.w(ty, "Browser") : U32)),
+        Lay.chip(ty, (x0 + 40 + bw + sw + tw : U32), 12, "Mech", U32.is_eq(k, 5), "mech", ""),
+        Lay.tab(ty, "Browser", 3, k, (x0 + 48 + bw + sw + tw + mw : U32)),
+        Lay.tab(ty, "Diff", 4, k, (x0 + 56 + bw + sw + tw + mw + Lay.button.w(ty, "Browser") : U32)),
         Lay.diff.if(U32.is_eq(k, 4), ty, diff, x0, x1, h, scroll),
         Lay.kicad(ko, ty, x1),
-        Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (380 + kw : U32))), D.Clip.all(), (x1 - 16 - kw - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (380 + kw : U32)))) : U32), 0, 52, T.Th.faint())),
+        Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (80 + bw + sw + tw + mw + Lay.button.w(ty, "Browser") + Lay.button.w(ty, "Diff") + kw : U32))), D.Clip.all(),
+          (x1 - 16 - kw - Ty.width(ty, 2n, Ty.fit(ty, 2n, help, Lay.room((x1 - x0 : U32), (80 + bw + sw + tw + mw + Lay.button.w(ty, "Browser") + Lay.button.w(ty, "Diff") + kw : U32)))) : U32), 0, 52, T.Th.faint())),
         Out.when(Bool.and(Bool.not(String.is_empty(busy)), Bool.not(Lay.shown(k, empty, ts, bm))),
           Out.ops(Ty.text(ty, 3n, busy, D.Clip.all(), (x0 + U32.shr((x1 - x0 - U32.min(Ty.width(ty, 3n, busy), (x1 - x0 : U32)) : U32)) : U32), (U32.shr(h) - 12 : U32), 23, T.Th.dim()))),
         Lay.inspect(ty, info, draft, x0, x1, h)])
@@ -2586,8 +2593,108 @@ def Lay.page.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out
     case False{}:
       Out.none()
 
+# The Mechanical page
+# -------------------
+# The selected thread's parts (client.bend's Mpage): a chip for each part,
+# Open in 3D and Refresh, then the part's renders two by two, each fitted
+# to its cell under its view's name. A render is an image the window loads
+# ("img" regions, main.bend's Pics) under its key "v:<sum>:<path>", so a
+# render drawn again is loaded again.
+
+def Mech.chips(ps: List<&2, MC.MPart>, +ty: Ty, +cur: String, +x0: U32, +x1: U32, +x: U32, +y: U32) -> Out:
+  match ps:
+    case Nil{}:
+      Out.none()
+    case MC.MPart{+p, +name, _} <> t:
+      +w = Lay.button.w(ty, name)
+      +wrap = Bool.and(U32.is_gt((x + w : U32), x1), U32.is_gt(x, x0))
+      +cx = Bool.pick(U32, wrap, x0, x)
+      +cy = Bool.pick(U32, wrap, (y + 36 : U32), y)
+      Out.cat(Lay.chip(ty, cx, cy, name, String.eq(p, cur), "mech-part", p), Mech.chips(t, ty, cur, x0, x1, (cx + w + 8 : U32), cy))
+
+# how far down the chips reach (the same walk, heights only)
+def Mech.chips.h(ps: List<&2, MC.MPart>, +ty: Ty, +x0: U32, +x1: U32, +x: U32, +y: U32) -> U32:
+  match ps:
+    case Nil{}:
+      (y + 28 : U32)
+    case MC.MPart{_, +name, _} <> t:
+      +w = Lay.button.w(ty, name)
+      +wrap = Bool.and(U32.is_gt((x + w : U32), x1), U32.is_gt(x, x0))
+      Mech.chips.h(t, ty, x0, x1, (Bool.pick(U32, wrap, x0, x) + w + 8 : U32), Bool.pick(U32, wrap, (y + 36 : U32), y))
+
+# one render in a cell: its view's name, then the image fitted (never
+# enlarged) and centred, with a rule round it; "loading" until its size is known
+def Mech.shot(+ty: Ty, +u: U.Ui, +root: String, +f: MC.MFile, +x: U32, +y: U32, +cw: U32, +ch: U32) -> Out:
+  +key = MC.Mech.key(root, f)
+  +size = U.Ui.info(u, "img:" ++ key)
+  +bw = Page.num(size, 0n)
+  +bh = Page.num(size, 1n)
+  +fw = Page.fit.w(bw, bh, cw, (ch - 24 : U32))
+  +fh = {((fw * bh : U32) / U32.max(bw, 1) : U32) : U32}
+  +ix = {(x + U32.shr((cw - fw : U32)) : U32) : U32}
+  Out.all([
+    Out.ops(Ty.text(ty, 2n, MC.Mech.view.of(f), D.Clip.all(), x, y, 20, T.Th.faint())),
+    Out.when(String.is_empty(size), Out.ops(Ty.text(ty, 2n, Bool.pick(String, String.starts_with(U.Ui.info(u, "img:" ++ key), "err:"), "cannot show it", "loading…"), D.Clip.all(), (x + 12 : U32), (y + 40 : U32), 20, T.Th.faint()))),
+    Out{Bool.pick(List<&2, R.Op>, String.is_empty(size), Nil{}, D.Draw.frame(D.Clip.all(), (ix - 1 : U32), (y + 23 : U32), (fw + 2 : U32), (fh + 2 : U32), T.Th.line())),
+      [Lay.hit(ix, (y + 24 : U32), U32.max(fw, 1), U32.max(fh, 1), "img", key)]}])
+
+def Mech.grid(fs: List<&2, MC.MFile>, +i: U32, +ty: Ty, +u: U.Ui, +root: String, +x0: U32, +y0: U32, +cw: U32, +ch: U32) -> Out:
+  match fs:
+    case Nil{}:
+      Out.none()
+    case +f <> t:
+      Out.cat(Mech.shot(ty, u, root, f, (x0 + (U32.and(i, 1) * (cw + 16 : U32) : U32) : U32), (y0 + (U32.shr(i) * (ch + 12 : U32) : U32) : U32), cw, ch),
+        Mech.grid(t, (i + 1 : U32), ty, u, root, x0, y0, cw, ch))
+
+def Mech.renders.k(none: Bool, +ty: Ty, +u: U.Ui, +name: String, fs: List<&2, MC.MFile>, +x0: U32, +x1: U32, +y: U32, +h: U32) -> Out:
+  match none:
+    case True{}:
+      Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, MC.Mech.unrendered(name), (x1 - x0 - 32 : U32)), D.Clip.all(), (x0 + 16 : U32), y, 28, T.Th.faint()))
+    case False{}:
+      Mech.grid(fs, 0, ty, u, U.Mpage.root(u), (x0 + 16 : U32), y, U32.shr((x1 - x0 - 48 : U32)),
+        U32.min(U32.shr(Lay.room(h, (y + 28 : U32))), (((U32.shr((x1 - x0 - 48 : U32)) * 3 : U32) / 4 : U32) + 28 : U32)))
+
+def Mech.part(m: Maybe<&2, MC.MPart>, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +y: U32, +h: U32) -> Out:
+  match m:
+    case Some{MC.MPart{_, +name, +fs}}:
+      Mech.renders.k(List.is_empty(&2, MC.MFile, fs), ty, u, name, fs, x0, x1, y, h)
+    case None{}:
+      Out.none()
+
+def Mech.say(+ty: Ty, +text: String, +x0: U32, +x1: U32, +y: U32) -> Out:
+  Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, text, (x1 - x0 - 32 : U32)), D.Clip.all(), (x0 + 16 : U32), y, 28, T.Th.faint()))
+
+def Mech.page.k(state: Nat, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match state:
+    case 0n:
+      Mech.say(ty, "Loading the parts…", x0, x1, 68)
+    case 1n:
+      Mech.say(ty, MC.Mech.none(), x0, x1, 68)
+    case _:
+      +cur = U.Mpage.cur.path(u)
+      +bw = Lay.button.w(ty, "Open in 3D")
+      +rw = Lay.button.w(ty, "Refresh")
+      +cx1 = {(x1 - 32 - bw - rw : U32) : U32}
+      +top = {(Mech.chips.h(U.Mpage.parts(u), ty, (x0 + 16 : U32), cx1, (x0 + 16 : U32), 64) + 16 : U32) : U32}
+      Out.all([
+        Mech.chips(U.Mpage.parts(u), ty, cur, (x0 + 16 : U32), cx1, (x0 + 16 : U32), 64),
+        Lay.button(ty, D.Clip.all(), (x1 - 24 - bw - rw : U32), 64, "Open in 3D", T.Th.accent(), "mech-3d", MC.Mech.abs(U.Mpage.root(u), cur)),
+        Lay.button(ty, D.Clip.all(), (x1 - 16 - rw : U32), 64, "Refresh", T.Th.text(), "mech-refresh", ""),
+        Mech.part(U.Mpage.cur(u), ty, u, x0, x1, top, h)])
+
+# the Mechanical tab: the page, and where to get FreeCAD when the hub has none
+def Lay.mech.if(on: Bool, +ty: Ty, +u: U.Ui, +x0: U32, +x1: U32, +h: U32) -> Out:
+  match on:
+    case True{}:
+      +note = U.Mpage.note(u)
+      Out.cat(Mech.page.k(U.Mpage.state(u), ty, u, x0, x1, Bool.pick(U32, String.is_empty(note), h, (h - 36 : U32))),
+        Out.when(Bool.not(String.is_empty(note)), Mech.say(ty, note, x0, x1, (h - 36 : U32))))
+    case False{}:
+      Out.none()
+
 def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
   Out.all([
+    Lay.mech.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 5), ty, S.Nui.ui(n), x0, x1, h),
     Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h),
     Lay.page.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 3), ty, S.Nui.ui(n), x0, x1, h),
     Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h),

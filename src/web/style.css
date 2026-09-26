@@ -191,6 +191,20 @@ button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowra
 .viewer { border-left: 1px solid var(--line); background: var(--view); position: relative; min-width: 0; }
 .viewer canvas { width: 100%; height: 100%; display: block; }
 
+/* Mechanical: a part's renders, and a part in 3D */
+.viewer.mech, .viewer.solid { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.viewer.mech { overflow: auto; background: var(--bg); }
+.mech-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.mech-head button.on { border-color: var(--accent); color: var(--text); }
+.mech-head .mech-name { color: var(--text); } .mech-head .mech-hint { color: var(--faint); margin-left: auto; font-size: 12px; }
+.mech-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; padding: 12px; }
+.mech-shot { margin: 0; display: flex; flex-direction: column; gap: 4px; }
+.mech-shot .mech-view { color: var(--faint); font-size: 12px; }
+.mech-shot img { width: 100%; display: block; border: 1px solid var(--line); cursor: zoom-in; }
+.mech-say, .mech-note { display: block; padding: 12px; color: var(--faint); }
+.mech-note { margin-top: auto; border-top: 1px solid var(--line); }
+.viewer.solid canvas { flex: 1; min-height: 0; touch-action: none; cursor: grab; }
+
 /* Attachments */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .msg .chips { margin-top: 6px; }
@@ -248,7 +262,7 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
   .composer { padding: 8px 10px 10px; }
   .composer textarea { min-height: 48px; }
   .msg .copy { opacity: 1; position: static; float: right; margin: 0 0 4px 8px; }
-  .app .viewer.diff { display: flex; position: fixed; inset: 0; z-index: 5; }
+  .app .viewer.diff, .app .viewer.mech, .app .viewer.solid { display: flex; position: fixed; inset: 0; z-index: 5; }
   .diff-head { padding: 8px 10px; }
   .dl .no { display: none; }
   .term-pane { height: 45vh; }

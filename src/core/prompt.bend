@@ -109,6 +109,21 @@ def Prompt.runtime(harness: String, ss: List<&2, Skill>) -> String:
   ++ "<backplane_browser>Backplane hosts a web browser for you: the backplane MCP server's preview_* tools (preview_open, preview_navigate, preview_snapshot, preview_click, preview_type, preview_press, preview_scroll, preview_evaluate, preview_wait_for). The user watches it live in the app's Browser tab. Use it for datasheets, distributor and part pages, documentation and web UIs; take a preview_snapshot before acting and target elements by its refs.</backplane_browser>\n\n"
   ++ Prompt.kistack(ss)
 
+# Mechanical work: FreeCAD, run headless, for the modelling, and
+# Backplane's own renderer for the pictures. Parts live in the project's
+# mech/ folder, whose renders the Mechanical page shows
+def Prompt.mech.freecad(none: Bool, +fc: String) -> String:
+  match none:
+    case True{}:
+      "FreeCAD is not installed on this machine. When a task needs a part modelled, changed or exported, tell the user FreeCAD is missing and that they can install it from freecad.org/downloads or their package manager (Backplane finds `freecadcmd` on PATH, or set BACKPLANE_FREECAD to it); meanwhile you can still render and inspect existing STEP files."
+    case False{}:
+      "Model parts with FreeCAD, headless: `\"" ++ fc ++ "\" script.py` runs a Python script with FreeCAD's modules (Part, PartDesign, Sketcher, Import, Mesh). Keep each part's source as a script in the project's `mech/` folder (e.g. `mech/bracket.py`) with its dimensions as named parameters at the top, in millimetres, Z up, the part's front facing -Y; have it save `mech/bracket.FCStd` and export `mech/bracket.step` with `Part.export` or `Import.export`. An assembly is one more script that places its parts and exports one STEP. To fit a board, export it with kicad-cli `pcb export step` and import that STEP. Run the script again after every change; check its output for errors and the shape's `isValid()`."
+
+def Prompt.mech(+fc: String, +render: String) -> String:
+  "<backplane_mechanical>For mechanical work (enclosures, brackets, mounts, fixtures, assemblies, fit checks) use FreeCAD and Backplane's renderer, not other CAD or plotting tools. "
+  ++ Prompt.mech.freecad(String.is_empty(fc), fc)
+  ++ " To see a part, run `\"" ++ render ++ "\" --render mech/bracket.step`: it draws the standard views (iso, front, top, right) to `mech/renders/bracket.<view>.png` and prints their paths. Render after each change and look at the images to check your work before you answer. Then call the backplane MCP tool `viewer_show` with the STEP's path and kind `mech`: the user's Mechanical page shows every part in `mech/` with its renders, and opens it in the 3D viewer. Write render paths in your reply only when you want them in the conversation too.</backplane_mechanical>"
+
 def Prompt.kicad.basics(+cli: String) -> String:
   "Use the selected KiCad CLI at `" ++ cli ++ "` for KiCad work. Check `\"" ++ cli ++ "\" --version` and subcommand `--help`. Export with `\"" ++ cli ++ "\" sch export` or `\"" ++ cli ++ "\" pcb export`; run checks with `\"" ++ cli ++ "\" sch erc` and `\"" ++ cli ++ "\" pcb drc`. Use the full path when invoking it, quoting paths for your shell."
 

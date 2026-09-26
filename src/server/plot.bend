@@ -1,6 +1,7 @@
 import Base
 import ./host.bend as H
 import ./kicad.bend as K
+import ../core/mech.bend as MC
 import ./proc.bend as PR
 import ../core/board.bend as B
 import ../core/schematic.bend as SC
@@ -391,13 +392,21 @@ def Pv.missing.note(+n: Nat) -> String:
   Bool.pick(String, Nat.is_eq(n, 0n), "",
     Nat.show(n) ++ Bool.pick(String, Nat.is_eq(n, 1n), " part has", " parts have") ++ " no 3D model on the hub's machine (KiCad's 3D library is not installed there, or the paths are wrong)")
 
-def Pv.solid.done(r: PR.Ran, +glb: String, +note: String) -> IO(Unit):
+# a part from STEP stands Z up, as the window and renders show it
+def Pv.solid.up(step: Bool, ts: List<&2, G.Tri3>) -> List<&2, G.Tri3>:
+  match step:
+    case True{}:
+      MC.Mech.upright(ts)
+    case False{}:
+      ts
+
+def Pv.solid.done(r: PR.Ran, +glb: String, +note: String, +step: Bool) -> IO(Unit):
   match r:
     case PR.Ran{0, +log}:
       do IO<Unit>:
         Pv.write(note, Pv.missing.note(Pv.missing(String.lines(log), 0n)))
         bs : List<&2, U32> <- K.Io.bytes(glb)
-        IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(G.Mesh.tris(G.Glb.parse(bs))))))
+        IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(Pv.solid.up(step, G.Mesh.tris(G.Glb.parse(bs)))))))
     case PR.Ran{_, out}:
       IO.die(Unit, 3, "3D export failed: " ++ String.take(String.trim(out), 160n))
 
@@ -406,7 +415,7 @@ def Pv.child.solid(+bare: Bool, +path: String, +note: String) -> IO(Unit):
     +isglb : Bool = String.ends_with(path, ".glb")
     +out : String = Bool.pick(String, isglb, path, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", "") ++ path, 2166136261)) ++ ".glb")
     r : PR.Ran <- Pv.glb.run(isglb, Pv.is_step(path), bare, path, out)
-    Pv.solid.done(r, out, note)
+    Pv.solid.done(r, out, note, Pv.is_step(path))
 
 def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
   do IO<Unit>:

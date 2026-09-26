@@ -6,6 +6,7 @@ import ../core/client.bend as U
 import ../core/attach.bend as AT
 import ../core/vt.bend as VT
 import ../core/diff.bend as DF
+import ../core/mech.bend as MC
 import ../core/images.bend as IM
 import ../core/fold.bend as FO
 import ../core/badge.bend as BG
@@ -323,6 +324,7 @@ def View.header(t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking:
           D.Dom.when(Bool.not(String.is_empty(M.Fork.source(st, id))), D.Dom.button("", "back", "", "Send what this fork did to the thread it came from, with its next message", "Bring back")), [
            D.Dom.button(Bool.pick(String, term, "on", ""), "term-toggle", "@term-size", "Terminal (ctrl+j)", "Terminal"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, diff), "on", ""), "diff", "", "What this thread changed (ctrl+d)", "Diff"),
+           D.Dom.button("", "mech", "", "This project's mechanical parts: their renders, and each in 3D", "Mech"),
            D.Dom.button(Bool.pick(String, Bool.and(panel, Bool.not(diff)), "on", ""), "panel", "", "Board viewer", "Board")]])}]}
 
 # the model menu's rows: each model's name, then what its CLI calls it,
@@ -538,6 +540,7 @@ def View.settings(+u: U.Ui, +st: M.State, +nf: Map<&2, String>, +v: String, +not
       View.setrow("Writing: model", Bool.pick(String, String.is_empty(U.TextGen.model(st)), "default", U.TextGen.model(st)) ++ ": " ++ U.Models.label_of(U.Str.get(nf, "models"), U.TextGen.provider(st), U.TextGen.model(st)),
         View.chips(U.Models.menu(U.Str.get(nf, "models"), U.TextGen.provider(st)), U.TextGen.model(st), "text.model")),
       View.setrow(U.KiCad.cli.label(nf), U.KiCad.cli.note(nf), View.fork(U.Str.get(nf, "kicad.fork"))),
+      View.setrow(U.FreeCAD.label(nf), U.FreeCAD.note(nf), Nil{}),
       View.setrow(U.KiCad.ipc.label(nf), U.KiCad.ipc.note(nf), Bool.pick(List<&2, D.Node>, U.KiCad.ipc.ready(nf), View.chips(["on", "off"], ipc, "kicad.ipc"), Nil{})),
       View.setrow("Theme", "The window and the web page (phones unset follow their own system).", View.chips(["dark", "light"], Bool.pick(String, String.eq(M.Setting.get(st, "ui.theme", ""), "light"), "light", "dark"), "ui.theme")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
@@ -999,19 +1002,74 @@ def View.browser(+u: U.Ui) -> D.Node:
   D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [
     WB.WB.browser.k(String.is_empty(U.Ui.info(u, "shot." ++ U.Ui.page(u))), U.Ui.info(u, "shot." ++ U.Ui.page(u)), U.Ui.page(u), "This thread")]}
 
-# the side pane of the selected thread: its diff, its browser, or the
-# board canvas
+# The Mechanical page (client.bend's Mpage): a chip per part, Open in 3D
+# and Refresh, the part's renders (a click opens one in the lightbox), and
+# where to get FreeCAD when the hub has none
+def View.mech.chips(ps: List<&2, MC.MPart>, +cur: String) -> List<&2, D.Node>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case MC.MPart{+p, +n, _} <> t:
+      D.Dom.button(Bool.pick(String, String.eq(p, cur), "on", ""), "mech-part", p, p, n) <> View.mech.chips(t, cur)
+
+def View.mech.shots(fs: List<&2, MC.MFile>, +root: String) -> List<&2, D.Node>:
+  match fs:
+    case Nil{}:
+      Nil{}
+    case +f <> t:
+      D.El{"figure", "", [D.At{"class", "mech-shot"}], [D.Dom.span("mech-view", MC.Mech.view.of(f)),
+        D.El{"a", "", [D.At{"href", MC.Mech.url(root, f)}, D.At{"target", "_blank"}, D.At{"data-lightbox", MC.Mech.url(root, f)}],
+          [D.El{"img", "", [D.At{"src", MC.Mech.url(root, f)}, D.At{"alt", MC.Mech.view.of(f)}], Nil{}}]}]} <> View.mech.shots(t, root)
+
+def View.mech.part(m: Maybe<&2, MC.MPart>, +root: String) -> List<&2, D.Node>:
+  match m:
+    case Some{MC.MPart{_, +n, +fs}}:
+      Bool.pick(List<&2, D.Node>, List.is_empty(&2, MC.MFile, fs), [D.Dom.span("mech-say", MC.Mech.unrendered(n))],
+        [D.El{"div", "", [D.At{"class", "mech-grid"}], View.mech.shots(fs, root)}])
+    case None{}:
+      Nil{}
+
+def View.mech.k(state: Nat, +u: U.Ui) -> List<&2, D.Node>:
+  match state:
+    case 0n:
+      [D.Dom.span("mech-say", "Loading the parts…")]
+    case 1n:
+      [D.Dom.span("mech-say", MC.Mech.none())]
+    case _:
+      D.El{"div", "", [D.At{"class", "mech-head"}], List.append(&2, D.Node, View.mech.chips(U.Mpage.parts(u), U.Mpage.cur.path(u)),
+        [D.Dom.button("primary", "mech-3d", MC.Mech.abs(U.Mpage.root(u), U.Mpage.cur.path(u)), "Turn the part in the 3D viewer", "Open in 3D"),
+         D.Dom.button("", "mech-refresh", "", "Look for parts and renders again", "Refresh"), D.Dom.button("", "panel", "", "Close the panel", "Close")])} <> View.mech.part(U.Mpage.cur(u), U.Mpage.root(u))
+
+def View.mech(+u: U.Ui) -> D.Node:
+  D.El{"aside", "mech", [D.At{"class", "viewer mech"}, D.At{"id", "viewer"}],
+    List.append(&2, D.Node, View.mech.k(U.Mpage.state(u), u), D.Dom.when(Bool.not(String.is_empty(U.Mpage.note(u))), D.Dom.span("mech-note", U.Mpage.note(u))))}
+
+# a part turned in 3D: host.js draws the hub's model of it (a "plot" with
+# a mesh, as the phones get) on the canvas whose data-key it carries
+def View.solid(+u: U.Ui) -> D.Node:
+  D.El{"aside", "solid", [D.At{"class", "viewer solid"}, D.At{"id", "viewer"}], [
+    D.El{"div", "", [D.At{"class", "mech-head"}], [D.Dom.button("", "mech", U.Ui.view_get(u, "view.path"), "Back to the part's renders", "Renders"),
+      D.Dom.span("mech-name", MC.Mech.stem(U.Ui.view_get(u, "view.path"))), D.Dom.span("mech-hint", "drag turn · shift drag pan · wheel zoom"), D.Dom.button("", "panel", "", "Close the panel", "Close")]},
+    D.El{"canvas", "solid", [D.At{"id", "solid"}, D.At{"data-key", U.Solid.want(u)}], Nil{}}]}
+
+# the side pane of the selected thread: its diff, its browser, its parts,
+# a part in 3D, or the board canvas
 def View.aside.k(i: Nat, +u: U.Ui) -> D.Node:
   match i:
     case 0n:
       View.diff(U.Ui.view_get(u, "diff"))
     case 1n:
       View.browser(u)
+    case 2n:
+      View.mech(u)
+    case 3n:
+      View.solid(u)
     case _:
       D.El{"aside", "viewer", [D.At{"class", "viewer"}, D.At{"id", "viewer"}], [D.El{"canvas", "board", [D.At{"id", "board"}], Nil{}}]}
 
 def View.aside(+kind: String, +u: U.Ui) -> D.Node:
-  View.aside.k(Bool.pick(Nat, String.eq(kind, "diff"), 0n, Bool.pick(Nat, String.eq(kind, "browser"), 1n, 2n)), u)
+  View.aside.k(Bool.pick(Nat, String.eq(kind, "diff"), 0n, Bool.pick(Nat, String.eq(kind, "browser"), 1n, Bool.pick(Nat, String.eq(kind, "mech"), 2n,
+    Bool.pick(Nat, Bool.and(String.eq(kind, "3d"), Bool.not(String.is_empty(U.Ui.view_get(u, "view.path")))), 3n, 4n)))), u)
 
 def View.aside.if(open: Bool, +kind: String, +u: U.Ui) -> List<&2, D.Node>:
   match open:

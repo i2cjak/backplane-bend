@@ -26,8 +26,9 @@ def recv.k(shot: Bool, u: U.Ui, +o: J.Json) -> U.Act:
     case False{}:
       U.Ui.recv_act(u, o)
 
+# (a part in 3D asks the hub for its model when the source changes)
 def recv(u: U.Ui, +o: J.Json) -> U.Act:
-  recv.k(String.eq(J.Json.get_str(o, "t", ""), "shot"), u, o)
+  U.Solid.sync(recv.k(String.eq(J.Json.get_str(o, "t", ""), "shot"), u, o))
 
 # a bot's cat for an <img data-cat="<look>:<mood>:<px>"> (host.js keeps
 # each answer)
@@ -49,7 +50,7 @@ def wanted(+u: U.Ui, +hash: String) -> U.Ui:
   Bool.pick(U.Ui, String.starts_with(hash, "#bot="), U.Ui.scratch_set(u, "@bot.want", String.drop(hash, 5n)), u)
 
 def act(u: U.Ui, action: String, value: String) -> U.Act:
-  U.Ui.act(u, action, value)
+  U.Solid.sync(U.Ui.act(u, action, value))
 
 def view(u: U.Ui) -> D.Node:
   V.View.page(u)

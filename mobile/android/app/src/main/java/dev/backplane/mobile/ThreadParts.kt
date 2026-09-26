@@ -16,6 +16,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -214,6 +215,22 @@ private fun hubImage(url: String, max: Int): Got? =
     produceState<Got?>(null, url, max) {
         value = withContext(Dispatchers.IO) { Images.load(url, max) }?.let { Got.Ok(it) } ?: Got.Failed
     }.value
+
+// an image from the hub filling its width (a part's render); a tap opens it
+@Composable
+fun HubPicture(m: AppModel, path: String, modifier: Modifier, show: (String) -> Unit) {
+    val u = m.web(path) ?: return
+    when (val g = hubImage(u, 1200)) {
+        null -> Box(modifier.aspectRatio(4f / 3f), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+        }
+        Got.Failed -> Box(modifier.aspectRatio(4f / 3f), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.BrokenImage, "No image", tint = MaterialTheme.colorScheme.outline)
+        }
+        is Got.Ok -> Image(g.b.asImageBitmap(), "Render", modifier.aspectRatio(g.b.width.toFloat() / maxOf(g.b.height, 1))
+            .clickable { show(u) }, contentScale = ContentScale.Fit)
+    }
+}
 
 // an image from the hub, as a thumbnail; a tap opens it full screen
 @Composable

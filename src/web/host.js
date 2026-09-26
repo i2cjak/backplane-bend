@@ -6,6 +6,7 @@
 // is dumb).
 
 import App from "./app.bend";
+import * as Solid from "./solid.js";
 
 // JSON <-> Bend Json
 // ------------------
@@ -195,6 +196,7 @@ function render() {
   const tl2 = document.getElementById("timeline");
   if (tl2 && (scroll || pinned)) tl2.scrollTop = tl2.scrollHeight;
   scroll = false;
+  Solid.mount(document.getElementById("solid"));
   if (focus) {
     document.getElementById(focus)?.focus();
     focus = null;
@@ -659,7 +661,13 @@ function connect() {
   s.onmessage = (e) => {
     // the hub sends only binary CBOR frames
     if (typeof e.data === "string") return;
-    const j = App.wire_in(toList(new Uint8Array(e.data)));
+    // a part's model goes straight to the 3D view (solid.js), not through Bend
+    const bytes = new Uint8Array(e.data);
+    if (Solid.isPlot(bytes)) {
+      Solid.got(bytes);
+      return;
+    }
+    const j = App.wire_in(toList(bytes));
     keep(JSON.parse(App.show(j)));
     const r = App.recv(ui, j);
     ui = r.ui;

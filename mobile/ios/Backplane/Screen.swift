@@ -190,6 +190,24 @@ struct Viewer: Decodable {
     let parts: Bool?
     // what the hub says about the source (parts with no 3D model)
     let note: String?
+    // the Mechanical page, when that is what is open
+    let mech: MechPage?
+}
+
+// The Mechanical page (src/mobile/view.bend's Mech.json): what to say
+// while there are no parts, the parts ("mech-part" value), the part on
+// show (its path for "mech-3d"), its renders and what to say without any,
+// and where to get FreeCAD when the hub has none
+struct MechPage: Decodable {
+    let say, note: String
+    let parts: [Choice]
+    let name, path: String
+    let shots: [MechShot]
+    let empty: String
+}
+
+struct MechShot: Decodable, Hashable {
+    let view, url: String
 }
 
 struct SheetRow: Decodable, Hashable {

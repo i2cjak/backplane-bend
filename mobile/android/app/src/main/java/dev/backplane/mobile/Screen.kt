@@ -118,7 +118,20 @@ data class Viewer(
     val sheets: List<Sheet> = emptyList(), val layerList: List<LayerRow> = emptyList(), val off: Int = 0, val parts: Boolean = true,
     // what the hub says about the source (parts with no 3D model)
     val note: String = "",
+    // the Mechanical page, when that is what is open
+    val mech: MechPage? = null,
 )
+
+// The Mechanical page (src/mobile/view.bend's Mech.json): what to say
+// while there are no parts, the parts ("mech-part" value), the part on
+// show (its path for "mech-3d"), its renders and what to say without any,
+// and where to get FreeCAD when the hub has none
+data class MechPage(
+    val say: String, val note: String, val parts: List<Choice>, val name: String, val path: String,
+    val shots: List<MechShot>, val empty: String,
+)
+
+data class MechShot(val view: String, val url: String)
 
 data class Sheet(val label: String, val value: String, val on: Boolean, val loop: Boolean)
 
@@ -361,6 +374,10 @@ private fun viewer(o: JSONObject) = Viewer(
     o.optJSONArray("sheets").map { Sheet(it.optString("label"), it.optString("value"), it.optBoolean("on"), it.optBoolean("loop")) },
     o.optJSONArray("layerList").map { LayerRow(it.optInt("layer"), it.optString("name"), it.optBoolean("on")) },
     o.optInt("off"), o.optBoolean("parts", true), o.optString("note"),
+    o.optJSONObject("mech")?.let { p ->
+        MechPage(p.optString("say"), p.optString("note"), choices(p.optJSONArray("parts")), p.optString("name"), p.optString("path"),
+            p.optJSONArray("shots").map { MechShot(it.optString("view"), it.optString("url")) }, p.optString("empty"))
+    },
 )
 
 private fun strs(a: JSONArray?): List<String> =
