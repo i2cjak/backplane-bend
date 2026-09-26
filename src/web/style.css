@@ -12,10 +12,41 @@
   --ok: #58c28a;
   --warn: #e3b341;
   --bad: #f06a6a;
+  --input: #b48cff;
+  --queued: #4fc1c9;
+  --on-accent: #06121f;
+  --view: #08090b;
+  --add-bg: #11331f;
+  --del-bg: #32131a;
   --mono: "Berkeley Mono", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   --sans: "Berkeley Mono", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   color-scheme: dark;
 }
+
+/* the light theme (Settings, Appearance: the hub's ui.theme) */
+.app.light {
+  --bg: #fafaf8;
+  --panel: #f1f0ec;
+  --raise: #e8e7e2;
+  --line: #d3d1ca;
+  --text: #1b1d21;
+  --dim: #5b6068;
+  --faint: #8a8f96;
+  --accent: #1f6fd1;
+  --ok: #1c8550;
+  --warn: #9a6700;
+  --bad: #c93434;
+  --input: #7446d0;
+  --queued: #127c84;
+  --on-accent: #ffffff;
+  --view: #f5f4ef;
+  --add-bg: #dff3e4;
+  --del-bg: #fbe4e6;
+  --sel: rgba(0,0,0,.06);
+  color-scheme: light;
+  background: var(--bg); color: var(--text);
+}
+html:has(.app.light), html:has(.app.light) body { background: #fafaf8; color: #1b1d21; }
 
 * { box-sizing: border-box; border-radius: 0; }
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 var(--sans); }
@@ -25,7 +56,8 @@ button {
 }
 button:hover { border-color: var(--faint); }
 button.on { border-color: var(--accent); color: var(--accent); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+button.primary.stop { background: var(--bad); border-color: var(--bad); }
 button.icon { padding: 0 7px; background: none; border-color: transparent; color: var(--dim); }
 button.icon:hover { color: var(--text); border-color: var(--line); }
 
@@ -57,8 +89,8 @@ button.icon:hover { color: var(--text); border-color: var(--line); }
 .dot.run, .dot.working { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
 .dot.fail, .dot.failed { background: var(--bad); }
 .dot.stop, .dot.approval { background: var(--warn); }
-.dot.input { background: #b48cff; }
-.dot.queued { background: #4fc1c9; }
+.dot.input { background: var(--input); }
+.dot.queued { background: var(--queued); }
 .thread .moves { display: none; gap: 2px; }
 .thread:hover .moves { display: flex; }
 .thread .move { padding: 0 5px; font-size: 11px; line-height: 16px; background: none; }
@@ -156,7 +188,7 @@ button.fold span { overflow: hidden; text-overflow: ellipsis; white-space: nowra
 .empty { display: grid; place-items: center; color: var(--faint); height: 100%; }
 
 /* Viewer */
-.viewer { border-left: 1px solid var(--line); background: #08090b; position: relative; min-width: 0; }
+.viewer { border-left: 1px solid var(--line); background: var(--view); position: relative; min-width: 0; }
 .viewer canvas { width: 100%; height: 100%; display: block; }
 
 /* Attachments */
@@ -194,8 +226,8 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 .dl .no { flex: none; width: 4ch; text-align: right; color: var(--faint); padding-right: 6px; user-select: none; }
 .dl .sign { flex: none; width: 2ch; text-align: center; user-select: none; }
 .dl .code { flex: 1; min-width: 0; }
-.dl.add { background: #11331f; } .dl.add .sign { color: var(--ok); }
-.dl.del { background: #32131a; } .dl.del .sign { color: var(--bad); }
+.dl.add { background: var(--add-bg); } .dl.add .sign { color: var(--ok); }
+.dl.del { background: var(--del-bg); } .dl.del .sign { color: var(--bad); }
 .dl.meta { color: var(--faint); }
 
 .toast { position: fixed; right: 16px; bottom: 16px; background: var(--raise); border: 1px solid var(--bad); color: var(--bad); padding: 8px 12px; cursor: pointer; }
@@ -376,6 +408,12 @@ textarea.field { resize: vertical; min-height: 56px; }
 
 .earlier { display: flex; justify-content: center; padding: 6px 0 12px; }
 .earlier-btn { font-size: 12px; opacity: 0.8; }
+
+/* a side question (View.btw) */
+.btw { background: var(--panel); border: 1px solid var(--line); padding: 6px 10px; }
+.btw-head { display: flex; align-items: center; gap: 8px; }
+.btw-q { flex: 1; min-width: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btw-a { white-space: pre-wrap; max-height: 16em; overflow: auto; }
 
 /* dictation (View.voice) */
 .foot-end { display: flex; align-items: center; gap: 6px; }

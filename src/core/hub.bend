@@ -479,7 +479,14 @@ def Hub.reorder_projects(+s: M.State, +now: Nat, +client: U32, +id: String, +p: 
 
 # agent features (skills, effort, naming)
 def Hub.methods.agent() -> List<&2, String>:
-  ["thread.branch", "skills.list", "thread.effort", "thread.local", "thread.merged", "thread.unrooted", "thread.titled"]
+  ["thread.branch", "skills.list", "thread.effort", "thread.local", "thread.merged", "thread.unrooted", "thread.titled", "thread.btw"]
+
+# a side question (/btw {thread, q}): the writing model answers it off
+# the hub (Git job "btw": a is the question, b what it reads), only to the
+# client that asked. Nothing is logged: the thread never holds it (law
+# btw_never_logged)
+def Hub.btw(+s: M.State, +client: U32, +id: String, +th: String, +q: String) -> Step:
+  Step.outs([Git{client, id, "btw", th, "", q, HD.Hand.btw(Hub.entries(s), th, HD.Hand.title(Hub.thread(s, th)), q)}])
 
 def Hub.provider_of(t: M.Thread) -> String:
   match t:
@@ -885,6 +892,8 @@ def Hub.agentm(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.
       Step.reply(client, id, [M.WorktreeRemoved{J.Json.get_str(p, "thread", ""), now}])
     case 6n:
       Title.got(s, now, client, id, J.Json.get_str(p, "thread", ""), p)
+    case 7n:
+      Hub.btw(s, client, id, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "q", ""))
     case _:
       Hub.media(C.Codec.pos(Hub.methods.media(), m), s, now, client, id, p, m)
 

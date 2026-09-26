@@ -15,6 +15,23 @@ def msg(+id: String) -> M.Entry:
 def err(+id: String) -> M.Entry:
   M.Act{id, "t", "error", "exit", "boom", 0n}
 
+def user(+id: String, +at: Nat) -> M.Entry:
+  M.Msg{id, "t", M.User{}, "do it", at}
+
+def said(+id: String, +at: Nat) -> M.Entry:
+  M.Msg{id, "t", M.Assistant{}, "done", at}
+
+def ran(+id: String, +kind: String, +at: Nat) -> M.Entry:
+  M.Act{id, "t", "tool", kind, "x", at}
+
+# a turn: a message, two tool calls, a reply on the way, one more call and
+# the last reply 133 s after the message
+def turn() -> List<&2, M.Entry>:
+  [user("u", 100n), ran("a", "shell", 110n), ran("b", "edit", 120n), said("m1", 150n), ran("c", "read", 160n), said("m2", 233n)]
+
+def at(+now: Nat) -> Map<&2, String>:
+  Map.set(&2, String, Map.new(&2, String), "clock", Nat.show(now))
+
 def Show.idl(es: List<&2, M.Entry>) -> List<&2, String>:
   match es:
     case Nil{}:
@@ -35,16 +52,23 @@ def Show.gs(gs: List<&2, F.Grp>) -> String:
     case F.GRun{xs} <> t:
       "[" ++ Show.ids(xs) ++ "] " ++ Show.gs(t)
 
+def Show.role(r: F.Role) -> String:
+  match r:
+    case F.RShow{}:
+      "s"
+    case F.RHead{id, label, open}:
+      "h(" ++ id ++ "|" ++ label ++ "|" ++ Bool.show(open) ++ ")"
+    case F.RIn{open}:
+      "i(" ++ Bool.show(open) ++ ")"
+    case F.RWork{id, label, open, inner}:
+      "w(" ++ id ++ "|" ++ label ++ "|" ++ Bool.show(open) ++ "|" ++ Show.role(inner) ++ ")"
+
 def Show.roles(rs: List<&2, F.Role>) -> String:
   match rs:
     case Nil{}:
       ""
-    case F.RShow{} <> t:
-      "s " ++ Show.roles(t)
-    case F.RHead{id, label, open} <> t:
-      "h(" ++ id ++ "|" ++ label ++ "|" ++ Bool.show(open) ++ ") " ++ Show.roles(t)
-    case F.RIn{open} <> t:
-      "i(" ++ Bool.show(open) ++ ") " ++ Show.roles(t)
+    case r <> t:
+      Show.role(r) ++ " " ++ Show.roles(t)
 
 def es1() -> List<&2, M.Entry>:
   [msg("m1"), tool("a", "shell"), tool("b", "edit"), tool("c", "shell"), err("e"), tool("d", "read"), msg("m2"), tool("f", "shell")]
@@ -98,6 +122,18 @@ def main() -> IO(Unit):
     C.Check.str("user opened", Show.roles(F.Fold.roles([tool("a", "x"), tool("b", "x")], Map.set(&2, String, none(), "fold:a", "1"), False{})), "h(a|2 tool calls · x|True) i(True) ")
     C.Check.str("user shut the live one", Show.roles(F.Fold.roles([tool("a", "x")], Map.set(&2, String, none(), "fold:a", "0"), True{})), "h(a|1 tool call · x|False) ")
     C.Check.str("ask", F.Fold.ask(True{}, "a") ++ " " ++ F.Fold.ask(False{}, "a"), "0a 1a")
+    C.Check.str("took", M.Time.took(45n) ++ " " ++ M.Time.took(133n) ++ " " ++ M.Time.took(3900n), "45s 2m 13s 1h 5m")
+    C.Check.str("turn done: its work folds up to the last reply", Show.roles(F.Fold.roles(turn(), at(533n), False{})),
+      "s w(work:u|Worked for 2m 13s · 5m ago|False|h(a|2 tool calls · shell, edit|False)) i(False) i(False) i(False) s ")
+    C.Check.str("turn running: all of it open", Show.roles(F.Fold.roles(turn(), at(533n), True{})),
+      "s w(work:u|Working · started 7m ago|True|h(a|2 tool calls · shell, edit|False)) i(False) s h(c|1 tool call · read|False) s ")
+    C.Check.str("turn opened again", Show.roles(F.Fold.roles(turn(), Map.set(&2, String, at(240n), "fold:work:u", "1"), False{})),
+      "s w(work:u|Worked for 2m 13s · just now|True|h(a|2 tool calls · shell, edit|False)) i(False) s h(c|1 tool call · read|False) s ")
+    C.Check.str("turn with no reply: nothing folds", Show.roles(F.Fold.roles([user("u", 0n), ran("a", "x", 1n), err("e")], none(), False{})),
+      "s h(a|1 tool call · x|False) s ")
+    C.Check.str("turn answered at once: nothing folds", Show.roles(F.Fold.roles([user("u", 0n), said("m", 1n)], none(), False{})), "s s ")
+    C.Check.str("a page from mid-turn: nothing folds", Show.roles(F.Fold.roles([ran("a", "x", 1n), said("m", 2n)], none(), False{})), "h(a|1 tool call · x|False) s ")
+    C.Check.str("clock ticks into the info map", U.Ui.info(U.Ui.tick(U.Ui.init(0n), 42n), "clock"), "42")
     C.Check.str("click opens", U.Ui.info(after(U.Ui.act(U.Ui.init(0n), "fold", "1a")), "fold:a"), "1")
     C.Check.str("click shuts", U.Ui.info(after(U.Ui.act(after(U.Ui.act(U.Ui.init(0n), "fold", "1a")), "fold", "0a")), "fold:a"), "0")
     C.Check.str("web folded", Web.shows(V.View.entries([tool("a", "shell"), tool("b", "edit"), err("e")], M.State.empty(), "t", none(), False{})),

@@ -58,6 +58,47 @@ def Th.focus() -> U32:
 def Th.code() -> U32:
   1052174
 
+# The light theme (Settings, Appearance): each colour of the palette above
+# has a light twin, swapped into every op a frame draws (layout.bend's
+# Theme.ops); the diff's row grounds too. Colours not in the palette (a
+# project's badge, a picture, the board viewer's scene) are left alone.
+
+def Th.swap.to(same: Bool, +to: U32, rest: U32) -> U32:
+  match same:
+    case True{}:
+      to
+    case False{}:
+      rest
+
+def Th.light(+c: U32) -> U32:
+  Th.swap.to(U32.is_eq(c, Th.bg()), 16448248,
+  Th.swap.to(U32.is_eq(c, Th.panel()), 15855852,
+  Th.swap.to(U32.is_eq(c, Th.raise()), 15263714,
+  Th.swap.to(U32.is_eq(c, Th.line()), 13881802,
+  Th.swap.to(U32.is_eq(c, Th.text()), 1776929,
+  Th.swap.to(U32.is_eq(c, Th.dim()), 5988456,
+  Th.swap.to(U32.is_eq(c, Th.faint()), 9080726,
+  Th.swap.to(U32.is_eq(c, Th.accent()), 2060241,
+  Th.swap.to(U32.is_eq(c, Th.ok()), 1869136,
+  Th.swap.to(U32.is_eq(c, Th.warn()), 10118912,
+  Th.swap.to(U32.is_eq(c, Th.bad()), 13186100,
+  Th.swap.to(U32.is_eq(c, Th.input()), 7620304,
+  Th.swap.to(U32.is_eq(c, Th.queued()), 1211524,
+  Th.swap.to(U32.is_eq(c, Th.soft()), 3619393,
+  Th.swap.to(U32.is_eq(c, Th.sel()), 14083575,
+  Th.swap.to(U32.is_eq(c, Th.focus()), 7053274,
+  Th.swap.to(U32.is_eq(c, Th.code()), 15658472,
+  Th.swap.to(U32.is_eq(c, 1127459), 14676964,
+  Th.swap.to(U32.is_eq(c, 3279380), 16508134, c)))))))))))))))))))
+
+# a colour in the theme asked for
+def Th.of(light: Bool, +c: U32) -> U32:
+  match light:
+    case True{}:
+      Th.light(c)
+    case False{}:
+      c
+
 # Metrics (pixels): the font cell is 8 x 16
 def Th.cw() -> U32:
   8

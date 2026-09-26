@@ -7,7 +7,7 @@ Codex) with live KiCad viewers, in a native window drawn entirely by Bend.
 - **Threads** per project, as in T3Code. They go *Settled* after three days of inactivity (configurable), and everything is kept in a local event log. Each thread picks its provider and model.
 - **Models working together.** An agent can delegate tasks to other models through Backplane's MCP tools. The subagent viewer shows each child task, its model and state, under its parent thread. Laws bound the delegation depth and deliver each result exactly once.
 - **KiCad viewers that stay truthful.** Board, schematic and 3D tabs follow the project's canonical files live, never a half-written save. Only what changed fades in. Click any pad, track, symbol or pin to see what it is (net, ref, value, footprint) and mention it in chat. STEP files open in the 3D view.
-- **KiCad-aware agents.** Every agent is told the exact kicad-cli to use and the project's canonical files (from `.backplane.json` or the `.kicad_pro`). They also get the [KiStack](https://github.com/American-Embedded/KiStack) skills, pinned. With the [Backplane KiCad fork](https://github.com/i2cjak/Backplane_KiCad) they also get its IPC API server, which you can turn off in Settings. Settings can also install the fork.
+- **KiCad-aware agents.** Every agent is told the exact kicad-cli to use and the project's canonical files (from `.backplane.json` or the `.kicad_pro`). They also get the [KiStack](https://github.com/American-Embedded/KiStack) skills: the latest is fetched in the background at each start and used from the next one (a pinned revision until then). Without KiCad on the machine, Settings and the agents say so. With the [Backplane KiCad fork](https://github.com/i2cjak/Backplane_KiCad) they also get its IPC API server, which you can turn off in Settings. Settings can also install the fork.
 - **A browser for the agents.** It is Chrome: an installed Google Chrome, or Google's Chrome for Testing, which Backplane downloads. Agents drive it with `preview_*` tools, and you watch it live in the Browser tab.
 - **Laws.** The rules that matter are stated in [`LAWS.bend`](LAWS.bend) and proven in [`PROOF.bend`](PROOF.bend). `bend PROOF.bend` checks every one.
 - **Anywhere on your tailnet.** Backplane also listens on your tailnet address (`--no-tailscale` turns that off). Your own devices get in without a token; anyone else needs the pairing token. Machines you own that run Backplane show up in the sidebar, and you can switch between them.
@@ -26,7 +26,9 @@ This installs into `~/.local/share/backplane` and links the binaries into `~/.lo
 - The installer checks the sha256 of what it downloads.
 - Backplane updates itself from GitHub releases. Set `BACKPLANE_NO_UPDATE=1` to turn that off.
 - `backplane` opens the window. Without a display it keeps serving the web client on `127.0.0.1:3787`.
-- `backplane-serve` runs headless.
+- `backplane --headless` does that on purpose, window or not, in the background: it returns at once with its pid and log (`<home>/headless.log`), and your devices connect over the tailnet. `--headless --foreground` stays attached, for a service.
+
+Each release also carries an AppImage, a `.deb` (Debian, Ubuntu), a `PKGBUILD` for the AUR (`backplane-bend-bin`) and the Android app (`backplane-<version>-android.apk`). Those update through their package, not in place. `scripts/icons.sh` redraws the app icon from `assets/icon/`.
 
 ## Build
 

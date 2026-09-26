@@ -104,6 +104,11 @@ struct Skill: Decodable, Hashable {
     let name, desc: String
 }
 
+// a side question (/btw) and its answer, until closed
+struct Btw: Decodable, Equatable {
+    let q, a: String
+}
+
 // what the thread changed: k 0 context, 1 added, 2 removed, 3 meta, 4 a hunk head
 struct DiffLine: Decodable, Hashable {
     let k: Int
@@ -173,6 +178,29 @@ struct Viewer: Decodable {
     let fov: Float
     let picked: String
     let card: Card?
+    // the viewer's own light ground, and each layer's colour on it (by layer)
+    let light: Bool?
+    let look: [UInt32]?
+    // the schematic's sheets ("view-sheet" value), the layers the user can
+    // turn off ("view-layer" layer) and those off (a bit each), and
+    // whether the 3D model shows its parts ("view-parts")
+    let sheets: [SheetRow]?
+    let layerList: [LayerRow]?
+    let off: UInt32?
+    let parts: Bool?
+    // what the hub says about the source (parts with no 3D model)
+    let note: String?
+}
+
+struct SheetRow: Decodable, Hashable {
+    let label, value: String
+    let on, loop: Bool
+}
+
+struct LayerRow: Decodable, Hashable {
+    let layer: Int
+    let name: String
+    let on: Bool
 }
 
 // the composer's model chip: its label, the models ("model" sends one)
@@ -218,6 +246,8 @@ struct ThreadView: Decodable {
     let earlier: Int?
     let live: [Block]
     let working, draft, send: String
+    // "interrupt" while a turn runs with nothing typed (the button is Stop)
+    let sendAct: String?
     let picker: ModelPicker
     let viewer: Viewer
     // the menu under the toolbar's ellipsis, after the tools
@@ -226,6 +256,7 @@ struct ThreadView: Decodable {
     let tasks: [TaskRow]?
     let asks: [Ask]?
     let skills: [Skill]?
+    let btw: Btw?
     // what the next message attaches, and what is still uploading; files
     // go up in pieces of chunk bytes
     let attaching: [Chip]?
@@ -418,6 +449,8 @@ struct Screen: Decodable {
     let find: Find?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
+    // the hub's theme ("light", "dark"; empty follows the phone's)
+    let theme: String?
 }
 
 struct Cmd: Decodable {

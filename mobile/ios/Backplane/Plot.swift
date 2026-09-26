@@ -288,7 +288,8 @@ final class PlotStore {
         queue.async {
             guard let o = Cbor.decode(d) as? [String: Any] else { return }
             let key = o["key"] as? String ?? ""
-            let solid = key.hasPrefix("2|")
+            // a 3D model: with its parts (2) or the board alone (3)
+            let solid = key.hasPrefix("2|") || key.hasPrefix("3|")
             if let why = o["none"] as? String {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {

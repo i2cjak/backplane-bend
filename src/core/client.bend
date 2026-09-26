@@ -57,8 +57,10 @@ def Act.cmds(a: Act) -> List<&2, Cmd>:
     case Act{_, cs}:
       cs
 
-def Ui.init(now: Nat) -> Ui:
-  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, VT.Vt)}
+# (the clock goes in the info map from the start, as Ui.tick puts it)
+def Ui.init(+now: Nat) -> Ui:
+  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "",
+    Map.set(&2, String, Map.new(&2, String), "clock", Nat.show(now)), Map.new(&2, String), Map.new(&2, VT.Vt)}
 
 def Str.get.k(r: Map<&2, String> & String) -> String:
   (_, v) = r
@@ -104,21 +106,9 @@ def Ui.entries(s: M.State) -> List<&2, M.Entry>:
 # Time
 # ----
 
-def Time.ago.k(m: Bool, h: Bool, d: Bool, +s: Nat) -> String:
-  match m h d:
-    case True{} _ _:
-      "now"
-    case False{} True{} _:
-      Nat.show(Nat.div(s, 60n)) ++ "m"
-    case False{} False{} True{}:
-      Nat.show(Nat.div(s, 3600n)) ++ "h"
-    case False{} False{} False{}:
-      Nat.show(Nat.div(s, 86400n)) ++ "d"
-
-# "now", "5m", "3h", "2d"
+# "now", "5m", "3h", "2d" (model.bend's, which folded turns use too)
 def Time.ago(+now: Nat, +at: Nat) -> String:
-  +s = Nat.sub(now, at)
-  Time.ago.k(Nat.is_lt(s, 60n), Nat.is_lt(s, 3600n), Nat.is_lt(s, 86400n), s)
+  M.Time.ago(now, at)
 
 def Ui.decode.k(m: Maybe<&2, M.Change>, rest: List<&2, M.Change>) -> List<&2, M.Change>:
   match m:
@@ -199,8 +189,10 @@ def Local.keep.go(ks: List<&2, String>, +old: Map<&2, String>, m: Map<&2, String
     case +k <> t:
       Local.keep.go(t, old, Map.set(&2, String, m, k, Str.get(old, k)))
 
+# (and the clock this client last ticked, which a folded turn's "5m ago"
+# reads)
 def Local.keep(+old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
-  Local.keep.go(["local.machine", "local.machines", "local.drafts"], old, m)
+  Local.keep.go(["local.machine", "local.machines", "local.drafts", "clock"], old, m)
 
 def Machines.home.k(home: Bool, +nf: Map<&2, String>) -> Map<&2, String>:
   Bool.pick(Map<&2, String>, Bool.and(home, Bool.not(String.is_empty(Str.get(nf, "machines")))), Map.set(&2, String, nf, "local.machines", Str.get(nf, "machines")), nf)
@@ -384,6 +376,46 @@ def Skills.has(+o: J.Json) -> Bool:
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
 
+# the settings' version row: a packaged install (info "update" is
+# "package") updates through its package manager and offers no buttons
+def Update.packaged(+nf: Map<&2, String>) -> Bool:
+  String.eq(Str.get(nf, "update"), "package")
+
+# the hub's pairing link (the tailnet address and the token), which a
+# phone or a browser pastes; Settings shows it with Copy
+def Pair.link(+nf: Map<&2, String>) -> String:
+  Str.get(nf, "pair")
+
+def Pair.note(+link: String) -> String:
+  Bool.pick(String, String.is_empty(link), "Shown once Backplane listens on your tailnet.", link)
+
+# KiCad itself: the hub's kicad-cli (info "kicad.cli", "" when there is
+# none on the machine), which ERC, DRC, exports and the 3D model need
+def KiCad.found(+nf: Map<&2, String>) -> Bool:
+  Bool.not(String.is_empty(Str.get(nf, "kicad.cli")))
+
+def KiCad.cli.label(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.found(nf), "KiCad CLI", "KiCad CLI: not found")
+
+def KiCad.cli.note(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.found(nf), Str.get(nf, "kicad.cli"), "Install KiCad from kicad.org/download, or Backplane KiCad")
+
+# KiCad IPC is the Backplane fork's api-server: without the fork the
+# setting has nothing to turn on, so Settings says where to get it instead
+# of offering it (info "kicad.fork": the fork's version, "" for none)
+def KiCad.ipc.ready(+nf: Map<&2, String>) -> Bool:
+  Bool.not(String.is_empty(Str.get(nf, "kicad.fork")))
+
+def KiCad.ipc.label(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.ipc.ready(nf), "KiCad IPC", "KiCad IPC: needs Backplane KiCad")
+
+def KiCad.ipc.note(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.ipc.ready(nf), "Agents may drive KiCad through the fork's api-server (NNG/protobuf).",
+    "Install it with the button above (Linux x86-64) or from github.com/i2cjak/Backplane_KiCad")
+
+def Update.line(+nf: Map<&2, String>, +note: String) -> String:
+  Bool.pick(String, Update.packaged(nf), "Updated by its package.", Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note))
+
 # an update notice: a version to offer, or the progress of one being applied
 def Ui.update(u: Ui, +o: J.Json) -> Ui:
   match u:
@@ -463,10 +495,12 @@ def Ui.online(u: Ui, b: Bool) -> Ui:
     case Ui{st, sel, dr, live, op, _, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Ui{st, sel, dr, live, op, b, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
-def Ui.tick(u: Ui, now: Nat) -> Ui:
+# the clock goes in the info map too, where a thread's folded turns read
+# it ("5m ago", FO.Fold.roles)
+def Ui.tick(u: Ui, +now: Nat) -> Ui:
   match u:
-    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+    case Ui{st, sel, dr, live, op, on, _, ad, pa, v, rid, w, er, note, +nf, ob, tr}:
+      Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, Map.set(&2, String, nf, "clock", Nat.show(now)), ob, tr}
 
 # Acting
 # ------
@@ -604,6 +638,45 @@ def Follow.label.k(run: Bool, +mode: String) -> String:
 def Follow.label(+st: M.State, +sel: String, run: Bool) -> String:
   Follow.label.k(run, Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), False{}))
 
+# While a turn runs and nothing is typed or attached, the send button is
+# Stop: sending would do nothing there (laws follow_stop_*)
+def Follow.stop.k(run: Bool, blank: Bool) -> Bool:
+  match run:
+    case True{}:
+      blank
+    case False{}:
+      False{}
+
+def Follow.stop(run: Bool, +draft: String, +atts: List<&2, String>) -> Bool:
+  Follow.stop.k(run, Bool.and(String.is_empty(String.trim(draft)), List.is_empty(&2, String, atts)))
+
+# "/btw <question>": a side question about the thread, answered off to
+# the side by the writing model; the turn and the thread never see it
+# (Btw.*, laws btw_*)
+def Btw.is(+draft: String) -> Bool:
+  Bool.or(String.eq(String.trim(draft), "/btw"), Bool.or(String.starts_with(draft, "/btw "), String.starts_with(draft, "/btw\n")))
+
+def Btw.q(+draft: String) -> String:
+  String.trim(String.drop(String.trim(draft), 4n))
+
+# what the send button says, and what it does
+def Follow.button.k(stop: Bool, +label: String) -> String:
+  match stop:
+    case True{}:
+      "Stop"
+    case False{}:
+      label
+
+def Follow.button(+st: M.State, +sel: String, run: Bool, stop: Bool, +draft: String) -> String:
+  Follow.button.k(stop, Bool.pick(String, Btw.is(draft), "Ask", Follow.label(st, sel, run)))
+
+def Follow.act(stop: Bool) -> String:
+  match stop:
+    case True{}:
+      "interrupt"
+    case False{}:
+      "send"
+
 def Ui.send.t(u: Ui, text: String, +mode: String) -> Act:
   match u:
     case Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:
@@ -707,7 +780,8 @@ def Ui.actions() -> List<&2, String>:
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
-   "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm"]
+   "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
+   "btw-close", "vw-light"]
 
 # Reading the client state
 # ------------------------
@@ -1925,6 +1999,52 @@ def Skills.fetch(need: Bool, a: Act) -> Act:
     case False{} _:
       a
 
+# Side questions
+# --------------
+# The question and its answer live in the scratch, per thread ("@btw:t",
+# "@btw.a:t", "" while it is being answered); the card above the composer
+# shows them until closed ("btw-close")
+
+def Btw.ask.k(u: Ui, +q: String) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui.also(Ui.rpc(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@btw:" ++ sel, q), "@btw.a:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
+        "thread.btw", [J.KV{"thread", J.Str{sel}}, J.KV{"q", J.Str{q}}]), Draft.keep(sel, ""))
+
+# "/btw" with no question asks nothing
+def Btw.ask(+u: Ui, +q: String) -> Act:
+  Bool.pick(Act, String.is_empty(q), Act{u, Nil{}}, Btw.ask.k(u, q))
+
+def Btw.has(+o: J.Json) -> Bool:
+  Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "btw"), J.Null{})), "null"))
+
+def Btw.answer(+a: String) -> String:
+  Bool.pick(String, String.is_empty(String.trim(a)), "No answer came back (Settings, Writing: the model it asks).", String.trim(a))
+
+def Btw.got(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.scratch_set(u, "@btw.a:" ++ J.Json.get_str(J.Json.get_obj(o, "result"), "thread", ""), Btw.answer(J.Json.get_str(J.Json.get_obj(o, "result"), "btw", "")))
+    case False{}:
+      u
+
+def Btw.reply(u: Ui, +o: J.Json) -> Ui:
+  Btw.got(Btw.has(o), u, o)
+
+def Btw.close(+u: Ui) -> Act:
+  Act{Ui.scratch_set(Ui.scratch_set(u, "@btw:" ++ Ui.sel(u), ""), "@btw.a:" ++ Ui.sel(u), ""), Nil{}}
+
+# the open thread's side question ("" for none) and its answer ("" while
+# it is being answered)
+def Btw.question(+u: Ui) -> String:
+  Ui.scratch(u, "@btw:" ++ Ui.sel(u))
+
+def Btw.reply.of(+u: Ui) -> String:
+  Ui.scratch(u, "@btw.a:" ++ Ui.sel(u))
+
+def Btw.text(+a: String) -> String:
+  Bool.pick(String, String.is_empty(a), "Thinking…", a)
+
 def Skills.want(a: Act) -> Act:
   match a:
     case Act{+u, cs}:
@@ -2665,12 +2785,22 @@ def Ui.send.k(empty: Bool, +u: Ui, text: String, +mode: String) -> Act:
 
 # the draft, then a line per attachment (attach.bend's format)
 # the draft sent; alt: the other follow-up mode (ctrl+Enter)
-def Ui.send(u: Ui, alt: Bool) -> Act:
+def Ui.send.go(u: Ui, alt: Bool) -> Act:
   match u:
     case Ui{+st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
       Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text,
         Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), alt))
+
+def Ui.send.btw(btw: Bool, +u: Ui, alt: Bool) -> Act:
+  match btw:
+    case True{}:
+      Btw.ask(u, Btw.q(Ui.draft_text(u)))
+    case False{}:
+      Ui.send.go(u, alt)
+
+def Ui.send(+u: Ui, alt: Bool) -> Act:
+  Ui.send.btw(Btw.is(Ui.draft_text(u)), u, alt)
 
 def Bots.sel.set(u: Ui, +th: String) -> Ui:
   match u:
@@ -3088,6 +3218,12 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
       Voice.rpc(Ui.scratch_set(u, "@f.vterm", ""), "add", [J.KV{"term", J.Str{String.trim(Ui.scratch(u, "@f.vterm"))}}])
     case 11n:
       Voice.rpc(u, "dict", [J.KV{"dict", J.Str{VC.Voice.dict.show(VC.Voice.dict.remove(Voice.dict(u), value))}}])
+    # the table's last action is not voice's: a side question closed
+    case 12n:
+      Btw.close(u)
+    # the phones' viewer ground (the window takes its own "vw-light")
+    case 13n:
+      Act{Ui.scratch_set(u, "@vw.light", Bool.pick(String, String.is_empty(Ui.scratch(u, "@vw.light")), "1", "")), Nil{}}
     case _:
       Act{u, Nil{}}
 
@@ -3132,7 +3268,7 @@ def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Bots.reply(o, Proj.reply(o, Ui.reply.skills(u, o)))
+  Bots.reply(o, Proj.reply(o, Btw.reply(Ui.reply.skills(u, o), o)))
 
 def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
   match i:

@@ -127,6 +127,11 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
     // the model's multisampling (4x where the GPU has it)
     private let samples: Int
     var bg = SIMD4<Float>(0, 0, 0, 1)
+    // each layer's colour on the viewer's light ground (empty: the chunks' own)
+    var look: [UInt32] = []
+    // the layers the user turned off, a bit each
+    var off: UInt32 = 0
+    func shown(_ layer: Int) -> Bool { layer < 0 || layer > 31 || (off >> UInt32(layer)) & 1 == 0 }
     // 2D view: pixels per micrometre and where 0,0 lands, in points
     var scale: Float = 0.01
     var off = SIMD2<Float>(0, 0)
@@ -248,7 +253,7 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
             for k in i..<j where !fresh.contains(k) { caps += chunks[k].caps; tris += chunks[k].tris }
             let c1 = caps.count / 5, t1 = tris.count / 2
             for k in i..<j where fresh.contains(k) { caps += chunks[k].caps; tris += chunks[k].tris }
-            let rgb = first.color
+            let rgb = first.layer >= 0 && first.layer < look.count ? look[first.layer] : first.color
             out.append(LayerDraw(layer: first.layer,
                 color: SIMD4(Float((rgb >> 16) & 255) / 255, Float((rgb >> 8) & 255) / 255, Float(rgb & 255) / 255, first.alpha),
                 caps: c0..<c1, freshCaps: c1..<(caps.count / 5), tris: t0..<t1, freshTris: t1..<(tris.count / 2)))
@@ -453,7 +458,7 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
             for (face, z) in [(top, thick + 40), (bottom, Float(-40))] {
                 u.z = z
                 for id in face {
-                    for l in layers where l.layer == id {
+                    for l in layers where l.layer == id && shown(l.layer) {
                         let (c, tr) = draws(l)
                         layer(cb, t, &u, color: l.color, caps: c, tris: tr)
                     }
@@ -462,7 +467,7 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
             }
         } else {
             frame(cb, t, clear: true, depth: false) { _ in }
-            for l in layers {
+            for l in layers where shown(l.layer) {
                 let (c, tr) = draws(l)
                 layer(cb, t, &u, color: l.color, caps: c, tris: tr)
             }
@@ -487,6 +492,7 @@ final class PlotCanvas: MTKView {
     var chunks: [PlotChunk] = []
     var onPick: (String) -> Void = { _ in }
     private var fitted = false
+    private var shownKey = ""
     private var fadeFrom: Date?
     private var fling = SIMD2<Float>(0, 0)
     private var link: CADisplayLink?
@@ -554,12 +560,15 @@ final class PlotCanvas: MTKView {
         if !fitted { refit() }
     }
 
-    func show(_ f: PlotFrame, bg: UInt32, slab: UInt32) {
+    func show(_ f: PlotFrame, bg: UInt32, slab: UInt32, look: [UInt32]) {
         renderer.bg = SIMD4(Float((bg >> 16) & 255) / 255, Float((bg >> 8) & 255) / 255, Float(bg & 255) / 255, 1)
+        renderer.look = look
         renderer.thick = f.thick > 0 ? f.thick : 1600
         renderer.load(f.chunks, fresh: f.fresh)
         chunks = f.chunks
-        let first = box.isEmpty || !fitted
+        // a new source (board to schematic, another sheet) fits anew
+        let first = box.isEmpty || !fitted || f.key != shownKey
+        shownKey = f.key
         box = f.box
         renderer.slab(f.box, color: slab)
         if first { fitted = false; setNeedsLayout() }
@@ -762,9 +771,14 @@ struct PlotCanvasView: UIViewRepresentable {
             c.renderer.three = three
             c.refit()
         }
-        if let f = frame, f.at != context.coordinator.shown {
+        if c.renderer.off != (viewer.off ?? 0) {
+            c.renderer.off = viewer.off ?? 0
+            c.setNeedsDisplay()
+        }
+        if let f = frame, f.at != context.coordinator.shown || (viewer.look ?? []) != context.coordinator.look {
             context.coordinator.shown = f.at
-            c.show(f, bg: viewer.bg, slab: viewer.slab)
+            context.coordinator.look = viewer.look ?? []
+            c.show(f, bg: viewer.bg, slab: viewer.slab, look: viewer.look ?? [])
             #if DEBUG
             // headless checks: SIMCTL_CHILD_BACKPLANE_TAP=x,y (points) taps there once
             if let t = ProcessInfo.processInfo.environment["BACKPLANE_TAP"], !context.coordinator.tapped {
@@ -789,6 +803,7 @@ struct PlotCanvasView: UIViewRepresentable {
 
     final class Coordinator {
         var shown: Date?
+        var look: [UInt32] = []
         var mesh: Date?
         var picked = ""
         var tapped = false
@@ -824,6 +839,54 @@ private struct CardView: View {
     }
 }
 
+// under the viewer's bar: the schematic's sheet, the layers shown (only
+// those this board or sheet has), and the 3D model's parts
+struct ViewerControls: View {
+    let model: AppModel
+    let viewer: Viewer
+    let present: Set<Int>
+
+    var body: some View {
+        let sheets = viewer.sheets ?? []
+        let layers = (viewer.layerList ?? []).filter { present.contains($0.layer) }
+        HStack(spacing: 8) {
+            if !sheets.isEmpty {
+                Menu {
+                    ForEach(sheets, id: \.value) { s in
+                        Button { model.act("view-sheet", s.value) } label: {
+                            if s.on { Label(s.label, systemImage: "checkmark") } else { Text(s.label) }
+                        }
+                        .disabled(s.loop)
+                    }
+                } label: {
+                    Label(sheets.first { $0.on }?.label.trimmingCharacters(in: .whitespaces) ?? "Sheet", systemImage: "doc.on.doc")
+                }
+                .buttonStyle(.bordered)
+            }
+            if !layers.isEmpty {
+                // stays open: several layers are turned on and off in a row
+                Menu {
+                    ForEach(layers, id: \.layer) { l in
+                        Button { model.act("view-layer", String(l.layer)) } label: {
+                            Label(l.name, systemImage: l.on ? "checkmark.square" : "square")
+                        }
+                    }
+                } label: {
+                    Label("Layers", systemImage: "square.3.layers.3d")
+                }
+                .buttonStyle(.bordered)
+                .menuActionDismissBehavior(.disabled)
+            }
+            if viewer.open == "3d" {
+                Toggle(isOn: Binding(get: { viewer.parts ?? true }, set: { _ in model.act("view-parts") })) { Text("Parts") }
+                    .toggleStyle(.button)
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+    }
+}
+
 // The viewer over the thread: the plot of the screen's source, the source
 // choices, the card of what was tapped, and a way back.
 struct PlotScreen: View {
@@ -844,7 +907,10 @@ struct PlotScreen: View {
                 Text(why).foregroundStyle(.secondary).frame(maxHeight: .infinity)
             } else if viewer.open == "3d", let why = m?.none, !why.isEmpty {
                 Text(why).font(.caption).foregroundStyle(.secondary).padding().frame(maxHeight: .infinity, alignment: .bottom)
+            } else if viewer.open == "3d", viewer.parts ?? true, let note = viewer.note, !note.isEmpty {
+                Text(note).font(.caption).foregroundStyle(.secondary).padding().frame(maxHeight: .infinity, alignment: .bottom)
             }
+            VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Picker("Source", selection: Binding(get: { viewer.open }, set: { model.act("view", $0) })) {
                     ForEach(viewer.choices, id: \.value) { Text($0.label).tag($0.value) }
@@ -852,16 +918,21 @@ struct PlotScreen: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 300)
                 Spacer()
+                // the viewer's own light or dark ground
+                Button { model.act("vw-light") } label: { Image(systemName: viewer.light == true ? "moon.fill" : "sun.max.fill").font(.title2) }
+                    .accessibilityLabel(viewer.light == true ? "Dark ground" : "Light ground")
                 Button { model.act("view", "") } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
                     .accessibilityLabel("Close")
             }
             .padding(.horizontal)
             .padding(.top, 6)
+            ViewerControls(model: model, viewer: viewer, present: Set(f?.chunks.map { $0.layer } ?? []))
+            }
             if let c = viewer.card {
                 CardView(card: c, model: model).frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(viewer.light == true ? .light : .dark)
         .statusBarHidden()
     }
 }

@@ -243,6 +243,35 @@ type Change is Data:
 def Time.max(+a: Nat, +b: Nat) -> Nat:
   Bool.pick(Nat, Nat.is_ge(a, b), a, b)
 
+def Time.ago.k(m: Bool, h: Bool, d: Bool, +s: Nat) -> String:
+  match m h d:
+    case True{} _ _:
+      "now"
+    case False{} True{} _:
+      Nat.show(Nat.div(s, 60n)) ++ "m"
+    case False{} False{} True{}:
+      Nat.show(Nat.div(s, 3600n)) ++ "h"
+    case False{} False{} False{}:
+      Nat.show(Nat.div(s, 86400n)) ++ "d"
+
+# "now", "5m", "3h", "2d"
+def Time.ago(+now: Nat, +at: Nat) -> String:
+  +s = Nat.sub(now, at)
+  Time.ago.k(Nat.is_lt(s, 60n), Nat.is_lt(s, 3600n), Nat.is_lt(s, 86400n), s)
+
+def Time.took.k(m: Bool, h: Bool, +s: Nat) -> String:
+  match m h:
+    case True{} _:
+      Nat.show(s) ++ "s"
+    case False{} True{}:
+      Nat.show(Nat.div(s, 60n)) ++ "m " ++ Nat.show(Nat.mod(s, 60n)) ++ "s"
+    case False{} False{}:
+      Nat.show(Nat.div(s, 3600n)) ++ "h " ++ Nat.show(Nat.div(Nat.mod(s, 3600n), 60n)) ++ "m"
+
+# how long something took: "45s", "2m 13s", "1h 5m"
+def Time.took(+s: Nat) -> String:
+  Time.took.k(Nat.is_lt(s, 60n), Nat.is_lt(s, 3600n), s)
+
 # Settle rule
 # -----------
 

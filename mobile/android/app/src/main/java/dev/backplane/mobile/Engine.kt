@@ -13,7 +13,10 @@ import java.util.concurrent.atomic.AtomicInteger
 // resume(), which answers {"since": "<n>", "origin": "<o>"}. The client is
 // started with this install's id and its kept drafts before anything
 // else runs.
-class Engine(private val source: String, private val cid: String, private val drafts: String) {
+// The bridge is compiled to QuickJS bytecode once per build and kept in
+// dir: parsing and compiling 1.3 MB of JavaScript took half a second at
+// every launch.
+class Engine(private val source: String, private val cid: String, private val drafts: String, private val dir: java.io.File) {
     private val thread = Executors.newSingleThreadExecutor { Thread(null, it, "bend", 64L shl 20) }
     private val dispatcher = thread.asCoroutineDispatcher()
     private var ctx: QuickJSContext? = null
@@ -23,11 +26,25 @@ class Engine(private val source: String, private val cid: String, private val dr
             QuickJSLoader.init()
             QuickJSContext.create().also {
                 it.setMaxStackSize(48 shl 20)
-                it.evaluate(source, "bridge.js")
+                load(it)
                 it.evaluate("Backplane.start(${q(cid)}, ${q(drafts)})")
                 ctx = it
             }
         }
+
+    // the bridge from its kept bytecode, else compiled now and kept (a
+    // bytecode file of another build, or one that fails, is dropped)
+    private fun load(c: QuickJSContext) {
+        val name = "bridge-%08x-%d.qjs".format(source.hashCode(), source.length)
+        dir.listFiles { f -> f.name.startsWith("bridge-") && f.name != name }?.forEach { it.delete() }
+        val kept = java.io.File(dir, name)
+        if (kept.exists() && runCatching { c.execute(kept.readBytes()) }.isSuccess) return
+        kept.delete()
+        val code = runCatching { c.compile(source, "bridge.js") }.getOrNull()
+        if (code == null) { c.evaluate(source, "bridge.js"); return }
+        c.execute(code)
+        runCatching { java.io.File(dir, "$name.tmp").also { it.writeBytes(code) }.renameTo(kept) }
+    }
 
     // calls queued whose answer carries a screen: while one is, the screen
     // before it is out of date before it could be drawn, so it is skipped

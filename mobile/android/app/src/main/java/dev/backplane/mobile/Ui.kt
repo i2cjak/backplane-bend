@@ -33,6 +33,9 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Layers
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
@@ -48,6 +51,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -186,7 +192,7 @@ private fun Pair(link: String, cancel: (() -> Unit)?, done: (String) -> Unit) {
         })
     }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+            Text("Paste the tailnet link Backplane shows in Settings (Pairing link).",
                 style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
@@ -230,7 +236,7 @@ private fun Hubs(m: AppModel, s: Screen, back: () -> Unit) {
             }
             item(key = "add") {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+                    Text("Paste the tailnet link Backplane shows in Settings (Pairing link).",
                         style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                         label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
@@ -664,11 +670,14 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
                         AttachButton(m)
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })
-                        // a long press sends with the other follow-up mode (queue or steer)
+                        // a long press sends with the other follow-up mode (queue or steer);
+                        // while a turn runs with nothing typed the button stops it
+                        val stop = t.sendAct == "interrupt" && m.composer.isBlank()
                         Box(Modifier.size(48.dp).combinedClickableCompat(onLong = { if (m.composer.isNotBlank()) m.act("send-alt") }) {
-                            if (m.composer.isNotBlank()) m.act("send")
+                            if (stop) m.act("interrupt") else if (m.composer.isNotBlank()) m.act("send")
                         }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.AutoMirrored.Filled.Send, t.send,
+                            if (stop) Icon(Icons.Filled.Stop, t.send, tint = MaterialTheme.colorScheme.error)
+                            else Icon(Icons.AutoMirrored.Filled.Send, t.send,
                                 tint = if (m.composer.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
                         }
                     }
@@ -722,7 +731,8 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             s.renderer.bottom = v.bottom
             s.renderer.orbit.fov = v.fov
             s.setThree(v.open == "3d")
-            if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab)
+            if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab, v.look)
+            if (s.renderer.off != v.off) { s.renderer.off = v.off; s.requestRender() }
             if (v.open == "3d") s.mesh(mesh)
             s.mark(v.picked)
         })
@@ -731,6 +741,9 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             f.none.isNotEmpty() -> Text(f.none, Modifier.align(Alignment.Center), color = Color.Gray)
             v.open == "3d" && mesh != null && mesh.none.isNotEmpty() ->
                 Text(mesh.none, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color.Gray,
+                    style = MaterialTheme.typography.labelMedium)
+            v.open == "3d" && v.parts && v.note.isNotEmpty() ->
+                Text(v.note, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp), color = Color.Gray,
                     style = MaterialTheme.typography.labelMedium)
         }
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -742,9 +755,53 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+            // the viewer's own light or dark ground
+            IconButton(onClick = { m.act("vw-light") }) {
+                Icon(if (v.light) Icons.Filled.DarkMode else Icons.Filled.LightMode, if (v.light) "Dark ground" else "Light ground",
+                    tint = if (v.light) Color.Black else Color.White)
+            }
+            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = if (v.light) Color.Black else Color.White) }
         }
+        ViewerControls(m, v, f?.chunks?.map { it.layer }?.toSet() ?: emptySet(), Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 56.dp))
         v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+// under the viewer's bar: the schematic's sheet, the layers shown, and
+// the 3D model's parts
+@Composable
+private fun ViewerControls(m: AppModel, v: Viewer, present: Set<Int>, modifier: Modifier) {
+    // only the layers this board or sheet has
+    val layers = v.layerList.filter { it.layer in present }
+    val fg = if (v.light) Color.Black else Color.White
+    Row(modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (v.sheets.isNotEmpty()) Box {
+            var open by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { open = true }) {
+                Text(v.sheets.firstOrNull { it.on }?.label?.trim() ?: "Sheet", color = fg, maxLines = 1)
+                Icon(Icons.Filled.ExpandMore, null, tint = fg)
+            }
+            DropdownMenu(open, { open = false }) {
+                for (sh in v.sheets) DropdownMenuItem(text = { Text(sh.label) }, enabled = !sh.loop,
+                    leadingIcon = { if (sh.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                    onClick = { open = false; m.act("view-sheet", sh.value) })
+            }
+        }
+        if (layers.isNotEmpty()) Box {
+            var open by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { open = true }) {
+                Icon(Icons.Filled.Layers, null, tint = fg)
+                Text("Layers", color = fg, modifier = Modifier.padding(start = 6.dp))
+            }
+            // stays open: several layers are turned on and off in a row
+            DropdownMenu(open, { open = false }) {
+                for (l in layers) DropdownMenuItem(text = { Text(l.name) },
+                    leadingIcon = { Checkbox(l.on, null) },
+                    onClick = { m.act("view-layer", l.layer.toString()) })
+            }
+        }
+        if (v.open == "3d") FilterChip(v.parts, { m.act("view-parts") }, label = { Text("Parts", color = fg) },
+            leadingIcon = { if (v.parts) Icon(Icons.Filled.Check, null, tint = fg) })
     }
 }
 

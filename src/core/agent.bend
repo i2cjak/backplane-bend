@@ -633,6 +633,9 @@ def Name.fragment(+answer: String) -> String:
 def Name.branch(+fragment: String) -> String:
   "backplane/" ++ fragment
 
+def Btw.system() -> String:
+  "You answer a quick side question about a coding agent's thread. The thread so far and the question follow. Answer from what the thread shows, in a few sentences, in plain text. Do not do the work, do not use tools and do not repeat the question. If the thread does not tell, say so."
+
 def Commit.system() -> String:
   "You write git commit messages. A unified diff follows, after the title of the task that produced it. Reply with only the commit message: a subject line in the imperative mood under 72 characters, then, only if the change needs it, a blank line and a short body wrapped at 72 characters. No quotes, no code fences, no trailers."
 

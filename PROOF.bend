@@ -377,6 +377,15 @@ def Laws.look_flip_hides():
 def Laws.look_flip_shows():
   {==}
 
+def Laws.look_light_same_alpha():
+  {==}
+
+def Laws.look_grounds_not_layers():
+  {==}
+
+def Laws.theme_dark_as_is(c):
+  {==}
+
 def Laws.look_flip_twice():
   {==}
 
@@ -448,6 +457,16 @@ def Laws.semver_cmp_refl(v):
 def Laws.update_never_same(v):
   %Equal.sym(Cmp, SV.Ver.cmp(v, v), EQ{}, Laws.semver_cmp_refl(v)) : {Cmp.is_gt(_) == False{} : Bool}
   {==}
+
+def Laws.update_off_managed(c, t, a):
+  {==}
+
+def Laws.update_appimage_managed(o, c, t):
+  match o:
+    case SNil{}:
+      {==}
+    case SCon{h, r}:
+      {==}
 
 law nat_cmp_succ:
   for n: Nat
@@ -3352,7 +3371,7 @@ def Laws.view_closed_wants_nothing(root):
       {==}
 
 def Laws.view_asks_once(u, cmds, h):
-  %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), cmds) == U.Act{u, cmds} : U.Act}
+  %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), MV.View.sheet(u), cmds) == U.Act{u, cmds} : U.Act}
   {==}
 
 def Laws.plot_frames_binary(bs):
@@ -4013,6 +4032,77 @@ def Laws.follow_setting_steer(p):
   {==}
 
 def Laws.follow_alt_flips(s, p):
+  {==}
+
+def Laws.tailnet_link_token():
+  {==}
+
+def Laws.work_message_shown(live, u, b, info, now):
+  match live:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.work_live_open(u, e, t, now):
+  {==}
+
+def Laws.btw_command():
+  {==}
+
+def Laws.btw_not_a_word():
+  {==}
+
+def Laws.btw_question():
+  {==}
+
+def Laws.btw_never_logged(s, c, id, th, q):
+  {==}
+
+def Laws.view_sheet_key():
+  {==}
+
+def Laws.view_board_no_sheet():
+  {==}
+
+def Laws.view_bare_key():
+  {==}
+
+def Laws.pick_off_skipped():
+  {==}
+
+def Laws.kicad_ipc_needs_fork():
+  {==}
+
+def Laws.kicad_missing_said():
+  {==}
+
+def Laws.kicad_missing_prompt():
+  {==}
+
+def Laws.took_seconds():
+  {==}
+
+def Laws.took_minutes():
+  {==}
+
+def Laws.took_hours():
+  {==}
+
+def Laws.follow_stop_idle(b):
+  {==}
+
+def Laws.follow_stop_typed(r):
+  match r:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.follow_stop_running():
+  {==}
+
+def Laws.follow_stop_interrupts():
   {==}
 
 def Laws.queue_mode_waits():

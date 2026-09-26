@@ -264,6 +264,19 @@ struct ComposerExtras: View {
         let atts = thread.attaching ?? []
         let up = thread.uploading ?? ""
         let skills = thread.skills ?? []
+        if let b = thread.btw {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("btw · " + b.q).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Spacer()
+                    Button { model.act("btw-close") } label: { Image(systemName: "xmark") }.buttonStyle(.borderless)
+                }
+                ScrollView { Text(b.a).font(.callout).frame(maxWidth: .infinity, alignment: .leading) }.frame(maxHeight: 200)
+            }
+            .padding(10)
+            .background(Color(.secondarySystemBackground))
+            .padding(.horizontal).padding(.top, 8)
+        }
         if !skills.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {

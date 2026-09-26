@@ -335,9 +335,28 @@ def Look.flip.k(on: Bool, look: U32 & U32) -> U32 & U32:
       (c, +a) = look
       (c, Bool.pick(U32, U32.is_eq(a, 0), Look.dim(), 0))
 
+# The look word: besides a bit per layer, bit 31 is the viewer's light
+# ground (its own sun/moon button) and bit 30 the window's light theme;
+# no layer index reaches either (a board has 25 layers, a schematic 24)
+def Look.light.bit() -> U32:
+  2147483648
+
+def Look.ui.bit() -> U32:
+  1073741824
+
+def Look.light(+flip: U32) -> Bool:
+  Bool.not(U32.is_eq(U32.and(flip, Look.light.bit()), 0))
+
+def Look.ui(+flip: U32) -> Bool:
+  Bool.not(U32.is_eq(U32.and(flip, Look.ui.bit()), 0))
+
+# the viewer's ground under the scene
+def Look.ground(+flip: U32) -> U32:
+  LO.Look.ground(Look.light(flip))
+
 # a layer's colour and opacity once the user's flips apply
 def Look.on(+kind: U32, +layer: U32, +flip: U32) -> U32 & U32:
-  Look.flip.k(Look.flipped(flip, layer), Look.of(kind, layer))
+  Look.flip.k(Look.flipped(flip, layer), LO.Look.of.t(Look.light(flip), kind, layer))
 
 def Look.alpha.k(l: U32 & U32) -> U32:
   (_, a) = l
@@ -561,20 +580,20 @@ def Pick.info(ss: List<&2, Seen>, +key: String) -> String:
       Bool.pick(String, String.eq(k, key), info, Pick.info(t, key))
 
 # (a match: only the picked item's ops are made, not every item's)
-def Ops.picked.k(hit: Bool, p: B.Prim, +v: View, +c: D.Clip, rest: List<&2, R.Op>) -> List<&2, R.Op>:
+def Ops.picked.k(hit: Bool, p: B.Prim, +v: View, +c: D.Clip, +flip: U32, rest: List<&2, R.Op>) -> List<&2, R.Op>:
   match hit:
     case True{}:
-      Ops.prim(p, v, c, 16777215, 200)
+      Ops.prim(p, v, c, Bool.pick(U32, Look.light(flip), 0, 16777215), 200)
     case False{}:
       rest
 
-# the picked item drawn again on top, bright
-def Ops.picked(ss: List<&2, Seen>, +key: String, +v: View, +c: D.Clip) -> List<&2, R.Op>:
+# the picked item drawn again on top, bright (dark on the light ground)
+def Ops.picked(ss: List<&2, Seen>, +key: String, +v: View, +c: D.Clip, +flip: U32) -> List<&2, R.Op>:
   match ss:
     case Nil{}:
       Nil{}
     case Seen{B.Item{+k, _, _, p, _}, _} <> t:
-      Ops.picked.k(String.eq(k, key), p, v, c, Ops.picked(t, key, v, c))
+      Ops.picked.k(String.eq(k, key), p, v, c, flip, Ops.picked(t, key, v, c, flip))
 
 # some item's fade ended after the base was drawn: fold it into the base
 def Vw.late(ss: List<&2, Seen>, +cut: Nat, +now: Nat) -> Bool:

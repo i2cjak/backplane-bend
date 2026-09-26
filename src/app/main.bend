@@ -157,10 +157,23 @@ def Shell.later(a: Shell) -> IO(Shell):
         Frame.soon(q, Frame.wait(N.Nui.ms_of(n), now))
         return Shell{n, w, True{}, True{}, q, i, wa}
 
-def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Nui:
+# the frame's hits go in, and the hover is found again in them (dirty when
+# it moved: one more frame draws it where the pointer is now)
+def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Step:
   match n:
     case N.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, _, ms, vw}:
-      N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms, vw}
+      N.Hover.again(N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms, vw})
+
+def Shell.hits.nui(s: N.Step) -> N.Nui:
+  match s:
+    case N.Step{n, _, _}:
+      n
+
+# frames go on while something animates, or once more when the hover moved
+def Shell.hits.anim(s: N.Step, anim: Bool) -> Bool:
+  match s:
+    case N.Step{_, _, d}:
+      Bool.or(anim, d)
 
 # a fade still running asks for the next frame
 def Shell.again(anim: Bool, a: Shell) -> IO(Shell):
@@ -879,6 +892,7 @@ def Watch.step2glb() -> IO(String):
     return Bool.pick(String, ok, d ++ "/backplane-step2glb", "backplane-step2glb")
 
 # how a file becomes a GLB: as it is, from STEP, or exported from a board
+# (a board through kicad-cli, which says so when KiCad is not installed)
 def Watch.glb.cmd(+path: String, +out: String, +cli: String, +step: String) -> String & List<&2, String>:
   Bool.pick(String & List<&2, String>, Bool.or(String.ends_with(path, ".step"), Bool.or(String.ends_with(path, ".stp"), Bool.or(String.ends_with(path, ".STEP"), String.ends_with(path, ".STP")))),
     (step, [path, out]),
@@ -886,7 +900,7 @@ def Watch.glb.cmd(+path: String, +out: String, +cli: String, +step: String) -> S
 
 def Watch.glb.run(cmd: String & List<&2, String>) -> IO(P.Ran):
   (c, args) = cmd
-  P.Proc.run(c, args, "/")
+  K.KiCad.run(c, args)
 
 def Watch.glb.done(r: P.Ran, +glb: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match r:
@@ -1069,36 +1083,14 @@ def Watch.mesh(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
 # root schematic (or the file on show, when the project has none) and
 # every sheet it reaches, each file once (HI.Hier.todo), at most 64.
 
-def Tree.next(todo: List<&2, String>, +tab: List<&2, HI.Kids>, k: List<&2, HI.Kids> -> List<&2, String> -> IO(List<&2, HI.Kids>)) -> IO(List<&2, HI.Kids>):
-  match todo:
-    case Nil{}:
-      IO.pure(List<&2, HI.Kids>, tab)
-    case +p <> rest:
-      do IO<List<&2, HI.Kids>>:
-        bs : List<&2, U32> <- S.Files.read(p)
-        +kd : HI.Kids = HI.Hier.kids(p, bs)
-        k(kd <> tab, HI.Hier.todo(HI.Hier.kids.sheets(kd), kd <> tab, rest))
-
-def Tree.load(fuel: Nat, +todo: List<&2, String>, +tab: List<&2, HI.Kids>) -> IO(List<&2, HI.Kids>):
-  match fuel:
-    case 0n:
-      IO.pure(List<&2, HI.Kids>, tab)
-    case 1n+f:
-      Tree.next(todo, tab, t2 => d2 => Tree.load(f, d2, t2))
-
-def Tree.root(f: K.Files, +path: String) -> String:
-  match f:
-    case K.Files{_, _, +sch}:
-      Bool.pick(String, String.is_empty(sch), path, sch)
-
 def Tree.send(+root: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   do IO<Unit>:
-    tab : List<&2, HI.Kids> <- Tree.load(64n, [root], Nil{})
+    tab : List<&2, HI.Kids> <- PV.Tree.load(64n, [root], Nil{})
     ok : Bool <- Chan.send(ShellMsg, q, Sheets{key, HI.Hier.show(HI.Hier.rows(tab, root))})
     return Unit{}
 
 def Watch.tree(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
-  IO.bind(K.Files, Unit, K.Files.read(Src.at(key, 1n)), f => Tree.send(Tree.root(f, path), key, q))
+  IO.bind(K.Files, Unit, K.Files.read(Src.at(key, 1n)), f => Tree.send(PV.Tree.root(f, path), key, q))
 
 def Watch.tree.if(sch: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match sch:
@@ -1315,7 +1307,7 @@ def Vx.kind(x: V.Vx) -> U32:
       k
 
 # the browser's frame, scaled down to fit the panel and centred
-def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
+def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, +flip: U32, b: BM.Bitmap) -> Image:
   match b:
     case BM.Bitmap{+w, +h, d, t, _, _, _, _}:
       +pw = {(ww - x0 : U32) : U32}
@@ -1324,7 +1316,7 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
       +fw = {D.Draw.floor(F32.mul(U32.to_f32(w), sc)) : U32}
       +fh = {D.Draw.floor(F32.mul(U32.to_f32(h), sc)) : U32}
       BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{w, h, d, t, 0, 0, 0, 0}, (x0 + U32.shr((pw - fw : U32)) : U32), (52 + U32.shr((ph - fh : U32)) : U32), fw, fh),
-        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, 526603, 255)], T.Th.bg()))
+        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, V.Look.ground(flip), 255)], L.Theme.ground(flip)))
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base,
 # plain background left of the panel, so frames compare it unchanged):
@@ -1338,22 +1330,22 @@ def Half.of(+n: U32) -> U32:
 
 # a 3D scene into the panel; while it is dragged, a draft at half size,
 # at rest four samples a pixel
-def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat) -> Image:
+def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat, +bg: U32) -> Image:
   match draft:
     case True{}:
-      FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, 526603)
+      FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, bg)
     case False{}:
-      FA.Scene3.render.q(True{}, ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, 526603)
+      FA.Scene3.render.q(True{}, ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, bg)
 
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
-      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now))
+      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, L.Theme.ground(flip), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now, V.Look.ground(flip)))
     case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
-      Shell.shot.base(ww, hh, x0, bm)
+      Shell.shot.base(ww, hh, x0, flip, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
-      FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
-        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), T.Th.bg())
+      FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, V.Look.ground(flip), 255)
+        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), L.Theme.ground(flip))
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match redraw vw:
@@ -1385,9 +1377,9 @@ def Vx.pick(x: V.Vx) -> String:
 def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Plan:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
-      TI.Frame.plan(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
+      TI.Frame.plan(ww, hh, List.append(&2, R.Op, L.Theme.ops(V.Look.ui(flip), ops), List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
-          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
+          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh}, flip)))),
         Pics.over(hs, pics, Nil{}, ww, hh, b), prev, dy)
 
 # the frame: UI ops over the fading items over the base. dy is how far
@@ -1398,7 +1390,7 @@ def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +
     case True{}:
       Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev, dy)
     case False{}:
-      TI.Frame.plan(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev, dy)
+      TI.Frame.plan(ww, hh, L.Theme.ops(V.Look.ui(flip), ops), Pics.over(hs, pics, Nil{}, ww, hh, Pix{L.Theme.ground(flip)}), prev, dy)
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
@@ -1470,7 +1462,8 @@ def Shell.present(+pl: TI.Plan, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMs
         r : Window & Image & Image <- W.Win.show(w, TI.Tiles.image(tiles), Frames.image(Aux.frames(wa)))
         t4 : U32 <- PS.Perf.lap("ui.present", tc)
         Shell.timed(t0)
-        Shell.shown.two(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms)
+        +s : N.Step = Shell.hits(n, hs, epoch)
+        Shell.shown.two(r, Shell.hits.nui(s), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.hits.anim(s, Shell.anim(n, ms)), ms)
 
 # The lightbox (nui.bend's Lbx, core/lightbox.bend's Lb): the picture
 # alone on a dark window, zoomed and panned, its full decode once there
@@ -1517,9 +1510,10 @@ def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2
         r : Window & Image <- W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms))
         t3 : U32 <- PS.Perf.lap("ui.lightbox", t2)
         Shell.timed(t0)
-        Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms)
+        +s : N.Step = Shell.hits(n, hs, epoch)
+        Shell.shown(r, Shell.hits.nui(s), q, i, wa, Shell.hits.anim(s, Shell.anim(n, ms)), ms)
     case False{}:
-      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.look(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
         L.Out{ops, hs}, n, w, q, i, wa, epoch, ms, t0, t2)
 
 def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
@@ -1560,7 +1554,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
   match n0:
     case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, oh, _, vw0}:
       Shell.paint.go(oh, N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
-        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.flip(n0))}, w, q, i, wa, epoch, ms)
+        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.look(n0))}, w, q, i, wa, epoch, ms)
 
 # what a frame notes before it is laid out: the hover's and the caret's
 # starts, the lightbox's ease, the cats' clock
@@ -1773,19 +1767,88 @@ def Start.fonts(+fq: Chan(L.Ty)) -> IO(Unit):
     ok : Bool <- Chan.send(L.Ty, fq, ty)
     return Unit{}
 
+# `--headless`: no window even with a display; the hub, the web client and
+# the tailnet listener run as they would without one, for the phones and
+# browsers that connect. It goes to the background: the same program starts
+# again in a session of its own with `--foreground` (its output appended to
+# <home>/headless.log), this one says where and ends, and closing the
+# terminal leaves it running. `--headless --foreground` stays (a service's)
+def Start.has(xs: List<&2, String>, +flag: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case +x <> t:
+      Bool.or(String.eq(x, flag), Start.has(t, flag))
+
+def Start.headless(+xs: List<&2, String>) -> Bool:
+  Start.has(xs, "--headless")
+
+# the value after `--home` (d without one)
+def Start.home(xs: List<&2, String>, +d: String) -> String:
+  match xs:
+    case +k <> +v <> +t:
+      Bool.pick(String, String.eq(k, "--home"), v, Start.home(v <> t, d))
+    case _:
+      d
+
+def Start.detach.sh() -> String:
+  "log=$1; shift; mkdir -p \"$(dirname \"$log\")\"; setsid \"$@\" --foreground >>\"$log\" 2>&1 </dev/null & echo $!"
+
+def Start.detached(r: P.Ran, +log: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, +out}:
+      IO.print("Backplane runs in the background (pid " ++ String.trim(out) ++ "), its log in " ++ log ++ ". Stop it: kill " ++ String.trim(out))
+    case P.Ran{_, +out}:
+      IO.print_err("backplane: could not start in the background: " ++ out)
+
+def Start.detach(+xs: List<&2, String>) -> IO(Unit):
+  do IO<Unit>:
+    +home : String <- S.Env.get("HOME", "/tmp")
+    +exe : String <- H.Sys.exe_path()
+    +log : String = Start.home(xs, home ++ "/.backplane-bend") ++ "/headless.log"
+    r : P.Ran <- P.Proc.run("sh", List.append(&2, String, ["-c", Start.detach.sh(), "sh", log, exe], xs), "/")
+    Start.detached(r, log)
+
+def Start.args(xs: List<&2, String>) -> List<String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      x <> Start.args(t)
+
+def Start.window(headless: Bool) -> IO(Result<&1, &1, U32 & String, Window>):
+  match headless:
+    case True{}:
+      IO.pure(Result<&1, &1, U32 & String, Window>, Fail{(0, "--headless")})
+    case False{}:
+      W.Win.open("Backplane", 1400, 900)
+
 # the window opens first and the fonts load beside the hub's start, so
 # the first frame waits only for the log
-def start(args: List<String>) -> IO(Unit):
+def Start.run(+xs: List<&2, String>) -> IO(Unit):
   do IO<Unit>:
     +fq : Chan(L.Ty) <- Chan.new(L.Ty, 1)
     IO.spawn(Unit, Start.fonts(fq))
-    r : Result<&1, &1, U32 & String, Window> <- W.Win.open("Backplane", 1400, 900)
+    r : Result<&1, &1, U32 & String, Window> <- Start.window(Start.headless(xs))
     +user : String <- S.Env.get("HOME", "/tmp")
     +exe : String <- S.Sys.exe_dir.io()
     b : S.Boot <- S.Main.prepare(user, exe)
-    +cfg : S.Cfg = S.Main.config(user, exe, args, b)
+    +cfg : S.Cfg = S.Main.config(user, exe, Start.args(xs), b)
     +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
     S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq))
+
+def Start.pick(detach: Bool, +xs: List<&2, String>) -> IO(Unit):
+  match detach:
+    case True{}:
+      Start.detach(xs)
+    case False{}:
+      Start.run(xs)
+
+def Start.go(+xs: List<&2, String>) -> IO(Unit):
+  Start.pick(Bool.and(Start.headless(xs), Bool.not(Start.has(xs, "--foreground"))), xs)
+
+def start(args: List<String>) -> IO(Unit):
+  Start.go(S.Names.copy(args))
 
 # (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
 def main() -> IO(Unit):

@@ -4,6 +4,7 @@ import ./src/core/bot.bend as BOT
 import ./src/core/botui.bend as BU
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
+import ./src/app/theme.bend as TH
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
@@ -57,6 +58,7 @@ import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/perf.bend as PF
+import ./src/core/prompt.bend as PM
 import ./src/core/voice.bend as VO
 import ./src/core/once.bend as ON
 
@@ -326,6 +328,21 @@ law look_flip_hides:
 law look_flip_shows:
   {V.Look.shows(0, 17, V.Look.toggle(0, 17)) == True{} : Bool}
 
+# the viewer's light ground shows and hides the same layers as the dark
+# one (F.Cu, B.Cu and a hidden courtyard), and neither ground's bit is a
+# layer's flip
+law look_light_same_alpha:
+  {[V.Look.alpha(0, 12, V.Look.light.bit()), V.Look.alpha(0, 5, V.Look.light.bit()), V.Look.alpha(0, 17, V.Look.light.bit()), V.Look.alpha(1, 14, V.Look.light.bit())]
+    == [V.Look.alpha(0, 12, 0), V.Look.alpha(0, 5, 0), V.Look.alpha(0, 17, 0), V.Look.alpha(1, 14, 0)] : List<&2, U32>}
+
+law look_grounds_not_layers:
+  {V.Look.shows(0, 12, U32.or(V.Look.light.bit(), V.Look.ui.bit())) == True{} : Bool}
+
+# the dark theme draws every colour as it is
+law theme_dark_as_is:
+  for +c: U32
+  {TH.Th.of(False{}, c) == c : U32}
+
 # flipping a layer twice gives it back
 law look_flip_twice:
   {V.Look.toggle(V.Look.toggle(4096, 12), 12) == 4096 : U32}
@@ -365,6 +382,20 @@ law semver_cmp_refl:
 law update_never_same:
   for +v: SV.Ver
   {SV.Ver.newer(v, v) == False{} : Bool}
+
+# a packaged install never updates itself: BACKPLANE_NO_UPDATE set, or
+# running as an AppImage
+law update_off_managed:
+  for +c: Char
+  for +t: String
+  for +a: String
+  {SV.Chan.managed(SCon{c, t}, a) == True{} : Bool}
+
+law update_appimage_managed:
+  for +o: String
+  for +c: Char
+  for +t: String
+  {SV.Chan.managed(o, SCon{c, t}) == True{} : Bool}
 
 # a prerelease (a nightly) sorts before the release of its version
 law semver_pre_before_release:
@@ -869,6 +900,11 @@ law tailnet_no_owner_no_trust:
   for login: String
   {TN.Tailnet.trusts("", login) == False{} : Bool}
 
+# the pairing link carries the token after "#", as the phones and the
+# web page read it
+law tailnet_link_token:
+  {TN.Tailnet.link("http://100.64.0.1:3787", "ab12") == "http://100.64.0.1:3787/#token=ab12" : String}
+
 # Drawing only what changed
 # ------------------------
 # A frame is kept as tiles and the timeline as per-entry parts; the next
@@ -1261,6 +1297,67 @@ law fold_default_live:
   for +live: Bool
   {FO.Fold.open("", live) == live : Bool}
 
+# a turn's work folds under its message: the message itself is never in
+# it, and while the turn runs its work stays open until shut by hand
+law work_message_shown:
+  for live: Bool
+  for +u: M.Entry
+  for +b: List<&2, M.Entry>
+  for +info: Map<&2, String>
+  for +now: Nat
+  {List.head(&2, FO.WRole, FO.Work.turn(live, u, b, info, now)) == Some{FO.WPlain{}} : Maybe<&2, FO.WRole>}
+
+law work_live_open:
+  for +u: M.Entry
+  for +e: M.Entry
+  for +t: List<&2, M.Entry>
+  for +now: Nat
+  {FO.Work.turn(True{}, u, e <> t, Map.new(&2, String), now)
+    == FO.WPlain{} <> FO.WHead{FO.Work.id(u), "Working · started " ++ FO.Work.ago(M.Time.ago(now, FO.Work.at(u))), True{}} <> FO.Work.ins(t, True{}) : List<&2, FO.WRole>}
+
+# "/btw <question>" asks beside the turn: only the word itself starts one,
+# and the hub answers it with a job alone, logging nothing, so the thread
+# never holds it
+law btw_command:
+  {U.Btw.is("/btw what changed?") == True{} : Bool}
+
+law btw_not_a_word:
+  {U.Btw.is("/btwx") == False{} : Bool}
+
+law btw_question:
+  {U.Btw.q("/btw  what changed? ") == "what changed?" : String}
+
+law btw_never_logged:
+  for +s: M.State
+  for +c: U32
+  for +id: String
+  for +th: String
+  for +q: String
+  {H.Hub.btw(s, c, id, th, q) == H.Step{[], [H.Git{c, id, "btw", th, "", q, HD.Hand.btw(H.Hub.entries(s), th, HD.Hand.title(H.Hub.thread(s, th)), q)}]} : H.Step}
+
+# without the Backplane KiCad fork there is no IPC to turn on: Settings
+# says so and offers no switch
+law kicad_ipc_needs_fork:
+  {U.KiCad.ipc.ready(Map.new(&2, String)) == False{} : Bool}
+
+# without a kicad-cli on the hub's machine, Settings says KiCad is missing
+law kicad_missing_said:
+  {U.KiCad.cli.label(Map.new(&2, String)) == "KiCad CLI: not found" : String}
+
+# the agents are told when KiCad is not installed
+law kicad_missing_prompt:
+  {String.starts_with(PM.Prompt.kicad("", False{}, "", "", False{}), "<kicad_runtime>KiCad is not installed") == True{} : Bool}
+
+# how long a turn took, as its row says it
+law took_seconds:
+  {M.Time.took(45n) == "45s" : String}
+
+law took_minutes:
+  {M.Time.took(133n) == "2m 13s" : String}
+
+law took_hours:
+  {M.Time.took(3900n) == "1h 5m" : String}
+
 # every frame the hub sends is binary (opcode 2, final): CBOR, never text
 law hub_frames_cbor:
   for +t: String
@@ -1365,6 +1462,21 @@ law view_3d_draws_board:
 
 law view_3d_key:
   {MV.View.key("3d", "/p") == "2|/p|" : String}
+
+# a sheet is part of a schematic's source and of nothing else's, and the
+# 3D model without its parts is the hub's kind 3
+law view_sheet_key:
+  {MV.View.key.at("schematic", "/p", "/p/amp.kicad_sch", False{}) == "1|/p|/p/amp.kicad_sch" : String}
+
+law view_board_no_sheet:
+  {MV.View.key.at("board", "/p", "/p/amp.kicad_sch", False{}) == "0|/p|" : String}
+
+law view_bare_key:
+  {MV.View.key.at("3d", "/p", "", True{}) == "3|/p|" : String}
+
+# a layer the user turned off on the phone is never what a tap picks
+law pick_off_skipped:
+  {MV.Pick.shown([MV.Cand{"pad", 4, 12}, MV.Cand{"zone", 900, 5}], V.Look.toggle(0, 12)) == [MV.Cand{"zone", 900, 5}] : List<&2, MV.Cand>}
 
 # 3D boards
 # ---------
@@ -1833,6 +1945,22 @@ law follow_alt_flips:
   for +s: String
   for +p: String
   {U.Follow.mode(s, p, True{}) == U.Follow.flip(U.Follow.mode(s, p, False{})) : String}
+
+# the send button is Stop only while a turn runs with nothing typed: an
+# idle thread or a typed message always sends, and Stop interrupts
+law follow_stop_idle:
+  for b: Bool
+  {U.Follow.stop.k(False{}, b) == False{} : Bool}
+
+law follow_stop_typed:
+  for r: Bool
+  {U.Follow.stop.k(r, False{}) == False{} : Bool}
+
+law follow_stop_running:
+  {U.Follow.stop.k(True{}, True{}) == True{} : Bool}
+
+law follow_stop_interrupts:
+  {U.Follow.act(True{}) == "interrupt" : String}
 
 # with a turn running, "queue" stores the message for later and runs
 # nothing, even for Claude, which would take it in place

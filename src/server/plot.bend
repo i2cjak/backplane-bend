@@ -10,6 +10,7 @@ import ../core/sexpr.bend as SX
 import ../core/utf8.bend as U
 import ../core/eq.bend as Q
 import ../core/json.bend as J
+import ../core/hier.bend as HI
 
 # The phones' viewer. One actor owns every board, schematic or 3D model a
 # phone watches and what each phone holds of it. It polls the files (every
@@ -51,6 +52,10 @@ type Sub is Data:
 
 type PSt is Data:
   PSt{srcs: List<&2, Src>, subs: List<&2, Sub>, polling: Bool}
+
+# a source drawn as a 3D model: 2 with its parts, 3 its board alone
+def Pv.solid.kind(+kind: U32) -> Bool:
+  Bool.or(U32.is_eq(kind, 2), U32.is_eq(kind, 3))
 
 def Pv.fuel() -> Nat:
   U32.to_nat(4294967295)
@@ -360,31 +365,48 @@ def Pv.is_step(+p: String) -> Bool:
 
 # a 3D model as a GLB: a .glb as it is; a STEP through step2glb; a board's
 # body and parts through kicad-cli (its copper, mask and silk the phone
-# draws from the board's plot)
-def Pv.glb.run(glb: Bool, step: Bool, +path: String, +out: String) -> IO(PR.Ran):
+# draws from the board's plot), or its body alone (kind 3: parts off)
+def Pv.glb.flags(+bare: Bool, +out: String, +path: String) -> List<&2, String>:
+  List.append(&2, String, ["pcb", "export", "glb"], List.append(&2, String, Bool.pick(List<&2, String>, bare, ["--no-components"], ["--subst-models"]), ["-f", "-o", out, path]))
+
+def Pv.glb.run(glb: Bool, step: Bool, +bare: Bool, +path: String, +out: String) -> IO(PR.Ran):
   match glb step:
     case True{} _:
       IO.pure(PR.Ran, PR.Ran{0, ""})
     case False{} True{}:
       IO.bind(String, PR.Ran, Pv.step2glb(), x => PR.Proc.run(x, [path, out], "/"))
     case False{} False{}:
-      IO.bind(String, PR.Ran, Pv.cli(), c => PR.Proc.run(c, ["pcb", "export", "glb", "--subst-models", "-f", "-o", out, path], "/"))
+      IO.bind(String, PR.Ran, Pv.cli(), c => K.KiCad.run(c, Pv.glb.flags(bare, out, path)))
 
-def Pv.solid.done(r: PR.Ran, +glb: String) -> IO(Unit):
+# how many parts kicad-cli found no 3D model for ("Could not add 3D model
+# for R1."): the phone says so, else a bare board looks like a bug
+def Pv.missing(ls: List<&2, String>, +n: Nat) -> Nat:
+  match ls:
+    case Nil{}:
+      n
+    case +l <> t:
+      Pv.missing(t, Bool.pick(Nat, String.starts_with(l, "Could not add 3D model"), 1n+n, n))
+
+def Pv.missing.note(+n: Nat) -> String:
+  Bool.pick(String, Nat.is_eq(n, 0n), "",
+    Nat.show(n) ++ Bool.pick(String, Nat.is_eq(n, 1n), " part has", " parts have") ++ " no 3D model on the hub's machine (KiCad's 3D library is not installed there, or the paths are wrong)")
+
+def Pv.solid.done(r: PR.Ran, +glb: String, +note: String) -> IO(Unit):
   match r:
-    case PR.Ran{0, _}:
+    case PR.Ran{0, +log}:
       do IO<Unit>:
+        Pv.write(note, Pv.missing.note(Pv.missing(String.lines(log), 0n)))
         bs : List<&2, U32> <- K.Io.bytes(glb)
         IO.print(P.Line.plot(P.Plot.of.solid(P.Solid.of(G.Mesh.tris(G.Glb.parse(bs))))))
     case PR.Ran{_, out}:
       IO.die(Unit, 3, "3D export failed: " ++ String.take(String.trim(out), 160n))
 
-def Pv.child.solid(+path: String) -> IO(Unit):
+def Pv.child.solid(+bare: Bool, +path: String, +note: String) -> IO(Unit):
   do IO<Unit>:
     +isglb : Bool = String.ends_with(path, ".glb")
-    +out : String = Bool.pick(String, isglb, path, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(path, 2166136261)) ++ ".glb")
-    r : PR.Ran <- Pv.glb.run(isglb, Pv.is_step(path), path, out)
-    Pv.solid.done(r, out)
+    +out : String = Bool.pick(String, isglb, path, "/tmp/backplane-solid-" ++ U32.show(P.Key.hash(Bool.pick(String, bare, "bare|", "") ++ path, 2166136261)) ++ ".glb")
+    r : PR.Ran <- Pv.glb.run(isglb, Pv.is_step(path), bare, path, out)
+    Pv.solid.done(r, out, note)
 
 def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
   do IO<Unit>:
@@ -392,13 +414,65 @@ def Pv.child.plot(+kind: U32, +path: String, +infos: String) -> IO(Unit):
     Pv.child.k(Pv.plot(Pv.parse.k(U32.is_eq(kind, 1), bs), kind), Bool.pick(U32, U32.is_eq(kind, 0), Pv.thick(bs), 0), infos)
 
 def Pv.child(+kind: U32, +path: String, +infos: String) -> IO(Unit):
-  Bool.pick(IO(Unit), U32.is_eq(kind, 2), Pv.child.solid(path), Pv.child.plot(kind, path, infos))
+  Bool.pick(IO(Unit), Pv.solid.kind(kind), Pv.child.solid(U32.is_eq(kind, 3), path, infos), Pv.child.plot(kind, path, infos))
 
 # `backplane --plot-info FILE SIG IDX`: one piece's info from an info file
 def Pv.child.info(+file: String, +sig: U32, +idx: Nat) -> IO(Unit):
   do IO<Unit>:
     t : String <- K.Io.text(file)
     IO.print(P.Infos.find(t, sig, idx))
+
+# A schematic's sheets
+# ------------------
+# The files the root reaches, read one by one (a sheet that includes an
+# ancestor is listed but never read twice), as hier.bend's rows. The window
+# walks them itself; the hub's phones get them from a --plot-tree child
+# (Pv.tree), so no schematic is parsed in the hub.
+
+def Tree.next(todo: List<&2, String>, +tab: List<&2, HI.Kids>, k: List<&2, HI.Kids> -> List<&2, String> -> IO(List<&2, HI.Kids>)) -> IO(List<&2, HI.Kids>):
+  match todo:
+    case Nil{}:
+      IO.pure(List<&2, HI.Kids>, tab)
+    case +p <> rest:
+      do IO<List<&2, HI.Kids>>:
+        bs : List<&2, U32> <- K.Io.bytes(p)
+        +kd : HI.Kids = HI.Hier.kids(p, bs)
+        k(kd <> tab, HI.Hier.todo(HI.Hier.kids.sheets(kd), kd <> tab, rest))
+
+def Tree.load(fuel: Nat, +todo: List<&2, String>, +tab: List<&2, HI.Kids>) -> IO(List<&2, HI.Kids>):
+  match fuel:
+    case 0n:
+      IO.pure(List<&2, HI.Kids>, tab)
+    case 1n+f:
+      Tree.next(todo, tab, t2 => d2 => Tree.load(f, d2, t2))
+
+# the root sheet: the project's schematic, else the file shown
+def Tree.root(f: K.Files, +path: String) -> String:
+  match f:
+    case K.Files{_, _, +sch}:
+      Bool.pick(String, String.is_empty(sch), path, sch)
+
+# `backplane --plot-tree ROOT`: the rows, as Hier.show writes them
+def Pv.child.tree(+root: String) -> IO(Unit):
+  do IO<Unit>:
+    tab : List<&2, HI.Kids> <- Tree.load(64n, [root], Nil{})
+    IO.print(HI.Hier.show(HI.Hier.rows(tab, root)))
+
+# a phone watching a project's schematic hears its sheets ("" rows for a
+# schematic of one sheet, or one the child could not read)
+def Pv.tree.say(r: PR.Ran, +client: U32, +root: String, +out: Chan(POut)) -> IO(Unit):
+  match r:
+    case PR.Ran{0, +text}:
+      Pv.say(out, client, J.Json.show(J.Json.obj([J.KV{"t", J.Str{"sheets"}}, J.KV{"root", J.Str{root}}, J.KV{"rows", J.Str{String.trim_end(text)}}])))
+    case _:
+      IO.pure(Unit, Unit{})
+
+def Pv.tree.k(+file: String, +client: U32, +root: String, +out: Chan(POut)) -> IO(Unit):
+  Bool.pick(IO(Unit), String.is_empty(file), IO.pure(Unit, Unit{}),
+    IO.bind(String, Unit, H.Sys.exe_path(), exe => IO.bind(PR.Ran, Unit, PR.Proc.run(exe, ["--plot-tree", file], "/"), r => Pv.tree.say(r, client, root, out))))
+
+def Pv.tree(+client: U32, +root: String, +out: Chan(POut)) -> IO(Unit):
+  IO.bind(K.Files, Unit, K.Files.read(root), f => Pv.tree.k(Tree.root(f, ""), client, root, out))
 
 def Pv.args.copy(xs: List<String>) -> List<&2, String>:
   match xs:
@@ -420,6 +494,8 @@ def Pv.main.k(xs: List<&2, String>, go: List<String> -> IO(Unit)) -> IO(Unit):
       Pv.child(Maybe.default(&2, U32, U32.read(k), 0), f, i)
     case "--plot" <> k <> f <> _:
       Pv.child(Maybe.default(&2, U32, U32.read(k), 0), f, "")
+    case "--plot-tree" <> f <> _:
+      Pv.child.tree(f)
     case "--plot-info" <> f <> sg <> ix <> _:
       Pv.child.info(f, Maybe.default(&2, U32, U32.read(sg), 0), Maybe.default(&2, Nat, Nat.read(ix), 0n))
     case +a:
@@ -458,6 +534,24 @@ def Pv.read.k(sm: U32 & U32, +r: PR.Ran, +key: String, +kind: U32, +q: Chan(PMsg
 def Pv.infos(+dir: String, +key: String) -> String:
   dir ++ "/" ++ U32.show(P.Key.hash(key, 2166136261)) ++ ".info"
 
+# a 3D model's note (Pv.missing.note, in its source's info file) to the
+# phones that watch it
+def Pv.note.fan(ss: List<&2, Sub>, +key: String, +text: String, +out: Chan(POut)) -> IO(Unit):
+  match ss:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case +s <> t:
+      do IO<Unit>:
+        Bool.pick(IO(Unit), Sub.is(s, key), Pv.say(out, Sub.client(s), J.Json.show(J.Json.obj([J.KV{"t", J.Str{"plotnote"}}, J.KV{"key", J.Str{key}}, J.KV{"text", J.Str{text}}]))), IO.pure(Unit, Unit{}))
+        Pv.note.fan(t, key, text, out)
+
+def Pv.note(solid: Bool, +subs: List<&2, Sub>, +key: String, +dir: String, +out: Chan(POut)) -> IO(Unit):
+  match solid:
+    case True{}:
+      IO.bind(String, Unit, K.Io.text(Pv.infos(dir, key)), t => Pv.note.fan(subs, key, String.trim(t), out))
+    case False{}:
+      IO.pure(Unit, Unit{})
+
 def Pv.read(+key: String, +kind: U32, +path: String, +q: Chan(PMsg), +dir: String) -> IO(Unit):
   do IO<Unit>:
     st : Result<&1, &1, U32 & String, U32 & U32 & U32> <- H.FS.stat(path)
@@ -473,7 +567,7 @@ def Pv.poll.go(changed: Bool, re: Nat, s: Src, +q: Chan(PMsg), +dir: String) -> 
     case True{} _ Src{+k, +kd, +p, sz, mt, _, _, pl}:
       do IO<Src>:
         IO.spawn(Unit, Pv.read(k, kd, p, q, dir))
-        return Src{k, kd, p, sz, mt, Bool.pick(Nat, U32.is_eq(kd, 2), 0n, 7n), True{}, pl}
+        return Src{k, kd, p, sz, mt, Bool.pick(Nat, Pv.solid.kind(kd), 0n, 7n), True{}, pl}
     case False{} 1n Src{+k, +kd, +p, sz, mt, _, _, pl}:
       do IO<Src>:
         IO.spawn(Unit, Pv.read(k, kd, p, q, dir))
@@ -651,7 +745,8 @@ def Pv.handle(st: PSt, m: PMsg, +q: Chan(PMsg), +out: Chan(POut), +dir: String) 
       do IO<PSt>:
         +file : String <- Pv.file(kind, root, path)
         st2 : PSt <- Pv.watch.k(String.is_empty(file), False{}, st, client, kind, Src.key(kind, root, path), file, q, out)
-        Pv.watch.board(Bool.and(U32.is_eq(kind, 2), String.ends_with(file, ".kicad_pcb")), st2, client, root, path, file, q, out)
+        Bool.pick(IO(Unit), U32.is_eq(kind, 1), IO.spawn(Unit, Pv.tree(client, root, out)), IO.pure(Unit, Unit{}))
+        Pv.watch.board(Bool.and(Pv.solid.kind(kind), String.ends_with(file, ".kicad_pcb")), st2, client, root, path, file, q, out)
     case PSt{ss, +subs, polling} PStop{+client}:
       do IO<PSt>:
         +subs2 : List<&2, Sub> = Sub.drop(subs, client)
@@ -668,7 +763,8 @@ def Pv.handle(st: PSt, m: PMsg, +q: Chan(PMsg), +out: Chan(POut), +dir: String) 
     case PSt{ss, +subs, polling} PGot{+key, +sz, +mt, +pl, +err}:
       do IO<PSt>:
         Bool.pick(IO(Unit), String.is_empty(err), IO.pure(Unit, Unit{}), Pv.fail(subs, key, err, out))
-        subs2 : List<&2, Sub> <- Pv.fan(subs, key, pl, out)
+        +subs2 : List<&2, Sub> <- Pv.fan(subs, key, pl, out)
+        Pv.note(Bool.and(String.is_empty(err), Bool.or(String.starts_with(key, "2|"), String.starts_with(key, "3|"))), subs2, key, dir, out)
         return PSt{Pv.got.srcs(ss, key, sz, mt, pl), subs2, polling}
 
 def Pv.got(m: Maybe<&1, PMsg>, st: PSt, +q: Chan(PMsg), +out: Chan(POut), +dir: String, k: PSt -> IO(Unit)) -> IO(Unit):

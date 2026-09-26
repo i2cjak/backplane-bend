@@ -358,6 +358,20 @@ fun AskCard(m: AppModel, a: Ask) {
 // and the skills a `$` being typed completes to
 @Composable
 fun ComposerExtras(m: AppModel, t: ThreadView) {
+    t.btw?.let { b ->
+        Surface(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp), shape = corner,
+            color = MaterialTheme.colorScheme.surfaceVariant) {
+            Column(Modifier.padding(start = 12.dp, bottom = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("btw · " + b.q, Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.outline, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    IconButton(onClick = { m.act("btw-close") }) { Icon(Icons.Filled.Close, "Close") }
+                }
+                Text(b.a, Modifier.padding(end = 12.dp).heightIn(max = 240.dp).verticalScroll(rememberScrollState()),
+                    style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
     if (t.skills.isNotEmpty()) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 8.dp, vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         for (k in t.skills) Surface(onClick = { m.act("skill", k.name) }, shape = corner,

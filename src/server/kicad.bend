@@ -17,12 +17,22 @@ type Rt is Data:
 type Files is Data:
   Files{pro: String, pcb: String, sch: String}
 
+# why a KiCad export cannot run: no kicad-cli anywhere (Rt.first)
+def KiCad.missing() -> String:
+  "KiCad is not installed on this machine (no kicad-cli): get it from kicad.org/download or its package manager"
+
+# a KiCad command's result, or KiCad.missing() without a kicad-cli
+def KiCad.run(+cli: String, args: List<&2, String>) -> IO(P.Ran):
+  Bool.pick(IO(P.Ran), String.is_empty(cli), IO.pure(P.Ran, P.Ran{127, KiCad.missing()}), P.Proc.run(cli, args, "/"))
+
 def KiCad.version() -> String:
   "10.0.6"
 
 def KiCad.release() -> String:
   "backplane-kicad-v10.0.6-2"
 
+# the KiStack commit to fall back on: the latest one found (KiStack.refresh)
+# is used once it is here
 def KiStack.revision() -> String:
   "ecf16c119c7ed610f5f251c479b03884b8d98b09"
 
@@ -126,8 +136,18 @@ def Rt.found(cs: List<&2, String>, fs: List<&2, Bool>) -> String:
 def Rt.read(+cli: String) -> IO(Rt):
   IO.bind(String, Rt, Io.text(Rt.root(cli) ++ "/manifest.json"), text => IO.pure(Rt, Rt.manifest(cli, text)))
 
+# a kicad-cli on the PATH, when none is in the usual places ("" when there
+# is none: KiCad is not installed, and Settings, the agents and the
+# phones' 3D view say so)
+def Rt.path.k(r: P.Ran) -> IO(Rt):
+  match r:
+    case P.Ran{0, +out}:
+      Bool.pick(IO(Rt), String.is_empty(String.trim(out)), IO.pure(Rt, Rt{"", False{}, "", ""}), Rt.read(String.trim(out)))
+    case _:
+      IO.pure(Rt, Rt{"", False{}, "", ""})
+
 def Rt.first.k(+cli: String) -> IO(Rt):
-  Bool.pick(IO(Rt), String.is_empty(cli), IO.pure(Rt, Rt{"kicad-cli", False{}, "", ""}), Rt.read(cli))
+  Bool.pick(IO(Rt), String.is_empty(cli), IO.bind(P.Ran, Rt, P.Proc.run("sh", ["-c", "command -v kicad-cli"], "/"), Rt.path.k), Rt.read(cli))
 
 # the first candidate that exists, with its runtime's manifest read
 def Rt.first(+cs: List<&2, String>) -> IO(Rt):
@@ -217,11 +237,35 @@ def KiStack.ensure.k(have: Bool, +dir: String) -> IO(Unit):
 # KiStack
 # -------
 
+# KiStack's latest commit, fetched off the hub's start: downloaded once,
+# checked, and named in <base>/current, which the next start uses (a start
+# never waits on the network; offline, the one there or the pinned one)
+def KiStack.base(+home: String) -> String:
+  home ++ "/.cache/backplane/kistack"
+
+def KiStack.refresh.sh() -> String:
+  "base=$1; sha=$(curl -fsSL --max-time 20 -H 'Accept: application/vnd.github.sha' https://api.github.com/repos/American-Embedded/KiStack/commits/HEAD) || exit 0; case $sha in ''|*[!0-9a-f]*) exit 0;; esac; if [ ! -f \"$base/$sha/skills/pcb/SKILL.md\" ]; then rm -rf \"$base/$sha.new\"; mkdir -p \"$base/$sha.new\"; curl -fsSL --max-time 120 \"https://codeload.github.com/American-Embedded/KiStack/tar.gz/$sha\" | tar -xz -C \"$base/$sha.new\" --strip-components=1 || exit 0; [ -f \"$base/$sha.new/skills/pcb/SKILL.md\" ] || exit 0; rm -rf \"$base/$sha\"; mv \"$base/$sha.new\" \"$base/$sha\"; fi; printf '%s\\n' \"$sha\" > \"$base/current.new\" && mv \"$base/current.new\" \"$base/current\""
+
+def KiStack.refresh(+home: String) -> IO(Unit):
+  IO.bind(P.Ran, Unit, P.Proc.run("sh", ["-c", KiStack.refresh.sh(), "sh", KiStack.base(home)], "/"), r => IO.pure(Unit, Unit{}))
+
+def KiStack.current.k(ok: Bool, +sha: String) -> String:
+  Bool.pick(String, Bool.and(ok, Bool.not(String.is_empty(sha))), sha, KiStack.revision())
+
+# the revision a start uses: the latest one fetched, else the pinned one
+def KiStack.current(+home: String) -> IO(String):
+  do IO<String>:
+    +sha : String <- IO.bind(String, String, Io.text(KiStack.base(home) ++ "/current"), t => IO.pure(String, String.trim(t)))
+    ok : Bool <- Io.is_file(KiStack.base(home) ++ "/" ++ sha ++ "/skills/pcb/SKILL.md")
+    return KiStack.current.k(ok, sha)
+
 # the skills live in <cache>/backplane/kistack/<revision>/skills (shared with
-# the TypeScript Backplane); fetch the pinned revision when it is missing
+# the TypeScript Backplane); with no latest revision fetched yet, fetch the
+# pinned one when it is missing
 def KiStack.ensure(+home: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = home ++ "/.cache/backplane/kistack/" ++ KiStack.revision()
+    rev : String <- KiStack.current(home)
+    +dir : String = KiStack.base(home) ++ "/" ++ rev
     have : Bool <- Io.is_file(dir ++ "/skills/pcb/SKILL.md")
     KiStack.ensure.k(have, dir)
 

@@ -110,7 +110,19 @@ data class Viewer(
     val open: String, val key: String, val layers: String, val choices: List<Choice>, val bg: Int, val fade: Float,
     val margin: Float, val zmin: Float, val zmax: Float, val tap: Float, val top: IntArray, val bottom: IntArray,
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
+    // the viewer's own light ground, and each layer's colour on it (by layer)
+    val light: Boolean = false, val look: IntArray = IntArray(0),
+    // the schematic's sheets ("view-sheet" value), the layers the user can
+    // turn off ("view-layer" layer) and those off (a bit each), and
+    // whether the 3D model shows its parts ("view-parts")
+    val sheets: List<Sheet> = emptyList(), val layerList: List<LayerRow> = emptyList(), val off: Int = 0, val parts: Boolean = true,
+    // what the hub says about the source (parts with no 3D model)
+    val note: String = "",
 )
+
+data class Sheet(val label: String, val value: String, val on: Boolean, val loop: Boolean)
+
+data class LayerRow(val layer: Int, val name: String, val on: Boolean)
 
 // the composer's model chip: its label, the models ("model" sends one)
 // and the efforts the current one takes ("effort")
@@ -128,6 +140,8 @@ data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
+    // "interrupt" while a turn runs with nothing typed (the button is Stop)
+    val sendAct: String,
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
     val queue: List<QueueRow> = emptyList(),
     val todos: Todos? = null,
@@ -139,6 +153,8 @@ data class ThreadView(
     val tasks: List<TaskRow> = emptyList(),
     val asks: List<Ask> = emptyList(),
     val skills: List<Skill> = emptyList(),
+    // a side question (/btw) and its answer, until closed
+    val btw: Btw? = null,
     // what the next message attaches, and what is still uploading; files
     // go up in pieces of chunk bytes
     val attaching: List<Chip> = emptyList(),
@@ -147,6 +163,8 @@ data class ThreadView(
     val diff: Diff? = null,
     val term: Term? = null,
 )
+
+data class Btw(val q: String, val a: String)
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
 
@@ -221,6 +239,8 @@ data class Screen(
     val settings: Settings? = null, val find: Find? = null,
     // a project remove to confirm ("proj-remove" id, or "proj-keep")
     val removing: Deleting? = null, val search: Search? = null,
+    // the hub's theme ("light", "dark"; "" follows the phone's)
+    val theme: String = "",
 )
 
 data class Cmd(
@@ -293,6 +313,7 @@ private fun thread(o: JSONObject) = threadOf(o).copy(
             a.optJSONArray("buttons").map { AskButton(it.optString("label"), it.optString("value"), it.optBoolean("primary")) })
     },
     skills = o.optJSONArray("skills").map { Skill(it.optString("name"), it.optString("desc")) },
+    btw = o.optJSONObject("btw")?.let { Btw(it.optString("q"), it.optString("a")) },
     attaching = chips(o.optJSONArray("attaching")),
     uploading = o.optString("uploading"),
     chunk = o.optInt("chunk", 196_608),
@@ -310,7 +331,7 @@ private fun threadOf(o: JSONObject) = ThreadView(
     o.optJSONArray("tools").map(::tool),
     o.optJSONArray("entries").map(::entry),
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
+    o.optString("sendAct", "send"), strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
     viewer(o.optJSONObject("viewer") ?: JSONObject()),
     o.optJSONArray("queue").map {
         QueueRow(it.optString("msg"), it.optString("text"), it.optString("tag"),
@@ -336,6 +357,10 @@ private fun viewer(o: JSONObject) = Viewer(
     o.optJSONObject("card")?.let { c ->
         Card(c.optString("info"), c.optString("title"), c.optJSONArray("rows").map { it.optString("k") to it.optString("v") })
     },
+    o.optBoolean("light"), ints(o.optJSONArray("look")),
+    o.optJSONArray("sheets").map { Sheet(it.optString("label"), it.optString("value"), it.optBoolean("on"), it.optBoolean("loop")) },
+    o.optJSONArray("layerList").map { LayerRow(it.optInt("layer"), it.optString("name"), it.optBoolean("on")) },
+    o.optInt("off"), o.optBoolean("parts", true), o.optString("note"),
 )
 
 private fun strs(a: JSONArray?): List<String> =
@@ -425,6 +450,7 @@ fun parseScreen(o: JSONObject) = Screen(
         Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
     },
     o.optJSONObject("search")?.let { Search(it.optBoolean("open"), it.optString("query"), it.optString("hint")) },
+    o.optString("theme"),
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =

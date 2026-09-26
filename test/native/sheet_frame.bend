@@ -10,6 +10,7 @@ import ../../src/app/theme.bend as T
 import ../../src/app/main.bend as M
 import ../../src/server/server.bend as SV
 import ../../src/gfx/raster.bend as R
+import ../../src/server/plot.bend as PV
 import ../../src/gfx/draw.bend as D
 
 # The viewer on a hierarchical schematic, without a window: load the
@@ -69,7 +70,7 @@ def with(+n: S.Nui, +k: String, +v: String) -> S.Nui:
 
 def go(+root: String) -> IO(Unit):
   do IO<Unit>:
-    +tab : List<&2, HI.Kids> <- M.Tree.load(64n, [root], Nil{})
+    +tab : List<&2, HI.Kids> <- PV.Tree.load(64n, [root], Nil{})
     +rows : String = HI.Hier.show(HI.Hier.rows(tab, root))
     IO.print(rows)
     +ty : L.Ty <- L.Ty.load()
