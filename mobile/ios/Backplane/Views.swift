@@ -500,11 +500,14 @@ struct ThreadScreen: View {
                     .focused($focused)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .background(Color(.secondarySystemBackground), in: .rect(cornerRadius: 18))
-                // a long press sends with the other follow-up mode (queue or steer)
-                Image(systemName: "arrow.up.circle.fill").font(.system(size: 32))
-                    .foregroundStyle(model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? Color.secondary : Color.accentColor)
+                // a long press sends with the other follow-up mode (queue or steer);
+                // while a turn runs with nothing typed the button stops it
+                let blank = model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                let stop = thread.sendAct == "interrupt" && blank
+                Image(systemName: stop ? "stop.circle.fill" : "arrow.up.circle.fill").font(.system(size: 32))
+                    .foregroundStyle(stop ? Color.red : blank ? Color.secondary : Color.accentColor)
                     .onTapGesture {
-                        if !model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.act("send") }
+                        if stop { model.act("interrupt") } else if !blank { model.act("send") }
                     }
                     .onLongPressGesture {
                         if !model.composer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { model.act("send-alt") }

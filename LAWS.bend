@@ -1834,6 +1834,22 @@ law follow_alt_flips:
   for +p: String
   {U.Follow.mode(s, p, True{}) == U.Follow.flip(U.Follow.mode(s, p, False{})) : String}
 
+# the send button is Stop only while a turn runs with nothing typed: an
+# idle thread or a typed message always sends, and Stop interrupts
+law follow_stop_idle:
+  for b: Bool
+  {U.Follow.stop.k(False{}, b) == False{} : Bool}
+
+law follow_stop_typed:
+  for r: Bool
+  {U.Follow.stop.k(r, False{}) == False{} : Bool}
+
+law follow_stop_running:
+  {U.Follow.stop.k(True{}, True{}) == True{} : Bool}
+
+law follow_stop_interrupts:
+  {U.Follow.act(True{}) == "interrupt" : String}
+
 # with a turn running, "queue" stores the message for later and runs
 # nothing, even for Claude, which would take it in place
 law queue_mode_waits:

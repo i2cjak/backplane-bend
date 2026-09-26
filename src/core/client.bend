@@ -604,6 +604,36 @@ def Follow.label.k(run: Bool, +mode: String) -> String:
 def Follow.label(+st: M.State, +sel: String, run: Bool) -> String:
   Follow.label.k(run, Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), False{}))
 
+# While a turn runs and nothing is typed or attached, the send button is
+# Stop: sending would do nothing there (laws follow_stop_*)
+def Follow.stop.k(run: Bool, blank: Bool) -> Bool:
+  match run:
+    case True{}:
+      blank
+    case False{}:
+      False{}
+
+def Follow.stop(run: Bool, +draft: String, +atts: List<&2, String>) -> Bool:
+  Follow.stop.k(run, Bool.and(String.is_empty(String.trim(draft)), List.is_empty(&2, String, atts)))
+
+# what the send button says, and what it does
+def Follow.button.k(stop: Bool, +label: String) -> String:
+  match stop:
+    case True{}:
+      "Stop"
+    case False{}:
+      label
+
+def Follow.button(+st: M.State, +sel: String, run: Bool, stop: Bool) -> String:
+  Follow.button.k(stop, Follow.label(st, sel, run))
+
+def Follow.act(stop: Bool) -> String:
+  match stop:
+    case True{}:
+      "interrupt"
+    case False{}:
+      "send"
+
 def Ui.send.t(u: Ui, text: String, +mode: String) -> Act:
   match u:
     case Ui{st, +sel, dr, live, op, on, +now, ad, pa, v, +rid, w, er, note, +nf, ob, tr}:

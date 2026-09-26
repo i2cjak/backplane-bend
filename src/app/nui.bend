@@ -913,6 +913,14 @@ def Hover.set(+n: Nui, +key: String) -> Step:
 def Hover.stamp(+n: Nui, +ms: Nat) -> Nui:
   Bool.pick(Nui, String.eq(U.Ui.info(Nui.ui(n), "hover.at"), "0"), Nui.with_ui(n, U.Ui.info_set(Nui.ui(n), "hover.at", Nat.show(ms))), n)
 
+# a frame's hits can move what is under a still pointer (a fold opened, a
+# scroll, the hub's news): the hover is found again in them, so it never
+# stays lit where a button was. Dirty when it changed
+def Hover.again(n: Nui) -> Step:
+  match n:
+    case Nui{u, w, h, +mx, +my, sd, sc, ca, fo, pa, +hi, ms, vw}:
+      Hover.set(Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}, Hover.key(Hit.find(hi, mx, my)))
+
 # Blink
 # -----
 # A focused field's caret blinks: shown for Blink.ms(), hidden as long. It

@@ -128,6 +128,8 @@ data class ThreadView(
     val id: String, val title: String, val branch: String, val state: String,
     val tools: List<Tool>, val entries: List<Entry>, val live: List<Block>,
     val working: String, val draft: String, val send: String,
+    // "interrupt" while a turn runs with nothing typed (the button is Stop)
+    val sendAct: String,
     val sending: List<String>, val queued: String, val picker: ModelPicker, val viewer: Viewer,
     val queue: List<QueueRow> = emptyList(),
     val todos: Todos? = null,
@@ -310,7 +312,7 @@ private fun threadOf(o: JSONObject) = ThreadView(
     o.optJSONArray("tools").map(::tool),
     o.optJSONArray("entries").map(::entry),
     blocks(o.optJSONArray("live")), o.optString("working"), o.optString("draft"), o.optString("send"),
-    strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
+    o.optString("sendAct", "send"), strs(o.optJSONArray("sending")), o.optString("queued"), picker(o.optJSONObject("picker") ?: JSONObject()),
     viewer(o.optJSONObject("viewer") ?: JSONObject()),
     o.optJSONArray("queue").map {
         QueueRow(it.optString("msg"), it.optString("text"), it.optString("tag"),

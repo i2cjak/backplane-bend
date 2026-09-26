@@ -157,10 +157,23 @@ def Shell.later(a: Shell) -> IO(Shell):
         Frame.soon(q, Frame.wait(N.Nui.ms_of(n), now))
         return Shell{n, w, True{}, True{}, q, i, wa}
 
-def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Nui:
+# the frame's hits go in, and the hover is found again in them (dirty when
+# it moved: one more frame draws it where the pointer is now)
+def Shell.hits(n: N.Nui, hs: List<&2, N.Hit>, +now: Nat) -> N.Step:
   match n:
     case N.Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, _, ms, vw}:
-      N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms, vw}
+      N.Hover.again(N.Nui{U.Ui.tick(u, now), w, h, mx, my, sd, sc, ca, fo, pa, hs, ms, vw})
+
+def Shell.hits.nui(s: N.Step) -> N.Nui:
+  match s:
+    case N.Step{n, _, _}:
+      n
+
+# frames go on while something animates, or once more when the hover moved
+def Shell.hits.anim(s: N.Step, anim: Bool) -> Bool:
+  match s:
+    case N.Step{_, _, d}:
+      Bool.or(anim, d)
 
 # a fade still running asks for the next frame
 def Shell.again(anim: Bool, a: Shell) -> IO(Shell):
@@ -1470,7 +1483,8 @@ def Shell.present(+pl: TI.Plan, o: L.Out, +n: N.Nui, w: Window, +q: Chan(ShellMs
         r : Window & Image & Image <- W.Win.show(w, TI.Tiles.image(tiles), Frames.image(Aux.frames(wa)))
         t4 : U32 <- PS.Perf.lap("ui.present", tc)
         Shell.timed(t0)
-        Shell.shown.two(r, Shell.hits(n, hs, epoch), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.anim(n, ms), ms)
+        +s : N.Step = Shell.hits(n, hs, epoch)
+        Shell.shown.two(r, Shell.hits.nui(s), q, i, Aux.with_frames(wa, TI.FSome{N.Nui.width(n), N.Nui.height(n), tiles}), Shell.hits.anim(s, Shell.anim(n, ms)), ms)
 
 # The lightbox (nui.bend's Lbx, core/lightbox.bend's Lb): the picture
 # alone on a dark window, zoomed and panned, its full decode once there
@@ -1517,7 +1531,8 @@ def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2
         r : Window & Image <- W.Win.present(w, Lbv.draw(n, Tie.pics(Aux.tie(wa)), ms))
         t3 : U32 <- PS.Perf.lap("ui.lightbox", t2)
         Shell.timed(t0)
-        Shell.shown(r, Shell.hits(n, hs, epoch), q, i, wa, Shell.anim(n, ms), ms)
+        +s : N.Step = Shell.hits(n, hs, epoch)
+        Shell.shown(r, Shell.hits.nui(s), q, i, wa, Shell.hits.anim(s, Shell.anim(n, ms)), ms)
     case False{}:
       Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
         L.Out{ops, hs}, n, w, q, i, wa, epoch, ms, t0, t2)

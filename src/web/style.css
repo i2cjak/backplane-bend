@@ -26,6 +26,7 @@ button {
 button:hover { border-color: var(--faint); }
 button.on { border-color: var(--accent); color: var(--accent); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; }
+button.primary.stop { background: var(--bad); border-color: var(--bad); }
 button.icon { padding: 0 7px; background: none; border-color: transparent; color: var(--dim); }
 button.icon:hover { color: var(--text); border-color: var(--line); }
 

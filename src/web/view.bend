@@ -877,7 +877,12 @@ def View.voice(+u: U.Ui, +sel: String) -> List<&2, D.Node>:
 def View.mic.of(+u: U.Ui, +sel: String) -> String:
   Bool.pick(String, Bool.or(String.eq(U.Ui.scratch(u, "@voice.th"), sel), String.is_empty(U.Ui.scratch(u, "@voice.th"))), U.Ui.scratch(u, "@voice"), "")
 
-def View.composer(+draft: String, +send: String, +label: String, +ctx: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
+# the send button, or Stop while a turn runs with nothing typed
+def View.send(+act: String, +send: String) -> D.Node:
+  Bool.pick(D.Node, String.eq(act, "interrupt"), D.Dom.button("primary stop", act, "", "Stop the running turn", send),
+    D.Dom.button("primary", act, "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send))
+
+def View.composer(+draft: String, +send: String, +act: String, +label: String, +ctx: String, +picking: Bool, +ms: List<&2, String>, +model: String, +info: String, +prov: String, +es: List<&2, String>, +effort: String, +rs: List<&2, U.SkillRow>,
     +atts: List<&2, String>, +up: String, vo: List<&2, D.Node>, +mic: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
     View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(vo, D.Dom.cat(View.attaching(atts, up), [
@@ -888,7 +893,7 @@ def View.composer(+draft: String, +send: String, +label: String, +ctx: String, +
       D.El{"label", "", [D.At{"class", "attach"}, D.At{"title", "Attach files or images (or paste an image)"}], [WI.WIcon.svg("paperclip", 16),
         D.El{"input", "attach-file", [D.At{"type", "file"}, D.At{"multiple", ""}, D.At{"data-attach", "attach"}], Nil{}}]},
       D.El{"span", "", [D.At{"class", "foot-end"}], [View.mic(mic),
-        D.Dom.button("primary", "send", "", "Enter; ctrl+Enter to " ++ Bool.pick(String, String.eq(send, "Queue"), "steer", "queue") ++ " instead", send)]}]}]))))}
+        View.send(act, send)]}]}]))))}
 
 # the thread's header, or the one given (a bot's)
 def View.top(hd: List<&2, D.Node>, t: M.Thread, +st: M.State, +panel: Bool, snoozed: Bool, picking: Bool, term: Bool, +diff: Bool, del: Bool) -> List<&2, D.Node>:
@@ -901,6 +906,7 @@ def View.top(hd: List<&2, D.Node>, t: M.Thread, +st: M.State, +panel: Bool, snoo
 def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, String>, +up: String, +term: Bool, hd: List<&2, D.Node>, vo: List<&2, D.Node>, +mic: String) -> D.Node:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, +op, _, +now, _, panel, _, _, _, _, _, +nf, _, +tr} M.Thread{+id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
+      +stop = U.Follow.stop(View.running(turn), U.Str.get(drafts, sel), atts)
       D.El{"main", "thread", [D.At{"class", Bool.pick(String, term, "thread-view with-term", "thread-view") ++ Bool.pick(String, U.Flag.get(op, "drop"), " dropping", "")},
         D.At{"data-drop", "attach"}, D.At{"data-drop-hover", "drop-hover"}], D.Dom.cat(D.Dom.cat(
         View.top(hd, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, panel, M.Snooze.on(now, U.Side.until(st, id)), U.Flag.get(op, "snooze"), term, String.eq(U.Str.get(nf, "view.kind:" ++ id), "diff"), String.eq(U.Str.get(drafts, "@del"), id)), [
@@ -911,7 +917,7 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.todos(U.Todos.shown(st, id, View.running(turn))),
         View.queued(M.Queue.items(st, id), View.running(turn)),
-        View.composer(U.Str.get(drafts, sel), U.Follow.label(st, sel, View.running(turn)), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
+        View.composer(U.Str.get(drafts, sel), U.Follow.button(st, sel, View.running(turn), stop), U.Follow.act(stop), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
           U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up, vo, mic)]),
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 

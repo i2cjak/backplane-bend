@@ -1170,14 +1170,23 @@ def Lay.act(+a: String) -> String:
 def Lay.val(+a: String) -> String:
   String.join(List.drop(&2, String, String.split(a, '|'), 1n), "|")
 
-# header buttons right to left from x; answers the output
-def Lay.buttons(+ty: Ty, bs: List<&2, S.Hit>, +y: U32, +x: U32) -> Out:
+def Lay.buttons.k(fits: Bool, +o: Out, rest: Out) -> Out:
+  match fits:
+    case True{}:
+      Out.cat(o, rest)
+    case False{}:
+      Out.none()
+
+# header buttons right to left from x, as many as fit right of lo (in a
+# narrow main area the rest would slide under the sidebar, drawn where
+# they cannot be clicked); answers the output
+def Lay.buttons(+ty: Ty, bs: List<&2, S.Hit>, +y: U32, +x: U32, +lo: U32) -> Out:
   match bs:
     case Nil{}:
       Out.none()
     case S.Hit{_, _, _, _, +label, +action} <> t:
-      Out.cat(Lay.button(ty, D.Clip.all(), (x - Lay.button.w(ty, label) : U32), y, label, T.Th.soft(), Lay.act(action), Lay.val(action)),
-        Lay.buttons(ty, t, y, (x - Lay.button.w(ty, label) - 8 : U32)))
+      Lay.buttons.k(U32.is_ge(x, (lo + Lay.button.w(ty, label) : U32)), Lay.button(ty, D.Clip.all(), (x - Lay.button.w(ty, label) : U32), y, label, T.Th.soft(), Lay.act(action), Lay.val(action)),
+        Lay.buttons(ty, t, y, (x - Lay.button.w(ty, label) - 8 : U32), lo))
 
 def Lay.pin(p: Bool) -> S.Hit:
   match p:
@@ -1239,7 +1248,7 @@ def Lay.header.k(+ty: Ty, +title: String, +branch: String, +icon: String, +tint:
     Out.ops(Lay.icon(ty, icon, D.Clip.all(), (x0 + 24 : U32), (hy + 18 : U32), tint)),
     Out.ops(Ty.text(ty, 0n, t, D.Clip.all(), (x0 + 48 : U32), hy, 52, T.Th.text())),
     Out.ops(Ty.text(ty, 2n, Lay.fit_or_none(ty, 2n, branch, U32.dim(room, (tw + 12 : U32))), D.Clip.all(), (x0 + 60 + tw : U32), hy, 52, T.Th.faint())),
-    Lay.buttons(ty, bs, (hy + 12 : U32), (x1 - 16 : U32))])
+    Lay.buttons(ty, bs, (hy + 12 : U32), (x1 - 16 : U32), (x0 + 48 : U32))])
 
 def Lay.header(+ty: Ty, t: M.Thread, +st: M.State, +x0: U32, +x1: U32, panel: Bool, +snoozed: Bool, del: Bool, +hy: U32) -> Out:
   match t:
@@ -1457,7 +1466,12 @@ def Comp.foot(+h: U32) -> U32:
 def Comp.send_x(+ty: Ty, +x1: U32, +send: String) -> U32:
   (x1 - 10 - Lay.button.w(ty, send) : U32)
 
-def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +models: String, +rs: List<&2, U.SkillRow>) -> Out:
+# the model's label fitted to what the mic, the paperclip and the send
+# button leave (in a narrow main area it ran under them)
+def Comp.models(+ty: Ty, +models: String, +x0: U32, +x1: U32, +send: String) -> String:
+  Ty.fit(ty, 2n, models, U32.dim(U32.dim(Comp.send_x(ty, x1, send), (x0 + 8 : U32)), 122))
+
+def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focused: Bool, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +act: String, +models: String, +rs: List<&2, U.SkillRow>) -> Out:
   +tw = {(x1 - x0 - 40 : U32) : U32}
   +n = List.length(&2, String, ls)
   +v = S.Cs.rows(n)
@@ -1480,7 +1494,7 @@ def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, 
     Comp.bar(Nat.is_gt(n, v), n, v, top, (x1 - 12 : U32), (y + 12 : U32), (U32.from_nat(v) * 23 - 4 : U32)),
     Out{Nil{}, [Lay.hit(x0, y, (x1 - x0 : U32), (64 + eh : U32), "focus", "composer"), Lay.hit(0, 0, 0, 0, "cs", Nat.show(top) ++ "," ++ Nat.show(Nat.sub(n, v)))]},
     Out{List.append(&2, R.Op, Ty.text(ty, 2n, models, D.Clip.all(), (x0 + 16 : U32), fy, 28, T.Th.dim()), Lay.icon(ty, "chevron-down", D.Clip.all(), (x0 + 22 + Ty.width(ty, 2n, models) : U32), (fy + 6 : U32), T.Th.dim())), [Lay.hit((x0 + 8 : U32), fy, (Ty.width(ty, 2n, models) + 38 : U32), 28, "flag", "models")]},
-    Lay.button(ty, D.Clip.all(), Comp.send_x(ty, x1, send), fy, send, T.Th.accent(), "send", ""),
+    Lay.button(ty, D.Clip.all(), Comp.send_x(ty, x1, send), fy, send, Bool.pick(U32, String.eq(act, "interrupt"), T.Th.bad(), T.Th.accent()), act, ""),
     Lay.skills(ty, rs, x0, x1, (y - 4 : U32))])
 
 # Caret moves only layout can place
@@ -1810,7 +1824,7 @@ def Lay.qrow(+ty: Ty, q: M.QItem, +first: Bool, +run: Bool, +more: Nat, +x0: U32
       Out.cat(Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), 30, 0, T.Th.raise(), T.Th.line()),
           Ty.text(ty, 2n, tag, D.Clip.all(), (x0 + 12 : U32), y, 30, T.Th.queued()),
           Ty.text(ty, 2n, Ty.fit(ty, 2n, String.join(String.split(U.Qu.label(msg, text), '\n'), " "), tw) ++ tail, D.Clip.all(), (x0 + 24 + Ty.width(ty, 2n, tag) : U32), y, 30, T.Th.dim())])),
-        Lay.buttons(ty, bs, (y + 1 : U32), (x1 - 4 : U32)))
+        Lay.buttons(ty, bs, (y + 1 : U32), (x1 - 4 : U32), x0))
 
 def Lay.qrows(qs: List<&2, M.QItem>, +ty: Ty, +i: Nat, +n: Nat, +run: Bool, +more: Nat, +x0: U32, +x1: U32, +y: U32) -> Out:
   match qs:
@@ -2988,26 +3002,28 @@ def Lay.attach_field(+ty: Ty, on: Bool, +path: String, +caret: Nat, +mark: Nat, 
       Out.none()
 
 # the composer with its attachments
-def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +models: String,
+def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool, +x0: U32, +x1: U32, +h: U32, +send: String, +act: String, +models: String,
     +rs: List<&2, U.SkillRow>, +atts: List<&2, String>, +up: String, +path: String) -> Out:
   +y = {(h - 120 - Comp.eh(List.length(&2, String, ls)) : U32) : U32}
   +fy = Comp.foot(h)
+  +ml = Comp.models(ty, models, x0, x1, send)
   Out.all([
-    Lay.composer(ty, draft, ls, held, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, send, models, rs),
-    Lay.atts(ty, atts, up, (x0 + 58 + Ty.width(ty, 2n, models) : U32), fy),
+    Lay.composer(ty, draft, ls, held, caret, mark, String.eq(focus, "composer"), blink, x0, x1, h, send, act, ml, rs),
+    Lay.atts(ty, atts, up, (x0 + 58 + Ty.width(ty, 2n, ml) : U32), fy),
     Lay.ibutton(ty, D.Clip.all(), (Comp.send_x(ty, x1, send) - 34 : U32), fy, "paperclip", T.Th.soft(), "focus", "attach-path"),
     Lay.attach_field(ty, String.eq(focus, "attach-path"), path, caret, mark, x0, x1, (y - 36 : U32))])
 
 def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
-    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase, +hy: U32) -> Out:
+    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase, +hy: U32, more: Bool) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
       +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
       +cx1 = {(cx0 + cw : U32) : U32}
       +ts = U.Tasks.of(st, sel)
-      +pl = {Bool.pick(U32, String.is_empty(U.Tasks.parent(st, sel)), 0, 32) : U32}
+      # the row under the header: the parent's link, "Show earlier"
+      +pl = {Bool.pick(U32, Bool.and(String.is_empty(U.Tasks.parent(st, sel)), Bool.not(more)), 0, 32) : U32}
       +top = {(52 + hy + pl + Tasks.height(ts) : U32) : U32}
       +asks = U.Asks.open(st, sel)
       +ah = Asks.h(ty, asks, (cw - 32 : U32))
@@ -3017,6 +3033,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       # the composer grows by eh, and all above it moves up
       +ls = Comp.wrap(ty, draft, cw)
       +eh = Comp.eh(List.length(&2, String, ls))
+      +stop = U.Follow.stop(Lay.running(turn), draft, atts)
       # the timeline and what sits around it are laid out at once
       tl ch = Lay.timeline(ty,
         List.concat(&2, TLine, [TL.memo.shown(ty, memo, st, sel, cw, pics), TL.sending(ty, pend, cw),
@@ -3024,7 +3041,7 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
         cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del, hy),
           Lay.parent(ty, st, sel, cx0, (58 + hy : U32)),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + hy + pl : U32)),
-          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.label(st, sel, Lay.running(turn)), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)) ++ U.Usage.tail(st, sel), rs, atts, up, path),
+          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.button(st, sel, Lay.running(turn), stop), U.Follow.act(stop), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)) ++ U.Usage.tail(st, sel), rs, atts, up, path),
           Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
           Lay.todos(ty, tds, cx0, cx1, (h - eh - 124 - Lay.qh(qs) : U32)),
           Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
@@ -3047,14 +3064,15 @@ def Lay.drop_mark(on: Bool, +ty: Ty, +draft: String, +x0: U32, +x1: U32, +h: U32
     case False{}:
       Out.none()
 
+# laid over the timeline, on a ground of its own: under the lines' hits
+# only a strip of it took clicks
 def Lay.earlier.at(+ty: Ty, +label: String, +x: U32, +y: U32, +w: U32) -> Out:
-  Out{Ty.text(ty, 2n, label, D.Clip.all(), x, y, 28, T.Th.accent()), [Lay.hit(x, y, w, 28, "earlier", "")]}
+  Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), (x - 8 : U32), y, (w + 8 : U32), 28, T.Th.bg(), 255)], Ty.text(ty, 2n, label, D.Clip.all(), x, y, 28, T.Th.accent())), [Lay.hit((x - 8 : U32), y, (w + 8 : U32), 28, "earlier", "")]}
 
 def Lay.earlier.b(+ty: Ty, +label: String, +x1: U32, +y: U32) -> Out:
   Lay.earlier.at(ty, label, (x1 - Ty.width(ty, 2n, label) - 16 : U32), y, (Ty.width(ty, 2n, label) + 8 : U32))
 
-# "Show earlier" at the timeline's top right, while the page is full (a
-# thread with more entries than one page shows)
+# "Show earlier" at the timeline's top right, while the page is full
 def Lay.earlier.k(more: Bool, +ty: Ty, +x1: U32, +y: U32) -> Out:
   match more:
     case True{}:
@@ -3162,10 +3180,10 @@ def TL.memo.size(m: TLMemo) -> Nat:
 # (the helper's hints) or something failed, and the words to clarify, one
 # at a time. Placed as Lay.thread.k places the composer.
 
-def Vx.send(t: M.Thread, +st: M.State, +sel: String) -> String:
+def Vx.send(t: M.Thread, +st: M.State, +sel: String, +draft: String, +atts: List<&2, String>) -> String:
   match t:
     case M.Thread{_, _, _, _, _, +turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
-      U.Follow.label(st, sel, Lay.running(turn))
+      U.Follow.button(st, sel, Lay.running(turn), U.Follow.stop(Lay.running(turn), draft, atts))
 
 def Vx.mic(+ty: Ty, +state: String, +x: U32, +y: U32) -> Out:
   Out{List.append(&2, R.Op,
@@ -3296,15 +3314,19 @@ def Vx.view(+ty: Ty, +n: S.Nui, +st: M.State, +sel: String, +x0: U32, +x1: U32, 
   +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
   +cx0 = {(x0 + U32.shr((x1 - x0 - cw : U32)) : U32) : U32}
   +eh = Comp.eh(List.length(&2, String, Comp.wrap(ty, U.Ui.draft_text(S.Nui.ui(n)), cw)))
-  Vx.view.k(ty, n, S.Nui.ui(n), sel, cx0, (cx0 + cw : U32), (h - 120 - eh : U32), Comp.foot(h), Vx.send(U.Ui.thread(st, sel), st, sel))
+  Vx.view.k(ty, n, S.Nui.ui(n), sel, cx0, (cx0 + cw : U32), (h - 120 - eh : U32), Comp.foot(h), Vx.send(U.Ui.thread(st, sel), st, sel, U.Ui.draft_text(S.Nui.ui(n)), U.Ui.atts(S.Nui.ui(n), sel)))
+
+# the page is full: a thread with more entries than one page shows
+def Lay.more(+memo: TLMemo, +n: S.Nui, +sel: String) -> Bool:
+  Nat.is_ge(TL.memo.size(memo), U.Page.shown(S.Nui.ui(n), sel))
 
 def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U32) -> Out:
   match n:
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
-      Out.cat(Out.cat(Out.all([Lay.earlier(ty, Nat.is_ge(TL.memo.size(memo), U.Page.shown(S.Nui.ui(n), sel)), x0, x1, hy), Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h)]), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
+      Out.cat(Out.cat(Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy)),
-        Vx.view(ty, n, st, sel, x0, x1, h))
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy, Lay.more(memo, n, sel))),
+        Vx.view(ty, n, st, sel, x0, x1, h)), Lay.earlier(ty, Lay.more(memo, n, sel), x0, x1, hy))
 
 # the thread view with its header at the top
 def Lay.thread(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32) -> Out:

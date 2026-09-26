@@ -218,6 +218,8 @@ struct ThreadView: Decodable {
     let earlier: Int?
     let live: [Block]
     let working, draft, send: String
+    // "interrupt" while a turn runs with nothing typed (the button is Stop)
+    let sendAct: String?
     let picker: ModelPicker
     let viewer: Viewer
     // the menu under the toolbar's ellipsis, after the tools

@@ -4015,6 +4015,22 @@ def Laws.follow_setting_steer(p):
 def Laws.follow_alt_flips(s, p):
   {==}
 
+def Laws.follow_stop_idle(b):
+  {==}
+
+def Laws.follow_stop_typed(r):
+  match r:
+    case True{}:
+      {==}
+    case False{}:
+      {==}
+
+def Laws.follow_stop_running():
+  {==}
+
+def Laws.follow_stop_interrupts():
+  {==}
+
 def Laws.queue_mode_waits():
   {==}
 

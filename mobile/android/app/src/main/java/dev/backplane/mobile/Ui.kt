@@ -664,11 +664,14 @@ fun ThreadScreen(m: AppModel, s: Screen, t: ThreadView, below: (@Composable () -
                         AttachButton(m)
                         OutlinedTextField(m.composer, m::draft, Modifier.weight(1f), maxLines = 6,
                             placeholder = { Text("Ask the agent") })
-                        // a long press sends with the other follow-up mode (queue or steer)
+                        // a long press sends with the other follow-up mode (queue or steer);
+                        // while a turn runs with nothing typed the button stops it
+                        val stop = t.sendAct == "interrupt" && m.composer.isBlank()
                         Box(Modifier.size(48.dp).combinedClickableCompat(onLong = { if (m.composer.isNotBlank()) m.act("send-alt") }) {
-                            if (m.composer.isNotBlank()) m.act("send")
+                            if (stop) m.act("interrupt") else if (m.composer.isNotBlank()) m.act("send")
                         }, contentAlignment = Alignment.Center) {
-                            Icon(Icons.AutoMirrored.Filled.Send, t.send,
+                            if (stop) Icon(Icons.Filled.Stop, t.send, tint = MaterialTheme.colorScheme.error)
+                            else Icon(Icons.AutoMirrored.Filled.Send, t.send,
                                 tint = if (m.composer.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
                         }
                     }
