@@ -572,12 +572,6 @@ def Nui.ui(n: Nui) -> U.Ui:
 def Nui.unpick(+n: Nui) -> Nui:
   Bool.pick(Nui, Bool.and(String.eq(Nui.focus_of(n), "proj"), Bool.not(U.Ui.flag(Nui.ui(n), "proj"))), Nui.with_focus(n, "composer"), n)
 
-# the hub's read model, handed over (main.bend's Shell.adopt)
-def Nui.adopt(n: Nui, st: M.State) -> Nui:
-  match n:
-    case Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
-      Nui{U.Ui.adopt(u, st), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
-
 def Nui.recv(n: Nui, +o: J.Json) -> Nui:
   Nui.unpick(Nui.recv.k(n, o))
 
@@ -654,6 +648,20 @@ def Nui.flip.key(+n: Nui) -> String:
 
 def Nui.flip(+n: Nui) -> U32:
   Maybe.default(&2, U32, U32.read(U.Ui.scratch(Nui.ui(n), Nui.flip.key(n))), 0)
+
+# the viewer's light ground (its sun/moon button, "@vw.light"), and the
+# window's light theme (Settings, Appearance: the hub's "ui.theme")
+def Nui.vlight(+n: Nui) -> Bool:
+  Bool.not(String.is_empty(U.Ui.scratch(Nui.ui(n), "@vw.light")))
+
+def Nui.light(+n: Nui) -> Bool:
+  String.eq(M.Setting.get(U.Ui.state.of(Nui.ui(n)), "ui.theme", ""), "light")
+
+# what a frame draws with: the layers' flips and both grounds (viewer.bend's
+# look word)
+def Nui.look(+n: Nui) -> U32:
+  U32.or(U32.and(Nui.flip(n), 1073741823),
+    U32.or(Bool.pick(U32, Nui.vlight(n), V.Look.light.bit(), 0), Bool.pick(U32, Nui.light(n), V.Look.ui.bit(), 0)))
 
 # SolidWorks' view controls (the 3D viewer)
 # -----------------------------------------
@@ -1151,6 +1159,23 @@ def Vw.stale(v: V.Vw) -> V.Vw:
   match v:
     case V.Vw{s, vi, f, r, d, lx, ly, b, _, cu, vx}:
       V.Vw{s, vi, f, r, d, lx, ly, b, False{}, cu, vx}
+
+def Nui.adopt.k(n: Nui, st: M.State) -> Nui:
+  match n:
+    case Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
+      Nui{U.Ui.adopt(u, st), w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
+
+def Nui.adopt.theme(changed: Bool, +n: Nui) -> Nui:
+  match changed:
+    case True{}:
+      Nui.with_vw(n, Vw.stale(Nui.vw(n)))
+    case False{}:
+      n
+
+# the hub's read model, handed over (main.bend's Shell.adopt); a new theme
+# draws the viewer's base again (its plain part is the window's ground)
+def Nui.adopt(+n: Nui, +st: M.State) -> Nui:
+  Nui.adopt.theme(Bool.not(String.eq(M.Setting.get(st, "ui.theme", ""), M.Setting.get(U.Ui.state.of(Nui.ui(n)), "ui.theme", ""))), Nui.adopt.k(n, st))
 
 # a board file arrived for a project root: same root merges (only what
 # changed fades), a new root starts over (the whole board fades in)
@@ -2143,6 +2168,11 @@ def Nui.sheet.open(m: Maybe<&2, Nat>, +n: Nui) -> Step:
 def Nui.layers.set(+n: Nui, +flip: U32) -> Step:
   Step{Nui.with_vw(Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), Nui.flip.key(n), U32.show(flip))), Vw.stale(Nui.vw(n))), Nil{}, True{}}
 
+# the viewer's sun/moon button: its own light or dark ground, whatever
+# the window's theme; the scene is drawn again on it
+def Nui.vlight.flip(+n: Nui) -> Step:
+  Step{Nui.with_vw(Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@vw.light", Bool.pick(String, Nui.vlight(n), "", "1"))), Vw.stale(Nui.vw(n))), Nil{}, True{}}
+
 def Nui.layers.open(+n: Nui) -> Step:
   Step{Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), "@vw.layers", Bool.pick(String, String.is_empty(U.Ui.scratch(Nui.ui(n), "@vw.layers")), "1", ""))), Nil{}, True{}}
 
@@ -2160,6 +2190,8 @@ def Nui.vw_act.more(i: Nat, +n: Nui, +value: String) -> Step:
       Nui.sheet.open(HI.Hier.child(Nui.rows(n), Nui.sheet.at(n), value), n)
     case 5n:
       Nui.sheet.go(n, HI.Hier.parent(Nui.rows(n), Nui.sheet.at(n)))
+    case 6n:
+      Nui.vlight.flip(n)
     case _:
       Step{n, Nil{}, False{}}
 
@@ -2186,7 +2218,7 @@ def Nui.vw_act.k(i: Nat, +n: Nui, +value: String) -> Step:
 
 # the window's own actions (they never reach the client state)
 def Nui.vw_act(+n: Nui, +action: String, +value: String) -> Step:
-  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo", "vw-find", "vw-layers", "vw-layer", "vw-layers-reset", "vw-sheet", "vw-open", "vw-up"], action, 0n), n, value)
+  Nui.vw_act.k(Nui.pos(["vw-kind", "vw-unpick", "vw-pal", "vw-palx", "vw-proj", "vw-projx", "vw-projo", "vw-find", "vw-layers", "vw-layer", "vw-layers-reset", "vw-sheet", "vw-open", "vw-up", "vw-light"], action, 0n), n, value)
 
 # a link in a message: only a web address is ever opened (law link_no_script)
 def Nui.click.url(url: Bool, +n: Nui, +action: String, +value: String) -> Step:

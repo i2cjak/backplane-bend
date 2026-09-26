@@ -4,6 +4,7 @@ import ./src/core/bot.bend as BOT
 import ./src/core/botui.bend as BU
 import ./src/core/model.bend as M
 import ./src/app/viewer.bend as V
+import ./src/app/theme.bend as TH
 import ./src/core/semver.bend as SV
 import ./src/app/nui.bend as N
 import ./src/core/board.bend as B
@@ -325,6 +326,21 @@ law look_flip_hides:
 # ...and flipping a hidden one shows it (F.CrtYd)
 law look_flip_shows:
   {V.Look.shows(0, 17, V.Look.toggle(0, 17)) == True{} : Bool}
+
+# the viewer's light ground shows and hides the same layers as the dark
+# one (F.Cu, B.Cu and a hidden courtyard), and neither ground's bit is a
+# layer's flip
+law look_light_same_alpha:
+  {[V.Look.alpha(0, 12, V.Look.light.bit()), V.Look.alpha(0, 5, V.Look.light.bit()), V.Look.alpha(0, 17, V.Look.light.bit()), V.Look.alpha(1, 14, V.Look.light.bit())]
+    == [V.Look.alpha(0, 12, 0), V.Look.alpha(0, 5, 0), V.Look.alpha(0, 17, 0), V.Look.alpha(1, 14, 0)] : List<&2, U32>}
+
+law look_grounds_not_layers:
+  {V.Look.shows(0, 12, U32.or(V.Look.light.bit(), V.Look.ui.bit())) == True{} : Bool}
+
+# the dark theme draws every colour as it is
+law theme_dark_as_is:
+  for +c: U32
+  {TH.Th.of(False{}, c) == c : U32}
 
 # flipping a layer twice gives it back
 law look_flip_twice:

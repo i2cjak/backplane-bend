@@ -23,6 +23,8 @@ struct BackplaneApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(model: model)
+                // the hub's theme, or the phone's own when it has none
+                .preferredColorScheme(model.screen?.theme == "light" ? .light : model.screen?.theme == "dark" ? .dark : nil)
                 // backplane://pair?url=... pairs; backplane://open?thread=... shows a thread
                 .onOpenURL { model.open($0) }
                 .onAppear { delegate.model = model }

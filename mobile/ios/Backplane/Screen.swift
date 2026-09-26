@@ -178,6 +178,9 @@ struct Viewer: Decodable {
     let fov: Float
     let picked: String
     let card: Card?
+    // the viewer's own light ground, and each layer's colour on it (by layer)
+    let light: Bool?
+    let look: [UInt32]?
 }
 
 // the composer's model chip: its label, the models ("model" sends one)
@@ -426,6 +429,8 @@ struct Screen: Decodable {
     let find: Find?
     let island: IslandAttributes.ContentState
     let thread: ThreadView?
+    // the hub's theme ("light", "dark"; empty follows the phone's)
+    let theme: String?
 }
 
 struct Cmd: Decodable {

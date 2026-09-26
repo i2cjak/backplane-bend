@@ -2,6 +2,7 @@ import Base
 import ../core/json.bend as J
 import ../core/client.bend as U
 import ../app/viewer.bend as V
+import ../core/look.bend as LO
 
 # The phones' board viewer, as the Bend client decides it. The viewer
 # shows the selected thread's project board, schematic or 3D model
@@ -83,8 +84,28 @@ def View.online(u: U.Ui, +on: Bool) -> U.Act:
 # The screen's part
 # -----------------
 
-def View.bg(+kind: String) -> U32:
-  855826
+def View.bg(+kind: String, light: Bool) -> U32:
+  Bool.pick(U32, light, LO.Look.ground(True{}), 855826)
+
+# the viewer's own light ground ("vw-light" flips it, as the window's sun
+# and moon button does): the phone paints each layer in its colour here
+# (look.bend's light table, by layer index) over View.bg
+def View.light(+u: U.Ui) -> Bool:
+  Bool.not(String.is_empty(U.Ui.scratch(u, "@vw.light")))
+
+def View.look.go(n: Nat, +kind: U32, +i: U32) -> List<&2, J.Json>:
+  match n:
+    case 0n:
+      Nil{}
+    case 1n+k:
+      J.Num{U32.show(LO.Look.light.k(U32.is_eq(kind, 1), i))} <> View.look.go(k, kind, (i + 1 : U32))
+
+def View.look(light: Bool, +kind: String) -> List<&2, J.Json>:
+  match light:
+    case True{}:
+      View.look.go(LO.Look.count(Bool.pick(U32, String.eq(kind, "schematic"), 1, 0)), Bool.pick(U32, String.eq(kind, "schematic"), 1, 0), 0)
+    case False{}:
+      Nil{}
 
 # which board layers a 3D view lays on the board's top and bottom faces,
 # in paint order as seen from that side (from below, B.Cu first and
@@ -233,7 +254,7 @@ def View.json(+u: U.Ui) -> J.Json:
     J.KV{"layers", J.Str{View.layers(View.kind(u), U.Ui.root(u))}},
     J.KV{"choices", J.Json.arr(Bool.pick(List<&2, J.Json>, String.is_empty(U.Ui.root(u)), Nil{},
       [View.choice("Board", "board", View.kind(u)), View.choice("Schematic", "schematic", View.kind(u)), View.choice("3D", "3d", View.kind(u))]))},
-    J.KV{"bg", J.Num{U32.show(View.bg(View.kind(u)))}}, J.KV{"fade", J.Num{Nat.show(V.Fade.ms())}}, J.KV{"margin", J.Num{"0.9"}},
+    J.KV{"bg", J.Num{U32.show(View.bg(View.kind(u), View.light(u)))}}, J.KV{"light", J.Json.bool(View.light(u))}, J.KV{"look", J.Json.arr(View.look(View.light(u), View.kind(u)))}, J.KV{"fade", J.Num{Nat.show(V.Fade.ms())}}, J.KV{"margin", J.Num{"0.9"}},
     J.KV{"zmin", J.Num{"0.5"}}, J.KV{"zmax", J.Num{"0.5"}}, J.KV{"tap", J.Num{"14"}},
     J.KV{"top", J.Json.arr(View.nums(View.top()))}, J.KV{"bottom", J.Json.arr(View.nums(View.bottom()))},
     J.KV{"slab", J.Num{"2375219"}}, J.KV{"fov", J.Num{"35"}},

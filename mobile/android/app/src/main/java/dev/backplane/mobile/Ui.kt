@@ -33,6 +33,8 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PushPin
@@ -725,7 +727,7 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             s.renderer.bottom = v.bottom
             s.renderer.orbit.fov = v.fov
             s.setThree(v.open == "3d")
-            if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab)
+            if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab, v.look)
             if (v.open == "3d") s.mesh(mesh)
             s.mark(v.picked)
         })
@@ -745,7 +747,12 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
                 }
             }
             Spacer(Modifier.weight(1f))
-            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = Color.White) }
+            // the viewer's own light or dark ground
+            IconButton(onClick = { m.act("vw-light") }) {
+                Icon(if (v.light) Icons.Filled.DarkMode else Icons.Filled.LightMode, if (v.light) "Dark ground" else "Light ground",
+                    tint = if (v.light) Color.Black else Color.White)
+            }
+            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = if (v.light) Color.Black else Color.White) }
         }
         v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
     }

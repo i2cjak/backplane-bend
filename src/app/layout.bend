@@ -2061,7 +2061,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
   +tms = U.Models.menu(U.Str.get(info, "models"), tp)
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
-  +total = {(920 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
+  +total = {(1020 + dy + ey + Set.voice.h(ty, n, x, w) : U32) : U32}
   +pair = U.Pair.link(info)
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
@@ -2099,19 +2099,24 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
     Set.row.r(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (b2 + 486 + dy + ey : U32), w, 140),
     Lay.chip(ty, (x + w - 120 : U32), (b2 + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
     Lay.chip(ty, (x + w - 70 : U32), (b2 + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
-    Set.head(ty, "Network and updates", x, (b2 + 570 + dy + ey : U32)),
-    Set.card(x, (b2 + 602 + dy + ey : U32), w, 216),
+    Set.head(ty, "Appearance", x, (b2 + 570 + dy + ey : U32)),
+    Set.card(x, (b2 + 602 + dy + ey : U32), w, 64),
+    Set.row.r(ty, "Theme", "The window and the web page (phones unset follow their own system).", x, (b2 + 604 + dy + ey : U32), w, 150),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") - 6 - Lay.button.w(ty, "Dark") : U32), (b2 + 618 + dy + ey : U32), "Dark", Bool.not(String.eq(M.Setting.get(st, "ui.theme", ""), "light")), "setting", "ui.theme=dark"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Light") : U32), (b2 + 618 + dy + ey : U32), "Light", String.eq(M.Setting.get(st, "ui.theme", ""), "light"), "setting", "ui.theme=light"),
+    Set.head(ty, "Network and updates", x, (b2 + 670 + dy + ey : U32)),
+    Set.card(x, (b2 + 702 + dy + ey : U32), w, 216),
     Set.row(ty, "Tailscale: " ++ U.Str.get(info, "tailnet"), Bool.pick(String, String.eq(U.Str.get(info, "tailnet"), "off"), "Listening on " ++ U.Str.get(info, "listen") ++ " only (started with --no-tailscale, or Tailscale is not up).",
-      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 604 + dy + ey : U32), w),
-    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 656 + dy + ey : U32), w, 80),
-    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 666 + dy + ey : U32), "Copy", T.Th.soft(), "copy", pair)),
-    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 708 + dy + ey : U32), w, 150),
-    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 718 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
-      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 718 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", ""))),
-    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 760 + dy + ey : U32), w, 190),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 774 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
-    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 774 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
-    Set.voice(ty, st, n, x, w, (b2 + 838 + dy + ey : U32))])),
+      "Also on your tailnet: your own devices get in, others need the pairing token."), x, (b2 + 704 + dy + ey : U32), w),
+    Set.row.r(ty, "Pairing link", U.Pair.note(pair), x, (b2 + 756 + dy + ey : U32), w, 80),
+    Bool.pick(Out, String.is_empty(pair), Out.none(), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Copy") : U32), (b2 + 766 + dy + ey : U32), "Copy", T.Th.soft(), "copy", pair)),
+    Set.row.r(ty, "Backplane " ++ v, U.Update.line(info, note), x, (b2 + 808 + dy + ey : U32), w, 150),
+    Bool.pick(Out, U.Update.packaged(info), Out.none(), Bool.pick(Out, String.starts_with(note, "update "), Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Install update") : U32), (b2 + 818 + dy + ey : U32), "Install update", T.Th.accent(), "update", ""),
+      Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Check now") : U32), (b2 + 818 + dy + ey : U32), "Check now", T.Th.soft(), "update-check", ""))),
+    Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 860 + dy + ey : U32), w, 190),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 874 + dy + ey : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
+    Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 874 + dy + ey : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
+    Set.voice(ty, st, n, x, w, (b2 + 938 + dy + ey : U32))])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])
@@ -2376,7 +2381,7 @@ def Side.has(+present: U32, +i: U32, +count: Nat) -> Bool:
 
 def Side.layer(+ty: Ty, +k: U32, +l: U32, +name: String, +flip: U32, +x: U32, +y: U32, +w: U32, +c: D.Clip) -> Out:
   +on = V.Look.shows(k, l, flip)
-  Out{List.append(&2, R.Op, [D.Draw.rect(c, (x + 12 : U32), (y + 6 : U32), 10, 10, Side.color(V.Look.of(k, l)), Bool.pick(U32, on, 255, 50))],
+  Out{List.append(&2, R.Op, [D.Draw.rect(c, (x + 12 : U32), (y + 6 : U32), 10, 10, Side.color(V.Look.on(k, l, flip)), Bool.pick(U32, on, 255, 50))],
       Ty.text(ty, 2n, name, c, (x + 32 : U32), y, 22, Bool.pick(U32, on, T.Th.text(), T.Th.faint()))),
     [Lay.hit(x, y, w, 22, "vw-layer", U32.show(l))]}
 
@@ -2455,6 +2460,19 @@ def Side.trail(cs: List<&2, Nat>, +rs: List<&2, HI.Row>, +at: Nat, +ty: Ty, +x: 
       Lay.chip(ty, x, 60, HI.Hier.name(rs, j), Nat.is_eq(j, at), "vw-sheet", Nat.show(j))
       <> Side.trail(t, rs, at, ty, (x + Lay.button.w(ty, HI.Hier.name(rs, j)) + 6 : U32))
 
+# the viewer's own light or dark ground (the sun shows on the dark one,
+# the moon on the light), whatever the window's theme
+def Side.ground(+ty: Ty, +n: S.Nui, +x: U32) -> Out:
+  Lay.ibutton(ty, D.Clip.all(), x, 60, Bool.pick(String, S.Nui.vlight(n), "moon", "sun"), T.Th.soft(), "vw-light", "")
+
+# 3D has no layer list: the ground button alone, where Layers would be
+def Side.ground.if(on: Bool, +ty: Ty, +n: S.Nui, +x1: U32) -> Out:
+  match on:
+    case True{}:
+      Side.ground(ty, n, (x1 - 16 - 28 : U32))
+    case False{}:
+      Out.none()
+
 def Side.k(board: Bool, +ty: Ty, +n: S.Nui, +k: U32, +ss: List<&2, V.Seen>, +x0: U32, +x1: U32, +h: U32) -> Out:
   match board:
     case True{}:
@@ -2465,7 +2483,8 @@ def Side.k(board: Bool, +ty: Ty, +n: S.Nui, +k: U32, +ss: List<&2, V.Seen>, +x0:
       Out.all([
         Out.all(Side.trail(Bool.pick(List<&2, Nat>, sheets, HI.Hier.chain(rs, at), Nil{}), rs, at, ty, (x0 + 16 : U32))),
         Lay.chip(ty, (x1 - 16 - Lay.button.w(ty, "Layers") : U32), 60, "Layers", open, "vw-layers", ""),
-        Side.list.if(open, ty, k, ss, S.Nui.flip(n), Bool.pick(List<&2, HI.Row>, sheets, rs, Nil{}), at, x1, h)])
+        Side.ground(ty, n, (x1 - 22 - Lay.button.w(ty, "Layers") - 28 : U32)),
+        Side.list.if(open, ty, k, ss, S.Nui.look(n), Bool.pick(List<&2, HI.Row>, sheets, rs, Nil{}), at, x1, h)])
     case False{}:
       Out.none()
 
@@ -2544,7 +2563,8 @@ def Lay.viewer(+ty: Ty, +n: S.Nui, +x0: U32, +x1: U32, +h: U32) -> Out:
   Out.all([
     Lay.viewer.vw(ty, S.Nui.vw(n), U.Ui.draft_text(S.Nui.ui(n)), U.Ui.view_get(S.Nui.ui(n), "diff"), x0, x1, h),
     Lay.page.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 3), ty, S.Nui.ui(n), x0, x1, h),
-    Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h)])
+    Side.k(U32.is_lt(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, S.Vw.kind(S.Nui.vw(n)), Lay.scene(n), x0, x1, h),
+    Side.ground.if(U32.is_eq(S.Vw.kind(S.Nui.vw(n)), 2), ty, n, x1)])
 
 def Lay.note.k(+ty: Ty, empty: Bool, offer: Bool, +note: String, +x: U32, +y: U32) -> Out:
   match empty offer:

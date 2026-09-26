@@ -753,7 +753,7 @@ def Ui.actions() -> List<&2, String>:
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
-   "btw-close"]
+   "btw-close", "vw-light"]
 
 # Reading the client state
 # ------------------------
@@ -3193,6 +3193,9 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
     # the table's last action is not voice's: a side question closed
     case 12n:
       Btw.close(u)
+    # the phones' viewer ground (the window takes its own "vw-light")
+    case 13n:
+      Act{Ui.scratch_set(u, "@vw.light", Bool.pick(String, String.is_empty(Ui.scratch(u, "@vw.light")), "1", "")), Nil{}}
     case _:
       Act{u, Nil{}}
 

@@ -127,6 +127,8 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
     // the model's multisampling (4x where the GPU has it)
     private let samples: Int
     var bg = SIMD4<Float>(0, 0, 0, 1)
+    // each layer's colour on the viewer's light ground (empty: the chunks' own)
+    var look: [UInt32] = []
     // 2D view: pixels per micrometre and where 0,0 lands, in points
     var scale: Float = 0.01
     var off = SIMD2<Float>(0, 0)
@@ -248,7 +250,7 @@ final class PlotRenderer: NSObject, MTKViewDelegate {
             for k in i..<j where !fresh.contains(k) { caps += chunks[k].caps; tris += chunks[k].tris }
             let c1 = caps.count / 5, t1 = tris.count / 2
             for k in i..<j where fresh.contains(k) { caps += chunks[k].caps; tris += chunks[k].tris }
-            let rgb = first.color
+            let rgb = first.layer >= 0 && first.layer < look.count ? look[first.layer] : first.color
             out.append(LayerDraw(layer: first.layer,
                 color: SIMD4(Float((rgb >> 16) & 255) / 255, Float((rgb >> 8) & 255) / 255, Float(rgb & 255) / 255, first.alpha),
                 caps: c0..<c1, freshCaps: c1..<(caps.count / 5), tris: t0..<t1, freshTris: t1..<(tris.count / 2)))
@@ -554,8 +556,9 @@ final class PlotCanvas: MTKView {
         if !fitted { refit() }
     }
 
-    func show(_ f: PlotFrame, bg: UInt32, slab: UInt32) {
+    func show(_ f: PlotFrame, bg: UInt32, slab: UInt32, look: [UInt32]) {
         renderer.bg = SIMD4(Float((bg >> 16) & 255) / 255, Float((bg >> 8) & 255) / 255, Float(bg & 255) / 255, 1)
+        renderer.look = look
         renderer.thick = f.thick > 0 ? f.thick : 1600
         renderer.load(f.chunks, fresh: f.fresh)
         chunks = f.chunks
@@ -762,9 +765,10 @@ struct PlotCanvasView: UIViewRepresentable {
             c.renderer.three = three
             c.refit()
         }
-        if let f = frame, f.at != context.coordinator.shown {
+        if let f = frame, f.at != context.coordinator.shown || (viewer.look ?? []) != context.coordinator.look {
             context.coordinator.shown = f.at
-            c.show(f, bg: viewer.bg, slab: viewer.slab)
+            context.coordinator.look = viewer.look ?? []
+            c.show(f, bg: viewer.bg, slab: viewer.slab, look: viewer.look ?? [])
             #if DEBUG
             // headless checks: SIMCTL_CHILD_BACKPLANE_TAP=x,y (points) taps there once
             if let t = ProcessInfo.processInfo.environment["BACKPLANE_TAP"], !context.coordinator.tapped {
@@ -789,6 +793,7 @@ struct PlotCanvasView: UIViewRepresentable {
 
     final class Coordinator {
         var shown: Date?
+        var look: [UInt32] = []
         var mesh: Date?
         var picked = ""
         var tapped = false
@@ -852,6 +857,9 @@ struct PlotScreen: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 300)
                 Spacer()
+                // the viewer's own light or dark ground
+                Button { model.act("vw-light") } label: { Image(systemName: viewer.light == true ? "moon.fill" : "sun.max.fill").font(.title2) }
+                    .accessibilityLabel(viewer.light == true ? "Dark ground" : "Light ground")
                 Button { model.act("view", "") } label: { Image(systemName: "xmark.circle.fill").font(.title2) }
                     .accessibilityLabel("Close")
             }
@@ -861,7 +869,7 @@ struct PlotScreen: View {
                 CardView(card: c, model: model).frame(maxHeight: .infinity, alignment: .bottom)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(viewer.light == true ? .light : .dark)
         .statusBarHidden()
     }
 }

@@ -700,6 +700,7 @@ def Mob.settings.of(+st: M.State, +nf: Map<&2, String>, +v: String, +note: Strin
     Mob.set.row("Model for new threads", Bool.pick(String, String.is_empty(model), "default", model) ++ ": " ++ U.Models.label_of(models, prov, model), Mob.set.chips("" <> U.Models.list(models, prov), model, "agent.model")),
     Mob.set.row("KiCad CLI", U.Str.get(nf, "kicad.cli"), Bool.pick(List<&2, J.Json>, String.is_empty(U.Str.get(nf, "kicad.fork")), [Mob.set.btn("Install Backplane KiCad", "kicad-install", "", False{})], Nil{})),
     Mob.set.row("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", Mob.set.chips(["on", "off"], M.Setting.get(st, "kicad.ipc", "on"), "kicad.ipc")),
+    Mob.set.row("Theme", "Unset, the phone follows its own system.", Mob.set.chips(["dark", "light"], M.Setting.get(st, "ui.theme", ""), "ui.theme")),
     Mob.set.row("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
     Mob.set.row("Pairing link", U.Pair.note(U.Pair.link(nf)), Bool.pick(List<&2, J.Json>, String.is_empty(U.Pair.link(nf)), Nil{}, [Mob.set.btn("Copy", "copy", U.Pair.link(nf), False{})])),
     Mob.set.row("Update channel", "Stable takes releases; nightly also takes the daily builds.", Mob.set.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
@@ -737,7 +738,7 @@ def Mob.screen(+u: U.Ui) -> J.Json:
   match u:
     case U.Ui{+st, +sel, +dr, _, +o, +on, +now, _, _, +v, _, _, +e, +note, _, _, _}:
       J.Json.obj([J.KV{"online", J.Json.bool(on)}, J.KV{"version", J.Json.str(v)}, J.KV{"error", J.Json.str(e)},
-        J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.str(sel)},
+        J.KV{"note", J.Json.str(note)}, J.KV{"sel", J.Json.str(sel)}, J.KV{"theme", J.Json.str(M.Setting.get(st, "ui.theme", ""))},
         J.KV{"empty", J.Json.str(Mob.empty(List.length(&2, M.Project, U.Ui.projects(st))))},
         J.KV{"projects", J.Json.arr(Mob.projects(U.Side.shown(st, now, U.Find.q(o, dr)), o, st, now))},
         J.KV{"search", Mob.search(u)},

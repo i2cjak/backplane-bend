@@ -377,6 +377,15 @@ def Laws.look_flip_hides():
 def Laws.look_flip_shows():
   {==}
 
+def Laws.look_light_same_alpha():
+  {==}
+
+def Laws.look_grounds_not_layers():
+  {==}
+
+def Laws.theme_dark_as_is(c):
+  {==}
+
 def Laws.look_flip_twice():
   {==}
 

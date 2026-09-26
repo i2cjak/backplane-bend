@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             // once paired, ask to post alerts
             LaunchedEffect(model.links.isNotEmpty()) { if (model.links.isNotEmpty()) askNotify() }
-            Theme { App(model) }
+            Theme(model.screen?.theme ?: "") { App(model) }
         }
     }
 
@@ -63,9 +63,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+// the hub's theme (Settings, Theme), or the phone's own when it has none
 @Composable
-fun Theme(content: @Composable () -> Unit) {
-    val dark = isSystemInDarkTheme()
+fun Theme(theme: String, content: @Composable () -> Unit) {
+    val dark = when (theme) { "light" -> false; "dark" -> true; else -> isSystemInDarkTheme() }
     val ctx = LocalContext.current
     val scheme = when {
         Build.VERSION.SDK_INT >= 31 -> if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)

@@ -1327,8 +1327,34 @@ def Vx.kind(x: V.Vx) -> U32:
     case V.Vx{k, _, _, _, _, _, _, _, _, _, bm}:
       k
 
+# The light theme: every op of the UI in the palette's light twin
+# (theme.bend's Th.light); the dark theme draws them as they are
+def Pal.op(o: R.Op) -> R.Op:
+  match o:
+    case R.Op{x0, y0, x1, y1, +c, a, sh}:
+      R.Op{x0, y0, x1, y1, T.Th.light(c), a, sh}
+
+# (onto a reversed accumulator: a frame holds many ops)
+def Pal.onto(os: List<&2, R.Op>, acc: List<&2, R.Op>) -> List<&2, R.Op>:
+  match os:
+    case Nil{}:
+      acc
+    case o <> t:
+      Pal.onto(t, Pal.op(o) <> acc)
+
+def Pal.ops(light: Bool, os: List<&2, R.Op>) -> List<&2, R.Op>:
+  match light:
+    case True{}:
+      List.reverse(&2, R.Op, Pal.onto(os, Nil{}))
+    case False{}:
+      os
+
+# the window's plain ground in its theme
+def Pal.ground(+flip: U32) -> U32:
+  T.Th.of(V.Look.ui(flip), T.Th.bg())
+
 # the browser's frame, scaled down to fit the panel and centred
-def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
+def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, +flip: U32, b: BM.Bitmap) -> Image:
   match b:
     case BM.Bitmap{+w, +h, d, t, _, _, _, _}:
       +pw = {(ww - x0 : U32) : U32}
@@ -1337,7 +1363,7 @@ def Shell.shot.base(+ww: U32, +hh: U32, +x0: U32, b: BM.Bitmap) -> Image:
       +fw = {D.Draw.floor(F32.mul(U32.to_f32(w), sc)) : U32}
       +fh = {D.Draw.floor(F32.mul(U32.to_f32(h), sc)) : U32}
       BM.Bitmap.over(ww, hh, BM.Bitmap.move(BM.Bitmap{w, h, d, t, 0, 0, 0, 0}, (x0 + U32.shr((pw - fw : U32)) : U32), (52 + U32.shr((ph - fh : U32)) : U32), fw, fh),
-        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, 526603, 255)], T.Th.bg()))
+        R.Frame.render(ww, hh, [D.Draw.rect(D.Clip.all(), x0, 52, pw, ph, V.Look.ground(flip), 255)], Pal.ground(flip)))
 
 # the viewer's settled scene, drawn once per scene/view (the frame's base,
 # plain background left of the panel, so frames compare it unchanged):
@@ -1351,22 +1377,22 @@ def Half.of(+n: U32) -> U32:
 
 # a 3D scene into the panel; while it is dragged, a draft at half size,
 # at rest four samples a pixel
-def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat) -> Image:
+def Shell.base3(draft: Bool, +ww: U32, +hh: U32, +x0: U32, ts: FA.Scene3, +c: MS.Cam, +now: Nat, +bg: U32) -> Image:
   match draft:
     case True{}:
-      FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, 526603)
+      FA.Scene3.render(Half.of(ww), Half.of(hh), Half.of(x0), 26, (Half.of(ww) - Half.of(x0) : U32), (Half.of(hh) - 26 : U32), ts, c, now, bg)
     case False{}:
-      FA.Scene3.render.q(True{}, ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, 526603)
+      FA.Scene3.render.q(True{}, ww, hh, x0, 52, (ww - x0 : U32), (hh - 52 : U32), ts, c, now, bg)
 
 def Shell.base(+ww: U32, +hh: U32, +x0: U32, +ss: List<&2, V.Seen>, +v: V.View, +now: Nat, +flip: U32, +drag: Bool, x: V.Vx) -> Image:
   match x:
     case V.Vx{2, _, ts, c, _, _, _, _, _, _, bm}:
-      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, T.Th.bg(), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now))
+      R.Frame.over(ww, hh, [D.Draw.rect(D.Clip.all(), 264, 0, (x0 - 264 : U32), hh, Pal.ground(flip), 255)], Shell.base3(drag, ww, hh, x0, ts, c, now, V.Look.ground(flip)))
     case V.Vx{3, _, _, _, _, _, _, _, _, _, bm}:
-      Shell.shot.base(ww, hh, x0, bm)
+      Shell.shot.base(ww, hh, x0, flip, bm)
     case V.Vx{+k, _, _, _, _, _, _, _, _, _, bm}:
-      FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, 526603, 255)
-        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), T.Th.bg())
+      FR.Fresh.frame(ww, hh, List.reverse(&2, R.Op, D.Draw.rect(D.Clip.all(), x0, 52, (ww - x0 : U32), hh, V.Look.ground(flip), 255)
+        <> V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, now, True{}, k, flip)), Pal.ground(flip))
 
 def Shell.vw.k(redraw: Bool, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32) -> V.Vw:
   match redraw vw:
@@ -1398,9 +1424,9 @@ def Vx.pick(x: V.Vx) -> String:
 def Shell.image.over(+ops: List<&2, R.Op>, vw: V.Vw, +ww: U32, +hh: U32, +x0: U32, +now: Nat, +flip: U32, +hs: List<&2, N.Hit>, +pics: Map<&2, BM.Bitmap>, prev: TI.Frames, +dy: U32) -> TI.Plan:
   match vw:
     case V.Vw{+ss, +v, _, _, _, _, _, +b, _, +cut, +vx}:
-      TI.Frame.plan(ww, hh, List.append(&2, R.Op, ops, List.reverse(&2, R.Op,
+      TI.Frame.plan(ww, hh, List.append(&2, R.Op, Pal.ops(V.Look.ui(flip), ops), List.reverse(&2, R.Op,
         List.append(&2, R.Op, Bool.pick(List<&2, R.Op>, U32.is_eq(Vx.kind(vx), 2), Nil{}, V.Ops.scene(ss, v, D.Clip{x0, 52, ww, hh}, now, cut, False{}, Vx.kind(vx), flip)),
-          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh})))),
+          V.Ops.picked(ss, Vx.pick(vx), v, D.Clip{x0, 52, ww, hh}, flip)))),
         Pics.over(hs, pics, Nil{}, ww, hh, b), prev, dy)
 
 # the frame: UI ops over the fading items over the base. dy is how far
@@ -1411,7 +1437,7 @@ def Shell.image(pa: Bool, +ops: List<&2, R.Op>, +vw: V.Vw, +ww: U32, +hh: U32, +
     case True{}:
       Shell.image.over(ops, vw, ww, hh, x0, now, flip, hs, pics, prev, dy)
     case False{}:
-      TI.Frame.plan(ww, hh, ops, Pics.over(hs, pics, Nil{}, ww, hh, Pix{T.Th.bg()}), prev, dy)
+      TI.Frame.plan(ww, hh, Pal.ops(V.Look.ui(flip), ops), Pics.over(hs, pics, Nil{}, ww, hh, Pix{Pal.ground(flip)}), prev, dy)
 
 def Aux.frames(a: Aux) -> TI.Frames:
   match a:
@@ -1534,7 +1560,7 @@ def Lbv.paint(on: Bool, +ops: List<&2, R.Op>, +hs: List<&2, N.Hit>, +oh: List<&2
         +s : N.Step = Shell.hits(n, hs, epoch)
         Shell.shown(r, Shell.hits.nui(s), q, i, wa, Shell.hits.anim(s, Shell.anim(n, ms)), ms)
     case False{}:
-      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.flip(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
+      Shell.present(Shell.image(N.Nui.panel(n), ops, N.Nui.vw(n), N.Nui.width(n), N.Nui.height(n), N.Nui.vx0(n), ms, N.Nui.look(n), hs, Tie.pics(Aux.tie(wa)), Aux.frames(wa), N.Hits.slide(hs, oh)),
         L.Out{ops, hs}, n, w, q, i, wa, epoch, ms, t0, t2)
 
 def Shell.paint.out(o: L.Out, +oh: List<&2, N.Hit>, +n: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), +wa: Aux, +epoch: Nat, +ms: Nat, +t0: U32, +t2: U32) -> IO(Shell):
@@ -1575,7 +1601,7 @@ def Shell.paint.k(+n0: N.Nui, w: Window, +q: Chan(ShellMsg), +i: Chan(S.Msg), wa
   match n0:
     case N.Nui{u, +ww, +hh, mx, my, sd, sc, ca, fo, pa, oh, _, vw0}:
       Shell.paint.go(oh, N.Nui{u, ww, hh, mx, my, sd, sc, ca, fo, pa, Nil{}, ms,
-        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.flip(n0))}, w, q, i, wa, epoch, ms)
+        Shell.vw.if(N.Nui.panel(n0), vw0, ww, hh, N.Nui.vx0(n0), ms, N.Nui.look(n0))}, w, q, i, wa, epoch, ms)
 
 # what a frame notes before it is laid out: the hover's and the caret's
 # starts, the lightbox's ease, the cats' clock

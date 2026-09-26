@@ -267,6 +267,8 @@ class PlotRenderer : GLSurfaceView.Renderer {
     @Volatile var offY = 0f
     @Volatile var fade = 1f
     @Volatile var bg = floatArrayOf(0f, 0f, 0f)
+    // each layer's colour on the viewer's light ground (empty: the chunks' own)
+    @Volatile var look = IntArray(0)
     @Volatile var three = false
     @Volatile var orbit = Orbit()
     @Volatile var thick = 1600f
@@ -380,7 +382,7 @@ class PlotRenderer : GLSurfaceView.Renderer {
             val c1 = caps.size / 5
             val t1 = tris.size / 2
             for (k in i until j) if (k in fresh) { caps.addAll(chunks[k].caps); tris.addAll(chunks[k].tris) }
-            val rgb = first.color
+            val rgb = if (first.layer in look.indices) look[first.layer] else first.color
             out.add(Layer(first.layer, floatArrayOf(((rgb shr 16) and 255) / 255f, ((rgb shr 8) and 255) / 255f, (rgb and 255) / 255f, first.alpha),
                 c0 until c1, c1 until caps.size / 5, t0 until t1, t1 until tris.size / 2))
             i = j
@@ -665,11 +667,12 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
         refit()
     }
 
-    fun show(f: PlotFrame, bg: Int, slab: Int) {
-        if (f === shown) return
+    fun show(f: PlotFrame, bg: Int, slab: Int, look: IntArray) {
+        if (f === shown && look.contentEquals(renderer.look)) return
         shown = f
         chunks = f.chunks
         renderer.bg = floatArrayOf(((bg shr 16) and 255) / 255f, ((bg shr 8) and 255) / 255f, (bg and 255) / 255f)
+        renderer.look = look
         renderer.thick = if (f.thick > 0) f.thick else 1600f
         queueEvent { renderer.load(f.chunks, f.fresh); renderer.slab(f.box, slab) }
         val first = box.isEmpty() || !fitted

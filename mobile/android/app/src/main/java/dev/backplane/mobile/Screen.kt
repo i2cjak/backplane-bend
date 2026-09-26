@@ -110,6 +110,8 @@ data class Viewer(
     val open: String, val key: String, val layers: String, val choices: List<Choice>, val bg: Int, val fade: Float,
     val margin: Float, val zmin: Float, val zmax: Float, val tap: Float, val top: IntArray, val bottom: IntArray,
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
+    // the viewer's own light ground, and each layer's colour on it (by layer)
+    val light: Boolean = false, val look: IntArray = IntArray(0),
 )
 
 // the composer's model chip: its label, the models ("model" sends one)
@@ -227,6 +229,8 @@ data class Screen(
     val settings: Settings? = null, val find: Find? = null,
     // a project remove to confirm ("proj-remove" id, or "proj-keep")
     val removing: Deleting? = null, val search: Search? = null,
+    // the hub's theme ("light", "dark"; "" follows the phone's)
+    val theme: String = "",
 )
 
 data class Cmd(
@@ -343,6 +347,7 @@ private fun viewer(o: JSONObject) = Viewer(
     o.optJSONObject("card")?.let { c ->
         Card(c.optString("info"), c.optString("title"), c.optJSONArray("rows").map { it.optString("k") to it.optString("v") })
     },
+    o.optBoolean("light"), ints(o.optJSONArray("look")),
 )
 
 private fun strs(a: JSONArray?): List<String> =
@@ -432,6 +437,7 @@ fun parseScreen(o: JSONObject) = Screen(
         Deleting(it.optString("id"), it.optString("title"), it.optString("body"), it.optString("yes"), it.optString("no"))
     },
     o.optJSONObject("search")?.let { Search(it.optBoolean("open"), it.optString("query"), it.optString("hint")) },
+    o.optString("theme"),
 )
 
 fun parseCmds(o: JSONObject): List<Cmd> =
