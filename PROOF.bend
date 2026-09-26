@@ -5291,3 +5291,18 @@ def Laws.reply_said_newest():
 
 def Laws.reply_person_wakes_none(s, now, from, text):
   {==}
+
+def Laws.far_machine_magicdns():
+  {==}
+
+def Laws.far_machine_self():
+  {==}
+
+def Laws.far_machine_other_port():
+  {==}
+
+def Laws.far_machine_stranger():
+  {==}
+
+def Laws.tailnet_domain():
+  {==}

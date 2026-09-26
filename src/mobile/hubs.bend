@@ -357,7 +357,7 @@ def Hubs.made(+m: Maybe<&2, Hub>, +k: String, +cid: String, +now: Nat) -> Hub:
     case Some{h}:
       h
     case None{}:
-      Hub{k, U.Ui.set_cid(U.Ui.init(now), cid)}
+      Hub{k, U.Ui.info_set(U.Ui.set_cid(U.Ui.init(now), cid), "local.fixed", "1")}
 
 def Hubs.set.go(ks: List<&2, String>, +old: List<&2, Hub>, +cid: String, +now: Nat) -> List<&2, Hub>:
   match ks:

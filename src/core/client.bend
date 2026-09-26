@@ -192,7 +192,7 @@ def Local.keep.go(ks: List<&2, String>, +old: Map<&2, String>, m: Map<&2, String
 # (and the clock this client last ticked, which a folded turn's "5m ago"
 # reads)
 def Local.keep(+old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
-  Local.keep.go(["local.machine", "local.machines", "local.drafts", "clock"], old, m)
+  Local.keep.go(["local.machine", "local.machines", "local.drafts", "clock", "local.fixed"], old, m)
 
 def Machines.home.k(home: Bool, +nf: Map<&2, String>) -> Map<&2, String>:
   Bool.pick(Map<&2, String>, Bool.and(home, Bool.not(String.is_empty(Str.get(nf, "machines")))), Map.set(&2, String, nf, "local.machines", Str.get(nf, "machines")), nf)
@@ -535,7 +535,7 @@ def Ui.on_thread(u: Ui, m: String) -> Act:
 def Ui.select.k(u: Ui, +id: String) -> Ui:
   match u:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
-      Ui{st, id, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@del", ""), "@bot", ""), "@room", ""), "@remote", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
+      Ui{st, id, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, "@del", ""), "@bot", ""), "@room", ""), "@remote", ""), "@bot.want", ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
 # Drafts kept
 # -----------
@@ -2807,8 +2807,9 @@ def Bots.sel.set(u: Ui, +th: String) -> Ui:
     case Ui{st, _, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       Ui{st, th, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}
 
+# (a bot still awaited, "@bot.want", gives way to what was chosen since)
 def Bots.views(u: Ui, +bot: String, +room: String, +remote: String) -> Ui:
-  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@bot", bot), "@room", room), "@remote", remote), "@del", "")
+  Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, "@bot", bot), "@room", room), "@remote", remote), "@del", ""), "@bot.want", "")
 
 # a bot shown: its thread is selected, its tab kept
 def Bots.select.k(m: Maybe<&2, BT.Bot>, u: Ui) -> Act:
@@ -2824,8 +2825,78 @@ def Bots.select(+u: Ui, +id: String) -> Act:
 def Bots.room.select(u: Ui, +id: String) -> Act:
   Act{Bots.views(u, "", id, ""), [Focus{"room-post"}, Scroll{}]}
 
-def Bots.remote.select(u: Ui, +id: String) -> Act:
+# A bot elsewhere on one of the owner's machines opens there: the window
+# switches to that machine's hub and shows the bot with all its tabs (its
+# name waits in "@bot.want" until that hub's log comes). A bot on anyone
+# else's machine is only a conversation, as is every bot elsewhere on a
+# client that cannot switch hubs ("local.fixed": the phones).
+
+# a url's host:port ("https://box.ts.net:3787/x" → "box.ts.net:3787")
+def Far.hostport(+url: String) -> String:
+  Maybe.default(&2, String, List.head(&2, String, String.split(Bool.pick(String, String.starts_with(url, "https://"), String.drop(url, 8n),
+    Bool.pick(String, String.starts_with(url, "http://"), String.drop(url, 7n), url)), '/')), "")
+
+def Far.host(+url: String) -> String:
+  Maybe.default(&2, String, List.head(&2, String, String.split(Far.hostport(url), ':')), "")
+
+def Far.port(+url: String) -> String:
+  Maybe.default(&2, String, List.get(&2, String, String.split(Far.hostport(url), ':'), 1n), "")
+
+# a host's first label, lowercased (a MagicDNS name's machine)
+def Far.label(+url: String) -> String:
+  String.to_lower(Maybe.default(&2, String, List.head(&2, String, String.split(Far.host(url), '.')), ""))
+
+# whether a url's host is a machine on the owner's tailnet (domain: its
+# MagicDNS domain, "" when unknown, then none is)
+def Far.ours(+purl: String, +domain: String) -> Bool:
+  Bool.and(Bool.not(String.is_empty(domain)), String.ends_with(String.to_lower(Far.host(purl)), "." ++ String.to_lower(domain)))
+
+# whether the machine named n at url is the peer called pname at purl: the
+# same address, or, when purl is on the owner's tailnet, the same name (its
+# MagicDNS label, or the peer's own) on the same port. A name alone is not
+# enough: someone else's "laptop" is not the owner's.
+def Far.hit(+n: String, +url: String, +pname: String, +purl: String, +domain: String) -> Bool:
+  Bool.or(Bool.and(Bool.not(String.is_empty(url)), String.eq(Far.hostport(url), Far.hostport(purl))),
+    Bool.and(Bool.and(Bool.and(Bool.not(String.is_empty(n)), Far.ours(purl, domain)), Bool.or(String.is_empty(Far.port(purl)), String.eq(Far.port(url), Far.port(purl)))),
+      Bool.or(String.eq(String.to_lower(n), Far.label(purl)), String.eq(String.to_lower(n), String.to_lower(pname)))))
+
+def Far.peers(ps: List<&2, J.Json>, +pname: String, +purl: String, +domain: String) -> Maybe<&2, String>:
+  match ps:
+    case Nil{}:
+      None{}
+    case +p <> t:
+      Bool.pick(Maybe<&2, String>, Far.hit(J.Json.get_str(p, "name", ""), J.Json.get_str(p, "url", ""), pname, purl, domain), Some{J.Json.get_str(p, "url", "")}, Far.peers(t, pname, purl, domain))
+
+# which of the owner's machines (the switcher's JSON) is the peer: "" for
+# this one, a url for another, None when it is none of them
+def Far.machine.k(+j: J.Json, +pname: String, +purl: String, +domain: String) -> Maybe<&2, String>:
+  Bool.pick(Maybe<&2, String>, Far.hit(J.Json.get_str(J.Json.get_obj(j, "self"), "name", ""), J.Json.get_str(J.Json.get_obj(j, "self"), "url", ""), pname, purl, domain), Some{""},
+    Far.peers(J.Json.elems(J.Json.get_obj(j, "peers")), pname, purl, domain))
+
+def Far.machine(+j: J.Json, +pname: String, +purl: String) -> Maybe<&2, String>:
+  Far.machine.k(j, pname, purl, J.Json.get_str(J.Json.get_obj(j, "self"), "domain", ""))
+
+def Far.chat(u: Ui, +id: String) -> Act:
   Act{Bots.views(u, "", "", id), [Focus{"remote-send"}, Scroll{}]}
+
+def Far.opened(a: Act, +name: String) -> Act:
+  match a:
+    case Act{u, cs}:
+      Act{Ui.scratch_set(u, "@bot.want", name), cs}
+
+def Far.open(same: Bool, +u: Ui, +url: String, +id: String, +name: String) -> Act:
+  match same:
+    case True{}:
+      Far.chat(u, id)
+    case False{}:
+      Far.opened(Ui.machine(u, url), name)
+
+def Far.go(m: Maybe<&2, String>, +u: Ui, +id: String, +name: String) -> Act:
+  match m:
+    case Some{+url}:
+      Far.open(Bool.or(String.eq(url, Ui.info(u, "local.machine")), String.eq(Ui.info(u, "local.fixed"), "1")), u, url, id, name)
+    case None{}:
+      Far.chat(u, id)
 
 # "name\u001ftext": a form field
 def Bots.bfield.k(ps: List<&2, String>, u: Ui) -> Ui:
@@ -2874,6 +2945,18 @@ def Bots.peers.k(+ps: List<&2, BT.Peer>, +u: Ui) -> List<&2, BT.Peer>:
 # the log holds no record of (so their bots are still told apart by id)
 def Bots.peers(+u: Ui) -> List<&2, BT.Peer>:
   Bots.peers.k(BT.World.peers(M.State.bots(Ui.state.of(u))), u)
+
+# a bot elsewhere ("name@machine", BU.far's id): the machine it names, as
+# BT.Peer.of finds it (an id first, then a name)
+def Far.peer(m: Maybe<&2, BT.Peer>, +u: Ui, +id: String) -> Act:
+  match m:
+    case Some{BT.Peer{_, +n, +url, _, _}}:
+      Far.go(Far.machine(Maybe.default(&2, J.Json, J.Json.parse(Ui.info(u, "local.machines")), J.Null{}), n, url), u, id, BT.Member.name(id))
+    case None{}:
+      Far.chat(u, id)
+
+def Bots.remote.select(+u: Ui, +id: String) -> Act:
+  Far.peer(BT.Peer.of(Bots.peers(u), BT.Member.machine(id)), u, id)
 
 # the members that are not the bot k stands for (BT.Member.key: "Kit@box"
 # and "Kit@<box's id>" are one bot)
@@ -3305,9 +3388,10 @@ def Bots.wanted.k(none: Bool, +u: Ui) -> Ui:
     case True{}:
       u
     case False{}:
-      Bots.wanted.m(BT.World.find.id(BT.World.bot(M.State.bots(Ui.state.of(u)), Ui.scratch(u, "@bot.want"))), u)
+      Bots.wanted.m(BT.World.find(M.State.bots(Ui.state.of(u)), Ui.scratch(u, "@bot.want")), u)
 
-# a bot asked for (just made) is shown once its change has come
+# a bot asked for (just made, or opened on another machine: an id or a
+# name) is shown once its change has come
 def Bots.wanted(+u: Ui) -> Ui:
   Bots.wanted.k(String.is_empty(Ui.scratch(u, "@bot.want")), u)
 

@@ -2813,3 +2813,29 @@ law reply_person_wakes_none:
   for +from: String
   for +text: String
   {H.Step.outs_of(BHS.Bots.incoming.person(s, now, from, text)) == Nil{} : List<&2, H.Out>}
+
+# a bot elsewhere opens on the owner's machine it lives on: the peer's
+# MagicDNS name is the machine the switcher lists by its address
+law far_machine_magicdns:
+  {U.Far.machine(J.Json.obj([J.KV{"self", J.Json.obj([J.KV{"name", J.Str{"desk"}}, J.KV{"url", J.Str{"http://100.64.0.1:3787"}}, J.KV{"domain", J.Str{"tail1.ts.net"}}])},
+    J.KV{"peers", J.Json.arr([J.Json.obj([J.KV{"name", J.Str{"Box"}}, J.KV{"url", J.Str{"http://100.64.0.2:3787"}}])])}]), "lab", "http://box.tail1.ts.net:3787") == Some{"http://100.64.0.2:3787"} : Maybe<&2, String>}
+
+# one on this machine ("" is the home hub)
+law far_machine_self:
+  {U.Far.machine(J.Json.obj([J.KV{"self", J.Json.obj([J.KV{"name", J.Str{"desk"}}, J.KV{"url", J.Str{"http://100.64.0.1:3787"}}, J.KV{"domain", J.Str{"tail1.ts.net"}}])},
+    J.KV{"peers", J.Json.arr([J.Json.obj([J.KV{"name", J.Str{"Box"}}, J.KV{"url", J.Str{"http://100.64.0.2:3787"}}])])}]), "desk", "http://100.64.0.1:3787") == Some{""} : Maybe<&2, String>}
+
+# another hub on the same machine but another port is not that machine's
+law far_machine_other_port:
+  {U.Far.machine(J.Json.obj([J.KV{"self", J.Json.obj([J.KV{"name", J.Str{"desk"}}, J.KV{"url", J.Str{"http://100.64.0.1:3787"}}, J.KV{"domain", J.Str{"tail1.ts.net"}}])},
+    J.KV{"peers", J.Json.arr([J.Json.obj([J.KV{"name", J.Str{"Box"}}, J.KV{"url", J.Str{"http://100.64.0.2:3787"}}])])}]), "box", "http://box.tail1.ts.net:4000") == None{} : Maybe<&2, String>}
+
+# someone else's machine is not the owner's, even with the same name as
+# one of them: its bots stay a conversation
+law far_machine_stranger:
+  {U.Far.machine(J.Json.obj([J.KV{"self", J.Json.obj([J.KV{"name", J.Str{"desk"}}, J.KV{"url", J.Str{"http://100.64.0.1:3787"}}, J.KV{"domain", J.Str{"tail1.ts.net"}}])},
+    J.KV{"peers", J.Json.arr([J.Json.obj([J.KV{"name", J.Str{"Box"}}, J.KV{"url", J.Str{"http://100.64.0.2:3787"}}])])}]), "box", "http://box.tail9.ts.net:3787") == None{} : Maybe<&2, String>}
+
+# the tailnet's domain, from this machine's MagicDNS name
+law tailnet_domain:
+  {TN.Tailnet.domain("{\"Self\":{\"DNSName\":\"desk.tail1.ts.net.\"}}") == "tail1.ts.net" : String}

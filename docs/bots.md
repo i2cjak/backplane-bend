@@ -340,3 +340,11 @@ when a name could mean two machines (two called `laptop`, any case), the
 bot is `name@<id>` and shown as `laptop (<id>)`. Two bots here with one
 name show their ids. A phone paired with two linked hubs shows a bot once,
 as its own hub's.
+
+A bot elsewhere that lives on one of the owner's own machines (the
+machine switcher's list: the same address, or, when the link's address is
+on the owner's tailnet domain, the peer's name or MagicDNS label on the
+same port, `Far.machine` in client.bend) opens there: the
+window switches to that hub and shows the bot with all its tabs; the web
+goes to that hub's page with `#bot=<name>`. A bot on anyone else's machine,
+and every bot elsewhere on the phones, is a conversation (`bots.tell`).

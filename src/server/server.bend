@@ -2415,15 +2415,17 @@ def Machines.peers(+cs: List<&2, Cand>) -> IO(J.Json):
   Bool.pick(IO(J.Json), List.is_empty(&2, Cand, cs), IO.pure(J.Json, J.Json.arr(Nil{})),
     IO.bind(P.Ran, J.Json, P.Proc.run("sh", ["-c", Machines.probe.sh(Machines.urls(cs))], "/"), r => IO.pure(J.Json, Machines.found(cs, r))))
 
-def Machines.me(m: TN.Machine, +port: U32) -> J.Json:
+def Machines.me(m: TN.Machine, +port: U32, +domain: String) -> J.Json:
   match m:
     case TN.Machine{n, +ip, _}:
-      J.Json.obj([J.KV{"name", J.Str{n}}, J.KV{"url", J.Str{Bool.pick(String, String.is_empty(ip), "", "http://" ++ ip ++ ":" ++ U32.show(port))}}])
+      J.Json.obj([J.KV{"name", J.Str{n}}, J.KV{"url", J.Str{Bool.pick(String, String.is_empty(ip), "", "http://" ++ ip ++ ":" ++ U32.show(port))}}, J.KV{"domain", J.Str{domain}}])
 
-# {"self": {"name", "url"}, "peers": [{"name", "url", "version"}]}
+# {"self": {"name", "url", "domain"}, "peers": [{"name", "url", "version"}]}
+# (domain: the tailnet's MagicDNS domain, how clients know a linked
+# machine's address is one of the owner's)
 def Machines.ask(+status: String, +port: U32, +extra: String) -> IO(String):
   IO.bind(J.Json, String, Machines.peers(List.append(&2, Cand, Machines.cands(TN.Tailnet.online(TN.Tailnet.peers(status)), port), Machines.static(String.split(extra, ',')))),
-    ps => IO.pure(String, J.Json.show(J.Json.obj([J.KV{"self", Machines.me(TN.Tailnet.self(status), port)}, J.KV{"peers", ps}]))))
+    ps => IO.pure(String, J.Json.show(J.Json.obj([J.KV{"self", Machines.me(TN.Tailnet.self(status), port, TN.Tailnet.domain(status))}, J.KV{"peers", ps}]))))
 
 def Machines.tell(+inbox: Chan(Msg), +now: String, +last: String) -> IO(String):
   Bool.pick(IO(String), String.eq(now, last), IO.pure(String, last),
