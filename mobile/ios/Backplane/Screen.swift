@@ -425,8 +425,8 @@ struct Cmd: Decodable {
     let text: String?
     // send: the CBOR frame, as base64, for the hub keyed hub
     let data, hub: String?
-    // notify
-    let thread, title, kind, body: String?
+    // notify; key is shared by alerts about the same item (src/core/notice.bend)
+    let thread, title, kind, body, key: String?
 }
 
 struct Resume: Decodable {

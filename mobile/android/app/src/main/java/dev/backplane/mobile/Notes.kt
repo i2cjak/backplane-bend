@@ -39,8 +39,12 @@ object Notes {
         return PendingIntent.getActivity(ctx, code, i, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    // one notification per thread: a newer turn's alert replaces the last
-    private fun id(thread: String) = thread.hashCode().let { if (it == LiveService.ID) it + 1 else it }
+    // one notification per key (src/core/notice.bend: "turn-<thread>", or
+    // "room-<room>" for a room exchange, the same on every paired hub): a
+    // newer alert replaces the last, and only the first one sounds
+    private fun id(key: String) = key.hashCode().let { if (it == LiveService.ID) it + 1 else it }
+
+    private fun key(c: Cmd) = c.key.ifEmpty { "turn-" + c.thread }
 
     fun turn(ctx: Context, c: Cmd) {
         if (!allowed(ctx)) return
@@ -52,15 +56,16 @@ object Notes {
             .setCategory(if (c.kind == "fail") NotificationCompat.CATEGORY_ERROR else NotificationCompat.CATEGORY_STATUS)
             .setContentIntent(open(ctx, c.thread, id(c.thread)))
             .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
             .build()
         try {
-            NotificationManagerCompat.from(ctx).notify(id(c.thread), n)
+            NotificationManagerCompat.from(ctx).notify(id(key(c)), n)
         } catch (_: SecurityException) {
         }
     }
 
     // the thread is open on screen: its alert has been seen
     fun clear(ctx: Context, thread: String) {
-        NotificationManagerCompat.from(ctx).cancel(id(thread))
+        NotificationManagerCompat.from(ctx).cancel(id("turn-" + thread))
     }
 }

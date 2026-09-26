@@ -17,14 +17,17 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func post(thread: String, title: String, body: String) {
+    // one notification per key ("turn-<thread>", or "room-<room>" for a room
+    // exchange, the same on every paired hub): a newer alert replaces the last
+    func post(thread: String, key: String, title: String, body: String) {
         let n = UNMutableNotificationContent()
         n.title = title
         n.body = body
         n.sound = .default
-        n.threadIdentifier = thread
+        let id = key.isEmpty ? "turn-" + thread : key
+        n.threadIdentifier = id
         n.userInfo = ["thread": thread]
-        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "turn-" + thread, content: n, trigger: nil))
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: n, trigger: nil))
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent n: UNNotification) async -> UNNotificationPresentationOptions {

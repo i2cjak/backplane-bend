@@ -123,6 +123,29 @@ paired hubs, which both report it (`BU.once.of`, `Hubs.rooms`; laws
 name: two rooms with one name both show, each named with its id, and on a
 phone with several hubs each row also carries its machine.
 
+## Notifications
+
+One item, one alert (`src/core/notice.bend`, laws `notice_*`). A turn's end
+alerts the person unless it is part of a room exchange they read in the
+room:
+
+- A failed turn always alerts.
+- A thread that is not a bot's alerts when it finishes.
+- A bot with an open ask (waiting on the person) alerts.
+- A bot turn that posted in a room, or sent to a bot, alerts only if its
+  post opened the room's exchange: no other bot posted in the room since the
+  person's last post there, or in the last 5 minutes. Its key is
+  `room-<room id>`, the same on every linked machine, so apps and APNs
+  replace one alert with the next instead of stacking them.
+- A bot turn woken by a room or bot message that posted nothing is quiet.
+- A bot turn the person started in the bot's own thread, or a routine's,
+  alerts as before (`turn-<thread>`).
+
+A hub counts only its own bots' posts (it pushes only for its own threads). A
+phone paired with several hubs counts every bot, so only the hub whose bot
+answered first raises the alert. A held push is logged as
+`backplane: push alert held for <thread>`.
+
 ## Machines and people
 
 A peer is another hub, linked by an invite: the inviting hub makes
