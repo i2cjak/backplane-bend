@@ -141,6 +141,8 @@ data class ThreadView(
     val tasks: List<TaskRow> = emptyList(),
     val asks: List<Ask> = emptyList(),
     val skills: List<Skill> = emptyList(),
+    // a side question (/btw) and its answer, until closed
+    val btw: Btw? = null,
     // what the next message attaches, and what is still uploading; files
     // go up in pieces of chunk bytes
     val attaching: List<Chip> = emptyList(),
@@ -149,6 +151,8 @@ data class ThreadView(
     val diff: Diff? = null,
     val term: Term? = null,
 )
+
+data class Btw(val q: String, val a: String)
 
 data class IslandLine(val thread: String, val title: String, val doing: String)
 
@@ -295,6 +299,7 @@ private fun thread(o: JSONObject) = threadOf(o).copy(
             a.optJSONArray("buttons").map { AskButton(it.optString("label"), it.optString("value"), it.optBoolean("primary")) })
     },
     skills = o.optJSONArray("skills").map { Skill(it.optString("name"), it.optString("desc")) },
+    btw = o.optJSONObject("btw")?.let { Btw(it.optString("q"), it.optString("a")) },
     attaching = chips(o.optJSONArray("attaching")),
     uploading = o.optString("uploading"),
     chunk = o.optInt("chunk", 196_608),

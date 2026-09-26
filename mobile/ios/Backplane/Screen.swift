@@ -104,6 +104,11 @@ struct Skill: Decodable, Hashable {
     let name, desc: String
 }
 
+// a side question (/btw) and its answer, until closed
+struct Btw: Decodable, Equatable {
+    let q, a: String
+}
+
 // what the thread changed: k 0 context, 1 added, 2 removed, 3 meta, 4 a hunk head
 struct DiffLine: Decodable, Hashable {
     let k: Int
@@ -228,6 +233,7 @@ struct ThreadView: Decodable {
     let tasks: [TaskRow]?
     let asks: [Ask]?
     let skills: [Skill]?
+    let btw: Btw?
     // what the next message attaches, and what is still uploading; files
     // go up in pieces of chunk bytes
     let attaching: [Chip]?

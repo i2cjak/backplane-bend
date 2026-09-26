@@ -882,6 +882,14 @@ def View.voice(+u: U.Ui, +sel: String) -> List<&2, D.Node>:
     D.Dom.cat(View.vstrip(Bool.and(here, U.Voice.on(u)), u),
       View.vask(Bool.and(String.eq(U.Ui.scratch(u, "@voice.uth"), sel), Bool.not(List.is_empty(&2, VC.Unsure, U.Voice.unsure(u)))), u)))
 
+# a side question (/btw) and its answer, over the composer until closed
+def View.btw(+u: U.Ui) -> List<&2, D.Node>:
+  Bool.pick(List<&2, D.Node>, String.is_empty(U.Btw.question(u)), Nil{},
+    [D.El{"div", "", [D.At{"class", "btw"}], [
+      D.El{"div", "", [D.At{"class", "btw-head"}], [D.Dom.span("btw-q", "btw · " ++ U.Btw.question(u)),
+        WI.WIcon.button("btw-close", "btw-close", "", "Close", "x", 14, "")]},
+      D.Dom.div("btw-a", [D.Txt{U.Btw.text(U.Btw.reply.of(u))}])]}])
+
 def View.mic.of(+u: U.Ui, +sel: String) -> String:
   Bool.pick(String, Bool.or(String.eq(U.Ui.scratch(u, "@voice.th"), sel), String.is_empty(U.Ui.scratch(u, "@voice.th"))), U.Ui.scratch(u, "@voice"), "")
 
@@ -894,7 +902,7 @@ def View.composer(+draft: String, +send: String, +act: String, +label: String, +
     +atts: List<&2, String>, +up: String, vo: List<&2, D.Node>, +mic: String) -> D.Node:
   D.El{"div", "", [D.At{"class", "composer"}], D.Dom.cat(
     View.menu(picking, ms, model, info, prov, es, effort), D.Dom.cat(View.skills(rs), D.Dom.cat(vo, D.Dom.cat(View.attaching(atts, up), [
-    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, or describe the change"}, D.At{"value", draft}, D.On{"input", "draft"},
+    D.El{"textarea", "composer", [D.At{"id", "composer"}, D.At{"rows", "3"}, D.At{"placeholder", "Ask anything, @tag files, $skill, /btw a side question"}, D.At{"value", draft}, D.On{"input", "draft"},
       D.At{"data-enter", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "send", "skill")}, D.At{"data-enter-alt", "send-alt"}, D.At{"data-tab", Bool.pick(String, List.is_empty(&2, U.SkillRow, rs), "", "skill")}, D.At{"data-paste", "attach"}], Nil{}},
     D.El{"div", "", [D.At{"class", "composer-foot"}], [
       WI.WIcon.after("model-chip", "flag", "models", "Choose the model and effort", U.Effort.label(label, effort) ++ ctx, "chevron-down", 14),
@@ -925,12 +933,12 @@ def View.thread.p(u: U.Ui, t: M.Thread, pend: List<&2, String>, +atts: List<&2, 
         D.El{"div", "asks", [D.At{"class", "asks"}], View.asks(U.Asks.open(st, id), U.Str.get(drafts, sel))},
         View.todos(U.Todos.shown(st, id, View.running(turn))),
         View.queued(M.Queue.items(st, id), View.running(turn)),
-        View.composer(U.Str.get(drafts, sel), U.Follow.button(st, sel, View.running(turn), stop), U.Follow.act(stop), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
+        View.composer(U.Str.get(drafts, sel), U.Follow.button(st, sel, View.running(turn), stop, U.Str.get(drafts, sel)), U.Follow.act(stop), U.Models.label(pr, mo), U.Usage.tail(st, sel), U.Flag.get(op, "models"), U.Models.menu(U.Str.get(nf, "models"), pr), mo, U.Str.get(nf, "models"), pr,
           U.Chip.all(U.Str.get(nf, "models"), pr, mo), U.Effort.of(st, sel), U.Skills.of(sel, drafts, nf), atts, up, vo, mic)]),
         D.Dom.when(term, View.term(U.Term.get(tr, id))))}
 
 def View.thread.h(+u: U.Ui, t: M.Thread, hd: List<&2, D.Node>) -> D.Node:
-  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"), hd, View.voice(u, U.Ui.sel(u)), View.mic.of(u, U.Ui.sel(u)))
+  View.thread.p(u, t, U.Ui.pending(u, U.Ui.sel(u)), U.Ui.atts(u, U.Ui.sel(u)), U.Ui.uploading(u, U.Ui.sel(u)), U.Ui.flag(u, "term"), hd, D.Dom.cat(View.btw(u), View.voice(u, U.Ui.sel(u))), View.mic.of(u, U.Ui.sel(u)))
 
 def View.thread(+u: U.Ui, t: M.Thread) -> D.Node:
   View.thread.h(u, t, Nil{})

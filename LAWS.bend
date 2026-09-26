@@ -1298,6 +1298,26 @@ law work_live_open:
   {FO.Work.turn(True{}, u, e <> t, Map.new(&2, String), now)
     == FO.WPlain{} <> FO.WHead{FO.Work.id(u), "Working · started " ++ FO.Work.ago(M.Time.ago(now, FO.Work.at(u))), True{}} <> FO.Work.ins(t, True{}) : List<&2, FO.WRole>}
 
+# "/btw <question>" asks beside the turn: only the word itself starts one,
+# and the hub answers it with a job alone, logging nothing, so the thread
+# never holds it
+law btw_command:
+  {U.Btw.is("/btw what changed?") == True{} : Bool}
+
+law btw_not_a_word:
+  {U.Btw.is("/btwx") == False{} : Bool}
+
+law btw_question:
+  {U.Btw.q("/btw  what changed? ") == "what changed?" : String}
+
+law btw_never_logged:
+  for +s: M.State
+  for +c: U32
+  for +id: String
+  for +th: String
+  for +q: String
+  {H.Hub.btw(s, c, id, th, q) == H.Step{[], [H.Git{c, id, "btw", th, "", q, HD.Hand.btw(H.Hub.entries(s), th, HD.Hand.title(H.Hub.thread(s, th)), q)}]} : H.Step}
+
 # how long a turn took, as its row says it
 law took_seconds:
   {M.Time.took(45n) == "45s" : String}

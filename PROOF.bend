@@ -4038,6 +4038,18 @@ def Laws.work_message_shown(live, u, b, info, now):
 def Laws.work_live_open(u, e, t, now):
   {==}
 
+def Laws.btw_command():
+  {==}
+
+def Laws.btw_not_a_word():
+  {==}
+
+def Laws.btw_question():
+  {==}
+
+def Laws.btw_never_logged(s, c, id, th, q):
+  {==}
+
 def Laws.took_seconds():
   {==}
 

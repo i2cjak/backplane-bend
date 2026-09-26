@@ -622,6 +622,15 @@ def Follow.stop.k(run: Bool, blank: Bool) -> Bool:
 def Follow.stop(run: Bool, +draft: String, +atts: List<&2, String>) -> Bool:
   Follow.stop.k(run, Bool.and(String.is_empty(String.trim(draft)), List.is_empty(&2, String, atts)))
 
+# "/btw <question>": a side question about the thread, answered off to
+# the side by the writing model; the turn and the thread never see it
+# (Btw.*, laws btw_*)
+def Btw.is(+draft: String) -> Bool:
+  Bool.or(String.eq(String.trim(draft), "/btw"), Bool.or(String.starts_with(draft, "/btw "), String.starts_with(draft, "/btw\n")))
+
+def Btw.q(+draft: String) -> String:
+  String.trim(String.drop(String.trim(draft), 4n))
+
 # what the send button says, and what it does
 def Follow.button.k(stop: Bool, +label: String) -> String:
   match stop:
@@ -630,8 +639,8 @@ def Follow.button.k(stop: Bool, +label: String) -> String:
     case False{}:
       label
 
-def Follow.button(+st: M.State, +sel: String, run: Bool, stop: Bool) -> String:
-  Follow.button.k(stop, Follow.label(st, sel, run))
+def Follow.button(+st: M.State, +sel: String, run: Bool, stop: Bool, +draft: String) -> String:
+  Follow.button.k(stop, Bool.pick(String, Btw.is(draft), "Ask", Follow.label(st, sel, run)))
 
 def Follow.act(stop: Bool) -> String:
   match stop:
@@ -743,7 +752,8 @@ def Ui.actions() -> List<&2, String>:
    "space", "space-input", "mem-forget", "routine-save", "routine-toggle", "routine-delete", "routine-run", "hook-new", "hook-revoke",
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
-   "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm"]
+   "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
+   "btw-close"]
 
 # Reading the client state
 # ------------------------
@@ -1961,6 +1971,52 @@ def Skills.fetch(need: Bool, a: Act) -> Act:
     case False{} _:
       a
 
+# Side questions
+# --------------
+# The question and its answer live in the scratch, per thread ("@btw:t",
+# "@btw.a:t", "" while it is being answered); the card above the composer
+# shows them until closed ("btw-close")
+
+def Btw.ask.k(u: Ui, +q: String) -> Act:
+  match u:
+    case Ui{st, +sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
+      Ui.also(Ui.rpc(Ui{st, sel, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, dr, sel, ""), "@btw:" ++ sel, q), "@btw.a:" ++ sel, ""), live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr},
+        "thread.btw", [J.KV{"thread", J.Str{sel}}, J.KV{"q", J.Str{q}}]), Draft.keep(sel, ""))
+
+# "/btw" with no question asks nothing
+def Btw.ask(+u: Ui, +q: String) -> Act:
+  Bool.pick(Act, String.is_empty(q), Act{u, Nil{}}, Btw.ask.k(u, q))
+
+def Btw.has(+o: J.Json) -> Bool:
+  Bool.not(String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(J.Json.get_obj(o, "result"), "btw"), J.Null{})), "null"))
+
+def Btw.answer(+a: String) -> String:
+  Bool.pick(String, String.is_empty(String.trim(a)), "No answer came back (Settings, Writing: the model it asks).", String.trim(a))
+
+def Btw.got(has: Bool, u: Ui, +o: J.Json) -> Ui:
+  match has:
+    case True{}:
+      Ui.scratch_set(u, "@btw.a:" ++ J.Json.get_str(J.Json.get_obj(o, "result"), "thread", ""), Btw.answer(J.Json.get_str(J.Json.get_obj(o, "result"), "btw", "")))
+    case False{}:
+      u
+
+def Btw.reply(u: Ui, +o: J.Json) -> Ui:
+  Btw.got(Btw.has(o), u, o)
+
+def Btw.close(+u: Ui) -> Act:
+  Act{Ui.scratch_set(Ui.scratch_set(u, "@btw:" ++ Ui.sel(u), ""), "@btw.a:" ++ Ui.sel(u), ""), Nil{}}
+
+# the open thread's side question ("" for none) and its answer ("" while
+# it is being answered)
+def Btw.question(+u: Ui) -> String:
+  Ui.scratch(u, "@btw:" ++ Ui.sel(u))
+
+def Btw.reply.of(+u: Ui) -> String:
+  Ui.scratch(u, "@btw.a:" ++ Ui.sel(u))
+
+def Btw.text(+a: String) -> String:
+  Bool.pick(String, String.is_empty(a), "Thinking…", a)
+
 def Skills.want(a: Act) -> Act:
   match a:
     case Act{+u, cs}:
@@ -2701,12 +2757,22 @@ def Ui.send.k(empty: Bool, +u: Ui, text: String, +mode: String) -> Act:
 
 # the draft, then a line per attachment (attach.bend's format)
 # the draft sent; alt: the other follow-up mode (ctrl+Enter)
-def Ui.send(u: Ui, alt: Bool) -> Act:
+def Ui.send.go(u: Ui, alt: Bool) -> Act:
   match u:
     case Ui{+st, +sel, +dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}:
       +text = AT.Att.join(String.trim(Str.get(dr, sel)), Att.nonblank(String.lines(Str.get(dr, "@att:" ++ sel))))
       Ui.send.k(String.is_empty(String.trim(text)), Ui{st, sel, dr, live, op, on, now, ad, pa, v, rid, w, er, note, nf, ob, tr}, text,
         Follow.mode(M.Setting.get(st, "followup", ""), M.Thread.provider(Ui.thread(st, sel)), alt))
+
+def Ui.send.btw(btw: Bool, +u: Ui, alt: Bool) -> Act:
+  match btw:
+    case True{}:
+      Btw.ask(u, Btw.q(Ui.draft_text(u)))
+    case False{}:
+      Ui.send.go(u, alt)
+
+def Ui.send(+u: Ui, alt: Bool) -> Act:
+  Ui.send.btw(Btw.is(Ui.draft_text(u)), u, alt)
 
 def Bots.sel.set(u: Ui, +th: String) -> Ui:
   match u:
@@ -3124,6 +3190,9 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
       Voice.rpc(Ui.scratch_set(u, "@f.vterm", ""), "add", [J.KV{"term", J.Str{String.trim(Ui.scratch(u, "@f.vterm"))}}])
     case 11n:
       Voice.rpc(u, "dict", [J.KV{"dict", J.Str{VC.Voice.dict.show(VC.Voice.dict.remove(Voice.dict(u), value))}}])
+    # the table's last action is not voice's: a side question closed
+    case 12n:
+      Btw.close(u)
     case _:
       Act{u, Nil{}}
 
@@ -3168,7 +3237,7 @@ def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:
-  Bots.reply(o, Proj.reply(o, Ui.reply.skills(u, o)))
+  Bots.reply(o, Proj.reply(o, Btw.reply(Ui.reply.skills(u, o), o)))
 
 def Ui.recv.k(i: Nat, u: Ui, +o: J.Json) -> Ui:
   match i:

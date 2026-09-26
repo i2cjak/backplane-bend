@@ -585,7 +585,12 @@ def Mob.page(+drafts: Map<&2, String>, +id: String, +st: M.State) -> U.Win:
 def Mob.paged.es(w: U.Win, +st: M.State, +sel: String, +info: Map<&2, String>, +running: Bool) -> List<&2, J.Json>:
   Mob.entries(U.Win.shown(w), st, sel, info, running)
 
-def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: List<&2, String>, +up: String, term: J.Json, skills: List<&2, J.Json>, +phase: String) -> J.Json:
+# a side question (/btw) and its answer, over the composer until closed
+def Mob.btw(+u: U.Ui) -> J.Json:
+  Bool.pick(J.Json, String.is_empty(U.Btw.question(u)), J.Null{},
+    J.Json.obj([J.KV{"q", J.Json.str(U.Btw.question(u))}, J.KV{"a", J.Json.str(U.Btw.text(U.Btw.reply.of(u)))}]))
+
+def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: List<&2, String>, +up: String, term: J.Json, skills: List<&2, J.Json>, +phase: String, btw: J.Json) -> J.Json:
   match u t:
     case U.Ui{+st, +sel, +drafts, +live, _, _, +now, _, pa, _, _, _, _, _, +nf, _, _} M.Thread{+id, _, title, _, _, +turn, _, archived, o, +sa, +ua, pinned, _, branch, _, +pr, +mo, _, _, _, _}:
       +pg = Mob.page(drafts, id, st)
@@ -605,10 +610,10 @@ def Mob.thread(u: U.Ui, t: M.Thread, pend: List<&2, String>, vw: J.Json, +atts: 
         J.KV{"live", J.Json.arr(Mob.nodes(D.Md.render(U.Str.get(live, id))))},
         J.KV{"working", J.Json.str(Bool.pick(String, String.is_empty(U.Str.get(live, id)), phase, ""))},
         J.KV{"draft", J.Json.str(U.Str.get(drafts, sel))},
-        J.KV{"send", J.Json.str(U.Follow.button(st, sel, V.View.running(turn), U.Follow.stop(V.View.running(turn), U.Str.get(drafts, sel), atts)))},
+        J.KV{"send", J.Json.str(U.Follow.button(st, sel, V.View.running(turn), U.Follow.stop(V.View.running(turn), U.Str.get(drafts, sel), atts), U.Str.get(drafts, sel)))},
         J.KV{"sendAct", J.Json.str(U.Follow.act(U.Follow.stop(V.View.running(turn), U.Str.get(drafts, sel), atts)))},
         J.KV{"picker", Mob.picker.ctx(U.Str.get(nf, "models"), pr, mo, U.Effort.of(st, sel), U.Usage.tail(st, sel))},
-        J.KV{"skills", J.Json.arr(skills)},
+        J.KV{"skills", J.Json.arr(skills)}, J.KV{"btw", btw},
         J.KV{"attaching", J.Json.arr(Mob.chips(atts))}, J.KV{"uploading", J.Json.str(up)},
         J.KV{"chunk", J.Json.nat(AT.Att.chunk())},
         J.KV{"diff", Mob.diff(Bool.and(pa, String.eq(U.Str.get(nf, "view.kind:" ++ id), "diff")), U.Str.get(nf, "diff:" ++ id))},
@@ -621,7 +626,7 @@ def Mob.main(none: Bool, +u: U.Ui, +sel: String) -> J.Json:
       J.Null{}
     case False{}:
       Mob.thread(u, U.Ui.thread(Mob.st(u), sel), U.Ui.pending(u, sel), VW.View.json(u), U.Ui.atts(u, sel), U.Ui.uploading(u, sel),
-        Mob.term(U.Ui.flag(u, "term"), u, sel), Mob.skills(U.Ui.skills(u)), M.Phase.label(U.Side.phase(Mob.st(u), U.Ui.thread(Mob.st(u), sel))))
+        Mob.term(U.Ui.flag(u, "term"), u, sel), Mob.skills(U.Ui.skills(u)), M.Phase.label(U.Side.phase(Mob.st(u), U.Ui.thread(Mob.st(u), sel))), Mob.btw(u))
 
 def Mob.empty(n: Nat) -> String:
   Bool.pick(String, Nat.is_eq(n, 0n), "Add a project to start.", "Pick a thread, or start one in a project.")

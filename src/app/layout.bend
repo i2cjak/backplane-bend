@@ -1488,7 +1488,7 @@ def Lay.composer(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String, 
     Out.ops(Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), (100 + eh : U32), 10, T.Th.panel(), Bool.pick(U32, focused, T.Th.focus(), T.Th.line()))),
     Comp.sel(Bool.and(focused, Bool.not(Nat.is_eq(caret, mark))), ty, shown, top, draft, ss, ED.Edit.lo(caret, mark), ED.Edit.hi(caret, mark), (x0 + 16 : U32), (y + 12 : U32)),
     Bool.pick(Out, String.is_empty(draft),
-      Out.ops(Ty.text(ty, 3n, Ty.fit(ty, 3n, "Ask anything, @tag files, $skill, or describe the change", tw), D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
+      Out.ops(Ty.text(ty, 3n, Ty.fit(ty, 3n, "Ask anything, @tag files, $skill, /btw a side question", tw), D.Clip.all(), (x0 + 16 : U32), (y + 10 : U32), 23, T.Th.faint())),
       Lay.lines(ty, shown, D.Clip{(x0 + 1 : U32), (y + 1 : U32), (x1 - 1 : U32), (y + 60 + eh : U32)}, (x0 + 16 : U32), (y + 10 : U32))),
     Bool.pick(Out, Bool.and(Bool.and(focused, blink), Bool.and(Nat.is_ge(crow, top), Nat.is_lt(row, v))), Out.ops([D.Draw.rect(D.Clip.all(), (x0 + 16 + cx : U32), (y + 14 + (U32.from_nat(row) * 23 : U32) : U32), 1, 16, T.Th.accent(), 255)]), Out.none()),
     Comp.bar(Nat.is_gt(n, v), n, v, top, (x1 - 12 : U32), (y + 12 : U32), (U32.from_nat(v) * 23 - 4 : U32)),
@@ -1805,6 +1805,33 @@ def Lay.asks(+ty: Ty, as: List<&2, M.Ask>, +draft: String, +x0: U32, +x1: U32, +
       Out.none()
     case +a <> t:
       Out.cat(Ask.card(ty, a, draft, x0, x1, y), Lay.asks(ty, t, draft, x0, x1, (y + Ask.h(ty, a, (x1 - x0 - 32 : U32)) + 8 : U32)))
+
+# A side question (/btw) and its answer, in a card over the composer until
+# closed; its answer wraps to at most Btw.rows() lines
+def Btw.rows() -> Nat:
+  12n
+
+def Btw.lines(+ty: Ty, +a: String, +w: U32) -> List<&2, String>:
+  List.take(&2, String, Ty.wrap(ty, 2n, U.Btw.text(a), (w - 32 : U32)), Btw.rows())
+
+# the card's height with its gap below (0 with no question)
+def Btw.h(+ty: Ty, +q: String, +a: String, +w: U32) -> U32:
+  Bool.pick(U32, String.is_empty(q), 0, (48 + (U32.from_nat(List.length(&2, String, Btw.lines(ty, a, w))) * 20 : U32) : U32))
+
+def Btw.card(+ty: Ty, +q: String, +a: String, +x0: U32, +x1: U32, +y: U32) -> Out:
+  +ls = Btw.lines(ty, a, (x1 - x0 : U32))
+  Out.all([
+    Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, y, (x1 - x0 : U32), (40 + (U32.from_nat(List.length(&2, String, ls)) * 20 : U32) : U32), 0, T.Th.raise(), T.Th.line()),
+      Ty.text(ty, 2n, Ty.fit(ty, 2n, "btw · " ++ q, (x1 - x0 - 64 : U32)), D.Clip.all(), (x0 + 16 : U32), (y + 6 : U32), 24, T.Th.dim())])),
+    Lay.lines(ty, ls, D.Clip.all(), (x0 + 16 : U32), (y + 30 : U32)),
+    Lay.ibutton(ty, D.Clip.all(), (x1 - 34 : U32), (y + 4 : U32), "x", T.Th.soft(), "btw-close", "")])
+
+def Btw.card.if(show: Bool, +ty: Ty, +q: String, +a: String, +x0: U32, +x1: U32, +y: U32) -> Out:
+  match show:
+    case True{}:
+      Btw.card(ty, q, a, x0, x1, y)
+    case False{}:
+      Out.none()
 
 # messages waiting for the running turn (stored on the server)
 def Lay.qhits(bs: List<&2, U.QBtn>, acc: List<&2, S.Hit>) -> List<&2, S.Hit>:
@@ -3024,7 +3051,7 @@ def Lay.composer.a(+ty: Ty, +draft: String, +ls: List<&2, String>, +held: String
 
 def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: String, +st: M.State, +sel: String, +live: String, +caret: Nat, +mark: Nat, +focus: String, +blink: Bool,
     +x0: U32, +x1: U32, +h: U32, +sc: U32, pa: Bool, +info: String, +picking: Bool, +pend: List<&2, String>, +rs: List<&2, U.SkillRow>, +now: Nat,
-    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase, +hy: U32, more: Bool) -> Out:
+    +atts: List<&2, String>, +up: String, +path: String, +pics: Map<&2, String>, del: Bool, +tsel: TSel, +moff: String, +ph: M.Phase, +hy: U32, more: Bool, +bq: String, +ba: String) -> Out:
   match t:
     case M.Thread{id, p, ti, c, a, +turn, pe, ar, o, sa, ua, pi, en, br, wt, +pr, +mo, rm, im, se, de}:
       +cw = {U32.min((x1 - x0 - 64 : U32), 780) : U32}
@@ -3043,17 +3070,19 @@ def Lay.thread.k(+ty: Ty, +memo: TLMemo, t: M.Thread, +draft: String, +held: Str
       +ls = Comp.wrap(ty, draft, cw)
       +eh = Comp.eh(List.length(&2, String, ls))
       +stop = U.Follow.stop(Lay.running(turn), draft, atts)
+      +bh = Btw.h(ty, bq, ba, cw)
       # the timeline and what sits around it are laid out at once
       tl ch = Lay.timeline(ty,
         List.concat(&2, TLine, [TL.memo.shown(ty, memo, st, sel, cw, pics), TL.sending(ty, pend, cw),
           TL.live.k(ty, String.is_empty(live), ph, live, cw)]),
-        cx0, cx1, top, (h - ah - qh - eh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del, hy),
+        cx0, cx1, top, (h - ah - qh - eh - bh : U32), sc, tsel, Out.none()) Out.all([Lay.header(ty, M.Thread{id, p, ti, c, a, turn, pe, ar, o, sa, ua, pi, en, br, wt, pr, mo, rm, im, se, de}, st, x0, x1, pa, M.Snooze.on(now, U.Side.until(st, sel)), del, hy),
           Lay.parent(ty, st, sel, cx0, (58 + hy : U32)),
           Lay.tasks(ty, ts, st, cx0, cx1, (60 + hy + pl : U32)),
-          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.button(st, sel, Lay.running(turn), stop), U.Follow.act(stop), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)) ++ U.Usage.tail(st, sel), rs, atts, up, path),
+          Lay.composer.a(ty, draft, ls, held, caret, mark, focus, blink, cx0, cx1, h, U.Follow.button(st, sel, Lay.running(turn), stop, draft), U.Follow.act(stop), U.Effort.label(U.Models.label(pr, mo), U.Effort.of(st, sel)) ++ U.Usage.tail(st, sel), rs, atts, up, path),
           Lay.queued(ty, qs, Lay.running(turn), cx0, cx1, (h - eh : U32)),
           Lay.todos(ty, tds, cx0, cx1, (h - eh - 124 - Lay.qh(qs) : U32)),
-          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh + 4 : U32)),
+          Lay.asks(ty, asks, draft, cx0, cx1, (h - 132 - ah - qh - eh - bh + 4 : U32)),
+          Btw.card.if(Bool.not(String.is_empty(bq)), ty, bq, ba, cx0, cx1, (h - 132 - qh - eh - bh + 4 : U32)),
           Lay.picker(picking, ty, U.Models.menu(info, pr), mo, info, pr, cx0, cx1, (h - 128 - eh : U32), (60 + hy : U32), U.Chip.all(info, pr, mo), U.Effort.of(st, sel), moff)])
       Out.cat(tl, ch)
 
@@ -3192,7 +3221,7 @@ def TL.memo.size(m: TLMemo) -> Nat:
 def Vx.send(t: M.Thread, +st: M.State, +sel: String, +draft: String, +atts: List<&2, String>) -> String:
   match t:
     case M.Thread{_, _, _, _, _, +turn, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _}:
-      U.Follow.button(st, sel, Lay.running(turn), U.Follow.stop(Lay.running(turn), draft, atts))
+      U.Follow.button(st, sel, Lay.running(turn), U.Follow.stop(Lay.running(turn), draft, atts), draft)
 
 def Vx.mic(+ty: Ty, +state: String, +x: U32, +y: U32) -> Out:
   Out{List.append(&2, R.Op,
@@ -3334,7 +3363,7 @@ def Lay.thread.at(+ty: Ty, +memo: TLMemo, +n: S.Nui, +x0: U32, +x1: U32, +hy: U3
     case S.Nui{U.Ui{+st, +sel, _, +live, +op, _, _, _, pa, _, _, _, _, _, +nf, _, _}, _, +h, _, _, _, +sc, +caret, +focus, +path, _, _, _}:
       Out.cat(Out.cat(Out.cat(Lay.drop_mark(U.Flag.get(op, "drop"), ty, U.Ui.draft_text(S.Nui.ui(n)), x0, x1, h), Lay.thread.k(ty, memo, U.Ui.thread(st, sel), U.Ui.draft_text(S.Nui.ui(n)), S.Cs.held(n), st, sel, U.Str.get(live, sel), caret, S.Nui.mark(n), focus, S.Blink.on(n), x0, x1, h, sc, pa,
         U.Str.get(nf, "models"), U.Flag.get(op, "models"), U.Ui.pending(S.Nui.ui(n), sel), U.Ui.skills(S.Nui.ui(n)), U.Side.now(S.Nui.ui(n)),
-        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy, Lay.more(memo, n, sel))),
+        U.Ui.atts(S.Nui.ui(n), sel), U.Ui.uploading(S.Nui.ui(n), sel), path, nf, U.Ui.deleting(S.Nui.ui(n)), TSel.of(U.Ui.scratch(S.Nui.ui(n), "@ts"), sel), U.Ui.scratch(S.Nui.ui(n), "@menu.off"), U.Side.phase(st, U.Ui.thread(st, sel)), hy, Lay.more(memo, n, sel), U.Btw.question(S.Nui.ui(n)), U.Btw.reply.of(S.Nui.ui(n)))),
         Vx.view(ty, n, st, sel, x0, x1, h)), Lay.earlier(ty, Lay.more(memo, n, sel), x0, x1, hy))
 
 # the thread view with its header at the top

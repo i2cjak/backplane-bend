@@ -378,6 +378,12 @@ textarea.field { resize: vertical; min-height: 56px; }
 .earlier { display: flex; justify-content: center; padding: 6px 0 12px; }
 .earlier-btn { font-size: 12px; opacity: 0.8; }
 
+/* a side question (View.btw) */
+.btw { background: var(--panel); border: 1px solid var(--line); padding: 6px 10px; }
+.btw-head { display: flex; align-items: center; gap: 8px; }
+.btw-q { flex: 1; min-width: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btw-a { white-space: pre-wrap; max-height: 16em; overflow: auto; }
+
 /* dictation (View.voice) */
 .foot-end { display: flex; align-items: center; gap: 6px; }
 button.mic { padding: 4px 6px; display: inline-flex; color: var(--dim); }

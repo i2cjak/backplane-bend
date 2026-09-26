@@ -149,6 +149,12 @@ def Hand.back(+es: List<&2, M.Entry>, +fork: String, +title: String) -> String:
   Hand.text("Work done in a fork of this thread, \"" ++ title ++ "\" (" ++ fork ++ "), brought back here. Its files stay on its own branch; what was said and done there, oldest first:",
     Hand.mine(es, fork), fork)
 
+# a side question (/btw): the thread so far, then the question, for the
+# writing model to answer beside the running turn
+def Hand.btw(+es: List<&2, M.Entry>, +th: String, +title: String, +q: String) -> String:
+  Hand.text("The user asks a side question about the thread \"" ++ title ++ "\" (" ++ th ++ ") while its agent works. Its conversation so far, oldest first:",
+    Hand.mine(es, th), th) ++ "\n\n" ++ q
+
 # the newest n of a list (newest first in)
 def Hand.newest(n: Nat, es: List<&2, M.Entry>) -> List<&2, M.Entry>:
   match n es:

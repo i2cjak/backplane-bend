@@ -1122,6 +1122,12 @@ def TitleJob.run(+tx: AG.Tx, +inbox: Chan(Msg), +thread: String, +placeholder: S
   IO.bind(String, Unit, OneShot.run(tx, AG.Title.system(), text), a =>
     GitJob.say(inbox, "thread.titled", [J.KV{"thread", J.Str{thread}}, J.KV{"placeholder", J.Str{placeholder}}, J.KV{"title", J.Str{a}}]))
 
+# a side question (/btw): the writing model reads the thread and the
+# question; the answer goes to the asking client only
+def BtwJob.run(+tx: AG.Tx, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +q: String, +input: String) -> IO(Unit):
+  IO.bind(String, Unit, OneShot.run(tx, AG.Btw.system(), input), a =>
+    GitJob.reply(inbox, client, id, True{}, J.Json.obj([J.KV{"thread", J.Str{thread}}, J.KV{"q", J.Str{q}}, J.KV{"btw", J.Str{a}}])))
+
 def AgentJob.named(+r: String, +inbox: Chan(Msg), +thread: String) -> IO(Unit):
   Bool.pick(IO(Unit), GT.Git.failed(r), GitJob.note(inbox, thread, "error", "branch name: " ++ r),
     GitJob.say(inbox, "thread.branch", [J.KV{"thread", J.Str{thread}}, J.KV{"branch", J.Str{r}}]))
@@ -1304,12 +1310,14 @@ def GitJob.run.k(i: Nat, +tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U
       KiCadJob.run(inbox, client, id, cwd, home)
     case 6n:
       TitleJob.run(tx, inbox, thread, a, b)
+    case 7n:
+      BtwJob.run(tx, inbox, client, id, thread, a, b)
     case _:
       GitJob.run.git(tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # a job the hub asked for: a git job, or one of the sidebar's
 def GitJob.run(+tx: AG.Tx, +job: String, +inbox: Chan(Msg), +client: U32, +id: String, +thread: String, +cwd: String, +a: String, +b: String, +home: String) -> IO(Unit):
-  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad", "title"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
+  GitJob.run.k(C.Codec.pos(["files", "snooze", "worktree", "merged", "wt_remove", "kicad", "title", "btw"], job), tx, job, inbox, client, id, thread, cwd, a, b, home)
 
 # Grok (grok agent stdio, ACP)
 # ----------------------------
