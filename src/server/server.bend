@@ -2874,7 +2874,9 @@ def Refresh.start(+inbox: Chan(Msg), +cfg: Cfg) -> IO(Unit):
 def Main.prepare(+user: String, +exe: String) -> IO(Boot):
   do IO<Boot>:
     K.KiStack.ensure(user)
-    ks : String & List<&2, Q.Skill> <- Skills.kistack.dir(user ++ "/.cache/backplane/kistack/" ++ K.KiStack.revision())
+    rev : String <- K.KiStack.current(user)
+    ks : String & List<&2, Q.Skill> <- Skills.kistack.dir(K.KiStack.base(user) ++ "/" ++ rev)
+    IO.spawn(Unit, K.KiStack.refresh(user))
     explicit : String <- Env.get("BACKPLANE_KICAD_CLI", "")
     rt : K.Rt <- K.Rt.resolve(explicit, exe, user ++ "/.backplane-bend")
     return Models.boot(ks, rt, Found{"", ""})

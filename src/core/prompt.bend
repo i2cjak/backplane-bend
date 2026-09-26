@@ -126,8 +126,15 @@ def Prompt.kicad.k(fork: Bool, ipc: Bool, +cli: String, +version: String, +commi
 
 # the KiCad runtime: the fork's IPC server is described only when this is
 # the fork and the kicad.ipc setting is on
+def Prompt.kicad.at(none: Bool, +cli: String, fork: Bool, +version: String, +commit: String, ipc: Bool) -> String:
+  match none:
+    case True{}:
+      "KiCad is not installed on this machine (no kicad-cli was found). Work on the design files directly, and when a task needs ERC, DRC, exports or another KiCad tool, tell the user KiCad is missing and that they can install it from kicad.org/download or their package manager."
+    case False{}:
+      Prompt.kicad.basics(cli) ++ Prompt.kicad.k(fork, ipc, cli, version, commit)
+
 def Prompt.kicad(+cli: String, fork: Bool, +version: String, +commit: String, ipc: Bool) -> String:
-  "<kicad_runtime>" ++ Prompt.kicad.basics(cli) ++ Prompt.kicad.k(fork, ipc, cli, version, commit) ++ "</kicad_runtime>"
+  "<kicad_runtime>" ++ Prompt.kicad.at(String.is_empty(cli), cli, fork, version, commit, ipc) ++ "</kicad_runtime>"
 
 def Prompt.path(+label: String, +p: String) -> String:
   Bool.pick(String, String.is_empty(p), "", "\n- " ++ label ++ ": `" ++ p ++ "`")

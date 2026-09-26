@@ -58,6 +58,7 @@ import ./src/core/space.bend as SPC
 import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/perf.bend as PF
+import ./src/core/prompt.bend as PM
 import ./src/core/voice.bend as VO
 import ./src/core/once.bend as ON
 
@@ -1338,6 +1339,14 @@ law btw_never_logged:
 # says so and offers no switch
 law kicad_ipc_needs_fork:
   {U.KiCad.ipc.ready(Map.new(&2, String)) == False{} : Bool}
+
+# without a kicad-cli on the hub's machine, Settings says KiCad is missing
+law kicad_missing_said:
+  {U.KiCad.cli.label(Map.new(&2, String)) == "KiCad CLI: not found" : String}
+
+# the agents are told when KiCad is not installed
+law kicad_missing_prompt:
+  {String.starts_with(PM.Prompt.kicad("", False{}, "", "", False{}), "<kicad_runtime>KiCad is not installed") == True{} : Bool}
 
 # how long a turn took, as its row says it
 law took_seconds:

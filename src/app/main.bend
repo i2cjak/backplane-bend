@@ -892,6 +892,7 @@ def Watch.step2glb() -> IO(String):
     return Bool.pick(String, ok, d ++ "/backplane-step2glb", "backplane-step2glb")
 
 # how a file becomes a GLB: as it is, from STEP, or exported from a board
+# (a board through kicad-cli, which says so when KiCad is not installed)
 def Watch.glb.cmd(+path: String, +out: String, +cli: String, +step: String) -> String & List<&2, String>:
   Bool.pick(String & List<&2, String>, Bool.or(String.ends_with(path, ".step"), Bool.or(String.ends_with(path, ".stp"), Bool.or(String.ends_with(path, ".STEP"), String.ends_with(path, ".STP")))),
     (step, [path, out]),
@@ -899,7 +900,7 @@ def Watch.glb.cmd(+path: String, +out: String, +cli: String, +step: String) -> S
 
 def Watch.glb.run(cmd: String & List<&2, String>) -> IO(P.Ran):
   (c, args) = cmd
-  P.Proc.run(c, args, "/")
+  K.KiCad.run(c, args)
 
 def Watch.glb.done(r: P.Ran, +glb: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match r:

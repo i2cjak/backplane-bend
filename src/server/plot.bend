@@ -376,7 +376,7 @@ def Pv.glb.run(glb: Bool, step: Bool, +bare: Bool, +path: String, +out: String) 
     case False{} True{}:
       IO.bind(String, PR.Ran, Pv.step2glb(), x => PR.Proc.run(x, [path, out], "/"))
     case False{} False{}:
-      IO.bind(String, PR.Ran, Pv.cli(), c => PR.Proc.run(c, Pv.glb.flags(bare, out, path), "/"))
+      IO.bind(String, PR.Ran, Pv.cli(), c => K.KiCad.run(c, Pv.glb.flags(bare, out, path)))
 
 # how many parts kicad-cli found no 3D model for ("Could not add 3D model
 # for R1."): the phone says so, else a bare board looks like a bug

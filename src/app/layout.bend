@@ -2120,7 +2120,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
       D.Clip.all(), (x + 16 : U32), (b2 + 520 + dy + er : U32), 24, T.Th.dim())),
     Set.head(ty, "KiCad", x, (b2 + 368 + dy + ey : U32)),
     Set.card(x, (b2 + 400 + dy + ey : U32), w, 150),
-    Set.row(ty, "KiCad CLI", U.Str.get(info, "kicad.cli"), x, (b2 + 402 + dy + ey : U32), w),
+    Set.row(ty, U.KiCad.cli.label(info), U.KiCad.cli.note(info), x, (b2 + 402 + dy + ey : U32), w),
     Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (b2 + 450 + dy + ey : U32)),
     Set.row.r(ty, U.KiCad.ipc.label(info), U.KiCad.ipc.note(info), x, (b2 + 486 + dy + ey : U32), w, Bool.pick(U32, U.KiCad.ipc.ready(info), 140, 0)),
     Bool.pick(Out, U.KiCad.ipc.ready(info), Out.all([

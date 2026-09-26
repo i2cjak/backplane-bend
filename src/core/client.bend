@@ -389,6 +389,17 @@ def Pair.link(+nf: Map<&2, String>) -> String:
 def Pair.note(+link: String) -> String:
   Bool.pick(String, String.is_empty(link), "Shown once Backplane listens on your tailnet.", link)
 
+# KiCad itself: the hub's kicad-cli (info "kicad.cli", "" when there is
+# none on the machine), which ERC, DRC, exports and the 3D model need
+def KiCad.found(+nf: Map<&2, String>) -> Bool:
+  Bool.not(String.is_empty(Str.get(nf, "kicad.cli")))
+
+def KiCad.cli.label(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.found(nf), "KiCad CLI", "KiCad CLI: not found")
+
+def KiCad.cli.note(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.found(nf), Str.get(nf, "kicad.cli"), "Install KiCad from kicad.org/download, or Backplane KiCad")
+
 # KiCad IPC is the Backplane fork's api-server: without the fork the
 # setting has nothing to turn on, so Settings says where to get it instead
 # of offering it (info "kicad.fork": the fork's version, "" for none)

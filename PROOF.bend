@@ -4074,6 +4074,12 @@ def Laws.pick_off_skipped():
 def Laws.kicad_ipc_needs_fork():
   {==}
 
+def Laws.kicad_missing_said():
+  {==}
+
+def Laws.kicad_missing_prompt():
+  {==}
+
 def Laws.took_seconds():
   {==}
 
