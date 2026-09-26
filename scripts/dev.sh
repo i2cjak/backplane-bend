@@ -6,15 +6,17 @@
 #   scripts/dev.sh run --no-build  run the last dev build again
 #   scripts/dev.sh web             rebuild only the web client (reload the page;
 #                                  the hub reads it from disk per request)
-#   scripts/dev.sh install         app + server + web client, installed over
-#                                  ~/.local/share/backplane, service restarted
+#   scripts/dev.sh install         app + server + web client + voice helper,
+#                                  installed over ~/.local/share/backplane,
+#                                  service restarted
 #   scripts/dev.sh install h@host  the same onto another machine over ssh
 #                                  (same os/arch; restarts backplane-bend there)
 #
 # The dev run keeps to itself: its own home (BACKPLANE_DEV_HOME, default
 # ~/.backplane-dev, never ~/.backplane-bend), port 3788 (BACKPLANE_DEV_PORT),
 # no tailnet, no self-update. Its window opens next to your normal one.
-# Helpers (browser, step2glb, voice) are borrowed from the installed copy.
+# The voice helper is built from this checkout (it takes a second); the
+# browser and step2glb helpers are borrowed from the installed copy.
 #
 # An installed build is stamped <next patch>-dev.<date>.<time>, e.g.
 # 0.10.1-dev.20260925.2130: newer than the release it came after, older than
@@ -46,11 +48,20 @@ build_web() {
   rm -rf "$dev/web" && mv "$dev/web.new" "$dev/web"
 }
 
+# the voice helper (Bun, one executable) into $1
+build_voice() {
+  out=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
+  (cd tools/voice && bun build.ts "$out.new" >/dev/null)
+  mv -f "$out.new" "$out"
+}
+
 build_app() {
   check src/app/main.bend
   scripts/build-app.sh src/app/main.bend "$dev/backplane.new"
   mv -f "$dev/backplane.new" "$dev/backplane"
-  for h in backplane-browser backplane-step2glb backplane-voice; do
+  rm -f "$dev/backplane-voice"
+  build_voice "$dev/backplane-voice"
+  for h in backplane-browser backplane-step2glb; do
     [ -e "$prefix/$h" ] && ln -sf "$prefix/$h" "$dev/$h"
   done
   return 0
@@ -72,9 +83,9 @@ stamp() {
   echo "${core%.*}.$(( ${core##*.} + 1 ))-dev.$(date +%Y%m%d.%H%M)"
 }
 
-# the app, the server and the web client into dist/, stamped;
-# src/core/version.bend is put back after. The helpers (browser, step2glb,
-# voice) are not rebuilt: the installed ones stay (scripts/build.sh builds
+# the app, the server, the web client and the voice helper into dist/,
+# stamped; src/core/version.bend is put back after. The browser and step2glb
+# helpers are not rebuilt: the installed ones stay (scripts/build.sh builds
 # them for releases)
 build_dist() {
   ver=$(stamp)
@@ -89,6 +100,7 @@ build_dist() {
   for f in dist/web/*.js dist/web/*.css dist/web/*.html; do gzip -9 -k -n -f "$f"; done
   scripts/build-app.sh src/server/main.bend dist/backplane-serve
   scripts/build-app.sh src/app/main.bend dist/backplane
+  build_voice dist/backplane-voice
   cp "$keep" src/core/version.bend
   say "built $ver"
 }
@@ -103,7 +115,7 @@ mkdir -p "$prefix" "$HOME/.local/bin"
 rm -rf "$prefix/web.old"
 [ -d "$prefix/web" ] && mv "$prefix/web" "$prefix/web.old"
 mv "$src/web" "$prefix/web"
-for f in backplane backplane-serve backplane-browser backplane-step2glb LICENSE; do
+for f in backplane backplane-serve backplane-browser backplane-step2glb backplane-voice LICENSE; do
   [ -e "$src/$f" ] && mv -f "$src/$f" "$prefix/$f"
 done
 ln -sf "$prefix/backplane" "$HOME/.local/bin/backplane"
@@ -114,7 +126,7 @@ EOF
 stage() {
   rm -rf build/dev-pkg && mkdir -p build/dev-pkg
   cp -R dist/web build/dev-pkg/web
-  for f in backplane backplane-serve backplane-browser backplane-step2glb; do
+  for f in backplane backplane-serve backplane-browser backplane-step2glb backplane-voice; do
     [ -e "dist/$f" ] && cp "dist/$f" build/dev-pkg/
   done
   [ -e LICENSE ] && cp LICENSE build/dev-pkg/

@@ -73,6 +73,13 @@ def raw() -> List<&2, U32>:
 def raw.bad() -> List<&2, U32>:
   [45, 45, 120, 13, 10, 0, 255, 128, 1, 2, 3, 201, 10]
 
+# a draft typed first, the window's caret after "abc"
+def typed() -> U.Ui:
+  U.Ui.scratch_set(ui(U.Ui.draft.set(live(), "abc def")), "@voice.at", "3")
+
+def into(+u: U.Ui, +text: String) -> U.Ui:
+  recv(u, "{\"t\":\"voice\",\"thread\":\"t1\",\"ev\":\"text\",\"text\":\"" ++ text ++ "\",\"unsure\":[]}")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     C.Check.str("start asks the hub", sent(U.Ui.act(start(), "voice", "")), "{\"id\":0,\"m\":\"bots.voice\",\"p\":{\"op\":\"start\",\"thread\":\"t1\",\"device\":\"\"}}\n")
@@ -118,3 +125,8 @@ def main() -> IO(Unit):
     C.Check.str("a 4-byte lead past U+10FFFF decodes as U+FFFD", T.Utf8.decode([104, 247, 191, 191, 191, 105]), "h\u{FFFD}i")
     C.Check.str("a surrogate decodes as U+FFFD", T.Utf8.decode([104, 237, 160, 128, 105]), "h\u{FFFD}i")
     C.Check.str("the last character still decodes", T.Utf8.decode([244, 143, 191, 191]), "\u{10FFFF}")
+    C.Check.str("at the window's caret", U.Ui.draft_text(into(typed(), "Hello")), "abc hello def")
+    C.Check.str("caret after it", U.Ui.scratch(into(typed(), "Hello"), "@voice.to"), "9")
+    C.Check.str("the caret is used once", U.Ui.draft_text(into(into(typed(), "Hello"), "Again")), "abc hello def again")
+    C.Check.str("after typed text, at the end", U.Ui.draft_text(into(ui(U.Ui.draft.set(live(), "fix the regulator")), "Then check it.")), "fix the regulator then check it.")
+    C.Check.str("a dictionary term keeps its capital", U.Ui.draft_text(recv(ui(U.Ui.draft.set(live(), "open")), "{\"t\":\"voice\",\"thread\":\"t1\",\"ev\":\"text\",\"text\":\"Backplane\",\"firm\":true,\"unsure\":[]}")), "open Backplane")

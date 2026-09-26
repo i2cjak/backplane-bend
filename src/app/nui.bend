@@ -999,6 +999,51 @@ def Undo.go(has: Bool, +n: Nui, +from: String, +to: String) -> Step:
 def Undo.run(+n: Nui, +from: String, +to: String) -> Step:
   Undo.go(Bool.not(String.is_empty(Undo.get(n, from))), n, from, to)
 
+# Dictation
+# ---------
+# A finished segment (a voice "text" message) for the selected thread goes
+# in at the caret while the composer has focus ("@voice.at"; the client's
+# U.Voice.heard puts it there), the caret moves past it ("@voice.to"), and
+# undo takes it back out; another thread's goes at its draft's end. Either
+# way the draft is written down, as typing does.
+
+def Hear.is(+o: J.Json) -> Bool:
+  Bool.and(String.eq(J.Json.get_str(o, "t", ""), "voice"), String.eq(J.Json.get_str(o, "ev", ""), "text"))
+
+def Hear.here(+n: Nui, +o: J.Json) -> Bool:
+  Bool.and(String.eq(J.Json.get_str(o, "thread", ""), U.Ui.sel(Nui.ui(n))), String.eq(Nui.focus_of(n), "composer"))
+
+def Hear.mark(+m: Nui, +c: Nat) -> Nui:
+  Nui.with_ui(m, U.Ui.scratch_set(Nui.ui(m), "@voice.at", Nat.show(c)))
+
+def Hear.at(here: Bool, +n: Nui) -> Nui:
+  match here:
+    case True{}:
+      Hear.mark(Undo.note(n, 2n), Nui.caret_of(n))
+    case False{}:
+      n
+
+def Hear.to(here: Bool, +n: Nui) -> Nui:
+  match here:
+    case True{}:
+      Nui.with_caret(n, Maybe.default(&2, Nat, Nat.read(U.Ui.scratch(Nui.ui(n), "@voice.to")), Nui.caret_of(n)))
+    case False{}:
+      n
+
+def Hear.kept(+n: Nui, +th: String) -> Step:
+  Step{n, [NKeep{th, U.Ui.scratch(Nui.ui(n), th)}], True{}}
+
+def Hear.k(text: Bool, +here: Bool, n: Nui, +o: J.Json) -> Step:
+  match text:
+    case True{}:
+      Hear.kept(Hear.to(here, Nui.recv(Hear.at(here, n), o)), J.Json.get_str(o, "thread", ""))
+    case False{}:
+      Step{Nui.recv(n, o), Nil{}, True{}}
+
+# a message from the hub
+def Nui.hear(+n: Nui, +o: J.Json) -> Step:
+  Hear.k(Hear.is(o), Hear.here(n, o), n, o)
+
 def Nui.composer.m(k: Nat, +n: Nui, +c: Nat, +m: Nat, +cl: String) -> Step:
   match k:
     case 4n:
