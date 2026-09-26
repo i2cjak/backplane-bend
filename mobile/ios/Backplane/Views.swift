@@ -72,7 +72,7 @@ struct PairView: View {
             } header: {
                 Text("Pairing link")
             } footer: {
-                Text("Paste the tailnet link Backplane shows under Settings, Remote access.")
+                Text("Paste the tailnet link Backplane shows in Settings (Pairing link).")
             }
             Button("Connect") { done(link) }.disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
         }
@@ -123,7 +123,7 @@ struct HubsView: View {
             } header: {
                 Text("Pair another")
             } footer: {
-                Text("Paste the tailnet link Backplane shows under Settings, Remote access.")
+                Text("Paste the tailnet link Backplane shows in Settings (Pairing link).")
             }
         }
         .navigationTitle("Hubs")

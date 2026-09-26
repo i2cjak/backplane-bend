@@ -389,6 +389,14 @@ def Ui.update.note(+ver: String, +state: String) -> String:
 def Update.packaged(+nf: Map<&2, String>) -> Bool:
   String.eq(Str.get(nf, "update"), "package")
 
+# the hub's pairing link (the tailnet address and the token), which a
+# phone or a browser pastes; Settings shows it with Copy
+def Pair.link(+nf: Map<&2, String>) -> String:
+  Str.get(nf, "pair")
+
+def Pair.note(+link: String) -> String:
+  Bool.pick(String, String.is_empty(link), "Shown once Backplane listens on your tailnet.", link)
+
 def Update.line(+nf: Map<&2, String>, +note: String) -> String:
   Bool.pick(String, Update.packaged(nf), "Updated by its package.", Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note))
 

@@ -186,7 +186,7 @@ private fun Pair(link: String, cancel: (() -> Unit)?, done: (String) -> Unit) {
         })
     }) { pad ->
         Column(Modifier.padding(pad).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+            Text("Paste the tailnet link Backplane shows in Settings (Pairing link).",
                 style = MaterialTheme.typography.bodyMedium)
             OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                 label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
@@ -230,7 +230,7 @@ private fun Hubs(m: AppModel, s: Screen, back: () -> Unit) {
             }
             item(key = "add") {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Paste the tailnet link Backplane shows under Settings, Remote access.",
+                    Text("Paste the tailnet link Backplane shows in Settings (Pairing link).",
                         style = MaterialTheme.typography.bodyMedium)
                     OutlinedTextField(text, { text = it }, Modifier.fillMaxWidth(), singleLine = true,
                         label = { Text("Pairing link") }, placeholder = { Text("http://host:3787/#token=…") })
