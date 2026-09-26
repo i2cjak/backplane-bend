@@ -3617,6 +3617,7 @@ def Hub.out(h: Hub, o: B.Out) -> IO(Hub):
     case Hub{+st, f, ls, cl, as, +inbox, +cfg, note} B.TurnEnded{+thread, +state}:
       do IO<Hub>:
         IO.spawn(Unit, Hub.phone(Cfg.home(cfg), st, thread, state, inbox))
+        ok : Bool <- Chan.send(Msg, inbox, Rpc{0, BH.Reply.request(thread, state)})
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
     case Hub{st, f, ls, cl, as, +inbox, cfg, note} B.Fs{+client, +id, +op, +path}:
       do IO<Hub>:

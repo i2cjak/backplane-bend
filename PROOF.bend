@@ -5186,3 +5186,18 @@ def Laws.hubs_bots_once(ss, hs, many):
 
 def Laws.hubs_bots_shown(ss, hs, many):
   {==}
+
+def Laws.reply_peer_person():
+  {==}
+
+def Laws.reply_peer_bot():
+  {==}
+
+def Laws.reply_peer_room():
+  {==}
+
+def Laws.reply_said_newest():
+  {==}
+
+def Laws.reply_person_wakes_none(s, now, from, text):
+  {==}

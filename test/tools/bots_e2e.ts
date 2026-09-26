@@ -3,8 +3,10 @@
 // wrong, replayed, stale, too big; bearer tokens and forms), linking the hubs with an invite, a
 // person on one hub writing to a bot on the other, a room shared by both, the signed bot
 // directory, and (on the minute tick) a routine and the linked machine's
-// bots in the hub info. Agents never answer: `claude`, `codex` and `grok`
-// are stand-ins that exit at once. Prints "ok ..." / "FAIL ..." lines.
+// bots in the hub info. Agents are stand-ins: `claude` answers every message
+// with "pong from the bot" (so a bot's answer to a person on the other hub
+// can travel back), `codex` and `grok` exit at once. Prints "ok ..." /
+// "FAIL ..." lines.
 //
 //   bun test/tools/bots_e2e.ts [BINARY] [WIREDIR] [--quick]
 //
@@ -38,12 +40,26 @@ function freePort(): number {
   return p;
 }
 
-// stand-in agents: they exit at once, so no real agent runs
+// stand-in agents, so no real agent runs: claude answers each message it
+// reads (Claude's stream-json: an assistant message, then the result);
+// codex and grok exit at once
 const root = mkdtempSync(join(tmpdir(), "bp-bots-e2e-"));
 const fake = join(root, "bin");
 mkdirSync(fake);
+const answer = "pong from the bot";
+const claude = `#!/bin/sh
+n=0
+while IFS= read -r line; do
+  case "$line" in
+    *'"type":"user"'*)
+      n=$((n + 1))
+      printf '%s\\n' '{"type":"assistant","message":{"id":"m'"$$-$n"'","content":[{"type":"text","text":"${answer}"}]}}'
+      printf '%s\\n' '{"type":"result","is_error":false,"result":"${answer}"}' ;;
+  esac
+done
+`;
 for (const n of ["claude", "codex", "grok"]) {
-  writeFileSync(join(fake, n), "#!/bin/sh\nexit 1\n");
+  writeFileSync(join(fake, n), n === "claude" ? claude : "#!/bin/sh\nexit 1\n");
   chmodSync(join(fake, n), 0o755);
 }
 
@@ -247,6 +263,11 @@ try {
   const posted = await change(a, "RoomPosted", (c) => c.text === "hello from beta");
   check("alpha logs the message as RoomPosted", !!posted, a.seen.filter((c) => c.$ === "RoomPosted"));
   check("from the person on beta", String(posted?.from ?? "").endsWith("@beta"), posted);
+  // the bot answers in its own thread; the answer goes back to the person
+  const sent = await change(a, "RoomPosted", (c) => c.from === "miso" && c.text === answer);
+  check("alpha logs miso's answer in the person's direct room", sent?.room === posted?.room, sent ?? a.seen.filter((c) => c.$ === "RoomPosted"));
+  const answered = await change(b, "RoomPosted", (c) => c.from === "miso@alpha" && c.text === answer);
+  check("the answer reaches the person on beta, in the room they wrote in", answered?.room === "dm:miso@alpha:you", answered ?? b.seen.filter((c) => c.$ === "RoomPosted"));
 
   // a room shared by both machines: alpha's person makes it with a bot on
   // each; beta learns it from the first post, and its side can post back

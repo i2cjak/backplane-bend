@@ -98,6 +98,15 @@ than the hop of the turn that sent it. A bot never sends past
 - Delivery to a local bot goes through the thread inbox (`Hub.inbox`): it
   queues behind a running turn, never interrupts.
 
+A person may write to a bot on a linked machine (`bots.tell`, `name@machine`):
+the post goes in their direct room there (`dm:<name>@<machine>:you`) and the
+bot hears `[message from person@<machine>]`. It answers in its own thread,
+which that person cannot see, so when such a turn completes the hub sends
+its newest answer back (`Reply.back`, run by the `bots.answered` request the
+server sends itself on `TurnEnded`): logged here in the room the message
+came in, and posted in the person's direct room there, waking no one (laws
+`reply_*`).
+
 ### Shared rooms
 
 A room's members can be on other machines (`name@machine`). A post goes to

@@ -358,10 +358,102 @@ def Bots.fire(+s: M.State, +now: Nat, +i: Nat, r: BT.Routine) -> B.Step:
       B.Step.before([M.RoutineFired{rid, now}], Nil{},
         Bots.fire.k(BT.World.find.id(Bots.bot(s, bot)), s, now, i, name, prompt))
 
+# Answers to a person elsewhere
+# ----------------------------
+# A person on a linked machine writes to a bot here (Bots.tell there): the
+# bot hears "[message from person@<machine>]" and answers in its own
+# thread, which that person cannot see. When such a turn completes, its
+# newest answer goes back to that machine, into the person's direct room
+# with the bot, and is logged here in the same room.
+
+# the machine a person wrote from, read from the head of a turn's message
+# ("[message from person@<machine>]"); "" for anything else: a bot, a room
+def Reply.peer.k(ok: Bool, +head: String) -> String:
+  match ok:
+    case True{}:
+      String.take(String.drop(head, 21n), Nat.sub(String.length(head), 22n))
+    case False{}:
+      ""
+
+def Reply.peer.head(+head: String) -> String:
+  Reply.peer.k(Bool.and(Bool.and(String.starts_with(head, "[message from person@"), String.ends_with(head, "]")),
+    Bool.and(Bool.not(String.contains(head, " in #")), Nat.is_gt(String.length(head), 22n))), head)
+
+def Reply.peer(+text: String) -> String:
+  Reply.peer.head(Maybe.default(&2, String, List.head(&2, String, String.split(text, '\n')), ""))
+
+# a thread's current turn read back from its entries (newest first): the
+# message that started it and the newest answer since
+type Said is Data:
+  Said{answer: String, trigger: String}
+
+def Said.user(hit: Bool, text: String, acc: Said) -> Said:
+  match hit acc:
+    case True{} Said{a, _}:
+      Said{a, text}
+    case False{} _:
+      acc
+
+def Said.answer(hit: Bool, text: String, acc: Said) -> Said:
+  match hit acc:
+    case True{} Said{+a, t}:
+      Said{Bool.pick(String, String.is_empty(a), text, a), t}
+    case False{} _:
+      acc
+
+# the walk stops at the thread's newest user message
+def Said.scan(es: List<&2, M.Entry>, +id: String, done: Bool, acc: Said) -> Said:
+  match es done:
+    case _ True{}:
+      acc
+    case Nil{} False{}:
+      acc
+    case M.Msg{_, +th, M.User{}, text, _} <> t False{}:
+      Said.scan(t, id, String.eq(th, id), Said.user(String.eq(th, id), text, acc))
+    case M.Msg{_, +th, M.Assistant{}, text, _} <> t False{}:
+      Said.scan(t, id, False{}, Said.answer(String.eq(th, id), text, acc))
+    case _ <> t False{}:
+      Said.scan(t, id, False{}, acc)
+
+def Said.of(es: List<&2, M.Entry>, +id: String) -> Said:
+  Said.scan(es, id, False{}, Said{"", ""})
+
+def Reply.back.k(p: Maybe<&2, BT.Peer>, b: Maybe<&2, BT.Bot>, +s: M.State, +now: Nat, +machine: String, +text: String) -> B.Step:
+  match p b:
+    case Some{+peer} Some{+bot}:
+      B.Step{[M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), BT.Room.dm("person@" ++ machine, BT.Bot.name(bot)), BT.Bot.name(bot), text, 0n, now}],
+        [B.BotFx{"send", Bots.peer.id(peer), "/bots/deliver", Bots.remote.body(BT.Bot.name(bot), "person", "", "", text, 0n)}]}
+    case _ _:
+      B.Step.none()
+
+def Reply.back.go(ok: Bool, +s: M.State, +now: Nat, +thread: String, +machine: String, +text: String) -> B.Step:
+  match ok:
+    case True{}:
+      Reply.back.k(Bots.peer(s, machine), BT.World.of_thread(M.State.bots(s), thread), s, now, machine, text)
+    case False{}:
+      B.Step.none()
+
+def Reply.back.said(sd: Said, +s: M.State, +now: Nat, +thread: String, +done: Bool) -> B.Step:
+  match sd:
+    case Said{+answer, +trigger}:
+      Reply.back.go(Bool.and(done, Bool.and(Bool.not(String.is_empty(answer)), Bool.not(String.is_empty(Reply.peer(trigger))))),
+        s, now, thread, Reply.peer(trigger), answer)
+
+# a turn ended ("completed" or "failed"): a bot's completed answer to a
+# person on a linked machine goes back to them
+def Reply.back(+s: M.State, +now: Nat, +thread: String, +state: String) -> B.Step:
+  Reply.back.said(Said.of(M.State.entries.all(s), thread), s, now, thread, String.eq(state, "completed"))
+
+# the request the server sends itself when a turn ends (the hub's step
+# runs it against the state it has then; the reply goes to no one)
+def Reply.request(+thread: String, +state: String) -> String:
+  J.Json.show(J.Json.obj([J.KV{"id", J.Num{"0"}}, J.KV{"m", J.Str{"bots.answered"}},
+    J.KV{"p", J.Json.obj([J.KV{"thread", J.Str{thread}}, J.KV{"state", J.Str{state}}])}]))
+
 def Bots.methods() -> List<&2, String>:
   ["bots.create", "bots.edit", "bots.delete", "bots.say", "bots.room", "bots.room_delete", "bots.post", "bots.routine", "bots.routine_delete",
    "bots.routine_run", "bots.hook", "bots.hook_revoke", "bots.forget", "bots.remember", "bots.space", "bots.invite", "bots.join", "bots.unpeer",
-   "bots.google", "bots.tell", "bots.hook_token", "bots.voice"]
+   "bots.google", "bots.tell", "bots.hook_token", "bots.voice", "bots.answered"]
 
 def Bots.is(+m: String) -> Bool:
   String.starts_with(m, "bots.")
@@ -463,6 +555,8 @@ def Bots.request.k(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p
       Bots.token(s, client, id, p)
     case 21n:
       B.Step.outs([B.BotFx{"voice", J.Json.show(p), U32.show(client), id}])
+    case 22n:
+      Reply.back(s, now, J.Json.get_str(p, "thread", ""), J.Json.get_str(p, "state", ""))
     case _:
       Bots.err(client, id, "unknown bots request")
 
@@ -543,10 +637,24 @@ def Bots.ring.k(h: BT.Hook, test: Bool, +s: M.State, +now: Nat, +text: String, +
 def Bots.ring(+s: M.State, +now: Nat, +hook: String, +body: String) -> B.Step:
   Bots.ring.k(BT.World.hook(M.State.bots(s), hook), RG.Ring.test(body), s, now, RG.Ring.text(body), RG.Ring.unsure(body))
 
-# a direct message from a bot on a linked machine to a bot here
+# a bot on a linked machine answers the person here (Reply.* below): the
+# answer goes in the person's direct room with it, the room Bots.tell
+# wrote in, and wakes no one
+def Bots.incoming.person(+s: M.State, +now: Nat, +from: String, +text: String) -> B.Step:
+  B.Step{[M.RoomPosted{B.Hub.id("p", now, B.Hub.seq(s)), BT.Room.dm("you", from), from, text, 0n, now}], Nil{}}
+
+def Bots.incoming.to(person: Bool, +s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
+  match person:
+    case True{}:
+      Bots.incoming.person(s, now, J.Json.get_str(o, "from", "") ++ "@" ++ peer, J.Json.get_str(o, "text", ""))
+    case False{}:
+      Bots.incoming.k(BT.World.find(M.State.bots(s), J.Json.get_str(o, "to", "")), s, now, peer, J.Json.get_str(o, "from", "") ++ "@" ++ peer,
+        J.Json.get_str(o, "roomName", ""), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "hop", 0n))
+
+# a direct message from a bot on a linked machine to a bot here, or a bot's
+# answer to the person here
 def Bots.incoming.dm(+s: M.State, +now: Nat, +peer: String, +o: J.Json) -> B.Step:
-  Bots.incoming.k(BT.World.find(M.State.bots(s), J.Json.get_str(o, "to", "")), s, now, peer, J.Json.get_str(o, "from", "") ++ "@" ++ peer,
-    J.Json.get_str(o, "roomName", ""), J.Json.get_str(o, "text", ""), J.Json.get_nat(o, "hop", 0n))
+  Bots.incoming.to(String.eq(J.Json.get_str(o, "to", ""), "person"), s, now, peer, o)
 
 def Bots.named(xs: List<&2, String>) -> List<&2, String>:
   match xs:
