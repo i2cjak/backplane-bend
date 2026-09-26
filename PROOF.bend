@@ -4015,6 +4015,9 @@ def Laws.follow_setting_steer(p):
 def Laws.follow_alt_flips(s, p):
   {==}
 
+def Laws.tailnet_link_token():
+  {==}
+
 def Laws.follow_stop_idle(b):
   {==}
 

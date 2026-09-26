@@ -869,6 +869,11 @@ law tailnet_no_owner_no_trust:
   for login: String
   {TN.Tailnet.trusts("", login) == False{} : Bool}
 
+# the pairing link carries the token after "#", as the phones and the
+# web page read it
+law tailnet_link_token:
+  {TN.Tailnet.link("http://100.64.0.1:3787", "ab12") == "http://100.64.0.1:3787/#token=ab12" : String}
+
 # Drawing only what changed
 # ------------------------
 # A frame is kept as tiles and the timeline as per-entry parts; the next

@@ -18,6 +18,12 @@ def Tailnet.login(+whois: String) -> String:
 def Tailnet.trusts(+owner: String, +login: String) -> Bool:
   Bool.and(Bool.and(Bool.not(String.is_empty(owner)), String.eq(owner, login)), Bool.not(String.eq(login, "tagged-devices")))
 
+# the pairing link a phone or browser pastes (the Settings screen shows
+# it): the hub's address with the token after "#", so it never reaches a
+# server's logs
+def Tailnet.link(+base: String, +token: String) -> String:
+  base ++ "/#token=" ++ token
+
 # A machine a client can switch to
 type Machine is Data:
   Machine{name: String, ip: String, online: Bool}
