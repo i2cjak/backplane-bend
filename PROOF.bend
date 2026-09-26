@@ -5022,6 +5022,9 @@ def Laws.voice_unsure_bounded(ds, ig, text):
 def Laws.voice_keywords_bounded(ds):
   voice_cap_le(String, 100n, ds)
 
+def Laws.voice_put_blank(firm, d, at):
+  {==}
+
 # Each bot once
 # -------------
 # Once.go keeps a key only when it is not among those seen, and adds it:

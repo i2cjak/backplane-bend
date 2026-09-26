@@ -43,8 +43,18 @@ machine's microphone into the selected thread. The hub sends
 device, label), `part` (words so far), `text` (a finished segment and its
 `unsure` words), `level` (0..100, four times a second), `hint`
 (`no-audio` 3 s without bytes, `silent` 4 s without speech, `ok` once
-speech comes), `stopping`, `error`, and `idle` last. Each segment joins the
-thread's draft; nothing is sent until the person sends it.
+speech comes), `stopping`, `error`, and `idle` last. Nothing is sent until
+the person sends it.
+
+Each segment goes into the thread's draft where the caret is (the end, in
+the web client or for a thread not on screen) and reads on from what is
+there (`Voice.put`): a space before it unless the draft ends in a space, a
+new line or a bracket, one after it when a word follows. Mid-sentence, its
+first word loses the capital the transcriber gives every segment, unless it
+is "I", not a plain word (USB, KiCad), or opens with a dictionary term (the
+hub marks those `firm`); before a lower-case word its closing period goes.
+The caret moves past it, ctrl+z takes it back out, and the window writes
+the draft down as typing does.
 
 The helper opens the recorder and the OpenAI session at once: `live` goes
 out as soon as the microphone gives audio (waiting at most 150 ms more for

@@ -2978,8 +2978,8 @@ def Bots.google(+u: Ui, +op: String) -> Act:
 # (starting, live, stopping, "" when off), "@voice.th" its thread,
 # "@voice.dev" the microphone, "@voice.lv" its level (0..100), "@voice.hint"
 # why nothing is coming (no-audio, silent), "@voice.part" the words of the
-# segment being heard, "@voice.err" the last error. A finished segment joins
-# its thread's draft; the words it may have misheard wait in "@voice.unsure"
+# segment being heard, "@voice.err" the last error. A finished segment goes
+# into its thread's draft where the caret is (VC.Voice.put); the words it may have misheard wait in "@voice.unsure"
 # (VC.Voice.unsure.json, for thread "@voice.uth") to be clarified: take the
 # guess, type the right spelling (it joins the dictionary), add the word as
 # heard to the dictionary, or skip it (skipped words, "@voice.ign", are not
@@ -2987,12 +2987,6 @@ def Bots.google(+u: Ui, +op: String) -> Act:
 
 def Voice.on(+u: Ui) -> Bool:
   Bool.not(String.is_empty(Ui.scratch(u, "@voice")))
-
-# a segment after the draft, a space between
-def Voice.join(+draft: String, +text: String) -> String:
-  Bool.pick(String, String.is_empty(text), draft,
-    Bool.pick(String, Bool.or(String.is_empty(String.trim(draft)), Bool.or(String.ends_with(draft, " "), String.ends_with(draft, "\n"))),
-      draft ++ text, draft ++ " " ++ text))
 
 def Voice.unsure(+u: Ui) -> List<&2, VC.Unsure>:
   VC.Voice.unsure.parse(Maybe.default(&2, J.Json, J.Json.parse(Ui.scratch(u, "@voice.unsure")), J.Null{}))
@@ -3055,9 +3049,20 @@ def Voice.drop(+u: Ui, +n: String) -> Ui:
   Voice.unsure.set(u, Voice.without.go(Voice.unsure(u), Maybe.default(&2, Nat, Nat.read(n), 0n)))
 
 # a finished segment: into its thread's draft, and its words to clarify
-def Voice.heard(+u: Ui, +thread: String, +text: String, us: List<&2, VC.Unsure>) -> Ui:
-  Voice.unsure.set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, thread, Voice.join(Ui.scratch(u, thread), text)), "@voice.part", ""), "@voice.uth", thread),
+def Voice.heard.ins(+u: Ui, +thread: String, +ins: VC.Ins, us: List<&2, VC.Unsure>) -> Ui:
+  Voice.unsure.set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(Ui.scratch_set(u, thread, VC.Ins.text(ins)), "@voice.part", ""), "@voice.uth", thread),
+    "@voice.at", ""), "@voice.to", Nat.show(VC.Ins.caret(ins))),
     Voice.merge(Bool.pick(List<&2, VC.Unsure>, String.eq(Ui.scratch(u, "@voice.uth"), thread), Voice.unsure(u), Nil{}), us, Voice.ignored(u)))
+
+# where a segment goes: "@voice.at" when the window set it (its caret),
+# else the draft's end
+def Voice.at.of(+u: Ui, +thread: String) -> Nat:
+  Maybe.default(&2, Nat, Nat.read(Ui.scratch(u, "@voice.at")), String.length(Ui.scratch(u, thread)))
+
+# a finished segment into its thread's draft (VC.Voice.put); "@voice.to"
+# is where the caret goes after it
+def Voice.heard(+u: Ui, +thread: String, +text: String, firm: Bool, us: List<&2, VC.Unsure>) -> Ui:
+  Voice.heard.ins(u, thread, VC.Voice.put(firm, Ui.scratch(u, thread), Voice.at.of(u, thread), text), us)
 
 def Voice.dev(+o: J.Json) -> String:
   Bool.pick(String, String.is_empty(J.Json.get_str(o, "label", "")), J.Json.get_str(o, "device", ""), J.Json.get_str(o, "label", ""))
@@ -3076,7 +3081,7 @@ def Voice.recv.k(i: Nat, +u: Ui, +o: J.Json) -> Ui:
     case 1n:
       Ui.scratch_set(u, "@voice.part", Ui.scratch(u, "@voice.part") ++ J.Json.get_str(o, "text", ""))
     case 2n:
-      Voice.heard(u, J.Json.get_str(o, "thread", ""), String.trim(J.Json.get_str(o, "text", "")), VC.Voice.unsure.parse(J.Json.get_obj(o, "unsure")))
+      Voice.heard(u, J.Json.get_str(o, "thread", ""), String.trim(J.Json.get_str(o, "text", "")), J.Json.get_bool(o, "firm", False{}), VC.Voice.unsure.parse(J.Json.get_obj(o, "unsure")))
     case 3n:
       Ui.scratch_set(u, "@voice.lv", Nat.show(J.Json.get_nat(o, "v", 0n)))
     case 4n:

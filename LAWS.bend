@@ -2726,6 +2726,13 @@ law voice_keywords_bounded:
   for +ds: List<&2, String>
   {Nat.is_le(List.length(&2, String, VO.Voice.keywords(ds)), VO.Voice.max_keywords()) == True{} : Bool}
 
+# a segment heard as nothing leaves the draft as it is
+law voice_put_blank:
+  for firm: Bool
+  for +d: String
+  for +at: Nat
+  {VO.Ins.text(VO.Voice.put(firm, d, at, "")) == d : String}
+
 # Each bot once
 # -------------
 # Every list of bots keys each bot by what it stands for (a bot here by its

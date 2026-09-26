@@ -673,3 +673,156 @@ def Voice.note(us: List<&2, Unsure>) -> String:
       ""
     case +h <> +t:
       "Possibly misheard: " ++ String.join(Voice.note.items(h <> t), ", ") ++ ". Ask if unsure."
+
+# Into the draft
+# --------------
+# A finished segment goes in at the caret (the draft's end for a client
+# without one) and reads on from what is there: a space before it unless
+# the draft is blank there or ends in a space or an opening bracket, a
+# space after it when a word follows. Mid-sentence (nothing before it but
+# a sentence's end, . ! ? or a new line, counts as a start) its first word
+# loses the capital the transcriber gives every segment, unless it is "I",
+# a dictionary term (`firm`), or not a plain capitalised word; before a
+# lower-case word its closing period goes. The caret lands after it.
+
+type Ins is Data:
+  Ins{text: String, caret: Nat}
+
+def Ins.text(i: Ins) -> String:
+  match i:
+    case Ins{t, _}:
+      t
+
+def Ins.caret(i: Ins) -> Nat:
+  match i:
+    case Ins{_, c}:
+      c
+
+# a character's code, 0 for none
+def Voice.code(m: Maybe<&2, Char>) -> U32:
+  match m:
+    case Some{Chr{+c}}:
+      c
+    case None{}:
+      0
+
+def Voice.last(+s: String) -> U32:
+  Voice.code(String.get(s, Nat.sub(String.length(s), 1n)))
+
+def Voice.first(+s: String) -> U32:
+  Voice.code(String.get(s, 0n))
+
+def Voice.space(+c: U32) -> Bool:
+  Bool.or(Bool.or(U32.is_eq(c, 32), U32.is_eq(c, 9)), Bool.or(U32.is_eq(c, 10), U32.is_eq(c, 13)))
+
+# ( [ { " “ ‘
+def Voice.opens(+c: U32) -> Bool:
+  Bool.or(Bool.or(Bool.or(U32.is_eq(c, 40), U32.is_eq(c, 91)), Bool.or(U32.is_eq(c, 123), U32.is_eq(c, 34))), Bool.or(U32.is_eq(c, 8220), U32.is_eq(c, 8216)))
+
+def Voice.lower(+c: U32) -> Bool:
+  Bool.and(U32.is_ge(c, 97), U32.is_le(c, 122))
+
+def Voice.upper(+c: U32) -> Bool:
+  Bool.and(U32.is_ge(c, 65), U32.is_le(c, 90))
+
+# a space goes before the segment
+def Voice.gap(+before: String) -> Bool:
+  Bool.not(Bool.or(U32.is_eq(Voice.last(before), 0), Bool.or(Voice.space(Voice.last(before)), Voice.opens(Voice.last(before)))))
+
+# 0 (nothing), . ! ?
+def Voice.stop.c(+c: U32) -> Bool:
+  Bool.or(Bool.or(U32.is_eq(c, 0), U32.is_eq(c, 46)), Bool.or(U32.is_eq(c, 33), U32.is_eq(c, 63)))
+
+# what comes next starts a sentence
+def Voice.starts(+before: String) -> Bool:
+  Bool.or(U32.is_eq(Voice.last(before), 10), Voice.stop.c(Voice.last(String.trim_end(before))))
+
+# the first word as a plain capitalised word: 0 at its first character, 1
+# inside it, 2 past it, 3 not plain
+def Voice.plain.step(st: Nat, +c: U32) -> Nat:
+  match st:
+    case 0n:
+      Bool.pick(Nat, Voice.upper(c), 1n, 3n)
+    case 1n:
+      Bool.pick(Nat, Bool.or(Voice.lower(c), Bool.or(U32.is_eq(c, 39), U32.is_eq(c, 8217))), 1n, Bool.pick(Nat, Voice.alnum(c), 3n, 2n))
+    case +k:
+      k
+
+def Voice.plain.go(s: String, st: Nat) -> Nat:
+  match s:
+    case SNil{}:
+      st
+    case SCon{Chr{+c}, t}:
+      Voice.plain.go(t, Voice.plain.step(st, c))
+
+def Voice.plain.k(st: Nat) -> Bool:
+  match st:
+    case 1n:
+      True{}
+    case 2n:
+      True{}
+    case _:
+      False{}
+
+def Voice.plain(s: String) -> Bool:
+  Voice.plain.k(Voice.plain.go(s, 0n))
+
+# "I", "I'm", "I've": the capital stays
+def Voice.self(+s: String) -> Bool:
+  Bool.and(U32.is_eq(Voice.first(s), 73), Bool.not(Voice.lower(Voice.code(String.get(s, 1n)))))
+
+def Voice.lower1(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{c, t}:
+      SCon{Char.to_lower(c), t}
+
+def Voice.casing.k(go: Bool, s: String) -> String:
+  match go:
+    case True{}:
+      Voice.lower1(s)
+    case False{}:
+      s
+
+def Voice.casing(firm: Bool, mid: Bool, +s: String) -> String:
+  Voice.casing.k(Bool.and(Bool.and(mid, Bool.not(firm)), Bool.and(Voice.plain(s), Bool.not(Voice.self(s)))), s)
+
+def Voice.unstop.k(go: Bool, +s: String) -> String:
+  match go:
+    case True{}:
+      String.take(s, Nat.sub(String.length(s), 1n))
+    case False{}:
+      s
+
+# the closing period dropped before a lower-case word (an ellipsis stays)
+def Voice.unstop(next: Bool, +s: String) -> String:
+  Voice.unstop.k(Bool.and(next, Bool.and(String.ends_with(s, "."), Bool.not(String.ends_with(s, "..")))), s)
+
+def Voice.put.go(firm: Bool, +before: String, +after: String, +seg: String) -> Ins:
+  +s = Voice.unstop(Voice.lower(Voice.first(String.trim_start(after))), Voice.casing(firm, Bool.not(Voice.starts(before)), seg))
+  +lead = Bool.pick(String, Voice.gap(before), " ", "")
+  Ins{before ++ lead ++ s ++ Bool.pick(String, Voice.alnum(Voice.first(after)), " ", "") ++ after, Nat.add(String.length(before), Nat.add(String.length(lead), String.length(s)))}
+
+def Voice.put.k(blank: Bool, firm: Bool, +draft: String, +at: Nat, +seg: String) -> Ins:
+  match blank:
+    case True{}:
+      Ins{draft, at}
+    case False{}:
+      Voice.put.go(firm, String.take(draft, at), String.drop(draft, at), seg)
+
+# a segment into the draft at `at` (past the end means the end; laws
+# voice_put_*)
+def Voice.put(firm: Bool, +draft: String, +at: Nat, +text: String) -> Ins:
+  Voice.put.k(String.is_empty(String.trim(text)), firm, draft, Bool.pick(Nat, Nat.is_le(at, String.length(draft)), at, String.length(draft)), String.trim(text))
+
+def Voice.firm.go(ds: List<&2, String>, +s: String, acc: Bool) -> Bool:
+  match ds:
+    case Nil{}:
+      acc
+    case +h <> t:
+      Voice.firm.go(t, s, Bool.or(acc, Bool.and(Bool.not(String.is_empty(h)), String.starts_with(s, String.to_lower(h)))))
+
+# the segment opens with a dictionary term, whose capital stays
+def Voice.firm(ds: List<&2, String>, text: String) -> Bool:
+  Voice.firm.go(ds, String.to_lower(String.trim(text)), False{})

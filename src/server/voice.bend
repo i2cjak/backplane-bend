@@ -120,7 +120,8 @@ def Vo.add(+home: String, +term: String) -> IO(String):
 
 # {"t":"voice","thread":..,"ev":..} for the client that started it:
 # ev live (with the recorder and the microphone it opened), part (words so
-# far), text (a finished segment, with the words to clarify), level (0..100,
+# far), text (a finished segment, with the words to clarify, and "firm"
+# when it opens with a dictionary term), level (0..100,
 # a few times a second), hint (no-audio, silent, ok), stopping, error,
 # idle (always last)
 def Vo.msg(+thread: String, +ev: String, kvs: List<&2, J.KV>) -> String:
@@ -130,7 +131,8 @@ def Vo.err(+thread: String, +e: String) -> String:
   Vo.msg(thread, "error", [J.KV{"error", J.Str{e}}])
 
 def Vo.text(+thread: String, +item: String, +t: String, +ds: List<&2, String>) -> String:
-  Vo.msg(thread, "text", [J.KV{"item", J.Str{item}}, J.KV{"text", J.Str{t}}, J.KV{"unsure", V.Voice.unsure.json(V.Voice.unsure(ds, Nil{}, t))}])
+  Vo.msg(thread, "text", [J.KV{"item", J.Str{item}}, J.KV{"text", J.Str{t}}, J.KV{"firm", J.Flag{V.Voice.firm(ds, t)}},
+    J.KV{"unsure", V.Voice.unsure.json(V.Voice.unsure(ds, Nil{}, t))}])
 
 def Vo.line.k(i: Nat, +o: J.Json, +thread: String, +ds: List<&2, String>) -> String:
   match i:

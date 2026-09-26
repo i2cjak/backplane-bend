@@ -549,11 +549,6 @@ def Shell.dirty(a: Shell) -> IO(Shell):
     case _:
       IO.pure(Shell, a)
 
-def Shell.recv(a: Shell, +text: String) -> IO(Shell):
-  match a:
-    case Shell{n, w, _, qd, q, i, wa}:
-      Shell.later(Shell{N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})), w, True{}, qd, q, i, wa})
-
 # the log's head read as usual, then the hub's read model in place of
 # the (empty) replay
 def Shell.adopt(current: Bool, a: Shell, st: M.State, +head: String) -> IO(Shell):
@@ -561,13 +556,6 @@ def Shell.adopt(current: Bool, a: Shell, st: M.State, +head: String) -> IO(Shell
     case True{} Shell{n, w, _, qd, q, i, wa}:
       Shell.later(Shell{N.Nui.adopt(N.Nui.recv(n, Maybe.default(&2, J.Json, J.Json.parse(head), J.Null{})), st), w, True{}, qd, q, i, wa})
     case False{} _:
-      IO.pure(Shell, a)
-
-def Shell.from(current: Bool, a: Shell, +t: String) -> IO(Shell):
-  match current:
-    case True{}:
-      Shell.recv(a, t)
-    case False{}:
       IO.pure(Shell, a)
 
 def Shell.queue(a: Shell, k: Chan(ShellMsg) -> Shell -> IO(Unit)) -> IO(Unit):
@@ -739,6 +727,31 @@ def Shell.retry(current: Bool, a: Shell, +url: String) -> IO(Shell):
     case False{}:
       IO.pure(Shell, a)
 
+def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
+  match cs:
+    case Nil{}:
+      IO.pure(Shell, a)
+    case c <> t:
+      IO.bind(Shell, Shell, Shell.cmd(a, c), a2 => Shell.cmds(t, a2))
+
+# fold a step into the app: its state, its commands, maybe a frame
+def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
+  match a s:
+    case Shell{_, w, d, qd, q, i, wa} N.Step{n, cs, dirty}:
+      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i, wa}), Shell.dirty)
+
+def Shell.recv(a: Shell, +text: String) -> IO(Shell):
+  match a:
+    case Shell{+n, w, d, qd, q, i, wa}:
+      Shell.step(Shell{n, w, d, qd, q, i, wa}, N.Nui.hear(n, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
+
+def Shell.from(current: Bool, a: Shell, +t: String) -> IO(Shell):
+  match current:
+    case True{}:
+      Shell.recv(a, t)
+    case False{}:
+      IO.pure(Shell, a)
+
 # messages that belong to one connection: only the current one's count
 def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
   match m:
@@ -761,19 +774,6 @@ def Shell.tagged(a: Shell, m: ShellMsg) -> IO(Shell):
   match a:
     case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti, fr}}:
       Shell.tagged.k(m, ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti, fr}})
-
-def Shell.cmds(cs: List<&2, N.NCmd>, a: Shell) -> IO(Shell):
-  match cs:
-    case Nil{}:
-      IO.pure(Shell, a)
-    case c <> t:
-      IO.bind(Shell, Shell, Shell.cmd(a, c), a2 => Shell.cmds(t, a2))
-
-# fold a step into the app: its state, its commands, maybe a frame
-def Shell.step(a: Shell, s: N.Step) -> IO(Shell):
-  match a s:
-    case Shell{_, w, d, qd, q, i, wa} N.Step{n, cs, dirty}:
-      IO.bind(Shell, Shell, Shell.cmds(cs, Shell{n, w, Bool.or(d, dirty), qd, q, i, wa}), Shell.dirty)
 
 # Events
 # ------
