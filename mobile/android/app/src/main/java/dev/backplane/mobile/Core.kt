@@ -29,7 +29,7 @@ import java.security.SecureRandom
 class Core(private val app: Application) : Application.ActivityLifecycleCallbacks {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val prefs = app.getSharedPreferences("backplane", Context.MODE_PRIVATE)
-    private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid(), prefs.getString("drafts", "{}") ?: "{}")
+    private val engine = Engine(app.assets.open("bridge.js").bufferedReader().readText(), cid(), prefs.getString("drafts", "{}") ?: "{}", app.filesDir)
     private val hubs = mutableMapOf<String, Hub>()
     // the client's state, kept for the next launch (StateStore)
     private val kept = StateStore(app.filesDir, app.assets.open("bridge.js").bufferedReader().readText())

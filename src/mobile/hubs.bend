@@ -250,7 +250,7 @@ def One.got.k(+seen: List<&2, N.Seen>, a: U.Act) -> Did:
 def One.got.seen(a: U.Act) -> U.Act:
   match a:
     case U.Act{u, cmds}:
-      U.Act{PK.MPick.seen(u), cmds}
+      U.Act{PK.MPick.seen(S.Mob.imgs.seen(u)), cmds}
 
 # a frame from the hub, and the alerts it raised
 def One.got(+u: U.Ui, +o: J.Json) -> Did:
