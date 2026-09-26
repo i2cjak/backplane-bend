@@ -6,7 +6,7 @@
 #   scripts/dev.sh run --no-build  run the last dev build again
 #   scripts/dev.sh web             rebuild only the web client (reload the page;
 #                                  the hub reads it from disk per request)
-#   scripts/dev.sh install         full build (scripts/build.sh), installed over
+#   scripts/dev.sh install         app + server + web client, installed over
 #                                  ~/.local/share/backplane, service restarted
 #   scripts/dev.sh install h@host  the same onto another machine over ssh
 #                                  (same os/arch; restarts backplane-bend there)
@@ -72,13 +72,23 @@ stamp() {
   echo "${core%.*}.$(( ${core##*.} + 1 ))-dev.$(date +%Y%m%d.%H%M)"
 }
 
-# a full build (dist/), stamped; src/core/version.bend is put back after
+# the app, the server and the web client into dist/, stamped;
+# src/core/version.bend is put back after. The helpers (browser, step2glb,
+# voice) are not rebuilt: the installed ones stay (scripts/build.sh builds
+# them for releases)
 build_dist() {
   ver=$(stamp)
   keep=$(mktemp)
   cp src/core/version.bend "$keep"
   trap 'cp "$keep" src/core/version.bend; rm -f "$keep"' EXIT
-  BACKPLANE_VERSION=$ver scripts/build.sh >/dev/null
+  printf 'import Base\n\n# The running build'"'"'s version (stamped by scripts/build.sh).\n\ndef Version.current() -> String:\n  "%s"\n' "$ver" > src/core/version.bend
+  for f in src/web/app.bend src/server/main.bend src/app/main.bend; do check "$f"; done
+  rm -rf dist && mkdir -p dist
+  bend src/web/index.html -o dist/web >/dev/null
+  cp src/web/sw.js dist/web/sw.js
+  for f in dist/web/*.js dist/web/*.css dist/web/*.html; do gzip -9 -k -n -f "$f"; done
+  scripts/build-app.sh src/server/main.bend dist/backplane-serve
+  scripts/build-app.sh src/app/main.bend dist/backplane
   cp "$keep" src/core/version.bend
   say "built $ver"
 }
