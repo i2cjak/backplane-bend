@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Backplane
+Comment=Agentic hardware development
+Exec=backplane
+Icon=backplane
+Terminal=false
+Categories=Development;Electronics;
+StartupWMClass=backplane

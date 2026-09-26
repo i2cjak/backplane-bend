@@ -136,25 +136,27 @@ def Http.response(status: String, ctype: String, body: List<&2, U32>, extra: Str
 def Http.text(status: String, body: String) -> List<&2, U32>:
   Http.response(status, "text/plain; charset=utf-8", U.Utf8.encode(body), "")
 
-def Http.ctype.k(html: Bool, js: Bool, css: Bool, svg: Bool, json: Bool) -> String:
-  match html js css svg json:
-    case True{} _ _ _ _:
+def Http.ctype.k(html: Bool, js: Bool, css: Bool, svg: Bool, json: Bool, png: Bool) -> String:
+  match html js css svg json png:
+    case True{} _ _ _ _ _:
       "text/html; charset=utf-8"
-    case _ True{} _ _ _:
+    case _ True{} _ _ _ _:
       "text/javascript; charset=utf-8"
-    case _ _ True{} _ _:
+    case _ _ True{} _ _ _:
       "text/css; charset=utf-8"
-    case _ _ _ True{} _:
+    case _ _ _ True{} _ _:
       "image/svg+xml"
-    case _ _ _ _ True{}:
+    case _ _ _ _ True{} _:
       "application/json"
-    case _ _ _ _ _:
+    case _ _ _ _ _ True{}:
+      "image/png"
+    case _ _ _ _ _ _:
       "application/octet-stream"
 
 # the Content-Type for a path's extension
 def Http.ctype(+p: String) -> String:
   Http.ctype.k(String.ends_with(p, ".html"), String.ends_with(p, ".js"),
-    String.ends_with(p, ".css"), String.ends_with(p, ".svg"), String.ends_with(p, ".json"))
+    String.ends_with(p, ".css"), String.ends_with(p, ".svg"), String.ends_with(p, ".json"), String.ends_with(p, ".png"))
 
 # the 101 response that accepts a WebSocket upgrade for this key
 def Ws.accept(key: String) -> List<&2, U32>:
