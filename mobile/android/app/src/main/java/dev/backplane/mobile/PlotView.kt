@@ -269,6 +269,9 @@ class PlotRenderer : GLSurfaceView.Renderer {
     @Volatile var bg = floatArrayOf(0f, 0f, 0f)
     // each layer's colour on the viewer's light ground (empty: the chunks' own)
     @Volatile var look = IntArray(0)
+    // the layers the user turned off, a bit each
+    @Volatile var off = 0
+    private fun shown(layer: Int) = layer !in 0..31 || (off shr layer) and 1 == 0
     @Volatile var three = false
     @Volatile var orbit = Orbit()
     @Volatile var thick = 1600f
@@ -584,11 +587,11 @@ class PlotRenderer : GLSurfaceView.Renderer {
             glDisable(GL_DEPTH_TEST)
             for ((face, zz) in listOf(top to thick + 40f, bottom to -40f)) {
                 z = zz
-                for (id in face) for (l in layers) if (l.layer == id) draw(l)
+                for (id in face) for (l in layers) if (l.layer == id && shown(l.layer)) draw(l)
                 if (hiLayer in face) hi()
             }
         } else {
-            for (l in layers) draw(l)
+            for (l in layers) if (shown(l.layer)) draw(l)
             hi()
         }
         // the scene to the screen
@@ -615,6 +618,7 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
     var chunks: List<PlotChunk> = emptyList()
     var onPick: (String) -> Unit = {}
     private var fitted = false
+    private var shownKey = ""
     private var fadeFrom = 0L
     private var flingX = 0f
     private var flingY = 0f
@@ -675,7 +679,9 @@ class PlotSurface(context: Context) : GLSurfaceView(context) {
         renderer.look = look
         renderer.thick = if (f.thick > 0) f.thick else 1600f
         queueEvent { renderer.load(f.chunks, f.fresh); renderer.slab(f.box, slab) }
-        val first = box.isEmpty() || !fitted
+        // a new source (board to schematic, another sheet) fits anew
+        val first = box.isEmpty() || !fitted || f.key != shownKey
+        shownKey = f.key
         box = f.box
         if (first) { fitted = false; refit() }
         fadeFrom = if (f.fresh.isEmpty()) 0 else f.at

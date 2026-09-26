@@ -269,7 +269,8 @@ class PlotStore {
         queue.execute {
             val o = runCatching { Cbor.decode(b) as? Map<String, Any?> }.getOrNull() ?: return@execute
             val key = o["key"] as? String ?: ""
-            val solid = key.startsWith("2|")
+            // a 3D model: with its parts (2) or the board alone (3)
+            val solid = key.startsWith("2|") || key.startsWith("3|")
             val why = o["none"] as? String
             if (why != null) {
                 main.post {

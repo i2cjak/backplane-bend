@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Memory
@@ -50,6 +51,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
@@ -728,6 +732,7 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             s.renderer.orbit.fov = v.fov
             s.setThree(v.open == "3d")
             if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab, v.look)
+            if (s.renderer.off != v.off) { s.renderer.off = v.off; s.requestRender() }
             if (v.open == "3d") s.mesh(mesh)
             s.mark(v.picked)
         })
@@ -736,6 +741,9 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             f.none.isNotEmpty() -> Text(f.none, Modifier.align(Alignment.Center), color = Color.Gray)
             v.open == "3d" && mesh != null && mesh.none.isNotEmpty() ->
                 Text(mesh.none, Modifier.align(Alignment.BottomCenter).padding(16.dp), color = Color.Gray,
+                    style = MaterialTheme.typography.labelMedium)
+            v.open == "3d" && v.parts && v.note.isNotEmpty() ->
+                Text(v.note, Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp), color = Color.Gray,
                     style = MaterialTheme.typography.labelMedium)
         }
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
@@ -754,7 +762,46 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             }
             IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = if (v.light) Color.Black else Color.White) }
         }
+        ViewerControls(m, v, f?.chunks?.map { it.layer }?.toSet() ?: emptySet(), Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 56.dp))
         v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+// under the viewer's bar: the schematic's sheet, the layers shown, and
+// the 3D model's parts
+@Composable
+private fun ViewerControls(m: AppModel, v: Viewer, present: Set<Int>, modifier: Modifier) {
+    // only the layers this board or sheet has
+    val layers = v.layerList.filter { it.layer in present }
+    val fg = if (v.light) Color.Black else Color.White
+    Row(modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (v.sheets.isNotEmpty()) Box {
+            var open by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { open = true }) {
+                Text(v.sheets.firstOrNull { it.on }?.label?.trim() ?: "Sheet", color = fg, maxLines = 1)
+                Icon(Icons.Filled.ExpandMore, null, tint = fg)
+            }
+            DropdownMenu(open, { open = false }) {
+                for (sh in v.sheets) DropdownMenuItem(text = { Text(sh.label) }, enabled = !sh.loop,
+                    leadingIcon = { if (sh.on) Icon(Icons.Filled.Check, null) else Spacer(Modifier.width(24.dp)) },
+                    onClick = { open = false; m.act("view-sheet", sh.value) })
+            }
+        }
+        if (layers.isNotEmpty()) Box {
+            var open by remember { mutableStateOf(false) }
+            OutlinedButton(onClick = { open = true }) {
+                Icon(Icons.Filled.Layers, null, tint = fg)
+                Text("Layers", color = fg, modifier = Modifier.padding(start = 6.dp))
+            }
+            // stays open: several layers are turned on and off in a row
+            DropdownMenu(open, { open = false }) {
+                for (l in layers) DropdownMenuItem(text = { Text(l.name) },
+                    leadingIcon = { Checkbox(l.on, null) },
+                    onClick = { m.act("view-layer", l.layer.toString()) })
+            }
+        }
+        if (v.open == "3d") FilterChip(v.parts, { m.act("view-parts") }, label = { Text("Parts", color = fg) },
+            leadingIcon = { if (v.parts) Icon(Icons.Filled.Check, null, tint = fg) })
     }
 }
 

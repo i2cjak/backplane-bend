@@ -112,7 +112,17 @@ data class Viewer(
     val slab: Int, val fov: Float, val picked: String, val card: Card?,
     // the viewer's own light ground, and each layer's colour on it (by layer)
     val light: Boolean = false, val look: IntArray = IntArray(0),
+    // the schematic's sheets ("view-sheet" value), the layers the user can
+    // turn off ("view-layer" layer) and those off (a bit each), and
+    // whether the 3D model shows its parts ("view-parts")
+    val sheets: List<Sheet> = emptyList(), val layerList: List<LayerRow> = emptyList(), val off: Int = 0, val parts: Boolean = true,
+    // what the hub says about the source (parts with no 3D model)
+    val note: String = "",
 )
+
+data class Sheet(val label: String, val value: String, val on: Boolean, val loop: Boolean)
+
+data class LayerRow(val layer: Int, val name: String, val on: Boolean)
 
 // the composer's model chip: its label, the models ("model" sends one)
 // and the efforts the current one takes ("effort")
@@ -348,6 +358,9 @@ private fun viewer(o: JSONObject) = Viewer(
         Card(c.optString("info"), c.optString("title"), c.optJSONArray("rows").map { it.optString("k") to it.optString("v") })
     },
     o.optBoolean("light"), ints(o.optJSONArray("look")),
+    o.optJSONArray("sheets").map { Sheet(it.optString("label"), it.optString("value"), it.optBoolean("on"), it.optBoolean("loop")) },
+    o.optJSONArray("layerList").map { LayerRow(it.optInt("layer"), it.optString("name"), it.optBoolean("on")) },
+    o.optInt("off"), o.optBoolean("parts", true), o.optString("note"),
 )
 
 private fun strs(a: JSONArray?): List<String> =

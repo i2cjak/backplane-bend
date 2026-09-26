@@ -181,6 +181,26 @@ struct Viewer: Decodable {
     // the viewer's own light ground, and each layer's colour on it (by layer)
     let light: Bool?
     let look: [UInt32]?
+    // the schematic's sheets ("view-sheet" value), the layers the user can
+    // turn off ("view-layer" layer) and those off (a bit each), and
+    // whether the 3D model shows its parts ("view-parts")
+    let sheets: [SheetRow]?
+    let layerList: [LayerRow]?
+    let off: UInt32?
+    let parts: Bool?
+    // what the hub says about the source (parts with no 3D model)
+    let note: String?
+}
+
+struct SheetRow: Decodable, Hashable {
+    let label, value: String
+    let on, loop: Bool
+}
+
+struct LayerRow: Decodable, Hashable {
+    let layer: Int
+    let name: String
+    let on: Bool
 }
 
 // the composer's model chip: its label, the models ("model" sends one)

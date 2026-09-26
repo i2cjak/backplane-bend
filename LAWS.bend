@@ -1449,6 +1449,21 @@ law view_3d_draws_board:
 law view_3d_key:
   {MV.View.key("3d", "/p") == "2|/p|" : String}
 
+# a sheet is part of a schematic's source and of nothing else's, and the
+# 3D model without its parts is the hub's kind 3
+law view_sheet_key:
+  {MV.View.key.at("schematic", "/p", "/p/amp.kicad_sch", False{}) == "1|/p|/p/amp.kicad_sch" : String}
+
+law view_board_no_sheet:
+  {MV.View.key.at("board", "/p", "/p/amp.kicad_sch", False{}) == "0|/p|" : String}
+
+law view_bare_key:
+  {MV.View.key.at("3d", "/p", "", True{}) == "3|/p|" : String}
+
+# a layer the user turned off on the phone is never what a tap picks
+law pick_off_skipped:
+  {MV.Pick.shown([MV.Cand{"pad", 4, 12}, MV.Cand{"zone", 900, 5}], V.Look.toggle(0, 12)) == [MV.Cand{"zone", 900, 5}] : List<&2, MV.Cand>}
+
 # 3D boards
 # ---------
 

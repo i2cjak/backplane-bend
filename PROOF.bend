@@ -3371,7 +3371,7 @@ def Laws.view_closed_wants_nothing(root):
       {==}
 
 def Laws.view_asks_once(u, cmds, h):
-  %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), cmds) == U.Act{u, cmds} : U.Act}
+  %Equal.sym(Bool, String.eq(MV.View.want(u), U.Ui.scratch(u, "@view.at")), True{}, h) : {MV.View.sync.k(_, u, MV.View.want(u), MV.View.kind(u), U.Ui.root(u), MV.View.sheet(u), cmds) == U.Act{u, cmds} : U.Act}
   {==}
 
 def Laws.plot_frames_binary(bs):
@@ -4057,6 +4057,18 @@ def Laws.btw_question():
   {==}
 
 def Laws.btw_never_logged(s, c, id, th, q):
+  {==}
+
+def Laws.view_sheet_key():
+  {==}
+
+def Laws.view_board_no_sheet():
+  {==}
+
+def Laws.view_bare_key():
+  {==}
+
+def Laws.pick_off_skipped():
   {==}
 
 def Laws.took_seconds():

@@ -1082,36 +1082,14 @@ def Watch.mesh(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
 # root schematic (or the file on show, when the project has none) and
 # every sheet it reaches, each file once (HI.Hier.todo), at most 64.
 
-def Tree.next(todo: List<&2, String>, +tab: List<&2, HI.Kids>, k: List<&2, HI.Kids> -> List<&2, String> -> IO(List<&2, HI.Kids>)) -> IO(List<&2, HI.Kids>):
-  match todo:
-    case Nil{}:
-      IO.pure(List<&2, HI.Kids>, tab)
-    case +p <> rest:
-      do IO<List<&2, HI.Kids>>:
-        bs : List<&2, U32> <- S.Files.read(p)
-        +kd : HI.Kids = HI.Hier.kids(p, bs)
-        k(kd <> tab, HI.Hier.todo(HI.Hier.kids.sheets(kd), kd <> tab, rest))
-
-def Tree.load(fuel: Nat, +todo: List<&2, String>, +tab: List<&2, HI.Kids>) -> IO(List<&2, HI.Kids>):
-  match fuel:
-    case 0n:
-      IO.pure(List<&2, HI.Kids>, tab)
-    case 1n+f:
-      Tree.next(todo, tab, t2 => d2 => Tree.load(f, d2, t2))
-
-def Tree.root(f: K.Files, +path: String) -> String:
-  match f:
-    case K.Files{_, _, +sch}:
-      Bool.pick(String, String.is_empty(sch), path, sch)
-
 def Tree.send(+root: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   do IO<Unit>:
-    tab : List<&2, HI.Kids> <- Tree.load(64n, [root], Nil{})
+    tab : List<&2, HI.Kids> <- PV.Tree.load(64n, [root], Nil{})
     ok : Bool <- Chan.send(ShellMsg, q, Sheets{key, HI.Hier.show(HI.Hier.rows(tab, root))})
     return Unit{}
 
 def Watch.tree(+path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
-  IO.bind(K.Files, Unit, K.Files.read(Src.at(key, 1n)), f => Tree.send(Tree.root(f, path), key, q))
+  IO.bind(K.Files, Unit, K.Files.read(Src.at(key, 1n)), f => Tree.send(PV.Tree.root(f, path), key, q))
 
 def Watch.tree.if(sch: Bool, +path: String, +key: String, +q: Chan(ShellMsg)) -> IO(Unit):
   match sch:

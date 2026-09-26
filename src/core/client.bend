@@ -57,8 +57,10 @@ def Act.cmds(a: Act) -> List<&2, Cmd>:
     case Act{_, cs}:
       cs
 
-def Ui.init(now: Nat) -> Ui:
-  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, VT.Vt)}
+# (the clock goes in the info map from the start, as Ui.tick puts it)
+def Ui.init(+now: Nat) -> Ui:
+  Ui{M.State.empty(), "", Map.new(&2, String), Map.new(&2, String), Map.new(&2, Bool), False{}, now, False{}, False{}, "", 0n, False{}, "", "",
+    Map.set(&2, String, Map.new(&2, String), "clock", Nat.show(now)), Map.new(&2, String), Map.new(&2, VT.Vt)}
 
 def Str.get.k(r: Map<&2, String> & String) -> String:
   (_, v) = r

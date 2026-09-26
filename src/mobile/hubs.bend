@@ -219,11 +219,17 @@ def One.act.k(i: Nat, +u: U.Ui, +action: String, +value: String) -> U.Act:
       U.Act{U.Ui.flag_off(u, "palette"), Nil{}}
     case 10n:
       U.Act{One.close(u, value), Nil{}}
+    case 11n:
+      VW.View.sheet.pick(u, value)
+    case 12n:
+      VW.View.layer(u, value)
+    case 13n:
+      VW.View.parts(u)
     case _:
       VW.View.sync(U.Ui.act(u, action, value))
 
 def One.act(+u: U.Ui, +action: String, +value: String) -> U.Act:
-  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close", "form-close"], action), u, action, value)
+  One.act.k(C.Codec.pos(["view", "view-mention", "view-pick", "view-unpick", "picker-open", "picker-type", "picker-mkdir", "find-open", "find-q", "find-close", "form-close", "view-sheet", "view-layer", "view-parts"], action), u, action, value)
 
 # what a step does to one hub's client
 type Op is Data:
@@ -248,7 +254,7 @@ def One.got.seen(a: U.Act) -> U.Act:
 
 # a frame from the hub, and the alerts it raised
 def One.got(+u: U.Ui, +o: J.Json) -> Did:
-  One.got.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), One.got.seen(U.Ui.recv_act(VW.View.picked(u, o), o)))
+  One.got.k(N.Note.seen(U.Ui.threads(S.Mob.st(u))), One.got.seen(U.Ui.recv_act(VW.View.sheets(VW.View.picked(u, o), o), o)))
 
 def One.run(op: Op, +u: U.Ui) -> Did:
   match op:
