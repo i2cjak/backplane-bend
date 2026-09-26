@@ -53,7 +53,7 @@ function chunk(o) {
   }
   const c = o.c ?? 0;
   const color = `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${(o.a ?? 255) / 255})`;
-  return { fill, line, dots, r, color };
+  return { fill, line, dots, r, color, layer: o.l ?? 0 };
 }
 
 // what this connection holds: the chunks of the last plot, in its order
@@ -83,7 +83,7 @@ export function got(o) {
     const box = Array.isArray(o.box) && o.box.length === 4 ? o.box : [0, 0, 1, 1];
     plots.set(key, { chunks: all, box });
   }
-  if (view && view.key === key) view.show(plots.get(key));
+  if (view && view.key === key) { view.show(plots.get(key)); present(plots.get(key)); }
 }
 
 class View {
@@ -92,6 +92,7 @@ class View {
     this.bg = bg;
     this.key = "";
     this.plot = null;
+    this.off = 0;
     this.scale = 1; this.ox = 0; this.oy = 0;
     this.fitted = false;
     this.drag = null;
@@ -166,6 +167,7 @@ class View {
     g.lineCap = "round";
     g.lineJoin = "round";
     for (const k of p.chunks) {
+      if (Math.floor(this.off / 2 ** k.layer) % 2) continue; // a layer turned off
       g.fillStyle = k.color;
       g.strokeStyle = k.color;
       g.fill(k.fill);
@@ -179,11 +181,20 @@ class View {
 
 let view = null;
 
+// the Layers menu lists only the layers the plot has something on
+function present(p) {
+  const has = new Set(p && p.chunks ? p.chunks.map((c) => c.layer) : []);
+  for (const b of document.querySelectorAll(".layer-list [data-layer]")) b.hidden = has.size > 0 && !has.has(Number(b.dataset.layer));
+}
+
 // after each render: the canvas on the page (if any) shows the source its
 // data-key names, once the hub has sent it
 export function mount(canvas) {
   if (!canvas) { view = null; return; }
   if (!view || view.canvas !== canvas) view = new View(canvas, canvas.dataset.bg || "#0d0f12");
+  const off = Number(canvas.dataset.off || 0);
+  if (off !== view.off) { view.off = off; view.later(); }
+  present(view.plot);
   const key = canvas.dataset.key || "";
   if (key !== view.key) {
     view.key = key;

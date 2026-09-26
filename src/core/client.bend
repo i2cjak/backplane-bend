@@ -802,7 +802,7 @@ def Ui.actions() -> List<&2, String>:
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
    "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link",
-   "mech", "mech-part", "mech-3d", "mech-refresh", "mech-renders", "mech-render", "view-kind", "view-sheet"]
+   "mech", "mech-part", "mech-3d", "mech-refresh", "mech-renders", "mech-render", "view-kind", "view-sheet", "view-layer"]
 
 # Reading the client state
 # ------------------------
@@ -2826,12 +2826,21 @@ def Mpage.part.k(three: Bool, +u: Ui, +value: String) -> Ui:
     case False{}:
       Ui.view_put(u, "mech", value)
 
+# the web viewer's layers turned off, a bit per layer (as core/look.bend
+# numbers them) for the board and for the schematic apart
+def Solid.off.key(+u: Ui) -> String:
+  "@off." ++ Bool.pick(String, String.is_empty(Ui.view_get(u, "view.kind")), "board", Ui.view_get(u, "view.kind"))
+
+def Solid.off(+u: Ui) -> U32:
+  Maybe.default(&2, U32, U32.read(Ui.scratch(u, Solid.off.key(u))), 0)
+
 # "mech" opens Mech (the part in 3D), "mech-part" shows another part,
 # "mech-3d" a part in 3D, "mech-refresh" asks for the parts again,
 # "mech-renders" shows a part's pictures, "mech-render" asks the hub to
 # draw them, "view-kind" shows the project's own board, schematic or 3D
-# model (a web tab), and "view-sheet" a sheet of its schematic (its file;
-# "" the root)
+# model (a web tab), "view-sheet" a sheet of its schematic (its file; ""
+# the root), and "view-layer" turns a layer of the board or schematic on
+# or off (its index)
 def Mpage.act(i: Nat, +u: Ui, +value: String) -> Act:
   match i:
     case 0n:
@@ -2851,6 +2860,8 @@ def Mpage.act(i: Nat, +u: Ui, +value: String) -> Act:
       Act{Ui.view_put(u, value, ""), Nil{}}
     case 7n:
       Act{Ui.view_put(u, "schematic", value), Nil{}}
+    case 8n:
+      Act{Ui.scratch_set(u, Solid.off.key(u), U32.show(U32.xor(Solid.off(u), U32.shln(1, U32.to_nat(Maybe.default(&2, U32, U32.read(value), 31)))))), Nil{}}
     # (past the table: an action no one takes)
     case _:
       Act{u, Nil{}}
