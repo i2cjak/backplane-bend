@@ -1790,13 +1790,45 @@ def Start.fonts(+fq: Chan(L.Ty)) -> IO(Unit):
 
 # `--headless`: no window even with a display; the hub, the web client and
 # the tailnet listener run as they would without one, for the phones and
-# browsers that connect
-def Start.headless(xs: List<&2, String>) -> Bool:
+# browsers that connect. It goes to the background: the same program starts
+# again in a session of its own with `--foreground` (its output appended to
+# <home>/headless.log), this one says where and ends, and closing the
+# terminal leaves it running. `--headless --foreground` stays (a service's)
+def Start.has(xs: List<&2, String>, +flag: String) -> Bool:
   match xs:
     case Nil{}:
       False{}
     case +x <> t:
-      Bool.or(String.eq(x, "--headless"), Start.headless(t))
+      Bool.or(String.eq(x, flag), Start.has(t, flag))
+
+def Start.headless(+xs: List<&2, String>) -> Bool:
+  Start.has(xs, "--headless")
+
+# the value after `--home` (d without one)
+def Start.home(xs: List<&2, String>, +d: String) -> String:
+  match xs:
+    case +k <> +v <> +t:
+      Bool.pick(String, String.eq(k, "--home"), v, Start.home(v <> t, d))
+    case _:
+      d
+
+def Start.detach.sh() -> String:
+  "log=$1; shift; mkdir -p \"$(dirname \"$log\")\"; setsid \"$@\" --foreground >>\"$log\" 2>&1 </dev/null & echo $!"
+
+def Start.detached(r: P.Ran, +log: String) -> IO(Unit):
+  match r:
+    case P.Ran{0, +out}:
+      IO.print("Backplane runs in the background (pid " ++ String.trim(out) ++ "), its log in " ++ log ++ ". Stop it: kill " ++ String.trim(out))
+    case P.Ran{_, +out}:
+      IO.print_err("backplane: could not start in the background: " ++ out)
+
+def Start.detach(+xs: List<&2, String>) -> IO(Unit):
+  do IO<Unit>:
+    +home : String <- S.Env.get("HOME", "/tmp")
+    +exe : String <- H.Sys.exe_path()
+    +log : String = Start.home(xs, home ++ "/.backplane-bend") ++ "/headless.log"
+    r : P.Ran <- P.Proc.run("sh", List.append(&2, String, ["-c", Start.detach.sh(), "sh", log, exe], xs), "/")
+    Start.detached(r, log)
 
 def Start.args(xs: List<&2, String>) -> List<String>:
   match xs:
@@ -1814,9 +1846,8 @@ def Start.window(headless: Bool) -> IO(Result<&1, &1, U32 & String, Window>):
 
 # the window opens first and the fonts load beside the hub's start, so
 # the first frame waits only for the log
-def start(args: List<String>) -> IO(Unit):
+def Start.run(+xs: List<&2, String>) -> IO(Unit):
   do IO<Unit>:
-    +xs : List<&2, String> = S.Names.copy(args)
     +fq : Chan(L.Ty) <- Chan.new(L.Ty, 1)
     IO.spawn(Unit, Start.fonts(fq))
     r : Result<&1, &1, U32 & String, Window> <- Start.window(Start.headless(xs))
@@ -1826,6 +1857,19 @@ def start(args: List<String>) -> IO(Unit):
     +cfg : S.Cfg = S.Main.config(user, exe, Start.args(xs), b)
     +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
     S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq))
+
+def Start.pick(detach: Bool, +xs: List<&2, String>) -> IO(Unit):
+  match detach:
+    case True{}:
+      Start.detach(xs)
+    case False{}:
+      Start.run(xs)
+
+def Start.go(+xs: List<&2, String>) -> IO(Unit):
+  Start.pick(Bool.and(Start.headless(xs), Bool.not(Start.has(xs, "--foreground"))), xs)
+
+def start(args: List<String>) -> IO(Unit):
+  Start.go(S.Names.copy(args))
 
 # (`--plot KIND FILE` is the hub's own board reader, src/server/plot.bend)
 def main() -> IO(Unit):

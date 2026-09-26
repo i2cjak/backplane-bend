@@ -295,6 +295,11 @@ Term proc_spawn_run(Env e, Term* f, IoWork* w) {
       posix_spawn_file_actions_adddup2(&fa, sv[1], 2);
     }
     posix_spawn_file_actions_addclose(&fa, sv[0]);
+    // the child keeps only the copies on 0-2: left open, a process it puts
+    // in the background would hold the pipe, and the caller never sees EOF
+    if (sv[1] > 2) {
+      posix_spawn_file_actions_addclose(&fa, sv[1]);
+    }
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
     sigset_t def;

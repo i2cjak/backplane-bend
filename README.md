@@ -26,7 +26,7 @@ This installs into `~/.local/share/backplane` and links the binaries into `~/.lo
 - The installer checks the sha256 of what it downloads.
 - Backplane updates itself from GitHub releases. Set `BACKPLANE_NO_UPDATE=1` to turn that off.
 - `backplane` opens the window. Without a display it keeps serving the web client on `127.0.0.1:3787`.
-- `backplane --headless` does that on purpose, window or not: run it in the background (`nohup backplane --headless &`, or a service) and your devices connect over the tailnet. `backplane-serve` is the same without the window's code.
+- `backplane --headless` does that on purpose, window or not, in the background: it returns at once with its pid and log (`<home>/headless.log`), and your devices connect over the tailnet. `--headless --foreground` stays attached, for a service.
 
 Each release also carries an AppImage, a `.deb` (Debian, Ubuntu), a `PKGBUILD` for the AUR (`backplane-bend-bin`) and the Android app (`backplane-<version>-android.apk`). Those update through their package, not in place. `scripts/icons.sh` redraws the app icon from `assets/icon/`.
 
