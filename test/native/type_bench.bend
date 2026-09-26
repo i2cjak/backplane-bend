@@ -9,13 +9,18 @@ import ../../src/gfx/raster.bend as R
 import ../../src/gfx/tiles.bend as TI
 import ../../src/app/bots.bend as BV
 import ../../src/app/cats.bend as CA
+import ../../src/core/json.bend as J
+import ../../src/core/utf8.bend as U8
 
 # Typing in the window, timed: each key goes through the same steps as in
 # the app (the event, the timeline memo, layout, the tiles redrawn) with
 # no window. A made-up log: one long thread and 30 short ones, and four
-# bots (their cats move) in two rooms.
+# bots (their cats move) in two rooms; or a real event log with one of its
+# threads open. Also times a caret blink: the same frame, the clock moved
+# half a blink on.
 #   scripts/build-app.sh test/native/type_bench.bend build/type_bench
-#   build/type_bench
+#   build/type_bench [EVENTS THREAD [W H [PASSES]]]   ("" "" W H: the made-up log at W x H;
+#   the parts' x50 lines stay at 1400 x 900)
 
 def para(+i: Nat) -> String:
   "Message " ++ Nat.show(i) ++ ": the regulator's enable pin is pulled up through R12 to VBAT, so the output comes up before the MCU "
@@ -71,6 +76,11 @@ def Times.add(t: Times, +a: Nat, +b: Nat, +c: Nat, +d: Nat) -> Times:
     case Times{e, m, l, ti, +w, ea}:
       Times{Nat.add(e, a), Nat.add(m, b), Nat.add(l, c), Nat.add(ti, d), Bool.pick(Nat, Nat.is_gt(Nat.add(Nat.add(a, b), Nat.add(c, d)), w), Nat.add(Nat.add(a, b), Nat.add(c, d)), w),
         ea ++ " " ++ Nat.show(Nat.add(Nat.add(a, b), Nat.add(c, d)))}
+
+def Times.total(t: Times, +keys: Nat) -> String:
+  match t:
+    case Times{+e, +m, +l, +ti, _, _}:
+      Nat.show(Nat.div(Nat.add(Nat.add(e, m), Nat.add(l, ti)), keys))
 
 def Times.show(t: Times, +keys: Nat) -> String:
   match t:
@@ -257,13 +267,90 @@ def select(+ty: L.Ty, +cats: Map<&2, CA.CatF>, +k: Kept) -> String:
   +n3 = again(ty, cats, ev(n2, W.WButton{800, 380, 1, False{}}), kept_memo(k))
   N.Sel.text(n3)
 
+# a real log (an events.jsonl), as a client receives it
+def items(ls: List<&2, String>) -> List<&2, J.Json>:
+  match ls:
+    case Nil{}:
+      Nil{}
+    case l <> t:
+      Maybe.default(&2, J.Json, J.Json.parse(l), J.Null{}) <> items(t)
+
+def lines(r: U8.Lines & List<&2, String>) -> List<&2, String>:
+  (_, ls) = r
+  ls
+
+def real(bs: List<&2, U32>, +sel: String) -> U.Ui:
+  ui_sel(U.Ui.act(U.Ui.recv(U.Ui.init(1790180000n), J.Json.obj([J.KV{"t", J.Str{"log"}}, J.KV{"version", J.Str{"0.1.0"}},
+    J.KV{"items", J.Json.arr(items(lines(U8.Lines.feed(U8.Lines.new(), bs))))}])), "select", sel))
+
+def read.k(r: File & Result<&1, &1, U32 & String, List<&2, U32>>) -> IO(List<&2, U32>):
+  (f, res) = r
+  do IO<List<&2, U32>>:
+    File.close(f)
+    bs : List<&2, U32> <- IO.pass(List<&2, U32>, res)
+    return bs
+
+def read(+path: String) -> IO(List<&2, U32>):
+  do IO<List<&2, U32>>:
+    f : File <- IO.try(File, File.open(path, "r"))
+    r : File & Result<&1, &1, U32 & String, List<&2, U32>> <- File.read_bytes(f, 200000000)
+    read.k(r)
+
+def copy(xs: List<&1, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case x <> t:
+      x <> copy(t)
+
+def arg(+xs: List<&2, String>, +i: Nat) -> String:
+  Maybe.default(&2, String, List.head(&2, String, List.drop(&2, String, xs, i)), "")
+
+# the made-up log, or the real one named on the command line
+def state(none: Bool, +as: List<&2, String>) -> IO(U.Ui):
+  match none:
+    case True{}:
+      IO.pure(U.Ui, ui_sel(U.Ui.act(U.Ui.fold(log(1790000000n), U.Ui.init(1790000100n)), "select", "t0")))
+    case False{}:
+      IO.bind(List<&2, U32>, U.Ui, read(arg(as, 0n)), bs => IO.pure(U.Ui, real(bs, arg(as, 1n))))
+
+# caret blinks, timed: the clock moves half a blink on, and the frame is
+# made as in the app (prepare, memo, layout, tiles); nothing else changed
+def blink(+n: Nat, +ty: L.Ty, +cats: Map<&2, CA.CatF>, k: Kept, +acc: Nat) -> IO(Nat):
+  match n k:
+    case 0n _:
+      IO.pure(Nat, acc)
+    case 1n+j Kept{+n0, memo0, fr0}:
+      do IO<Nat>:
+        +t0 : Nat <- IO.now()
+        +n1 : N.Nui = prepared(n0, Nat.mul(1n+j, N.Blink.ms()))
+        +memo : L.TLMemo = L.Lay.memo(ty, n1, memo0)
+        +o : L.Out = BV.Bv.frame(ty, memo, cats, n1)
+        +tiles : TI.Tiles = TI.Frame.par(N.Nui.width(n1), N.Nui.height(n1), ops(o), Pix{T.Th.bg()}, fr0, 0)
+        +img : Image = TI.Tiles.image(tiles)
+        +t1 : Nat <- IO.now()
+        blink(j, ty, cats, Kept{with_hits(n1, hits(o), t1), memo, TI.FSome{N.Nui.width(n1), N.Nui.height(n1), tiles}}, Nat.add(acc, Nat.sub(t1, t0)))
+
+# the same keys typed again and again in one process, from the same first
+# frame: a long-lived window gets slower at the same work as it allocates
+# (bendlang/bend#1007), and this shows it (ms per key, every pass)
+def passes(+r: Nat, +i: Nat, +ty: L.Ty, +cats: Map<&2, CA.CatF>, +k: Kept, +acc: String) -> IO(String):
+  match r:
+    case 0n:
+      IO.pure(String, acc)
+    case 1n+q:
+      IO.bind(Times, String, key(text(), ty, cats, k, Times{0n, 0n, 0n, 0n, 0n, ""}),
+        t => passes(q, 1n+i, ty, cats, k, acc ++ " " ++ Times.total(t, String.length(text()))))
+
 def main() -> IO(Unit):
   do IO<Unit>:
+    args : List<String> <- IO.args()
+    +as : List<&2, String> = copy(args)
     +ty : L.Ty <- L.Ty.load()
     +a : Nat <- IO.now()
-    +u : U.Ui = ui_sel(U.Ui.act(U.Ui.fold(log(1790000000n), U.Ui.init(1790000100n)), "select", "t0"))
+    +u : U.Ui <- state(String.is_empty(arg(as, 0n)), as)
     +cats : Map<&2, CA.CatF> = BV.Bv.warm(u, CA.Cats.none(), 0n)
-    +k : Kept = warm(ty, cats, N.Nui.init(u, 1400, 900))
+    +k : Kept = warm(ty, cats, N.Nui.init(u, Maybe.default(&2, U32, U32.read(arg(as, 2n)), 1400), Maybe.default(&2, U32, U32.read(arg(as, 3n)), 900)))
     +b : Nat <- IO.now()
     IO.print("state and first frame: " ++ Nat.show(Nat.sub(b, a)) ++ " ms")
     parts(ty, cats, k)
@@ -271,4 +358,9 @@ def main() -> IO(Unit):
     t : Times <- key(text(), ty, cats, k, Times{0n, 0n, 0n, 0n, 0n, ""})
     IO.print(Times.show(t, String.length(text())))
     +ct : Nat <- tick(30n, ty, cats, k, 0n)
+    +reps : Nat = Maybe.default(&2, Nat, Nat.read(arg(as, 4n)), 0n)
+    ps : String <- passes(reps, 0n, ty, cats, k, "")
+    IO.print("ms per key, each pass of " ++ Nat.show(String.length(text())) ++ " keys:" ++ ps)
+    +bt : Nat <- blink(20n, ty, cats, k, 0n)
+    IO.print("caret blink frame: " ++ Nat.show(Nat.div(bt, 20n)) ++ "." ++ Nat.show(Nat.mod(Nat.div(Nat.mul(bt, 10n), 20n), 10n)) ++ " ms")
     IO.print("cat frame (4 cats move; pose, layout, tiles): " ++ Nat.show(Nat.div(ct, 30n)) ++ "." ++ Nat.show(Nat.mod(Nat.div(Nat.mul(ct, 10n), 30n), 10n)) ++ " ms")
