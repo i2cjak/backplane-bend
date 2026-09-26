@@ -79,6 +79,14 @@ def Tailnet.online(ms: List<&2, Machine>) -> List<&2, Machine>:
     case Machine{n, +ip, +on} <> t:
       Tailnet.online.k(Bool.and(on, Bool.not(String.is_empty(ip))), Machine{n, ip, on}, Tailnet.online(t))
 
+# the tailnet's MagicDNS domain ("box.tail1.ts.net." → "tail1.ts.net"):
+# every machine on it is named <host>.<domain>
+def Tailnet.domain.of(+dns: String) -> String:
+  String.join(List.drop(&2, String, String.split(Bool.pick(String, String.ends_with(dns, "."), String.take(dns, Nat.sub(String.length(dns), 1n)), dns), '.'), 1n), ".")
+
+def Tailnet.domain(+status: String) -> String:
+  Tailnet.domain.of(J.Json.get_str(J.Json.get_obj(Maybe.default(&2, J.Json, J.Json.parse(status), J.Null{}), "Self"), "DNSName", ""))
+
 def Tailnet.self.of(+p: J.Json) -> Machine:
   Machine{Tailnet.host(p), Tailnet.first_ip(J.Json.elems(J.Json.get_obj(p, "TailscaleIPs"))), True{}}
 

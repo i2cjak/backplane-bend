@@ -38,6 +38,16 @@ def cat(name: String) -> String:
 def page(u: U.Ui, origin: String) -> U.Ui:
   U.Ui.scratch_set(u, "@page", origin)
 
+# where a Connect goes: the other hub's page, carrying the bot to open
+# there (U.Far.opened's "@bot.want") in the address's fragment
+def visit(+u: U.Ui, +url: String) -> String:
+  Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@bot.want")), url ++ "/", url ++ "/#bot=" ++ U.Ui.scratch(u, "@bot.want"))
+
+# the page opened with "#bot=<name>" (decoded): that bot is shown once the
+# log has it
+def wanted(+u: U.Ui, +hash: String) -> U.Ui:
+  Bool.pick(U.Ui, String.starts_with(hash, "#bot="), U.Ui.scratch_set(u, "@bot.want", String.drop(hash, 5n)), u)
+
 def act(u: U.Ui, action: String, value: String) -> U.Act:
   U.Ui.act(u, action, value)
 

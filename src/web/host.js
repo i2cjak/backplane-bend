@@ -171,6 +171,11 @@ const cid = (() => {
 })();
 
 let ui = App.page(App.init(now(), cid), location.origin);
+// opened from another hub to show one of this machine's bots ("#bot=<name>")
+if (location.hash) {
+  try { ui = App.wanted(ui, decodeURIComponent(location.hash)); } catch {}
+  history.replaceState(null, "", location.pathname + location.search);
+}
 // drafts this browser kept (Keep commands), one key per thread
 const DRAFT = "backplane-draft:";
 for (let i = 0; i < localStorage.length; i += 1) {
@@ -227,7 +232,7 @@ function run(cmds) {
       later();
     } else if (c.$ === "Connect") {
       // another machine's hub serves its own page; "" is this one
-      if (c.url) location.href = c.url + "/";
+      if (c.url) location.href = App.visit(ui, c.url);
     } else if (c.$ === "Scroll") {
       scroll = true;
     } else if (c.$ === "Keep") {
