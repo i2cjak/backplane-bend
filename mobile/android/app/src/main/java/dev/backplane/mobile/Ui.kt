@@ -5,6 +5,10 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -72,6 +76,7 @@ import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -112,6 +117,10 @@ fun App(m: AppModel) {
         pairing -> {
             BackHandler { pairing = false }
             Hubs(m, s) { pairing = false }
+        }
+        s.thread != null && s.thread.viewer.open == "renders" && s.thread.viewer.mech != null -> {
+            BackHandler { m.act("view", "") }
+            MechScreen(m, s.thread.viewer, s.thread.viewer.mech)
         }
         s.thread != null && s.thread.viewer.open.isNotEmpty() -> {
             BackHandler { m.act("view", "") }
@@ -720,6 +729,8 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
     val f = m.plots.frame?.takeIf { it.key == v.layers }
     val mesh = m.plots.mesh?.takeIf { it.key == v.key }
     Box(Modifier.fillMaxSize().background(Color(0xFF000000.toInt() or v.bg))) {
+        // a part alone gets a surface of its own: nothing of a board is left on it
+        key(if (v.layers.isEmpty()) v.key else "") {
         AndroidView(factory = { PlotSurface(it) }, modifier = Modifier.fillMaxSize(), update = { s ->
             s.margin = v.margin
             s.zmin = v.zmin
@@ -730,13 +741,20 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
             s.renderer.top = v.top
             s.renderer.bottom = v.bottom
             s.renderer.orbit.fov = v.fov
-            s.setThree(v.open == "3d")
+            s.setThree(v.open == "3d" || v.open == "mech")
             if (f != null && f.none.isEmpty()) s.show(f, v.bg, v.slab, v.look)
             if (s.renderer.off != v.off) { s.renderer.off = v.off; s.requestRender() }
-            if (v.open == "3d") s.mesh(mesh)
+            if (v.open == "3d" || v.open == "mech") s.mesh(mesh)
             s.mark(v.picked)
         })
+        }
         when {
+            // Mech with no part to show: what the page says
+            v.open == "mech" && v.key.isEmpty() -> Text(v.mech?.say?.ifEmpty { null } ?: v.mech?.note ?: "", Modifier.align(Alignment.Center).padding(24.dp), color = Color.Gray)
+            // a part alone (from the Mechanical page) has no board plot under it
+            v.layers.isEmpty() && mesh == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+            v.layers.isEmpty() && mesh!!.none.isNotEmpty() -> Text(mesh.none, Modifier.align(Alignment.Center), color = Color.Gray)
+            v.layers.isEmpty() -> {}
             f == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
             f.none.isNotEmpty() -> Text(f.none, Modifier.align(Alignment.Center), color = Color.Gray)
             v.open == "3d" && mesh != null && mesh.none.isNotEmpty() ->
@@ -748,23 +766,77 @@ private fun PlotScreen(m: AppModel, v: Viewer) {
         }
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically) {
-            SingleChoiceSegmentedButtonRow(Modifier.widthIn(max = 300.dp)) {
+            SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
                 v.choices.forEachIndexed { i, c ->
                     SegmentedButton(selected = c.value == v.open, onClick = { m.act("view", c.value) },
-                        shape = SegmentedButtonDefaults.itemShape(i, v.choices.size)) { Text(c.label) }
+                        shape = SegmentedButtonDefaults.itemShape(i, v.choices.size), icon = {}) { Text(c.label, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
                 }
-            }
-            Spacer(Modifier.weight(1f))
-            // the viewer's own light or dark ground
-            IconButton(onClick = { m.act("vw-light") }) {
-                Icon(if (v.light) Icons.Filled.DarkMode else Icons.Filled.LightMode, if (v.light) "Dark ground" else "Light ground",
-                    tint = if (v.light) Color.Black else Color.White)
             }
             IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close", tint = if (v.light) Color.Black else Color.White) }
         }
         ViewerControls(m, v, f?.chunks?.map { it.layer }?.toSet() ?: emptySet(), Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 56.dp))
+        if (v.open == "mech") v.mech?.let { p -> MechBar(m, p, v.light, Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 108.dp)) }
         v.card?.let { c -> PlotCard(m, c, Modifier.align(Alignment.BottomCenter)) }
     }
+}
+
+// over a part in 3D: the thread's parts (a tap shows another) and Renders
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MechBar(m: AppModel, p: MechPage, light: Boolean, modifier: Modifier) {
+    val fg = if (light) Color.Black else Color.White
+    FlowRow(modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (c in p.parts) FilterChip(c.on, onClick = { m.act("mech-part", c.value) },
+            label = { Text(c.label, color = if (c.on) MaterialTheme.colorScheme.onSecondaryContainer else fg) })
+        OutlinedButton(onClick = { m.act("mech-renders", p.rel) }) { Text("Renders", color = fg) }
+    }
+}
+
+// The Mechanical page: the viewer's choices (Mech on), a chip per part,
+// Open in 3D and Refresh, then the part's renders (a tap opens one full
+// screen), and where to get FreeCAD when the hub has none
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun MechScreen(m: AppModel, v: Viewer, p: MechPage) {
+    var shown by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).statusBarsPadding().navigationBarsPadding()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            SingleChoiceSegmentedButtonRow(Modifier.weight(1f)) {
+                v.choices.forEachIndexed { i, c ->
+                    SegmentedButton(selected = c.value == v.open, onClick = { m.act("view", c.value) },
+                        shape = SegmentedButtonDefaults.itemShape(i, v.choices.size), icon = {}) { Text(c.label, maxLines = 1, style = MaterialTheme.typography.labelMedium) }
+                }
+            }
+            IconButton(onClick = { m.act("view", "") }) { Icon(Icons.Filled.Close, "Close") }
+        }
+        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (p.say.isNotEmpty()) Text(p.say, color = MaterialTheme.colorScheme.outline, modifier = Modifier.padding(top = 12.dp))
+            if (p.parts.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for (c in p.parts) FilterChip(c.on, onClick = { m.act("mech-part", c.value) }, label = { Text(c.label) })
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedButton(onClick = { m.act("mech-3d", p.path) }, enabled = p.path.isNotEmpty()) { Text("3D") }
+                    // the render job: queued on the hub, its pictures in when done
+                    Button(onClick = { m.act("mech-render", p.rel) }, enabled = !p.busy && p.rel.isNotEmpty()) {
+                        if (p.busy) CircularProgressIndicator(Modifier.size(16.dp).padding(end = 6.dp), strokeWidth = 2.dp)
+                        Text(p.render)
+                    }
+                    OutlinedButton(onClick = { m.act("mech-refresh") }) { Text("Refresh") }
+                }
+                if (p.err.isNotEmpty()) Text("Rendering failed: ${p.err}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+            }
+            if (p.empty.isNotEmpty()) Text(p.empty, color = MaterialTheme.colorScheme.outline)
+            for (s in p.shots) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(s.view, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline)
+                HubPicture(m, s.url, Modifier.fillMaxWidth()) { shown = it }
+            }
+            if (p.note.isNotEmpty()) Text(p.note, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.padding(bottom = 12.dp))
+        }
+    }
+    shown?.let { u -> Lightbox(u) { shown = null } }
 }
 
 // under the viewer's bar: the schematic's sheet, the layers shown, and
@@ -775,6 +847,10 @@ private fun ViewerControls(m: AppModel, v: Viewer, present: Set<Int>, modifier: 
     val layers = v.layerList.filter { it.layer in present }
     val fg = if (v.light) Color.Black else Color.White
     Row(modifier.padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        // the viewer's own light or dark ground
+        IconButton(onClick = { m.act("vw-light") }) {
+            Icon(if (v.light) Icons.Filled.DarkMode else Icons.Filled.LightMode, if (v.light) "Dark ground" else "Light ground", tint = fg)
+        }
         if (v.sheets.isNotEmpty()) Box {
             var open by remember { mutableStateOf(false) }
             OutlinedButton(onClick = { open = true }) {
@@ -800,7 +876,7 @@ private fun ViewerControls(m: AppModel, v: Viewer, present: Set<Int>, modifier: 
                     onClick = { m.act("view-layer", l.layer.toString()) })
             }
         }
-        if (v.open == "3d") FilterChip(v.parts, { m.act("view-parts") }, label = { Text("Parts", color = fg) },
+        if (v.open == "3d" && v.layers.isNotEmpty()) FilterChip(v.parts, { m.act("view-parts") }, label = { Text("Parts", color = fg) },
             leadingIcon = { if (v.parts) Icon(Icons.Filled.Check, null, tint = fg) })
     }
 }

@@ -282,6 +282,8 @@ class PlotStore {
                 return@execute
             }
             if (solid) {
+                // a note about the model (parts with no 3D model) is not a model
+                if (o["mesh"] == null) return@execute
                 val m = PlotMesh.decode(o)
                 main.post { if (gen == generation) mesh = MeshFrame(key, m, "", System.currentTimeMillis()) }
                 return@execute

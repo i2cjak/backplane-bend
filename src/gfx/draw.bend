@@ -94,6 +94,10 @@ def Snap.ppm(+img: Image, +w: U32, +h: U32) -> List<&2, U32>:
   List.append(&2, U32, Snap.ascii("P6\n" ++ U32.show(w) ++ " " ++ U32.show(h) ++ "\n255\n"),
     Snap.go(U32.to_nat((w * h : U32)), img, R.Frame.depth(w, h), w, Nil{}))
 
+# the frame's pixels as 8-bit RGB, row by row (a PNG's rows)
+def Snap.rgb(+img: Image, +w: U32, +h: U32) -> List<&2, U32>:
+  Snap.go(U32.to_nat((w * h : U32)), img, R.Frame.depth(w, h), w, Nil{})
+
 # Polygons
 # --------
 

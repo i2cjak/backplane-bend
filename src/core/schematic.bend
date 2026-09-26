@@ -187,12 +187,17 @@ def Sch.or.f(+v: F32, +d: F32) -> F32:
 def Sch.width(+x: S.Sx, +d: F32) -> F32:
   Sch.or.f(S.Sx.f(S.Sx.get(S.Sx.get(x, "stroke"), "width"), 0n), d)
 
-def Sch.fill.k(+t: String, +colored: Bool) -> Nat:
-  Bool.pick(Nat, String.eq(t, "outline"), 1n, Bool.pick(Nat, Bool.or(String.eq(t, "background"), Bool.or(String.eq(t, "color"), colored)), 2n, 0n))
+def Sch.fill.k(+t: String, +colored: Bool, +faint: Bool) -> Nat:
+  Bool.pick(Nat, String.eq(t, "outline"), 1n, Bool.pick(Nat, Bool.and(colored, faint), 0n,
+    Bool.pick(Nat, Bool.or(String.eq(t, "background"), Bool.or(String.eq(t, "color"), colored)), 2n, 0n)))
 
-# 0 no fill, 1 filled with the outline colour, 2 filled with the body colour
+# 0 no fill, 1 filled with the outline colour, 2 filled with the body
+# colour; a fill of its own colour that is nearly clear (a tint under a
+# quarter opaque, as a group's box often has) is left out, since the body
+# colour would paint it solid over what it groups
 def Sch.fill(+x: S.Sx) -> Nat:
-  Sch.fill.k(S.Sx.attr(S.Sx.get(x, "fill"), "type"), F32.is_gt(S.Sx.f(S.Sx.get(S.Sx.get(x, "fill"), "color"), 3n), 0.0))
+  Sch.fill.k(S.Sx.attr(S.Sx.get(x, "fill"), "type"), F32.is_gt(S.Sx.f(S.Sx.get(S.Sx.get(x, "fill"), "color"), 3n), 0.0),
+    F32.is_lt(S.Sx.f(S.Sx.get(S.Sx.get(x, "fill"), "color"), 3n), 0.25))
 
 # degrees to 0..360
 def Sch.deg(+d: F32) -> F32:

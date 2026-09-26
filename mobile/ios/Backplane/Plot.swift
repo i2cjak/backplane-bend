@@ -301,6 +301,8 @@ final class PlotStore {
                 }
                 return
             }
+            // a note about the model (parts with no 3D model) is not a model
+            if solid, o["mesh"] == nil { return }
             if solid {
                 let m = PlotMesh.decode(o)
                 DispatchQueue.main.async {

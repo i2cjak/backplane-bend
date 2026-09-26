@@ -59,6 +59,8 @@ import ./src/core/google.bend as GO
 import ./src/core/cat.bend as CAT
 import ./src/core/perf.bend as PF
 import ./src/core/prompt.bend as PM
+import ./src/core/mech.bend as MCH
+import ./src/core/png.bend as PNG
 import ./src/core/voice.bend as VO
 import ./src/core/once.bend as ON
 
@@ -1347,6 +1349,29 @@ law kicad_missing_said:
 # the agents are told when KiCad is not installed
 law kicad_missing_prompt:
   {String.starts_with(PM.Prompt.kicad("", False{}, "", "", False{}), "<kicad_runtime>KiCad is not installed") == True{} : Bool}
+
+# a part's render from a view goes to renders/ beside it, named by view
+law mech_render_path:
+  {MCH.Mech.render("mech/bracket.step", "iso") == "mech/renders/bracket.iso.png" : String}
+
+# a part lists the renders there are of it, and nothing else is a part
+law mech_part_renders:
+  {List.length(&2, MCH.MFile, MCH.Mech.part.shots.of(MCH.Mech.parts("1 9 mech/a.step\n2 9 mech/renders/a.iso.png\n3 9 mech/renders/a.top.png\n4 9 mech/notes.png"))) == 2n : Nat}
+
+# a render's image key carries its checksum, and names its file
+law mech_key_path:
+  {MCH.Mech.key.path("v:123:/p/mech/renders/a.iso.png") == "/p/mech/renders/a.iso.png" : String}
+
+# PNG chunks carry the standard CRC-32 (IEND's is AE426082)
+law png_crc_iend:
+  {PNG.Png.crc(PNG.Png.ascii("IEND")) == 2923585666 : U32}
+
+# without FreeCAD on the hub's machine, Settings and the agents say so
+law freecad_missing_said:
+  {U.FreeCAD.label(Map.new(&2, String)) == "FreeCAD: not found" : String}
+
+law freecad_missing_prompt:
+  {String.starts_with(PM.Prompt.mech.freecad(True{}, ""), "FreeCAD is not installed") == True{} : Bool}
 
 # how long a turn took, as its row says it
 law took_seconds:

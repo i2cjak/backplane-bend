@@ -897,6 +897,16 @@ def Nui.with_ui(n: Nui, u: U.Ui) -> Nui:
     case Nui{_, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}:
       Nui{u, w, h, mx, my, sd, sc, ca, fo, pa, hi, ms, vw}
 
+def Nui.sync.k(a: U.Act, n: Nui) -> Step:
+  match a:
+    case U.Act{u, cs}:
+      Step{Nui.with_ui(n, u), Nui.cmds(cs), True{}}
+
+# a message's state with what the client asks for after it (the
+# Mechanical page's parts, client.bend's Mpage.sync)
+def Nui.sync(+n: Nui) -> Step:
+  Nui.sync.k(U.Mpage.sync(U.Act{Nui.ui(n), Nil{}}), n)
+
 def Undo.put(+n: Nui, +w: String, v: String) -> Nui:
   Nui.with_ui(n, U.Ui.scratch_set(Nui.ui(n), Undo.key(n, w), v))
 
@@ -1038,7 +1048,7 @@ def Hear.k(text: Bool, +here: Bool, n: Nui, +o: J.Json) -> Step:
     case True{}:
       Hear.kept(Hear.to(here, Nui.recv(Hear.at(here, n), o)), J.Json.get_str(o, "thread", ""))
     case False{}:
-      Step{Nui.recv(n, o), Nil{}, True{}}
+      Nui.sync(Nui.recv(n, o))
 
 # a message from the hub
 def Nui.hear(+n: Nui, +o: J.Json) -> Step:
@@ -1579,17 +1589,18 @@ def Nui.prepare.k(open: Bool, +n: Nui) -> Nui:
 
 # a kind of view by name (View.kind_of reads it back)
 def View.name(+k: U32) -> String:
-  Bool.pick(String, U32.is_eq(k, 1), "schematic", Bool.pick(String, U32.is_eq(k, 2), "3d", Bool.pick(String, U32.is_eq(k, 3), "browser", Bool.pick(String, U32.is_eq(k, 4), "diff", "board"))))
+  Bool.pick(String, U32.is_eq(k, 1), "schematic", Bool.pick(String, U32.is_eq(k, 2), "3d", Bool.pick(String, U32.is_eq(k, 3), "browser", Bool.pick(String, U32.is_eq(k, 4), "diff", Bool.pick(String, U32.is_eq(k, 5), "mech", "board")))))
 
 # the kind of view for a requested file: named, else from its extension
 def View.kind_of(+kind: String, +path: String) -> U32:
+  Bool.pick(U32, String.eq(kind, "mech"), 5,
   Bool.pick(U32, String.eq(kind, "diff"), 4,
   Bool.pick(U32, String.eq(kind, "browser"), 3,
   Bool.pick(U32, String.eq(kind, "schematic"), 1,
     Bool.pick(U32, Bool.or(String.eq(kind, "3d"), String.eq(kind, "step")), 2,
       Bool.pick(U32, String.eq(kind, "board"), 0,
         Bool.pick(U32, String.ends_with(path, ".kicad_sch"), 1,
-          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0)))))))
+          Bool.pick(U32, Bool.or(String.ends_with(path, ".glb"), Bool.or(String.ends_with(path, ".step"), String.ends_with(path, ".stp"))), 2, 0))))))))
 
 def Vx.seen(x: V.Vx) -> String:
   match x:

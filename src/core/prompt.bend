@@ -109,6 +109,23 @@ def Prompt.runtime(harness: String, ss: List<&2, Skill>) -> String:
   ++ "<backplane_browser>Backplane hosts a web browser for you: the backplane MCP server's preview_* tools (preview_open, preview_navigate, preview_snapshot, preview_click, preview_type, preview_press, preview_scroll, preview_evaluate, preview_wait_for). The user watches it live in the app's Browser tab. Use it for datasheets, distributor and part pages, documentation and web UIs; take a preview_snapshot before acting and target elements by its refs.</backplane_browser>\n\n"
   ++ Prompt.kistack(ss)
 
+# Mechanical work: FreeCAD, run headless, for the modelling, and
+# Backplane's own renderer for the pictures. Parts live in the project's
+# mech/ folder, whose renders the Mechanical page shows
+def Prompt.mech.freecad(none: Bool, +fc: String) -> String:
+  match none:
+    case True{}:
+      "FreeCAD is not installed on this machine. When a task needs a part modelled, changed or exported, tell the user FreeCAD is missing and that they can install it from freecad.org/downloads or their package manager (Backplane finds `freecadcmd` on PATH, or set BACKPLANE_FREECAD to it); meanwhile you can still render and inspect existing STEP files."
+    case False{}:
+      "Model with FreeCAD, headless: `\"" ++ fc ++ "\" -c \"exec(open('mech/<part>.py').read())\"` runs a script with FreeCAD's Python modules (Part, PartDesign, Sketcher, Import, Mesh). Each part is one script in the project's `mech/` folder with its dimensions as named parameters at the top, in millimetres, Z up, the part's front facing -Y; it checks `shape.isValid()`, saves `mech/<part>.FCStd` and exports `mech/<part>.step` (`Part.export` or `Import.export`). An assembly is one more script that places the parts and exports one STEP."
+
+def Prompt.mech.loop(+render: String) -> String:
+  " Work in this loop, in as few steps as you can: 1. write or edit `mech/<part>.py`; 2. run it and read any error; 3. call the backplane MCP tool `viewer_show` with the STEP's path and kind `mech`: the user turns the part in 3D on their Mech page, which lists every part in `mech/` and draws renders when they ask. Rendering is optional: only when you need to see the result yourself, run `\"" ++ render ++ "\" --render mech/a.step mech/b.step` (several parts in one call), which writes small iso, front, top and right views to `mech/renders/<part>.<view>.png` in seconds (a large assembly's first time can take a minute while it is meshed, then it is cached), and look at the iso view first. If `--render` prints an error, tell the user instead of working around the renderer. Parts that already exist elsewhere in the project show on the page once their STEP is copied or exported into `mech/`. For a board in a fit check, `kicad-cli pcb export step --board-only` is enough unless component heights matter: the full board with parts is large and slow."
+
+def Prompt.mech(+fc: String, +render: String) -> String:
+  "<backplane_mechanical>For mechanical work (enclosures, brackets, mounts, fixtures, assemblies, fit checks) use FreeCAD and Backplane's renderer, not other CAD or plotting tools. "
+  ++ Prompt.mech.freecad(String.is_empty(fc), fc) ++ Prompt.mech.loop(render) ++ "</backplane_mechanical>"
+
 def Prompt.kicad.basics(+cli: String) -> String:
   "Use the selected KiCad CLI at `" ++ cli ++ "` for KiCad work. Check `\"" ++ cli ++ "\" --version` and subcommand `--help`. Export with `\"" ++ cli ++ "\" sch export` or `\"" ++ cli ++ "\" pcb export`; run checks with `\"" ++ cli ++ "\" sch erc` and `\"" ++ cli ++ "\" pcb drc`. Use the full path when invoking it, quoting paths for your shell."
 
