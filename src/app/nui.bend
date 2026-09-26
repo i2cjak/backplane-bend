@@ -530,11 +530,16 @@ def Nui.resize(n: Nui, +w: U32, +h: U32) -> Step:
 
 # Hover
 # -----
-# The clickable region under the pointer lights up, fading in over
-# Hover.ms(); "hover.at" is "0" until the next frame stamps its start.
+# The clickable region under the pointer lights up: half lit in the very
+# next frame, fully lit Hover.ms() later; "hover.at" is "0" until the
+# next frame stamps its start.
 
 def Hover.ms() -> Nat:
-  120n
+  60n
+
+# how lit the first frame is (0..255)
+def Hover.floor() -> Nat:
+  128n
 
 def Hover.key(m: Maybe<&2, Hit>) -> String:
   match m:
@@ -544,7 +549,8 @@ def Hover.key(m: Maybe<&2, Hit>) -> String:
       ""
 
 def Hover.alpha.k(+at: Nat, +ms: Nat) -> U32:
-  Bool.pick(U32, Nat.is_ge(ms, Nat.add(at, Hover.ms())), 255, U32.from_nat(Nat.div(Nat.mul(Nat.sub(ms, at), 255n), Hover.ms())))
+  Bool.pick(U32, Nat.is_ge(ms, Nat.add(at, Hover.ms())), 255,
+    U32.from_nat(Nat.add(Hover.floor(), Nat.div(Nat.mul(Nat.sub(ms, at), Nat.sub(255n, Hover.floor())), Hover.ms()))))
 
 def Nui.moved.k(n: Nui, +x: U32, +y: U32) -> Nui:
   match n:

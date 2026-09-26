@@ -184,6 +184,7 @@ export function levelOf(rms: number): number {
 }
 
 const LEVEL_MS = 250;
+const LABEL_WAIT_MS = 150; // how long "ready" waits for the microphone's name
 const NO_AUDIO_MS = 3000;
 const SILENT_MS = 4000;
 
@@ -212,32 +213,48 @@ async function live(a: Args) {
 
   const listing = a.source === "stdin" ? Promise.resolve(undefined) : listDevices().catch(() => undefined);
   let finishing = false;
-  let rt: Realtime;
-  try {
-    rt = await Realtime.connect(o, {
-      delta: (item, text) => emit({ event: "delta", item, text }),
-      done: (item, text) => emit({ event: "done", item, text }),
-      error: (m) => error(m),
-      closed: () => {
-        if (!finishing) {
-          error("the connection to OpenAI closed");
-          stop();
-        }
-      },
-    });
-  } catch (e) {
-    fail(msg(e));
-  }
+
+  // The recorder and the OpenAI session open at once: audio heard before
+  // the session is up waits in `queued` and goes the moment it opens, so
+  // recording starts (and "ready" goes out) without waiting on the network.
+  let rt: Realtime | undefined;
+  const queued: Action[] = [];
+  const send = (acts: Action[]) => {
+    for (const x of acts) {
+      if ("append" in x) rt!.append(x.append);
+      else if ("commit" in x) rt!.commit();
+      else rt!.clear();
+    }
+  };
+  const apply = (acts: Action[]) => {
+    if (rt) send(acts);
+    else queued.push(...acts);
+  };
+  const connecting = Realtime.connect(o, {
+    delta: (item, text) => emit({ event: "delta", item, text }),
+    done: (item, text) => emit({ event: "done", item, text }),
+    error: (m) => error(m),
+    closed: () => {
+      if (!finishing) {
+        error("the connection to OpenAI closed");
+        stop();
+      }
+    },
+  }).then(
+    (r) => {
+      rt = r;
+      send(queued.splice(0));
+      return r;
+    },
+    (e) => {
+      error(msg(e));
+      stop();
+      return undefined;
+    },
+  );
 
   const seg = new Segmenter();
   const re = new Rechunker(CHUNK);
-  const apply = (acts: Action[]) => {
-    for (const x of acts) {
-      if ("append" in x) rt.append(x.append);
-      else if ("commit" in x) rt.commit();
-      else rt.clear();
-    }
-  };
   // the level meter and the no-audio / silent hints
   let bytes = 0;
   let peak = 0;
@@ -265,11 +282,23 @@ async function live(a: Args) {
     const src = await Promise.race([opening, stopped]);
     if (src === "stop") opening.then((s) => s.kill(), () => {});
     else {
-      // the device's name is a nicety: never hold the session up for it
-      const devs = await Promise.race([listing, Bun.sleep(1000).then(() => undefined)]);
-      const device = a.device || devs?.default || "";
-      const label = devs?.devices.find((d) => d.name === device)?.label ?? "";
-      emit({ event: "ready", recorder: src.name, device, label });
+      // the device's name is a nicety: "ready" goes now with what is known,
+      // and again with the name if the listing comes in a little later
+      let devs: Awaited<typeof listing>;
+      let listed = false;
+      listing.then((d) => ((devs = d), (listed = true)));
+      await Promise.race([listing, Bun.sleep(LABEL_WAIT_MS)]);
+      const ready = () => {
+        const device = a.device || devs?.default || "";
+        const label = devs?.devices.find((d) => d.name === device)?.label ?? "";
+        emit({ event: "ready", recorder: src.name, device, label });
+      };
+      ready();
+      if (!listed) {
+        listing.then(() => {
+          if (!stopping && !hints.size && (devs?.default || devs?.devices.length)) ready();
+        });
+      }
       const t0 = Date.now();
       const meter = setInterval(() => {
         if (stopping) return clearInterval(meter);
@@ -307,8 +336,10 @@ async function live(a: Args) {
   finishing = true;
   for (const c of re.rest()) apply(seg.push(c));
   apply(seg.flush());
-  if (!(await rt.waitAll(WAIT_MS))) log("gave up waiting for transcripts");
-  rt.close();
+  const live = await connecting;
+  if (!live) end();
+  if (!(await live.waitAll(WAIT_MS))) log("gave up waiting for transcripts");
+  live.close();
   end();
 }
 

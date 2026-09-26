@@ -310,12 +310,21 @@ test("live with no recorder is an error event", async () => {
   expect(r.events[0].error).toContain("no recorder");
 });
 
-test("a bad key is a 401 error event", async () => {
+test("a bad key is a 401 error event (recording starts before the session opens)", async () => {
   const r = run(["live", "--source", "stdin"], { OPENAI_API_KEY: "bad" });
   r.proc.stdin.end();
   expect(await r.done).toBe(1);
-  expect(r.events.map((e) => e.event)).toEqual(["error", "end"]);
-  expect(r.events[0].error).toContain("401");
+  const evs = r.events.map((e) => e.event);
+  expect(evs.filter((e) => e === "error").length).toBe(1);
+  expect(evs[evs.length - 1]).toBe("end");
+  expect(r.events.find((e) => e.event === "error")!.error).toContain("401");
+});
+
+test("live: ready goes out before the OpenAI session opens", async () => {
+  const r = run(["live", "--source", "stdin"], { OPENAI_BASE_URL: "http://10.255.255.1:9/v1" });
+  expect(await r.next("ready")).toMatchObject({ event: "ready", recorder: "stdin" });
+  r.proc.stdin.end();
+  r.proc.kill();
 });
 
 test("no key is an error event; --key-file wins over the environment", async () => {
