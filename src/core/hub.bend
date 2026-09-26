@@ -400,10 +400,10 @@ def Device.register(+now: Nat, +client: U32, +id: String, +p: J.Json) -> Step:
 # ------------------------------------------------------------
 
 # folders for the project picker (listing, creating, creating as a
-# project); the server answers. project.create is the server's own, with
-# a path it has resolved
+# project, finding projects on disk); the server answers. project.create
+# is the server's own, with a path it has resolved
 def Hub.methods.fs() -> List<&2, String>:
-  ["fs.list", "fs.mkdir", "project.new", "project.create"]
+  ["fs.list", "fs.mkdir", "project.new", "project.create", "fs.find"]
 
 # sidebar and navigation
 def Hub.methods.nav() -> List<&2, String>:
@@ -922,6 +922,8 @@ def Hub.fs(i: Nat, +s: M.State, +now: Nat, +client: U32, +id: String, +p: J.Json
       Step.outs([Fs{client, id, "new", J.Json.get_str(p, "path", "")}])
     case 3n:
       Hub.project_add(s, now, client, id, p)
+    case 4n:
+      Step.outs([Fs{client, id, "find", ""}])
     case _:
       Hub.nav(C.Codec.pos(Hub.methods.nav(), m), s, now, client, id, p, m)
 

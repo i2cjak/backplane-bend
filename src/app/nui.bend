@@ -1429,9 +1429,10 @@ def Pal.act(mention: Bool, +n: Nui, +a: String, +v: String) -> Step:
 
 # Project picker
 # --------------
-# Open lists where it was last; the client fetches folders (fs.list) and
-# ranks them. Enter runs the selected row, Tab opens the selected folder,
-# Backspace on an empty filter goes up.
+# Opens on the projects; the client ranks them and the folders (fs.list).
+# Enter runs the selected row, Tab opens the selected folder, Backspace on
+# an empty filter goes up a folder, Esc goes back from the folders to the
+# projects.
 
 def Pick.open(+n: Nui) -> Step:
   Nui.focus.step(Nui.act(n, "proj-open", ""), "proj")
@@ -1447,24 +1448,19 @@ def Pick.typed(e: Ed, +n: Nui) -> Step:
     case Ed{+t, _, _, _, _, _, _}:
       Step{Nui.with_ui(n, U.Proj.set(Nui.ui(n), t, 0n)), Nil{}, True{}}
 
-# adding closes the picker; browsing and creating keep it open
-def Pick.run.k(i: Nat, +n: Nui, +v: String) -> Step:
-  match i:
-    case 0n:
-      Nui.act(n, "proj-add", v)
-    case 1n:
-      Nui.act(n, "proj-cd", v)
-    case 2n:
-      Nui.act(n, "proj-mkdir", v)
-    case 3n:
-      Nui.act(n, "proj-new", v)
-    case _:
+# a row runs its own action (a row with none does nothing): going to or
+# adding a project closes the picker; browsing and creating keep it open
+def Pick.run.k(known: Bool, +n: Nui, +a: String, +v: String) -> Step:
+  match known:
+    case True{}:
+      Nui.act(n, a, v)
+    case False{}:
       Step{n, Nil{}, False{}}
 
 def Pick.run(it: U.PItem, +n: Nui) -> Step:
   match it:
     case U.PItem{_, +a, +v}:
-      Pick.run.k(Nui.pos(["proj-add", "proj-cd", "proj-mkdir", "proj-new"], a, 0n), n, v)
+      Pick.run.k(Nat.is_lt(Nui.pos(U.Proj.acts(), a, 0n), List.length(&2, String, U.Proj.acts())), n, a, v)
 
 def Pick.at(+n: Nui) -> U.PItem:
   U.Palette.at(U.Proj.items(Nui.ui(n)), U.Proj.index(Nui.ui(n)))
@@ -1475,10 +1471,18 @@ def Pick.tab.k(it: U.PItem, +n: Nui) -> Step:
     case U.PItem{_, +a, +v}:
       Bool.pick(Step, String.eq(a, "proj-cd"), Nui.act(n, "proj-cd", v), Step{n, Nil{}, False{}})
 
+# Esc leaves the folders for the projects, and closes the projects
+def Pick.esc(dir: Bool, +n: Nui) -> Step:
+  match dir:
+    case True{}:
+      Nui.act(n, "proj-back", "")
+    case False{}:
+      Pick.close(n)
+
 def Pick.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, tab: Bool, up_dir: Bool, +n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   match esc enter up down tab up_dir:
     case True{} _ _ _ _ _:
-      Pick.close(n)
+      Pick.esc(U.Proj.browsing(Nui.ui(n)), n)
     case _ True{} _ _ _ _:
       Pick.run(Pick.at(n), n)
     case _ _ True{} _ _ _:
@@ -1494,7 +1498,7 @@ def Pick.key.k(esc: Bool, enter: Bool, up: Bool, down: Bool, tab: Bool, up_dir: 
 
 def Pick.key(+n: Nui, +code: U32, +text: U32, +mods: U32) -> Step:
   Pick.key.k(U32.is_eq(code, Key.escape()), Bool.or(U32.is_eq(code, Key.enter()), U32.is_eq(code, Key.kp_enter())), U32.is_eq(code, 65362), U32.is_eq(code, 65364),
-    U32.is_eq(code, Key.tab()), Bool.and(U32.is_eq(code, Key.backspace()), String.is_empty(U.Proj.query(Nui.ui(n)))), n, code, text, mods)
+    U32.is_eq(code, Key.tab()), Bool.and(Bool.and(U32.is_eq(code, Key.backspace()), String.is_empty(U.Proj.query(Nui.ui(n)))), U.Proj.browsing(Nui.ui(n))), n, code, text, mods)
 
 def Pick.click(+n: Nui, +v: String) -> Step:
   Pick.run(U.Palette.at(U.Proj.items(Nui.ui(n)), Maybe.default(&2, Nat, Nat.read(v), 0n)), n)

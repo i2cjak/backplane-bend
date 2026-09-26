@@ -2,13 +2,15 @@ import Base
 import ../core/json.bend as J
 import ../core/client.bend as U
 
-# The project picker on a phone: one path field, ~/ when it opens. The
-# text up to its last / is the folder listed (the hub resolves ~, and
-# relative paths under home); the rest filters that folder's subfolders.
-# A tapped folder fills in its path. Listing, adding and creating are
-# core's (U.Proj); the field is "@mpick" in the scratch, the folder last
-# asked for "@mpick.asked", home (learned from the first listing of ~/)
-# the info "proj.home".
+# The project picker on a phone: one field, empty when it opens, over the
+# projects (core's U.Proj.list: the hub's own, and those it once had or
+# found on disk), which the field filters. A path (~/..., /...) browses
+# instead: the text up to its last / is the folder listed (the hub
+# resolves ~), the rest filters that folder's subfolders. A tapped folder
+# fills in its path. Listing, adding and creating are core's (U.Proj);
+# the field is "@mpick" in the scratch, the folder last asked for
+# "@mpick.asked", home (learned from the first listing of ~/) the info
+# "proj.home".
 
 def MPick.split.k(+ps: List<&2, String>, +text: String) -> String:
   Bool.pick(String, Nat.is_le(List.length(&2, String, ps), 1n), "~/",
@@ -52,9 +54,15 @@ def MPick.list.k(same: Bool, +u: U.Ui, +dir: String) -> U.Act:
 def MPick.type(+u: U.Ui, +text: String) -> U.Act:
   MPick.list.k(String.eq(MPick.dir(text), U.Ui.scratch(u, "@mpick.asked")), U.Ui.scratch_set(u, "@mpick", text), MPick.dir(text))
 
-# opens at home, listed afresh
+def MPick.blank(a: U.Act) -> U.Act:
+  match a:
+    case U.Act{u, cs}:
+      U.Act{U.Ui.scratch_set(u, "@mpick", ""), cs}
+
+# opens on the projects (asking the hub which it finds on disk), home
+# listed afresh behind them
 def MPick.open(+u: U.Ui) -> U.Act:
-  MPick.type(U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.flag_on(U.Proj.reset(u, ""), "proj"), "@mpick.asked", ""), "@mpick.follow", ""), "~/")
+  U.Proj.find(MPick.blank(MPick.type(U.Ui.scratch_set(U.Ui.scratch_set(U.Ui.flag_on(U.Proj.mode(u, ""), "proj"), "@mpick.asked", ""), "@mpick.follow", ""), "~/")))
 
 # a new folder; the field follows into it once the hub has made it
 def MPick.mkdir(+u: U.Ui, +path: String) -> U.Act:
@@ -127,16 +135,49 @@ def MPick.items.k(none: Bool, +u: U.Ui, +q: String) -> List<&2, J.Json>:
     case False{}:
       MPick.items.q(String.is_empty(q), u, U.Ui.info(u, "proj.home"), q, U.Proj.dir(u), U.Proj.entries(u))
 
-# what the picker offers. No filter: add the listed folder (once), its
-# parent, its subfolders. A filter: matching subfolders best first, then
-# creating the typed name (only when no folder has it), then adding
-def MPick.items(+u: U.Ui) -> List<&2, J.Json>:
+# the folders. No filter: add the listed folder (once), its parent, its
+# subfolders. A filter: matching subfolders best first, then creating the
+# typed name (only when no folder has it), then adding
+def MPick.folders(+u: U.Ui) -> List<&2, J.Json>:
   MPick.items.k(Bool.or(String.is_empty(U.Proj.dir(u)), Bool.not(String.is_empty(U.Ui.info(u, "proj.err")))), u, MPick.filter(U.Ui.scratch(u, "@mpick")))
+
+def MPick.proj.rows(ps: List<&2, U.PItem>) -> List<&2, J.Json>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case U.PItem{l, +a, v} <> t:
+      MPick.row(l, a, v, Bool.pick(String, String.eq(a, "proj-pick"), "dir", "add")) <> MPick.proj.rows(t)
+
+def MPick.browse() -> J.Json:
+  MPick.row("Add a project from a folder", "picker-type", "~/", "dir")
+
+def MPick.projects.k(empty: Bool, +u: U.Ui, +q: String) -> List<&2, J.Json>:
+  match empty:
+    case True{}:
+      MPick.browse() <> MPick.proj.rows(U.Proj.list(u, q))
+    case False{}:
+      List.append(&2, J.Json, MPick.proj.rows(U.Proj.list(u, q)), [MPick.browse()])
+
+def MPick.items.m(path: Bool, +u: U.Ui, +text: String) -> List<&2, J.Json>:
+  match path:
+    case True{}:
+      MPick.folders(u)
+    case False{}:
+      MPick.projects.k(String.is_empty(String.trim(text)), u, String.trim(text))
+
+# a field that starts a path browses folders
+def MPick.is_path(+text: String) -> Bool:
+  Bool.or(String.starts_with(text, "~"), String.starts_with(text, "/"))
+
+# what the picker offers: the projects (adding from a folder first, or
+# last under a filter), or for a path the folders (MPick.folders)
+def MPick.items(+u: U.Ui) -> List<&2, J.Json>:
+  MPick.items.m(MPick.is_path(U.Ui.scratch(u, "@mpick")), u, U.Ui.scratch(u, "@mpick"))
 
 def MPick.json.k(open: Bool, +u: U.Ui) -> J.Json:
   match open:
     case True{}:
-      J.Json.obj([J.KV{"text", J.Json.str(U.Ui.scratch(u, "@mpick"))}, J.KV{"hint", J.Json.str("~/path, or a name to filter or create")},
+      J.Json.obj([J.KV{"text", J.Json.str(U.Ui.scratch(u, "@mpick"))}, J.KV{"hint", J.Json.str(Bool.pick(String, MPick.is_path(U.Ui.scratch(u, "@mpick")), "~/path, or a name to filter or create", "A project, or ~/path to add a folder"))},
         J.KV{"error", J.Json.str(U.Ui.info(u, "proj.err"))}, J.KV{"items", J.Json.arr(MPick.items(u))}])
     case False{}:
       J.Null{}

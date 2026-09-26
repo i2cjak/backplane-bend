@@ -284,7 +284,11 @@ button.chip:hover { border-color: var(--bad); color: var(--bad); }
 .picker input:focus { outline: none; border-color: var(--accent); }
 .picker .perr { padding: 0 14px 6px; color: var(--bad); font-size: 12px; }
 .prows { overflow-y: auto; border-top: 1px solid var(--line); padding: 4px 0; }
-.prow { display: block; width: 100%; text-align: left; padding: 6px 14px; background: none; border: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prow { display: flex; gap: 12px; width: 100%; text-align: left; padding: 6px 14px; background: none; border: 0; white-space: nowrap; }
+.prow .pl { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.prow .pd { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; color: var(--faint, var(--dim)); font-size: 12px; }
+.prow .pd:empty { display: none; }
+.picker .pback { background: none; border: 1px solid var(--line); padding: 0 6px; margin-right: 8px; color: var(--dim); font-size: 12px; }
 .prow:hover, .prow.sel { background: var(--sel, rgba(255,255,255,.06)); }
 .prow.act { color: var(--accent); }
 .prow.off { color: var(--faint, var(--dim)); cursor: default; }
