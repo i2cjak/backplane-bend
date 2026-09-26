@@ -2658,3 +2658,30 @@ law hubs_bots_shown:
   for +hs: List<&2, Hb.Hub>
   for +many: Bool
   {Hb.Hubs.bots(ss, hs, many) == ON.Once.vals(J.Json, Hb.Hubs.bots.keyed(ss, hs, many)) : List<&2, J.Json>}
+
+# a bot's answer goes back only to a person who wrote from a linked machine:
+# never to a bot there, never for a room post
+law reply_peer_person:
+  {BHS.Reply.peer("[message from person@desktop]\nhey") == "desktop" : String}
+
+law reply_peer_bot:
+  {BHS.Reply.peer("[message from Bub@desktop]\nhey") == "" : String}
+
+law reply_peer_room:
+  {BHS.Reply.peer("[message from person@desktop in #staff]\nhey") == "" : String}
+
+# the answer sent back is the turn's newest, and the turn is the one the
+# thread's newest user message started (another thread's entries are skipped)
+law reply_said_newest:
+  {BHS.Said.of([M.Msg{"3", "t", M.Assistant{}, "second", 3n}, M.Msg{"x", "u", M.Assistant{}, "other", 3n},
+    M.Msg{"2", "t", M.Assistant{}, "first", 2n}, M.Msg{"1", "t", M.User{}, "[message from person@desktop]\nhey", 1n},
+    M.Msg{"0", "t", M.Assistant{}, "old", 0n}], "t")
+    == BHS.Said{"second", "[message from person@desktop]\nhey"} : BHS.Said}
+
+# an answer from a bot elsewhere to the person here wakes no one
+law reply_person_wakes_none:
+  for +s: M.State
+  for +now: Nat
+  for +from: String
+  for +text: String
+  {H.Step.outs_of(BHS.Bots.incoming.person(s, now, from, text)) == Nil{} : List<&2, H.Out>}
