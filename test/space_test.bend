@@ -6,6 +6,9 @@ import ../src/web/dom.bend as D
 import ../src/web/space.bend as WS
 import ../src/mobile/space.bend as MS
 
+def yes(b: Bool) -> String:
+  Bool.pick(String, b, "yes", "no")
+
 def rt(+s: String) -> String:
   SP.Space.show(SP.Space.read(s))
 
@@ -148,6 +151,15 @@ def main() -> IO(Unit):
     C.Check.str("message", SP.Space.message("ship", ""), "[space] ship")
     C.Check.str("message value", SP.Space.message("note", "hello there"), "[space] note: hello there")
     C.Check.str("empty", SP.Space.show(SP.Space.empty("Mochi")), "{\"title\":\"Mochi\",\"blocks\":[{\"type\":\"text\",\"text\":\"Mochi hasn't built a space yet.\"},{\"type\":\"text\",\"text\":\"Ask it to make one: a dashboard of what it watches, a checklist, buttons for what you ask it often.\"}]}")
+    C.Check.str("link button", String.join(SP.Space.link("space:ship"), "|"), "ship")
+    C.Check.str("link form", String.join(SP.Space.link("space:note?value=hello+there%21"), "|"), "note|hello there!")
+    C.Check.str("link form empty", String.join(SP.Space.link("space:note?value="), "|"), "note")
+    C.Check.str("link encoded action", String.join(SP.Space.link("space:deploy%20now"), "|"), "deploy now")
+    C.Check.str("link no action", Nat.show(List.length(&2, String, SP.Space.link("space:?value=x"))), "0")
+    C.Check.str("link web", Nat.show(List.length(&2, String, SP.Space.link("https://example.com/?value=x"))), "0")
+    C.Check.str("link other field", String.join(SP.Space.link("space:pick?x=1&value=b"), "|"), "pick|b")
+    C.Check.str("page locked", yes(String.starts_with(SP.Space.page("<p>hi</p>"), SP.Space.page.head())), "yes")
+    C.Check.str("page policy", yes(String.contains(SP.Space.page.head(), "script-src 'none'")), "yes")
     C.Check.str("web actions", web(), "[kit|ship]click:space {kit|note}{kit|note}click:space-input [kit|go]click:space ")
     C.Check.str("phone sends", unsep(J.Json.show(MS.MSpace.json(SP.Space.read("{\"title\":\"t\",\"blocks\":[{\"type\":\"row\",\"blocks\":[{\"type\":\"button\",\"label\":\"Go\",\"action\":\"go\"}]},{\"type\":\"input\",\"action\":\"note\"},{\"type\":\"divider\"}]}"), "kit"))),
       "{\"bot\":\"kit\",\"title\":\"t\",\"blocks\":[{\"type\":\"row\",\"blocks\":[{\"send\":\"kit\\u001fgo\",\"type\":\"button\",\"label\":\"Go\",\"action\":\"go\"}]},{\"send\":\"kit\\u001fnote\",\"type\":\"input\",\"label\":\"\",\"action\":\"note\",\"placeholder\":\"\"},{\"type\":\"divider\"}]}")

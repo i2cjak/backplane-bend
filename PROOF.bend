@@ -4604,6 +4604,13 @@ def Laws.space_progress_max(p):
 
 def Laws.space_message_prefix(action, value):
   starts_with_empty(SPC.Sp.msg.k(String.is_empty(value), action, value))
+
+def Laws.space_page_locked(html):
+  starts_with_empty(html)
+
+def Laws.space_link_only_ours(u, h):
+  %Equal.sym(Bool, String.starts_with(u, "space:"), False{}, h) : {SPC.Sp.link.k(_, u) == Nil{} : List<&2, String>}
+  {==}
 # Google laws
 # -----------
 

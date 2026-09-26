@@ -23,6 +23,9 @@ def log(cs: List<&2, M.Change>) -> J.Json:
 def spec() -> String:
   "{\"title\":\"Desk\",\"blocks\":[{\"type\":\"stat\",\"label\":\"Mail\",\"value\":\"3\"},{\"type\":\"button\",\"label\":\"Go\",\"action\":\"go\"}]}"
 
+def changes(cs: List<&2, M.Change>) -> J.Json:
+  J.Json.obj([J.KV{"t", J.Json.str("changes")}, J.KV{"items", J.Json.arr(items(cs))}])
+
 def two() -> H.Hubs:
   H.Hubs.after(H.Hubs.recv(
     H.Hubs.after(H.Hubs.recv(H.Hubs.set(H.Hubs.init(0n, "c"), ["lap:3787", "box:3787"]), "lap:3787",
@@ -58,6 +61,13 @@ def shown() -> H.Hubs:
 
 def tab(+t: String) -> J.Json:
   bot(go(shown(), "bot-tab", t))
+
+# the bot shown, after it wrote a page
+def paged() -> H.Hubs:
+  go(H.Hubs.after(H.Hubs.recv(go(shown(), "bot-tab", "space"), "box:3787", changes([M.SpacePageSet{"b1", "<h1>Desk</h1>", 170n}]))), "bot-tab", "space")
+
+def page() -> J.Json:
+  J.Json.get_obj(bot(paged()), "page")
 
 def cmds(cs: List<&2, H.HCmd>) -> String:
   match cs:
@@ -108,6 +118,11 @@ def main() -> IO(Unit):
     C.Check.str("settings", J.Json.get_str(J.Json.get_obj(tab("settings"), "settings"), "persona", ""), "helps")
     C.Check.str("space values untouched", strs(J.Json.elems(J.Json.get_obj(J.Json.get_obj(tab("space"), "space"), "blocks")), "value"), "3;;")
     C.Check.str("space sends", strs(J.Json.elems(J.Json.get_obj(J.Json.get_obj(tab("space"), "space"), "blocks")), "send"), ";b1\u{1f}go;")
+    C.Check.str("no page, blocks", J.Json.show(J.Json.get_obj(tab("space"), "page")), "null")
+    C.Check.str("a page", J.Json.get_str(page(), "url", "") ++ " " ++ J.Json.get_str(page(), "n", "") ++ " " ++ J.Json.get_str(page(), "bot", ""), "/bots/b1/space.html 170 b1")
+    C.Check.str("a page, no blocks", J.Json.show(J.Json.get_obj(bot(paged()), "space")), "null")
+    C.Check.str("a space link goes to the hub in focus", cmds(H.Hubs.cmds(H.Hubs.act(paged(), "space-link", "b1\u{1f}space:go"))), "send@box:3787 ")
+    C.Check.str("a web link sends nothing", cmds(H.Hubs.cmds(H.Hubs.act(paged(), "space-link", "b1\u{1f}https://example.com"))), "")
     C.Check.str("browser url", J.Json.get_str(J.Json.get_obj(tab("browser"), "browser"), "url", ""), "/bots/b1/screen.jpg")
     C.Check.str("no frame yet", J.Json.get_str(J.Json.get_obj(tab("browser"), "browser"), "n", ""), "0")
     C.Check.str("a new frame", J.Json.get_str(J.Json.get_obj(bot(H.Hubs.after(A.recv(go(shown(), "bot-tab", "browser"), "box:3787", shot()))), "browser"), "n", ""), "4")

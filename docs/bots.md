@@ -285,6 +285,21 @@ a JSON document of blocks:
 sends the bot `[space] <action> <value>` as a human turn (hop 0). The spec
 is data, never code a client runs, so a bot cannot script a client.
 
+A bot can also write its space as a web page with `space_page(html)` (HTML
+and CSS, at most 256 KB; `""` removes it; event `SpacePageSet`). The phone
+apps show it full screen in the Space tab in place of the blocks; desktop
+and web keep the blocks, or say the space is a page when there are none.
+The hub serves it at `GET /bots/<id>/space.html` behind `Space.page.head`,
+whose policy (also sent as a header) runs no script and loads nothing from
+the network: images and fonts are `data:` URLs (law `space_page_locked`).
+The apps turn scripts off too (Android also blocks network loads) and load
+it with no origin. A link to `space:<action>`, or a form with
+`action="space:<action>"` and a field named `value`, works as a button or
+an input: the app hands the URL to the `space-link` action and
+`Space.link` reads it; any other URL sends nothing (law
+`space_link_only_ours`), and web links open in the phone's browser. Only a
+tap or a submit counts, never a navigation the page makes by itself.
+
 ## Browser
 
 Each bot has its own page (a tab in the shared Chrome, one persistent

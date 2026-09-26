@@ -279,7 +279,7 @@ private fun BotScreen(m: AppModel, s: Screen, b: BotView) {
     }) { pad ->
         Box(Modifier.fillMaxSize().padding(pad).imePadding()) {
             when (b.tab) {
-                "space" -> b.space?.let { SpaceView(it) { a, v -> m.act(a, v) } }
+                "space" -> if (b.page != null) SpacePage(m, b.page) else b.space?.let { SpaceView(it) { a, v -> m.act(a, v) } }
                 "browser" -> BrowserTab(m, b.browser)
                 "memory" -> MemoryTab(m, b.memory)
                 "routines" -> RoutinesTab(m, b)

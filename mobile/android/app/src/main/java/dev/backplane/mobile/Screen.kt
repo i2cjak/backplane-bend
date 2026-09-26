@@ -223,7 +223,7 @@ data class BotPost(val id: String, val from: String, val text: String, val ago: 
 data class BotView(
     val kind: String, val id: String, val name: String, val mood: String, val note: String, val tab: String,
     val peer: String, val members: String, val draft: String, val secret: String, val secretFor: String,
-    val cat: String, val tabs: List<BotTab>, val space: SpaceModel?, val browser: BotBrowser?,
+    val cat: String, val tabs: List<BotTab>, val space: SpaceModel?, val page: SpacePageModel?, val browser: BotBrowser?,
     val memory: List<BotMemory>, val routines: List<BotRoutine>, val routine: RoutineForm?,
     val hooks: List<BotHook>, val settings: BotSettings?, val posts: List<BotPost>,
 )
@@ -377,6 +377,7 @@ private fun botView(o: JSONObject) = BotView(
     o.optString("secret"), o.optString("secretFor"), o.optString("cat"),
     o.optJSONArray("tabs").map { BotTab(it.optString("id"), it.optString("label")) },
     o.optJSONObject("space")?.let(::spaceModel),
+    o.optJSONObject("page")?.let { SpacePageModel(it.optString("bot"), it.optString("url"), it.optString("n")) },
     o.optJSONObject("browser")?.let { BotBrowser(it.optString("url"), it.optString("n")) },
     o.optJSONArray("memory").map {
         BotMemory(it.optString("key"), it.optString("kind"), it.optString("text"), it.optString("tags"), it.optString("updated"))

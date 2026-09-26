@@ -1,4 +1,5 @@
 import SwiftUI
+import WebKit
 
 // A bot's space: the JSON src/mobile/space.bend emits (MSpace.json). Plain
 // data; Bend has already kept what it understands and capped every size.
@@ -222,5 +223,88 @@ private struct SpaceInput: View {
         if t.isEmpty { return }
         act("space-input", block.key + "\u{1f}" + t)
         text = ""
+    }
+}
+
+// A bot's space as a web page (mobile/bots.bend's "page"): the hub serves
+// it at url behind a policy that runs no script and loads nothing from the
+// network, and the web view runs no script either. n is new when the page
+// is. A tapped link or submitted form goes to Bend as ("space-link",
+// bot + "\u{1f}" + url), which decides what a "space:" one sends; web
+// links open in the browser.
+struct SpacePageModel: Decodable {
+    let bot, url, n: String
+}
+
+struct SpacePage: View {
+    let model: AppModel
+    let page: SpacePageModel
+    @State private var html: String?
+
+    private var url: URL? {
+        model.hubURL(page.url, query: [URLQueryItem(name: "n", value: page.n)])
+    }
+
+    var body: some View {
+        Group {
+            if let html {
+                PageWeb(html: html) { u in
+                    if u.scheme == "space" {
+                        model.act("space-link", page.bot + "\u{1f}" + u.absoluteString)
+                    } else if u.scheme == "http" || u.scheme == "https" {
+                        UIApplication.shared.open(u)
+                    }
+                }
+                .ignoresSafeArea(edges: .bottom)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: url) {
+            guard let u = url, let (d, r) = try? await URLSession.shared.data(from: u),
+                  (r as? HTTPURLResponse)?.statusCode == 200, let t = String(data: d, encoding: .utf8) else { return }
+            html = t
+        }
+    }
+}
+
+private struct PageWeb: UIViewRepresentable {
+    let html: String
+    let tapped: (URL) -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeUIView(context: Context) -> WKWebView {
+        let c = WKWebViewConfiguration()
+        c.defaultWebpagePreferences.allowsContentJavaScript = false
+        c.websiteDataStore = .nonPersistent()
+        let w = WKWebView(frame: .zero, configuration: c)
+        w.navigationDelegate = context.coordinator
+        w.isOpaque = false
+        w.backgroundColor = .clear
+        return w
+    }
+
+    func updateUIView(_ w: WKWebView, context: Context) {
+        context.coordinator.tapped = tapped
+        if context.coordinator.shown != html {
+            context.coordinator.shown = html
+            w.loadHTMLString(html, baseURL: nil)
+        }
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var shown: String?
+        var tapped: ((URL) -> Void)?
+
+        // the page itself (and its #anchors) loads; everything else is a tap
+        func webView(_ w: WKWebView, decidePolicyFor a: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let u = a.request.url else { return decisionHandler(.cancel) }
+            if u.scheme == "about" { return decisionHandler(.allow) }
+            decisionHandler(.cancel)
+            // a redirect the page makes on its own is not a tap
+            if a.navigationType != .other { tapped?(u) }
+        }
     }
 }

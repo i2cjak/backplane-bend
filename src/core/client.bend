@@ -10,6 +10,7 @@ import ./fold.bend as FO
 import ./todo.bend as TD
 import ./bot.bend as BT
 import ./voice.bend as VC
+import ./space.bend as SPC
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -781,7 +782,7 @@ def Ui.actions() -> List<&2, String>:
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
-   "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back"]
+   "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link"]
 
 # Reading the client state
 # ------------------------
@@ -3266,6 +3267,18 @@ def Bots.space.k(ps: List<&2, String>, u: Ui) -> Act:
 def Bots.space(u: Ui, +v: String) -> Act:
   Bots.space.k(String.split(v, '\u{1f}'), u)
 
+def Bots.space.link.k(ps: List<&2, String>, u: Ui) -> Act:
+  match ps:
+    case b <> +url <> _:
+      Bots.space.k(b <> SPC.Space.link(url), u)
+    case _:
+      Act{u, Nil{}}
+
+# a link or form in a bot's page ("bot\u001furl"): a "space:" one is a
+# button or field; any other URL does nothing here (the app opens it)
+def Bots.space.link(u: Ui, +v: String) -> Act:
+  Bots.space.link.k(String.split(v, '\u{1f}'), u)
+
 def Bots.routine.save(+u: Ui) -> Act:
   Ui.rpc(Bots.fields.clear(Ui.scratch_set(u, "@onew", ""), ["oid", "oname", "ocron", "oprompt"]), "bots.routine",
     [J.KV{"bot", J.Str{Bots.cur(u)}}, J.KV{"routine", J.Str{Bots.field(u, "oid")}}, J.KV{"name", J.Str{Bool.pick(String, String.is_empty(Bots.field(u, "oname")), "routine", Bots.field(u, "oname"))}},
@@ -3560,6 +3573,9 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
     # the phones' viewer ground (the window takes its own "vw-light")
     case 13n:
       Act{Ui.scratch_set(u, "@vw.light", Bool.pick(String, String.is_empty(Ui.scratch(u, "@vw.light")), "1", "")), Nil{}}
+    # a link or form in a bot's page
+    case 18n:
+      Bots.space.link(u, value)
     # and the project picker's own: go to a project, add one found, browse
     # folders, back to the projects
     case _:

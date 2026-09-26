@@ -32,6 +32,7 @@ import ../core/store.bend as ST
 import ./botnet.bend as BN
 import ../core/bothub.bend as BH
 import ../core/bot.bend as BO
+import ../core/space.bend as SPC
 import ../core/sign.bend as SG
 import ./google.bend as GS
 import ../core/google.bend as GG
@@ -1623,7 +1624,6 @@ def Upgrade.start.go(on: Bool, +inbox: Chan(Msg)) -> IO(Unit):
       IO.spawn(Unit, Upgrade.check(Fuel.forever(), 15000, inbox))
     case False{}:
       IO.pure(Unit, Unit{})
-
 
 # Remote access (Tailscale)
 # ------------------------
@@ -4020,13 +4020,43 @@ def Bot.http.job(i: Nat, +home: String, +port: U32, +kind: String, +arg: String,
     case _:
       Bot.verify(False{}, home, kind, peer, ts, sig, gh, dl, body, "", Nil{}, reply, now, inbox)
 
-def Hub.bot_http(h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+def Bot.page.sent(none: Bool, +html: String, +reply: Chan(List<&2, U32>)) -> IO(Unit):
+  match none:
+    case True{}:
+      Bot.answer(reply, W.Http.text("404 Not Found", "no page"))
+    case False{}:
+      Bot.answer(reply, W.Http.response.c("200 OK", "text/html; charset=utf-8", U.Utf8.encode(SPC.Space.page(html)), "no-store",
+        "Content-Security-Policy: " ++ SPC.Space.page.csp() ++ "\r\nX-Content-Type-Options: nosniff\r\n"))
+
+# a bot's space page (Space.page: no scripts, nothing from the network)
+def Hub.bot.page(h: Hub, +bot: String, +reply: Chan(List<&2, U32>)) -> IO(Hub):
+  match h:
+    case Hub{+st, f, ls, cl, as, inbox, cfg, note}:
+      do IO<Hub>:
+        +html : String = BO.Page.html(BO.World.spage(M.State.bots(st), bot))
+        IO.spawn(Unit, Bot.page.sent(Bool.or(String.is_empty(bot), String.is_empty(html)), html, reply))
+        return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.bot_http.job(h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
     +ct: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
   match h:
     case Hub{st, f, ls, cl, as, +inbox, +cfg, note}:
       do IO<Hub>:
         IO.spawn(Unit, Bot.http.job(C.Codec.pos(["shot", "oauth", "hook"], kind), Cfg.home(cfg), Cfg.port(cfg), kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply, now, inbox))
         return Hub{st, f, ls, cl, as, inbox, cfg, note}
+
+def Hub.bot_http.k(page: Bool, h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +ct: String, +raw: List<&2, U32>,
+    +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  match page:
+    case True{}:
+      Hub.bot.page(h, arg, reply)
+    case False{}:
+      Hub.bot_http.job(h, kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply, now)
+
+def Hub.bot_http(h: Hub, +kind: String, +arg: String, +peer: String, +ts: String, +sig: String, +gh: String, +dl: String, +body: String,
+    +ct: String, +raw: List<&2, U32>, +reply: Chan(List<&2, U32>), +now: Nat) -> IO(Hub):
+  Hub.bot_http.k(String.eq(kind, "page"), h, kind, arg, peer, ts, sig, gh, dl, body, ct, raw, reply, now)
 
 def Bot.hook.live.k(hk: BO.Hook, +st: M.State) -> Bool:
   match hk:
@@ -4133,7 +4163,8 @@ def Conn.bot.kind.k(+post: Bool, +get: Bool, +r: String) -> Nat:
       Bool.pick(Nat, Bool.and(post, String.eq(r, "/bots/link")), 3n,
         Bool.pick(Nat, Bool.and(get, String.eq(r, "/bots/dir")), 4n,
           Bool.pick(Nat, Bool.and(get, Bool.and(String.starts_with(r, "/bots/"), String.ends_with(r, "/screen.jpg"))), 5n,
-            Bool.pick(Nat, Bool.and(get, String.eq(r, "/oauth/google")), 6n, 0n))))))
+            Bool.pick(Nat, Bool.and(get, String.eq(r, "/oauth/google")), 6n,
+              Bool.pick(Nat, Bool.and(get, Bool.and(String.starts_with(r, "/bots/"), String.ends_with(r, "/space.html"))), 7n, 0n)))))))
 
 # which bots' route a request is (0: none)
 def Conn.bot.kind(req: W.Request) -> Nat:
@@ -4143,6 +4174,10 @@ def Conn.bot.kind(req: W.Request) -> Nat:
 
 # /bots/<id>/screen.jpg: the id ("" when it is not a plain id)
 def Conn.bot.shot_id(+r: String) -> String:
+  Bool.pick(String, BN.Bn.safe(String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n))), String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n)), "")
+
+# /bots/<id>/space.html: the id ("" when it is not a plain id)
+def Conn.bot.page_id(+r: String) -> String:
   Bool.pick(String, BN.Bn.safe(String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n))), String.take(String.drop(r, 6n), Nat.sub(String.length(r), 17n)), "")
 
 def Conn.bot.answer(m: Maybe<&1, List<&2, U32>>, s: Socket) -> IO(Unit):
@@ -4249,6 +4284,8 @@ def Conn.route.bot(k: Nat, s: Socket, +req: W.Request, rest: List<&2, U32>, +web
       Conn.bot.own(Conn.allowed(trusted, hs, p, token), s, BotReq{"shot", Conn.bot.shot_id(W.Http.route(p)), "", "", "", "", ""}, inbox)
     case 6n W.Request{_, +p, +hs}:
       Conn.bot.own(Conn.allowed(trusted, hs, p, token), s, BotReq{"oauth", p, "", "", "", "", ""}, inbox)
+    case 7n W.Request{_, +p, +hs}:
+      Conn.bot.own(Conn.allowed(trusted, hs, p, token), s, BotReq{"page", Conn.bot.page_id(W.Http.route(p)), "", "", "", "", ""}, inbox)
     case _ _:
       Conn.route.mcp(Conn.is_mcp(req), s, req, rest, web, id, inbox, trusted, token)
 

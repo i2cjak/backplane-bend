@@ -1,5 +1,6 @@
 import Base
 import ./json.bend as J
+import ./google.bend as G
 
 # A bot's space: the UI it writes for itself (docs/bots.md, "Space"), as
 # blocks. Parsing keeps what it understands, skips unknown blocks and caps
@@ -375,6 +376,10 @@ def Space.empty(+name: String) -> Space:
   Space{name, [BText{name ++ " hasn't built a space yet."},
     BText{"Ask it to make one: a dashboard of what it watches, a checklist, buttons for what you ask it often."}]}
 
+# what a bot whose space is only a page shows where pages are not drawn
+def Space.paged(+name: String) -> Space:
+  Space{name, [BText{name ++ "'s space is a web page. Open it in the Backplane app on your phone."}]}
+
 def Sp.msg.k(none: Bool, +action: String, +value: String) -> String:
   match none:
     case True{}:
@@ -476,3 +481,65 @@ def Space.json(sp: Space) -> J.Json:
 
 def Space.show(sp: Space) -> String:
   J.Json.show(Space.json(sp))
+
+# Pages
+# -----
+# A bot may also write its space as a web page (space_page), which the
+# phones show full screen. It stays data: the hub serves it behind
+# Space.page.head, whose policy lets no script run and nothing load from
+# the network (images and fonts inline only), and the apps turn scripts
+# off too. A link or form to "space:<action>" is a button: the app hands
+# the URL to Space.link, and the bot hears Space.message as from a button.
+
+def Space.max_page() -> Nat:
+  262144n
+
+# the policy, also sent as a header by the hub
+def Space.page.csp() -> String:
+  "default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; media-src data:; form-action space:; base-uri 'none'"
+
+def Space.page.head() -> String:
+  "<!doctype html><meta charset=\"utf-8\">" ++
+  "<meta http-equiv=\"Content-Security-Policy\" content=\"" ++ Space.page.csp() ++ "\">" ++
+  "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><meta name=\"color-scheme\" content=\"light dark\">"
+
+# the page as served: the head first, whatever the bot wrote after it
+# (law space_page_locked)
+def Space.page(html: String) -> String:
+  Space.page.head() ++ html
+
+# what a bot's page is, capped
+def Space.page.cap(html: String) -> String:
+  String.take(html, Space.max_page())
+
+def Sp.link.part(ps: List<&2, String>) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case h <> _:
+      h
+
+def Sp.link.of.k(ae: Bool, ve: Bool, +a: String, +v: String) -> List<&2, String>:
+  match ae ve:
+    case True{} _:
+      Nil{}
+    case False{} True{}:
+      [a]
+    case False{} False{}:
+      [a, v]
+
+def Sp.link.of(+a: String, +v: String) -> List<&2, String>:
+  Sp.link.of.k(String.is_empty(String.trim(a)), String.is_empty(v), a, v)
+
+def Sp.link.k(ours: Bool, +u: String) -> List<&2, String>:
+  match ours:
+    case False{}:
+      Nil{}
+    case True{}:
+      Sp.link.of(String.take(G.Url.decode(Sp.link.part(String.split(String.drop(u, 6n), '?'))), Space.max_action()),
+        String.take(G.Url.param(G.Url.query(u), "value"), Space.max_text()))
+
+# the action and value a "space:" link or form sends: [action] or
+# [action, value]; nothing for any other URL or an empty action
+def Space.link(+u: String) -> List<&2, String>:
+  Sp.link.k(String.starts_with(u, "space:"), u)
