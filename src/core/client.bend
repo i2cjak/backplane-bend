@@ -384,6 +384,14 @@ def Skills.has(+o: J.Json) -> Bool:
 def Ui.update.note(+ver: String, +state: String) -> String:
   Bool.pick(String, String.is_empty(state), Bool.pick(String, String.is_empty(ver), "", "update " ++ ver), state)
 
+# the settings' version row: a packaged install (info "update" is
+# "package") updates through its package manager and offers no buttons
+def Update.packaged(+nf: Map<&2, String>) -> Bool:
+  String.eq(Str.get(nf, "update"), "package")
+
+def Update.line(+nf: Map<&2, String>, +note: String) -> String:
+  Bool.pick(String, Update.packaged(nf), "Updated by its package.", Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note))
+
 # an update notice: a version to offer, or the progress of one being applied
 def Ui.update(u: Ui, +o: J.Json) -> Ui:
   match u:

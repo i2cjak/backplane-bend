@@ -366,6 +366,20 @@ law update_never_same:
   for +v: SV.Ver
   {SV.Ver.newer(v, v) == False{} : Bool}
 
+# a packaged install never updates itself: BACKPLANE_NO_UPDATE set, or
+# running as an AppImage
+law update_off_managed:
+  for +c: Char
+  for +t: String
+  for +a: String
+  {SV.Chan.managed(SCon{c, t}, a) == True{} : Bool}
+
+law update_appimage_managed:
+  for +o: String
+  for +c: Char
+  for +t: String
+  {SV.Chan.managed(o, SCon{c, t}) == True{} : Bool}
+
 # a prerelease (a nightly) sorts before the release of its version
 law semver_pre_before_release:
   for +a: Nat

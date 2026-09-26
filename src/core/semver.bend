@@ -139,6 +139,12 @@ def Chan.best(rs: List<&2, Rel>, +channel: String, +best: String) -> String:
 def Chan.pick(+channel: String, rs: List<&2, Rel>) -> String:
   Chan.best(rs, channel, "")
 
+# a packaged install (BACKPLANE_NO_UPDATE set, or an AppImage: $APPIMAGE)
+# takes its updates from its package, never from the releases (laws
+# update_off_managed, update_appimage_managed)
+def Chan.managed(+off: String, +appimage: String) -> Bool:
+  Bool.or(Bool.not(String.is_empty(off)), Bool.not(String.is_empty(appimage)))
+
 # the channel a setting names (anything else is stable)
 def Chan.of(+s: String) -> String:
   Bool.pick(String, String.eq(s, "nightly"), "nightly", "stable")

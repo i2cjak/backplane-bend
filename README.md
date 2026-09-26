@@ -28,6 +28,8 @@ This installs into `~/.local/share/backplane` and links the binaries into `~/.lo
 - `backplane` opens the window. Without a display it keeps serving the web client on `127.0.0.1:3787`.
 - `backplane-serve` runs headless.
 
+Each release also carries an AppImage, a `.deb` (Debian, Ubuntu), a `PKGBUILD` for the AUR (`backplane-bend-bin`) and the Android app (`backplane-<version>-android.apk`). Those update through their package, not in place. `scripts/icons.sh` redraws the app icon from `assets/icon/`.
+
 ## Build
 
 You need [Bend](https://bend-lang.com), clang 19+, X11 headers (`libx11-dev`), and bun for the tests.

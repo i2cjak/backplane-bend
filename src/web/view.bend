@@ -541,9 +541,9 @@ def View.settings(+u: U.Ui, +st: M.State, +nf: Map<&2, String>, +v: String, +not
       View.setrow("KiCad IPC", "Agents may drive KiCad through the fork's api-server.", View.chips(["on", "off"], ipc, "kicad.ipc")),
       View.setrow("Tailscale: " ++ U.Str.get(nf, "tailnet"), "Listening on " ++ U.Str.get(nf, "listen"), Nil{}),
       View.setrow("Update channel", "Stable takes releases; nightly also takes the daily builds.", View.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
-      View.setrow("Backplane " ++ v, Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note),
-        Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")],
-          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")]))], View.voice.set(u, st))}]}
+      View.setrow("Backplane " ++ v, U.Update.line(nf, note),
+        Bool.pick(List<&2, D.Node>, U.Update.packaged(nf), Nil{}, Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")],
+          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")])))], View.voice.set(u, st))}]}
 
 def View.empty(n: Nat) -> D.Node:
   D.El{"main", "empty", [D.At{"class", "empty"}], [D.Txt{Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")}]}

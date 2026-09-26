@@ -449,6 +449,16 @@ def Laws.update_never_same(v):
   %Equal.sym(Cmp, SV.Ver.cmp(v, v), EQ{}, Laws.semver_cmp_refl(v)) : {Cmp.is_gt(_) == False{} : Bool}
   {==}
 
+def Laws.update_off_managed(c, t, a):
+  {==}
+
+def Laws.update_appimage_managed(o, c, t):
+  match o:
+    case SNil{}:
+      {==}
+    case SCon{h, r}:
+      {==}
+
 law nat_cmp_succ:
   for n: Nat
   {Nat.cmp(1n+n, n) == GT{} : Cmp}

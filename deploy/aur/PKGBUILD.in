@@ -1,0 +1,39 @@
+# The AUR package backplane-bend-bin. The release workflow fills in the
+# version and the sums and publishes the result as the release's PKGBUILD;
+# copy it into the AUR repository and run `makepkg --printsrcinfo > .SRCINFO`.
+pkgname=backplane-bend-bin
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Agentic hardware development, with live KiCad viewers"
+arch=(x86_64 aarch64)
+url="https://github.com/i2cjak/backplane-bend"
+license=(MIT)
+depends=(glibc libx11)
+optdepends=('git: thread worktrees and commits'
+            'kicad: ERC, DRC, exports and the 3D viewer'
+            'tailscale: reach it from your other devices')
+provides=(backplane)
+conflicts=(backplane)
+# prebuilt: shipped as released
+options=(!strip !debug)
+source_x86_64=("$url/releases/download/v$pkgver/backplane-v$pkgver-linux-x64.tar.gz")
+source_aarch64=("$url/releases/download/v$pkgver/backplane-v$pkgver-linux-arm64.tar.gz")
+sha256sums_x86_64=(@SHA_LINUX_X64@)
+sha256sums_aarch64=(@SHA_LINUX_ARM64@)
+
+package() {
+  local plat=linux-x64
+  [ "$CARCH" = aarch64 ] && plat=linux-arm64
+  cd "backplane-$plat"
+  install -d "$pkgdir/opt/backplane" "$pkgdir/usr/bin"
+  cp -R . "$pkgdir/opt/backplane/"
+  # pacman updates it, not the app
+  for b in backplane backplane-serve; do
+    printf '#!/bin/sh\nBACKPLANE_NO_UPDATE=1 exec /opt/backplane/%s "$@"\n' "$b" > "$pkgdir/usr/bin/$b"
+    chmod 755 "$pkgdir/usr/bin/$b"
+  done
+  install -Dm644 backplane.desktop "$pkgdir/usr/share/applications/backplane.desktop"
+  install -Dm644 icon/backplane.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/backplane.svg"
+  install -Dm644 icon/backplane-256.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/backplane.png"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
