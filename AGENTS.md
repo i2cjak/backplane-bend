@@ -60,6 +60,11 @@ scripts/build-app.sh src/app/main.bend build/backplane   # one native binary, co
 dist/backplane        # run it (opens http://127.0.0.1:3787)
 ```
 
+Trying a branch without CI or a release (use this, not a release, whenever the user wants to see or try a change):
+- `scripts/dev.sh` builds the app and web client into `build/dev` (about 5 min) and runs them beside the installed Backplane: port 3788, home `~/.backplane-dev`, no tailnet, no self-update. It never touches `~/.backplane-bend`. Its window opens next to the user's. `scripts/dev.sh run --no-build` runs the last build again. For a headless check: `DISPLAY= BACKPLANE_DEV_HOME=$(mktemp -d) scripts/dev.sh run --no-build &`, capture the PID, probe `127.0.0.1:3788`, kill that PID.
+- `scripts/dev.sh web` rebuilds only the web client (seconds); reload the page, no restart.
+- `scripts/dev.sh install [user@host]` puts a full build over `~/.local/share/backplane` (here, or on that host over ssh) and restarts the service. Only when the user asks: the restart ends every session in the app, yours included. The build is stamped `<next patch>-dev.<date>.<time>`, so the next real release replaces it and the updater never rolls it back.
+
 Native builds go through `scripts/build-app.sh`: bend emits the C, `scripts/cc-split.py` splits it into units, and clang compiles them at nice 19 on cores 0-3 (`BACKPLANE_JOBS`, `BACKPLANE_CPUS`), one build at a time machine-wide (`/tmp/bp-wt-build.lock`). About 2 minutes instead of 4+, and far less memory than one 30 MB file. Never run a bare `bend src/app/main.bend -o ...` on a machine someone is using.
 
 Native builds need clang 19+ and X11 headers (`libx11-dev`). Without root, `~/.local/bin/clang` may be a `zig cc` shim, and `BACKPLANE_X11=~/.local/x11` points the build at headers extracted from the .deb.

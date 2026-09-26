@@ -1,0 +1,153 @@
+#!/bin/sh
+# Try this checkout without CI or a release.
+#
+#   scripts/dev.sh                 build the app + web client into build/dev
+#                                  and run it beside your installed Backplane
+#   scripts/dev.sh run --no-build  run the last dev build again
+#   scripts/dev.sh web             rebuild only the web client (reload the page;
+#                                  the hub reads it from disk per request)
+#   scripts/dev.sh install         full build (scripts/build.sh), installed over
+#                                  ~/.local/share/backplane, service restarted
+#   scripts/dev.sh install h@host  the same onto another machine over ssh
+#                                  (same os/arch; restarts backplane-bend there)
+#
+# The dev run keeps to itself: its own home (BACKPLANE_DEV_HOME, default
+# ~/.backplane-dev, never ~/.backplane-bend), port 3788 (BACKPLANE_DEV_PORT),
+# no tailnet, no self-update. Its window opens next to your normal one.
+# Helpers (browser, step2glb, voice) are borrowed from the installed copy.
+#
+# An installed build is stamped <next patch>-dev.<date>.<time>, e.g.
+# 0.10.1-dev.20260925.2130: newer than the release it came after, older than
+# the next one, so the updater replaces it with the next real release (or a
+# later nightly) and never with an older one.
+set -eu
+cd "$(dirname "$0")/.."
+export PATH="$HOME/.bend/bin:$HOME/.bun/bin:$PATH"
+# 4 clang jobs at -O3 passed 28 GB here; 2 stay near 12 GB
+export BACKPLANE_JOBS=${BACKPLANE_JOBS:-2}
+prefix=${BACKPLANE_PREFIX:-$HOME/.local/share/backplane}
+dev=build/dev
+port=${BACKPLANE_DEV_PORT:-3788}
+home=${BACKPLANE_DEV_HOME:-$HOME/.backplane-dev}
+
+say() { printf '\033[1mdev:\033[0m %s\n' "$*"; }
+
+check() {
+  out=$(bend "$1" --check-only 2>&1) || { echo "$out"; exit 1; }
+  case $out in *"All terms check"*) ;; *) echo "$out"; exit 1 ;; esac
+}
+
+build_web() {
+  check src/web/app.bend
+  rm -rf "$dev/web.new"
+  bend src/web/index.html -o "$dev/web.new" >/dev/null
+  cp src/web/sw.js "$dev/web.new/sw.js"
+  for f in "$dev"/web.new/*.js "$dev"/web.new/*.css "$dev"/web.new/*.html; do gzip -9 -k -n -f "$f"; done
+  rm -rf "$dev/web" && mv "$dev/web.new" "$dev/web"
+}
+
+build_app() {
+  check src/app/main.bend
+  scripts/build-app.sh src/app/main.bend "$dev/backplane.new"
+  mv -f "$dev/backplane.new" "$dev/backplane"
+  for h in backplane-browser backplane-step2glb backplane-voice; do
+    [ -e "$prefix/$h" ] && ln -sf "$prefix/$h" "$dev/$h"
+  done
+  return 0
+}
+
+run() {
+  [ -x "$dev/backplane" ] || { say "no dev build yet: run scripts/dev.sh"; exit 1; }
+  mkdir -p "$home"
+  say "http://127.0.0.1:$port  home $home  (ctrl-c stops it)"
+  BACKPLANE_NO_UPDATE=1 exec "$dev/backplane" --home "$home" --port "$port" --no-tailscale
+}
+
+stamp() {
+  # the highest full release, whether or not this branch contains it
+  git fetch -q --tags 2>/dev/null || true
+  last=$(git tag --list 'v[0-9]*' --sort=-v:refname | grep -v -- - | head -n 1)
+  last=${last:-v0.0.0}
+  core=${last#v}; core=${core%%-*}
+  echo "${core%.*}.$(( ${core##*.} + 1 ))-dev.$(date +%Y%m%d.%H%M)"
+}
+
+# a full build (dist/), stamped; src/core/version.bend is put back after
+build_dist() {
+  ver=$(stamp)
+  keep=$(mktemp)
+  cp src/core/version.bend "$keep"
+  trap 'cp "$keep" src/core/version.bend; rm -f "$keep"' EXIT
+  BACKPLANE_VERSION=$ver scripts/build.sh >/dev/null
+  cp "$keep" src/core/version.bend
+  say "built $ver"
+}
+
+# swap dist/ into a prefix the way deploy/install.sh.in does (renames, so a
+# running binary is replaced safely); run here or over ssh
+install_into() {
+  cat <<'EOF'
+set -eu
+src=$1 prefix=$2
+mkdir -p "$prefix" "$HOME/.local/bin"
+rm -rf "$prefix/web.old"
+[ -d "$prefix/web" ] && mv "$prefix/web" "$prefix/web.old"
+mv "$src/web" "$prefix/web"
+for f in backplane backplane-serve backplane-browser backplane-step2glb LICENSE; do
+  [ -e "$src/$f" ] && mv -f "$src/$f" "$prefix/$f"
+done
+ln -sf "$prefix/backplane" "$HOME/.local/bin/backplane"
+ln -sf "$prefix/backplane-serve" "$HOME/.local/bin/backplane-serve"
+EOF
+}
+
+stage() {
+  rm -rf build/dev-pkg && mkdir -p build/dev-pkg
+  cp -R dist/web build/dev-pkg/web
+  for f in backplane backplane-serve backplane-browser backplane-step2glb; do
+    [ -e "dist/$f" ] && cp "dist/$f" build/dev-pkg/
+  done
+  [ -e LICENSE ] && cp LICENSE build/dev-pkg/
+  return 0
+}
+
+install_local() {
+  build_dist
+  stage
+  install_into | sh -s "$PWD/build/dev-pkg" "$prefix"
+  say "installed into $prefix"
+  if systemctl --user is-active --quiet backplane.service 2>/dev/null; then
+    # the restart ends every session inside the app (this one too, if it
+    # runs there), so it waits a few seconds for this script to finish
+    systemd-run --user --quiet --on-active=5 systemctl --user restart backplane.service
+    say "backplane.service restarts in 5 s"
+  else
+    say "run: backplane"
+  fi
+}
+
+install_remote() {
+  host=$1
+  build_dist
+  stage
+  rdir=$(ssh "$host" mktemp -d)
+  tar -C build/dev-pkg -czf - . | ssh "$host" tar -C "$rdir" -xzf -
+  install_into | ssh "$host" sh -s "$rdir" '$HOME/.local/share/backplane'
+  ssh "$host" "rm -rf $rdir; systemctl --user restart backplane-bend.service 2>/dev/null || systemctl --user restart backplane.service 2>/dev/null || true"
+  say "installed on $host"
+}
+
+mkdir -p "$dev"
+case ${1:-run} in
+  run)
+    [ "${2:-}" = --no-build ] || { build_web; build_app; }
+    run ;;
+  web)
+    build_web
+    say "web client rebuilt: reload the page" ;;
+  install)
+    if [ -n "${2:-}" ]; then install_remote "$2"; else install_local; fi ;;
+  *)
+    sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+    exit 1 ;;
+esac
