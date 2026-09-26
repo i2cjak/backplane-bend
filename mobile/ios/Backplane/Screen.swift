@@ -419,6 +419,7 @@ struct BotView: Decodable {
     let look: Int?
     let tabs: [BotTab]?
     let space: SpaceModel?
+    let page: SpacePageModel?
     let browser: BotBrowser?
     let memory: [BotMemory]?
     let routines: [BotRoutine]?

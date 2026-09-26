@@ -255,7 +255,11 @@ struct BotScreen: View {
     @ViewBuilder private var content: some View {
         switch bot.tab ?? "chat" {
         case "space":
-            if let s = bot.space { SpaceView(space: s) { model.act($0, $1) }.navigationTitle(bot.name).navigationBarTitleDisplayMode(.inline) }
+            if let p = bot.page {
+                SpacePage(model: model, page: p).navigationTitle(bot.name).navigationBarTitleDisplayMode(.inline)
+            } else if let s = bot.space {
+                SpaceView(space: s) { model.act($0, $1) }.navigationTitle(bot.name).navigationBarTitleDisplayMode(.inline)
+            }
         case "browser":
             BrowserTab(model: model, browser: bot.browser).navigationTitle(bot.name).navigationBarTitleDisplayMode(.inline)
         case "memory":

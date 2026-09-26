@@ -347,17 +347,34 @@ def BU.tab.label(+t: String) -> String:
 def BU.tab(+u: U.Ui) -> String:
   Bool.pick(String, String.is_empty(U.Ui.scratch(u, "@btab")), "chat", U.Ui.scratch(u, "@btab"))
 
-# a bot's space: what it wrote, or a friendly empty one
-def BU.space.k(+spec: String, +name: String) -> SP.Space:
-  Bool.pick(SP.Space, String.is_empty(spec), SP.Space.empty(name), SP.Space.read(spec))
+def BU.space.none(paged: Bool, +name: String) -> SP.Space:
+  match paged:
+    case True{}:
+      SP.Space.paged(name)
+    case False{}:
+      SP.Space.empty(name)
 
+def BU.space.k(none: Bool, paged: Bool, +spec: String, +name: String) -> SP.Space:
+  match none:
+    case True{}:
+      BU.space.none(paged, name)
+    case False{}:
+      SP.Space.read(spec)
+
+# a bot's space: what it wrote, else a note that its space is a page (on
+# the phones), else a friendly empty one
 def BU.space(+u: U.Ui, b: BT.Bot) -> SP.Space:
   match b:
     case BT.Bot{+i, +n, _, _, _, _, _}:
-      BU.space.k(BT.World.space(M.State.bots(U.Ui.state(u)), i), n)
+      BU.space.k(String.is_empty(BT.World.space(M.State.bots(U.Ui.state(u)), i)),
+        Bool.not(String.is_empty(BT.Page.html(BT.World.spage(M.State.bots(U.Ui.state(u)), i)))), BT.World.space(M.State.bots(U.Ui.state(u)), i), n)
 
 def BU.mems(+u: U.Ui, +bot: String) -> List<&2, BT.Mem>:
   BT.World.mems(M.State.bots(U.Ui.state(u)), bot)
+
+# a bot's space page (empty html when it has none)
+def BU.page(+u: U.Ui, +bot: String) -> BT.Page:
+  BT.World.spage(M.State.bots(U.Ui.state(u)), bot)
 
 def BU.routines(+u: U.Ui, +bot: String) -> List<&2, BT.Routine>:
   BT.World.routines(M.State.bots(U.Ui.state(u)), bot)

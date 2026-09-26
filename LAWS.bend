@@ -2401,6 +2401,18 @@ law space_message_prefix:
   for +action: String
   for +value: String
   {String.starts_with(SPC.Space.message(action, value), "[space] ") == True{} : Bool}
+
+# a bot's page is always served behind the head whose policy runs no
+# script and loads nothing from the network, whatever the bot wrote
+law space_page_locked:
+  for html: String
+  {String.starts_with(SPC.Space.page(html), SPC.Space.page.head()) == True{} : Bool}
+
+# only a "space:" link in a bot's page sends the bot anything
+law space_link_only_ours:
+  for +u: String
+  for h: {String.starts_with(u, "space:") == False{} : Bool}
+  {SPC.Space.link(u) == Nil{} : List<&2, String>}
 # Google (bots' Gmail and Calendar)
 # ---------------------------------
 

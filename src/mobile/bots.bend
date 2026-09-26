@@ -202,11 +202,26 @@ def MBots.browser(+u: U.Ui, +id: String) -> J.Json:
   J.Json.obj([J.KV{"url", J.Json.str("/bots/" ++ id ++ "/screen.jpg")},
     J.KV{"n", J.Json.str(Bool.pick(String, String.is_empty(U.Ui.info(u, "shot." ++ id)), "0", U.Ui.info(u, "shot." ++ id)))}])
 
+def MBots.space.k(none: Bool, +at: Nat, +u: U.Ui, b: BT.Bot, +id: String) -> List<&2, J.KV>:
+  match none:
+    case True{}:
+      [J.KV{"space", MS.MSpace.json(B.BU.space(u, b), id)}]
+    case False{}:
+      [J.KV{"page", J.Json.obj([J.KV{"bot", J.Json.str(id)}, J.KV{"url", J.Json.str("/bots/" ++ id ++ "/space.html")}, J.KV{"n", J.Json.str(Nat.show(at))}])}]
+
+# a bot's space: its page when it wrote one (the url the hub serves it at,
+# and n, new when the page is), else its blocks; the apps hand a tapped
+# link to "space-link" with bot + "\x1f" + url
+def MBots.space(p: BT.Page, +u: U.Ui, b: BT.Bot, +id: String) -> List<&2, J.KV>:
+  match p:
+    case BT.Page{+html, +at}:
+      MBots.space.k(String.is_empty(html), at, u, b, id)
+
 # what tab i (in B.BU.tabs order) adds; the chat is the screen's thread
 def MBots.tab.k(i: Nat, +u: U.Ui, b: BT.Bot, +id: String, +persona: String, +now: Nat) -> List<&2, J.KV>:
   match i:
     case 1n:
-      [J.KV{"space", MS.MSpace.json(B.BU.space(u, b), id)}]
+      MBots.space(B.BU.page(u, id), u, b, id)
     case 2n:
       [J.KV{"browser", MBots.browser(u, id)}]
     case 3n:

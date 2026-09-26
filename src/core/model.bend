@@ -237,6 +237,8 @@ type Change is Data:
   SpaceSet{bot: String, spec: String, at: Nat}
   PeerSet{id: String, name: String, url: String, revoked: Bool, at: Nat}
   BotWoke{bot: String, hop: Nat, at: Nat}
+  # a bot's space as a web page ("" takes it away)
+  SpacePageSet{bot: String, html: String, at: Nat}
 
 # the later of two times. Base's Nat.max recurses once per unit and
 # overflows at epoch scale; Nat.is_ge compiles to a machine comparison.
@@ -1289,6 +1291,8 @@ def State.apply.go(s: State, e: Change) -> State:
       State.world((w => BT.World.peer_set(w, id, name, url, revoked, at)), s)
     case BotWoke{bot, hop, _}:
       State.world((w => BT.World.woke(w, bot, hop)), s)
+    case SpacePageSet{bot, html, at}:
+      State.world((w => BT.World.spage_set(w, bot, html, at)), s)
     case TodosSet{+th, todos, _}:
       State.setting(s, "todos." ++ th, todos)
     case ProviderSet{+id, +p, m, _}:
