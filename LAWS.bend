@@ -1334,6 +1334,11 @@ law btw_never_logged:
   for +q: String
   {H.Hub.btw(s, c, id, th, q) == H.Step{[], [H.Git{c, id, "btw", th, "", q, HD.Hand.btw(H.Hub.entries(s), th, HD.Hand.title(H.Hub.thread(s, th)), q)}]} : H.Step}
 
+# without the Backplane KiCad fork there is no IPC to turn on: Settings
+# says so and offers no switch
+law kicad_ipc_needs_fork:
+  {U.KiCad.ipc.ready(Map.new(&2, String)) == False{} : Bool}
+
 # how long a turn took, as its row says it
 law took_seconds:
   {M.Time.took(45n) == "45s" : String}

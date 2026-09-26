@@ -4071,6 +4071,9 @@ def Laws.view_bare_key():
 def Laws.pick_off_skipped():
   {==}
 
+def Laws.kicad_ipc_needs_fork():
+  {==}
+
 def Laws.took_seconds():
   {==}
 

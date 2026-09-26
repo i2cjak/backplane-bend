@@ -2122,9 +2122,10 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
     Set.card(x, (b2 + 400 + dy + ey : U32), w, 150),
     Set.row(ty, "KiCad CLI", U.Str.get(info, "kicad.cli"), x, (b2 + 402 + dy + ey : U32), w),
     Set.fork(ty, U.Str.get(info, "kicad.fork"), (x + 16 : U32), (b2 + 450 + dy + ey : U32)),
-    Set.row.r(ty, "KiCad IPC", "Agents may drive KiCad through the fork's api-server (NNG/protobuf).", x, (b2 + 486 + dy + ey : U32), w, 140),
-    Lay.chip(ty, (x + w - 120 : U32), (b2 + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
-    Lay.chip(ty, (x + w - 70 : U32), (b2 + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off"),
+    Set.row.r(ty, U.KiCad.ipc.label(info), U.KiCad.ipc.note(info), x, (b2 + 486 + dy + ey : U32), w, Bool.pick(U32, U.KiCad.ipc.ready(info), 140, 0)),
+    Bool.pick(Out, U.KiCad.ipc.ready(info), Out.all([
+      Lay.chip(ty, (x + w - 120 : U32), (b2 + 500 + dy + ey : U32), "On", String.eq(ipc, "on"), "setting", "kicad.ipc=on"),
+      Lay.chip(ty, (x + w - 70 : U32), (b2 + 500 + dy + ey : U32), "Off", String.eq(ipc, "off"), "setting", "kicad.ipc=off")]), Out.none()),
     Set.head(ty, "Appearance", x, (b2 + 570 + dy + ey : U32)),
     Set.card(x, (b2 + 602 + dy + ey : U32), w, 64),
     Set.row.r(ty, "Theme", "The window and the web page (phones unset follow their own system).", x, (b2 + 604 + dy + ey : U32), w, 150),

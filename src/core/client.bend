@@ -389,6 +389,19 @@ def Pair.link(+nf: Map<&2, String>) -> String:
 def Pair.note(+link: String) -> String:
   Bool.pick(String, String.is_empty(link), "Shown once Backplane listens on your tailnet.", link)
 
+# KiCad IPC is the Backplane fork's api-server: without the fork the
+# setting has nothing to turn on, so Settings says where to get it instead
+# of offering it (info "kicad.fork": the fork's version, "" for none)
+def KiCad.ipc.ready(+nf: Map<&2, String>) -> Bool:
+  Bool.not(String.is_empty(Str.get(nf, "kicad.fork")))
+
+def KiCad.ipc.label(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.ipc.ready(nf), "KiCad IPC", "KiCad IPC: needs Backplane KiCad")
+
+def KiCad.ipc.note(+nf: Map<&2, String>) -> String:
+  Bool.pick(String, KiCad.ipc.ready(nf), "Agents may drive KiCad through the fork's api-server (NNG/protobuf).",
+    "Install it with the button above (Linux x86-64) or from github.com/i2cjak/Backplane_KiCad")
+
 def Update.line(+nf: Map<&2, String>, +note: String) -> String:
   Bool.pick(String, Update.packaged(nf), "Updated by its package.", Bool.pick(String, String.is_empty(note), "Up to date, checked hourly.", note))
 
