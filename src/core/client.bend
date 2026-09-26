@@ -781,7 +781,7 @@ def Ui.actions() -> List<&2, String>:
    "peer-invite", "peer-join", "peer-revoke", "google", "remote", "remote-send", "bot-look", "room-delete", "routine-edit", "hook-done", "form-close", "earlier",
    "hook-token", "hook-retoken", "hook-untoken",
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
-   "btw-close", "vw-light"]
+   "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back"]
 
 # Reading the client state
 # ------------------------
@@ -2091,9 +2091,13 @@ def Models.label_of(+info: String, +provider: String, +model: String) -> String:
 
 # Project picker
 # --------------
-# A folder browser with fuzzy filtering: the listed folder and its
-# subfolders come from the server (fs.list); the query and selection live
-# in the drafts map under keys no thread id can take.
+# It opens on the projects: this hub's own (Enter goes to one), and those
+# it once had or found on disk (fs.find: a folder holding .backplane or
+# .backplane.json), each added back in one step. "Add a folder" (or a
+# typed path) turns it into a folder browser with fuzzy filtering
+# ("@proj.mode" is "dir"): the listed folder and its subfolders come from
+# the server (fs.list). The query and selection live in the drafts map
+# under keys no thread id can take.
 
 def Proj.query(u: Ui) -> String:
   match u:
@@ -2139,9 +2143,30 @@ def Proj.focus(a: Act) -> Act:
     case Act{u, cs}:
       Act{u, List.append(&2, Cmd, cs, [Focus{"proj"}])}
 
-# opens where it was last (home the first time)
+# browsing folders rather than choosing among projects
+def Proj.browsing(+u: Ui) -> Bool:
+  String.eq(Ui.scratch(u, "@proj.mode"), "dir")
+
+# the list shown ("" projects, "dir" folders), with an empty filter
+def Proj.mode(+u: Ui, +m: String) -> Ui:
+  Ui.scratch_set(Proj.reset(u, ""), "@proj.mode", m)
+
+def Proj.cmds.front(cs: List<&2, Cmd>, a: Act) -> Act:
+  match a:
+    case Act{u, ds}:
+      Act{u, List.append(&2, Cmd, cs, ds)}
+
+# the projects on disk are asked for as the picker opens; the answer is
+# kept apart from the browsing requests (@proj.frid)
+def Proj.find(a: Act) -> Act:
+  match a:
+    case Act{+u, cs}:
+      Proj.cmds.front(cs, Ui.rpc(Ui.scratch_set(u, "@proj.frid", Nat.show(Ui.rid(u))), "fs.find", Nil{}))
+
+# opens on the projects; the folder list is fetched where it was last
+# (home the first time)
 def Proj.open(+u: Ui) -> Act:
-  Proj.focus(Proj.rpc(Proj.reset(Ui.flag_on(u, "proj"), ""), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}]))
+  Proj.focus(Proj.find(Proj.rpc(Proj.mode(Ui.flag_on(u, "proj"), ""), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}])))
 
 def Proj.names(xs: List<&2, J.Json>) -> List<&2, String>:
   match xs:
@@ -2208,10 +2233,30 @@ def Proj.reply.k(i: Nat, +u: Ui, +o: J.Json) -> Ui:
     case _:
       u
 
-# an answer to the picker: a listing replaces the one shown, an added
-# project closes it, an error shows in it
+def Proj.found.mine(+u: Ui, +o: J.Json) -> Bool:
+  Bool.and(Bool.not(String.is_empty(Ui.scratch(u, "@proj.frid"))), String.eq(J.Json.as_raw(J.Json.get(o, "id"), ""), Ui.scratch(u, "@proj.frid")))
+
+# the projects found on disk, and home to shorten paths with. A hub that
+# cannot look finds none, and says nothing of it
+def Proj.found.put(ok: Bool, +u: Ui, +o: J.Json) -> Ui:
+  match ok:
+    case True{}:
+      Ui.info_set(Ui.info_set(u, "proj.home", J.Json.get_str(J.Json.get_obj(o, "result"), "home", Ui.info(u, "proj.home"))), "proj.found",
+        String.join(Proj.names(J.Json.elems(J.Json.get_obj(J.Json.get_obj(o, "result"), "found"))), SCon{Proj.sep(), SNil{}}))
+    case False{}:
+      Ui.error_put(u, "")
+
+def Proj.reply.f(found: Bool, +o: J.Json, +u: Ui) -> Ui:
+  match found:
+    case True{}:
+      Proj.found.put(J.Json.get_bool(o, "ok", True{}), Ui.scratch_set(u, "@proj.frid", ""), o)
+    case False{}:
+      Proj.reply.k(Proj.which(Proj.mine(u, o), J.Json.get_bool(o, "ok", True{}), Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")))), u, o)
+
+# an answer to the picker: the projects found fill its list, a listing
+# replaces the one shown, an added project closes it, an error shows in it
 def Proj.reply(+o: J.Json, +u: Ui) -> Ui:
-  Proj.reply.k(Proj.which(Proj.mine(u, o), J.Json.get_bool(o, "ok", True{}), Bool.not(String.is_empty(J.Json.get_str(J.Json.get_obj(o, "result"), "dir", "")))), u, o)
+  Proj.reply.f(Proj.found.mine(u, o), o, u)
 
 def Proj.join(+dir: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(dir, "/"), dir ++ name, dir ++ "/" ++ name)
@@ -2300,26 +2345,229 @@ def Proj.items.k(path: Bool, +u: Ui, +q: String, +dir: String, +ns: List<&2, Str
     case False{}:
       Proj.items.q(String.is_empty(q), u, q, dir, ns)
 
-# what the picker offers. No filter: add the listed folder (once), the
+# the folder browser's rows. No filter: add the listed folder (once), the
 # parent, the subfolders. A filter: matching subfolders best first, then
 # creating the typed name (only when no folder has it), then adding. A
 # typed path (/..., ~...) goes there instead
-def Proj.items(+u: Ui) -> List<&2, PItem>:
+def Proj.folders(+u: Ui) -> List<&2, PItem>:
   Proj.items.k(Bool.or(String.starts_with(Proj.query(u), "/"), String.starts_with(Proj.query(u), "~")), u, Proj.query(u), Proj.dir(u), Proj.entries(u))
 
-# add (closes the picker), browse, create
-def Proj.run.k(i: Nat, u: Ui, +v: String) -> Act:
+# a path under home written with ~ (as is when home is not known)
+def Proj.tilde(+home: String, +p: String) -> String:
+  Bool.pick(String, Bool.and(Bool.not(String.is_empty(home)), Bool.or(String.eq(p, home), String.starts_with(p, home ++ "/"))),
+    "~" ++ String.drop(p, String.length(home)), p)
+
+# a folder's own name
+def Proj.base(+p: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, Proj.nonempty(String.split(p, '/'))), p)
+
+# a project the list may offer: live ones rank above the rest
+type PCand is Data:
+  PCand{rank: Nat, title: String, action: String, root: String}
+
+def PCand.before(a: PCand, b: PCand) -> Bool:
+  match a b:
+    case PCand{+x, n, _, _} PCand{+y, m, _, _}:
+      Bool.or(Nat.is_gt(x, y), Bool.and(Nat.is_eq(x, y), String.is_le(String.to_lower(n), String.to_lower(m))))
+
+def Proj.cands.k(keep: Bool, c: PCand, rest: List<&2, PCand>) -> List<&2, PCand>:
+  match keep:
+    case True{}:
+      c <> rest
+    case False{}:
+      rest
+
+def Proj.cand(rm: Bool, ti: String, r: String) -> PCand:
+  match rm:
+    case True{}:
+      PCand{1n, ti, "proj-found", r}
+    case False{}:
+      PCand{2n, ti, "proj-pick", r}
+
+# the hub's projects: the live ones, or those removed
+def Proj.cands.ps(ps: List<&2, M.Project>, +live: Bool) -> List<&2, PCand>:
+  match ps:
+    case Nil{}:
+      Nil{}
+    case M.Project{_, ti, r, _, +rm} <> t:
+      Proj.cands.k(Bool.pick(Bool, live, Bool.not(rm), rm), Proj.cand(rm, ti, r), Proj.cands.ps(t, live))
+
+def Proj.cands.found(rs: List<&2, String>) -> List<&2, PCand>:
+  match rs:
+    case Nil{}:
+      Nil{}
+    case +r <> t:
+      PCand{1n, Proj.base(r), "proj-found", r} <> Proj.cands.found(t)
+
+def Proj.seen(xs: List<&2, PCand>, +root: String) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case PCand{_, _, _, r} <> t:
+      Bool.or(String.eq(r, root), Proj.seen(t, root))
+
+# each folder once, the first offer of it kept
+def Proj.dedup(xs: List<&2, PCand>, +acc: List<&2, PCand>) -> List<&2, PCand>:
+  match xs:
+    case Nil{}:
+      acc
+    case PCand{r, ti, a, +ro} <> t:
+      Proj.dedup(t, Proj.cands.k(Bool.not(Proj.seen(acc, ro)), PCand{r, ti, a, ro}, acc))
+
+# live projects, then removed ones, then those found on disk
+def Proj.cands(+u: Ui) -> List<&2, PCand>:
+  Proj.dedup(List.concat(&2, PCand, [Proj.cands.ps(Ui.projects(Ui.state(u)), True{}), Proj.cands.ps(Ui.projects(Ui.state(u)), False{}),
+    Proj.cands.found(Proj.nonempty(String.split(Ui.info(u, "proj.found"), Proj.sep())))]), Nil{})
+
+def Proj.rank.k(+sc: Nat, +r: Nat, +ti: String, +a: String, +ro: String, +rest: List<&2, PCand>) -> List<&2, PCand>:
+  Bool.pick(List<&2, PCand>, Nat.is_eq(sc, 0n), rest, PCand{Nat.add(Nat.mul(sc, 4n), r), ti, a, ro} <> rest)
+
+# those whose name matches the filter
+def Proj.rank(cs: List<&2, PCand>, +q: String) -> List<&2, PCand>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case PCand{r, +ti, a, ro} <> t:
+      Proj.rank.k(FZ.Fuzzy.score(ti, q), r, ti, a, ro, Proj.rank(t, q))
+
+def Proj.cand.row(+a: String, +ti: String) -> String:
+  Bool.pick(String, String.eq(a, "proj-pick"), ti, "Add " ++ ti)
+
+def Proj.list.rows(cs: List<&2, PCand>) -> List<&2, PItem>:
+  match cs:
+    case Nil{}:
+      Nil{}
+    case PCand{_, ti, +a, ro} <> t:
+      PItem{Proj.cand.row(a, ti), a, ro} <> Proj.list.rows(t)
+
+# the projects matching the filter, best first (live first for a tie)
+def Proj.list(+u: Ui, +q: String) -> List<&2, PItem>:
+  Proj.list.rows(List.sort(~PCand, ~PCand.before, Proj.rank(Proj.cands(u), q)))
+
+def Proj.browse.row() -> PItem:
+  PItem{"Add a project from a folder", "proj-browse", ""}
+
+# (a match, not Bool.pick: only the list shown is made)
+def Proj.items.p(path: Bool, empty: Bool, +u: Ui, +q: String) -> List<&2, PItem>:
+  match path empty:
+    case True{} _:
+      Proj.items.k(True{}, u, q, "", Nil{})
+    case False{} True{}:
+      Proj.browse.row() <> Proj.list(u, q)
+    case False{} False{}:
+      List.append(&2, PItem, Proj.list(u, q), [Proj.browse.row()])
+
+def Proj.items.m(dir: Bool, +u: Ui) -> List<&2, PItem>:
+  match dir:
+    case True{}:
+      Proj.folders(u)
+    case False{}:
+      Proj.items.p(Bool.or(String.starts_with(Proj.query(u), "/"), String.starts_with(Proj.query(u), "~")), String.is_empty(Proj.query(u)), u, Proj.query(u))
+
+# what the picker offers. The projects: adding from a folder first, then
+# every project (with a filter: those matching, best first, then adding
+# from a folder). A typed path goes there, adds it, or creates it. The
+# folders: Proj.folders
+def Proj.items(+u: Ui) -> List<&2, PItem>:
+  Proj.items.m(Proj.browsing(u), u)
+
+# the path a row of the projects list stands for, as it is shown beside it
+def Proj.detail(+u: Ui, it: PItem) -> String:
+  match it:
+    case PItem{_, +a, +v}:
+      Bool.pick(String, Bool.or(String.eq(a, "proj-pick"), String.eq(a, "proj-found")), Proj.tilde(Ui.info(u, "proj.home"), v), "")
+
+type PBest is Data:
+  PBest{id: String, at: Nat}
+
+def PBest.at(b: PBest) -> Nat:
+  match b:
+    case PBest{_, +a}:
+      a
+
+def PBest.step(keep: Bool, id: String, a: Nat, b: PBest) -> PBest:
+  match keep:
+    case True{}:
+      PBest{id, a}
+    case False{}:
+      b
+
+# the project's thread most recently active (not archived or deleted)
+def Proj.latest(ts: List<&2, M.Thread>, +pid: String, +b: PBest) -> PBest:
+  match ts:
+    case Nil{}:
+      b
+    case M.Thread{id, p, _, _, +a, _, _, ar, _, _, _, _, _, _, _, _, _, _, _, _, de} <> t:
+      Proj.latest(t, pid, PBest.step(Bool.and(Bool.and(String.eq(p, pid), Bool.not(Bool.or(ar, de))), Nat.is_ge(a, PBest.at(b))), id, a, b))
+
+def Proj.id_of.k(hit: Bool, id: String, rest: String) -> String:
+  match hit:
+    case True{}:
+      id
+    case False{}:
+      rest
+
+# the live project with this root ("" when none)
+def Proj.id_of(ps: List<&2, M.Project>, +root: String) -> String:
+  match ps:
+    case Nil{}:
+      ""
+    case M.Project{id, _, r, _, rm} <> t:
+      Proj.id_of.k(Bool.and(String.eq(r, root), Bool.not(rm)), id, Proj.id_of(t, root))
+
+def Proj.go.k(none: Bool, u: Ui, +pid: String, +tid: String) -> Act:
+  match none:
+    case True{}:
+      Ui.new_thread(u, pid)
+    case False{}:
+      Ui.select(u, tid)
+
+def Proj.go.t(u: Ui, +pid: String, b: PBest) -> Act:
+  match b:
+    case PBest{+tid, _}:
+      Proj.go.k(String.is_empty(tid), u, pid, tid)
+
+def Proj.go.p(none: Bool, +u: Ui, +pid: String) -> Act:
+  match none:
+    case True{}:
+      Act{u, Nil{}}
+    case False{}:
+      Proj.go.t(Ui.flag_off(u, "proj"), pid, Proj.latest(Ui.threads(Ui.state(u)), pid, PBest{"", 0n}))
+
+# going to a project opens its latest thread, or starts one
+def Proj.go(+u: Ui, +root: String) -> Act:
+  Proj.go.p(String.is_empty(Proj.id_of(Ui.projects(Ui.state(u)), root)), u, Proj.id_of(Ui.projects(Ui.state(u)), root))
+
+# the folder browser, where it was last (listed afresh)
+def Proj.browse(+u: Ui) -> Act:
+  Proj.rpc(Proj.mode(u, "dir"), "fs.list", [J.KV{"path", J.Str{Proj.dir(u)}}])
+
+# add (closes the picker), browse, create, go to a project, add one found,
+# browse folders, back to the projects
+def Proj.run.k(i: Nat, +u: Ui, +v: String) -> Act:
   match i:
     case 0n:
       Proj.rpc(Ui.info_set(u, "proj.err", ""), "project.add", [J.KV{"path", J.Str{v}}])
     case 1n:
-      Proj.rpc(Proj.reset(u, ""), "fs.list", [J.KV{"path", J.Str{v}}])
+      Proj.rpc(Proj.mode(u, "dir"), "fs.list", [J.KV{"path", J.Str{v}}])
     case 2n:
       Proj.rpc(Proj.reset(u, ""), "fs.mkdir", [J.KV{"path", J.Str{v}}])
     case 3n:
       Proj.rpc(Ui.info_set(u, "proj.err", ""), "project.new", [J.KV{"path", J.Str{v}}])
+    case 4n:
+      Proj.go(u, v)
+    case 5n:
+      Proj.rpc(Ui.info_set(u, "proj.err", ""), "project.add", [J.KV{"path", J.Str{v}}])
+    case 6n:
+      Proj.browse(u)
+    case 7n:
+      Act{Proj.mode(u, ""), Nil{}}
     case _:
       Act{u, Nil{}}
+
+# the picker's actions, in Proj.run.k's order
+def Proj.acts() -> List<&2, String>:
+  ["proj-add", "proj-cd", "proj-mkdir", "proj-new", "proj-pick", "proj-found", "proj-browse", "proj-back"]
 
 def Proj.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
   match xs:
@@ -2331,7 +2579,7 @@ def Proj.pos(xs: List<&2, String>, +x: String, +i: Nat) -> Nat:
 def Proj.run(it: PItem, u: Ui) -> Act:
   match it:
     case PItem{_, +a, +v}:
-      Proj.run.k(Proj.pos(["proj-add", "proj-cd", "proj-mkdir", "proj-new"], a, 0n), u, v)
+      Proj.run.k(Proj.pos(Proj.acts(), a, 0n), u, v)
 
 # Enter runs the selected row
 def Proj.enter(+u: Ui) -> Act:
@@ -3224,8 +3472,10 @@ def Voice.act(i: Nat, +u: Ui, +value: String) -> Act:
     # the phones' viewer ground (the window takes its own "vw-light")
     case 13n:
       Act{Ui.scratch_set(u, "@vw.light", Bool.pick(String, String.is_empty(Ui.scratch(u, "@vw.light")), "1", "")), Nil{}}
+    # and the project picker's own: go to a project, add one found, browse
+    # folders, back to the projects
     case _:
-      Act{u, Nil{}}
+      Proj.run.k(Nat.add(Nat.sub(i, 14n), 4n), u, value)
 
 # opening Settings asks for the voice settings
 def Voice.flag.k(ask: Bool, a: Act) -> Act:

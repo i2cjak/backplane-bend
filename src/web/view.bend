@@ -560,24 +560,36 @@ def View.error(e: String) -> List<&2, D.Node>:
 # Project picker
 # --------------
 
-def View.prows(ps: List<&2, U.PItem>, +i: Nat, +sel: Nat) -> List<&2, D.Node>:
+def View.prow.cls(+a: String) -> String:
+  Bool.pick(String, Bool.or(String.eq(a, "proj-cd"), String.eq(a, "proj-pick")), "prow", Bool.pick(String, String.is_empty(a), "prow off", "prow act"))
+
+# a row: its label, and a project's path at the right
+def View.prows(+u: U.Ui, ps: List<&2, U.PItem>, +i: Nat, +sel: Nat) -> List<&2, D.Node>:
   match ps:
     case Nil{}:
       Nil{}
-    case U.PItem{+l, +a, v} <> t:
-      D.Dom.button(Bool.pick(String, String.eq(a, "proj-cd"), "prow", Bool.pick(String, String.is_empty(a), "prow off", "prow act")) ++ Bool.pick(String, Nat.is_eq(i, sel), " sel", ""),
-        a, v, l, l) <> View.prows(t, 1n+i, sel)
+    case U.PItem{+l, +a, +v} <> t:
+      D.El{"button", "", [D.At{"class", View.prow.cls(a) ++ Bool.pick(String, Nat.is_eq(i, sel), " sel", "")}, D.At{"title", l}, D.At{"data-value", v}, D.On{"click", a}],
+        [D.El{"span", "", [D.At{"class", "pl"}], [D.Txt{l}]}, D.El{"span", "", [D.At{"class", "pd"}], [D.Txt{U.Proj.detail(u, U.PItem{l, a, v})}]}]} <> View.prows(u, t, 1n+i, sel)
+
+# above the filter: "Projects", or the folder browsed and the way back
+def View.phead(dir: Bool, +u: U.Ui) -> D.Node:
+  match dir:
+    case True{}:
+      D.El{"div", "", [D.At{"class", "dir"}], [D.Dom.button("pback", "proj-back", "", "Back to projects", "Projects"), D.Txt{U.Proj.dir(u)}]}
+    case False{}:
+      D.El{"div", "", [D.At{"class", "dir"}], [D.Txt{"Projects"}]}
 
 def View.picker(open: Bool, +u: U.Ui) -> List<&2, D.Node>:
   match open:
     case True{}:
       [D.El{"div", "", [D.At{"class", "modal-back"}, D.On{"click", "proj-close"}], Nil{}},
         D.El{"div", "picker", [D.At{"class", "picker"}], D.Dom.cat([
-          D.El{"div", "", [D.At{"class", "dir"}], [D.Txt{U.Proj.dir(u)}]},
-          D.El{"input", "proj", [D.At{"id", "proj"}, D.At{"placeholder", "Filter, name a new folder, or type a path"}, D.At{"autocomplete", "off"},
-            D.On{"input", "proj-q"}, D.At{"data-enter", "proj-enter"}], Nil{}}],
+          View.phead(U.Proj.browsing(u), u),
+          D.El{"input", "proj", [D.At{"id", "proj"}, D.At{"placeholder", Bool.pick(String, U.Proj.browsing(u), "Filter, name a new folder, or type a path", "Find a project, or type a path")},
+            D.At{"autocomplete", "off"}, D.At{"value", U.Proj.query(u)}, D.On{"input", "proj-q"}, D.At{"data-enter", "proj-enter"}], Nil{}}],
           D.Dom.cat(Bool.pick(List<&2, D.Node>, String.is_empty(U.Ui.info(u, "proj.err")), Nil{}, [D.El{"div", "", [D.At{"class", "perr"}], [D.Txt{U.Ui.info(u, "proj.err")}]}]),
-            [D.El{"div", "", [D.At{"class", "prows"}], View.prows(U.Proj.items(u), 0n, U.Proj.index(u))}]))}]
+            [D.El{"div", "", [D.At{"class", "prows"}], View.prows(u, U.Proj.items(u), 0n, U.Proj.index(u))}]))}]
     case False{}:
       Nil{}
 

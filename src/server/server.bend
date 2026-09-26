@@ -847,6 +847,12 @@ def FsJob.mkdir.sh() -> String:
 def FsJob.resolve.sh() -> String:
   "exec 2>&1; set -e; " ++ FsJob.path.sh() ++ FsJob.dir.sh() ++ "echo \"$d\""
 
+# folders under home holding .backplane or .backplane.json (Backplane
+# projects), five levels down at most; other hidden folders, node_modules
+# and other file systems are skipped, and it gives up after five seconds
+def FsJob.find.sh() -> String:
+  "exec 2>/dev/null; echo \"$HOME\"; timeout 5 find \"$HOME\" -xdev -mindepth 1 -maxdepth 5 \\( -type d \\( -name node_modules -o \\( -name '.*' ! -name .backplane \\) \\) -prune \\) -o \\( -type d -name .backplane -printf '%h\\n' -prune \\) -o \\( -name .backplane.json -printf '%h\\n' \\) | grep -vxF \"$HOME\" | LC_ALL=C sort -u | head -n 500; true"
+
 def FsJob.strs(ls: List<&2, String>) -> List<&2, J.Json>:
   match ls:
     case Nil{}:
@@ -867,6 +873,18 @@ def FsJob.listed(r: P.Ran) -> J.Json:
       FsJob.listed.k(String.lines(String.trim(out)))
     case P.Ran{_, out}:
       J.Json.obj([J.KV{"error", J.Str{String.trim(out)}}])
+
+def FsJob.found.k(ls: List<&2, String>) -> J.Json:
+  match ls:
+    case h <> t:
+      J.Json.obj([J.KV{"home", J.Str{h}}, J.KV{"found", J.Json.arr(FsJob.strs(t))}])
+    case Nil{}:
+      J.Json.obj([J.KV{"found", J.Json.arr(Nil{})}])
+
+def FsJob.found(r: P.Ran) -> J.Json:
+  match r:
+    case P.Ran{_, out}:
+      FsJob.found.k(String.lines(String.trim(out)))
 
 def FsJob.ok(+r: J.Json) -> Bool:
   String.eq(J.Json.show(Maybe.default(&2, J.Json, J.Json.get(r, "error"), J.Null{})), "null")
@@ -921,7 +939,7 @@ def FsJob.sh(+sh: String, +path: String) -> IO(P.Ran):
   P.Proc.run("sh", ["-c", sh, "sh", path], "/")
 
 # list, mkdir (then list it), add (resolve, then create), new (mkdir,
-# then create)
+# then create), find
 def FsJob.run.k(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
   match i:
     case 1n:
@@ -930,11 +948,13 @@ def FsJob.run.k(i: Nat, +inbox: Chan(Msg), +client: U32, +id: String, +path: Str
       IO.bind(P.Ran, Unit, FsJob.sh(FsJob.resolve.sh(), path), r => FsJob.create(r, inbox, client, id))
     case 3n:
       IO.bind(P.Ran, Unit, FsJob.sh(FsJob.mkdir.sh(), path), r => FsJob.create(r, inbox, client, id))
+    case 4n:
+      IO.bind(P.Ran, Unit, FsJob.sh(FsJob.find.sh(), path), r => FsJob.answer(inbox, client, id, FsJob.found(r)))
     case _:
       FsJob.list(inbox, client, id, path)
 
 def FsJob.run(+op: String, +inbox: Chan(Msg), +client: U32, +id: String, +path: String) -> IO(Unit):
-  FsJob.run.k(C.Codec.pos(["list", "mkdir", "add", "new"], op), inbox, client, id, path)
+  FsJob.run.k(C.Codec.pos(["list", "mkdir", "add", "new", "find"], op), inbox, client, id, path)
 
 def GitJob.nonblank(ls: List<&2, String>, +n: Nat) -> Nat:
   match ls:

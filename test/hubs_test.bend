@@ -103,9 +103,9 @@ def main() -> IO(Unit):
     C.Check.str("no hubs", screen(H.Hubs.init(0n, "c"), "empty"), "Pair with a hub to start.")
     C.Check.str("register tells every hub", cmds(H.Hubs.cmds(H.Hubs.register(two(), "ios", "tok", "alert", "", "sandbox", "b"))), "send@100.1.1.1:3787 send@box:3787 ")
     C.Check.str("picker opens on its hub", H.Hubs.cur(H.Hubs.after(H.Hubs.act(two(), "picker-open", "box:3787|"))), "box:3787")
-    C.Check.str("picker asks that hub", cmds(H.Hubs.cmds(H.Hubs.act(two(), "picker-open", "box:3787|"))), "send@box:3787 ")
+    C.Check.str("picker asks that hub", cmds(H.Hubs.cmds(H.Hubs.act(two(), "picker-open", "box:3787|"))), "send@box:3787 send@box:3787 ")
     C.Check.str("picker's paths stay as they are",
-      J.Json.get_str(J.Json.get_obj(H.Hubs.screen(H.Hubs.after(H.Hubs.act(two(), "picker-open", "box:3787|"))), "folders"), "text", ""), "~/")
+      J.Json.get_str(J.Json.get_obj(H.Hubs.screen(H.Hubs.after(H.Hubs.act(H.Hubs.after(H.Hubs.act(two(), "picker-open", "box:3787|")), "picker-type", "~/"))), "folders"), "text", ""), "~/")
     C.Check.str("snooze value", H.Hubs.rest("box:3787|t2|1h"), "t2|1h")
     C.Check.str("search filters every hub", list(searching(), "projects", "id"), "box:3787|p2;")
     C.Check.str("search shown", yes(J.Json.get_bool(J.Json.get_obj(H.Hubs.screen(searching()), "search"), "open", False{})), "yes")

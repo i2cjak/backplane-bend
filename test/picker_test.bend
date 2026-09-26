@@ -3,6 +3,7 @@ import ./check.bend as C
 import ../src/core/client.bend as U
 import ../src/core/fuzzy.bend as FZ
 import ../src/core/json.bend as J
+import ../src/core/model.bend as M
 
 def labels(ps: List<&2, U.PItem>) -> String:
   match ps:
@@ -22,20 +23,53 @@ def json(+s: String) -> J.Json:
 def listing(+id: String, +dir: String) -> J.Json:
   json("{\"t\":\"reply\",\"id\":" ++ id ++ ",\"ok\":true,\"result\":{\"dir\":\"" ++ dir ++ "\",\"entries\":[\"Development\",\"docs\",\".cache\",\"dev-notes\"]}}")
 
-# the picker opened (its fs.list is request 0) and that listing arrived
+# the picker opened (its fs.list is request 0, its fs.find 1), that
+# listing arrived, and it went to the folders
 def listed() -> U.Ui:
-  U.Ui.recv(ui(U.Ui.act(U.Ui.init(0n), "proj-open", "")), listing("0", "/home/h"))
+  U.Ui.scratch_set(U.Ui.recv(ui(U.Ui.act(U.Ui.init(0n), "proj-open", "")), listing("0", "/home/h")), "@proj.mode", "dir")
 
 def at(+q: String) -> String:
   labels(U.Proj.items(U.Proj.set(listed(), q, 0n)))
+
+# a live project with two threads, one removed, one with none
+def log() -> List<&2, M.Change>:
+  [M.ProjectCreated{"p1", "board", "/home/h/board", 1n}, M.ThreadCreated{"t0", "p1", "a", M.Local{}, "", "", "claude", "", 10n},
+   M.ThreadCreated{"t1", "p1", "b", M.Local{}, "", "", "claude", "", 20n}, M.ProjectCreated{"p2", "old", "/home/h/old", 2n},
+   M.ProjectRemoved{"p2", 3n}, M.ProjectCreated{"p3", "empty", "/home/h/empty", 4n}]
+
+def found() -> J.Json:
+  json("{\"t\":\"reply\",\"id\":1,\"ok\":true,\"result\":{\"home\":\"/home/h\",\"found\":[\"/home/h/board\",\"/home/h/kart\",\"/home/h/old\"]}}")
+
+# the picker open on the projects, what the hub found in
+def projects() -> U.Ui:
+  U.Ui.recv(ui(U.Ui.act(U.Ui.fold(log(), U.Ui.init(0n)), "proj-open", "")), found())
+
+def rows(+q: String) -> String:
+  labels(U.Proj.items(U.Proj.set(projects(), q, 0n)))
+
+def sent(cs: List<&2, U.Cmd>) -> String:
+  match cs:
+    case Nil{}:
+      ""
+    case U.Send{t} <> r:
+      J.Json.get_str(Maybe.default(&2, J.Json, J.Json.parse(t), J.Null{}), "m", "") ++ ";" ++ sent(r)
+    case _ <> r:
+      sent(r)
+
+def asks(a: U.Act) -> String:
+  match a:
+    case U.Act{_, cs}:
+      sent(cs)
 
 def main() -> IO(Unit):
   +cd = ui(U.Ui.act(listed(), "proj-cd", "/home/h/docs"))
   +late = U.Ui.recv(cd, listing("0", "/somewhere/old"))
   +adding = ui(U.Ui.act(listed(), "proj-add", "/home/h"))
-  +refused = U.Ui.recv(adding, json("{\"t\":\"reply\",\"id\":1,\"ok\":false,\"error\":\"already a project: /home/h\"}"))
-  +added = U.Ui.recv(adding, json("{\"t\":\"reply\",\"id\":1,\"ok\":true,\"result\":{}}"))
-  +missing = U.Ui.recv(cd, json("{\"t\":\"reply\",\"id\":1,\"ok\":false,\"result\":{\"error\":\"no such folder: /home/h/docs\"}}"))
+  +refused = U.Ui.recv(adding, json("{\"t\":\"reply\",\"id\":2,\"ok\":false,\"error\":\"already a project: /home/h\"}"))
+  +added = U.Ui.recv(adding, json("{\"t\":\"reply\",\"id\":2,\"ok\":true,\"result\":{}}"))
+  +missing = U.Ui.recv(cd, json("{\"t\":\"reply\",\"id\":2,\"ok\":false,\"result\":{\"error\":\"no such folder: /home/h/docs\"}}"))
+  +gone = U.Ui.act(projects(), "proj-pick", "/home/h/board")
+  +browse = ui(U.Ui.act(projects(), "proj-browse", ""))
   do IO<Unit>:
     C.Check.str("no filter", at(""), "Add /home/h as a project|..|Development/|docs/|dev-notes/|")
     C.Check.str("filter ranks", at("dev"), "Development/|dev-notes/|Create project 'dev' here|Create folder 'dev' here|Add /home/h as a project|")
@@ -52,3 +86,18 @@ def main() -> IO(Unit):
     C.Check.str("refused stays open", Bool.show(U.Ui.flag(refused, "proj")), "True")
     C.Check.str("added closes", Bool.show(U.Ui.flag(added, "proj")), "False")
     C.Check.str("server error text", U.Ui.info(missing, "proj.err"), "no such folder: /home/h/docs")
+    C.Check.str("opens on projects", Bool.show(U.Proj.browsing(projects())), "False")
+    C.Check.str("open asks", asks(U.Ui.act(U.Ui.init(0n), "proj-open", "")), "fs.list;fs.find;")
+    C.Check.str("projects", rows(""), "Add a project from a folder|board|empty|Add kart|Add old|")
+    C.Check.str("projects filtered", rows("ol"), "Add old|Add a project from a folder|")
+    C.Check.str("projects path", rows("~/x"), "Go to ~/x|Add ~/x as a project|Create project ~/x|")
+    C.Check.str("path beside", U.Proj.detail(projects(), U.PItem{"board", "proj-pick", "/home/h/board"}), "~/board")
+    C.Check.str("no path beside", U.Proj.detail(projects(), U.PItem{"..", "proj-cd", "/home"}), "")
+    C.Check.str("go selects latest", U.Ui.sel(ui(gone)), "t1")
+    C.Check.str("go closes", Bool.show(U.Ui.flag(ui(gone), "proj")), "False")
+    C.Check.str("go to empty starts a thread", asks(U.Ui.act(projects(), "proj-pick", "/home/h/empty")), "thread.create;")
+    C.Check.str("found adds", asks(U.Ui.act(projects(), "proj-found", "/home/h/kart")), "project.add;")
+    C.Check.str("browse", Bool.show(U.Proj.browsing(browse)), "True")
+    C.Check.str("back", Bool.show(U.Proj.browsing(ui(U.Ui.act(browse, "proj-back", "")))), "False")
+    C.Check.str("cd browses", Bool.show(U.Proj.browsing(ui(U.Ui.act(projects(), "proj-cd", "/tmp")))), "True")
+    C.Check.str("find error kept quiet", U.Ui.info(U.Ui.recv(ui(U.Ui.act(U.Ui.init(0n), "proj-open", "")), json("{\"t\":\"reply\",\"id\":1,\"ok\":false,\"error\":\"unknown\"}")), "proj.err"), "")

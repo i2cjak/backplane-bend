@@ -2669,18 +2669,28 @@ def Lay.palette(+ty: Ty, +u: U.Ui, +ww: U32, +hh: U32, +blink: Bool) -> Out:
 
 # Project picker
 # --------------
-# The folder being browsed, a filter line (fuzzy), then what can be done:
-# add the folder, create the typed folder, go up, or open a subfolder.
+# The projects (or the folder being browsed), a filter line (fuzzy), then
+# what can be done: go to a project or add one, add the folder, create the
+# typed folder, go up, or open a subfolder. A project's path sits at the
+# row's right.
 
-def Proj.rows(+ty: Ty, ps: List<&2, U.PItem>, +i: Nat, +sel: Nat, +x: U32, +y: U32, +w: U32, left: Nat) -> Out:
+def Proj.tone(+a: String, +on: Bool) -> U32:
+  Bool.pick(U32, Bool.or(String.eq(a, "proj-cd"), String.eq(a, "proj-pick")), Bool.pick(U32, on, T.Th.text(), T.Th.soft()), Bool.pick(U32, String.is_empty(a), T.Th.faint(), T.Th.accent()))
+
+def Proj.detail(+ty: Ty, +d: String, +x: U32, +y: U32, +w: U32) -> List<&2, R.Op>:
+  +f = Ty.fit(ty, 2n, d, (w * 2 / 5 : U32))
+  Ty.text(ty, 2n, f, D.Clip.all(), (x + w - 16 - Ty.width(ty, 2n, f) : U32), y, 28, T.Th.faint())
+
+def Proj.rows(+ty: Ty, +u: U.Ui, ps: List<&2, U.PItem>, +i: Nat, +sel: Nat, +x: U32, +y: U32, +w: U32, left: Nat) -> Out:
   match ps left:
-    case U.PItem{+l, +a, _} <> t 1n+m:
+    case U.PItem{+l, +a, +v} <> t 1n+m:
+      +d = U.Proj.detail(u, U.PItem{l, a, v})
       Out.cat(Out{List.concat(&2, R.Op, [
           Bool.pick(List<&2, R.Op>, Nat.is_eq(i, sel), [D.Draw.rect(D.Clip.all(), (x + 4 : U32), y, (w - 8 : U32), 28, T.Th.sel(), 255)], Nil{}),
-          Ty.text(ty, 2n, Ty.fit(ty, 2n, l, (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), y, 28,
-            Bool.pick(U32, String.eq(a, "proj-cd"), Bool.pick(U32, Nat.is_eq(i, sel), T.Th.text(), T.Th.soft()), Bool.pick(U32, String.is_empty(a), T.Th.faint(), T.Th.accent())))]),
+          Ty.text(ty, 2n, Ty.fit(ty, 2n, l, Bool.pick(U32, String.is_empty(d), (w - 32 : U32), (w * 3 / 5 - 24 : U32))), D.Clip.all(), (x + 16 : U32), y, 28, Proj.tone(a, Nat.is_eq(i, sel))),
+          Proj.detail(ty, d, x, y, w)]),
           [Lay.hit(x, y, w, 28, "vw-proj", Nat.show(i))]},
-        Proj.rows(ty, t, 1n+i, sel, x, (y + 28 : U32), w, m))
+        Proj.rows(ty, u, t, 1n+i, sel, x, (y + 28 : U32), w, m))
     case _ _:
       Out.none()
 
@@ -2698,18 +2708,19 @@ def Lay.proj(+ty: Ty, +u: U.Ui, +ww: U32, +hh: U32, +blink: Bool) -> Out:
   +ey = {Bool.pick(U32, String.is_empty(err), 0, 26) : U32}
   +sel = U.Proj.index(u)
   +top = Proj.first(sel, rows)
+  +dir = U.Proj.browsing(u)
   +bh = {(n * 28 + 118 + ey : U32) : U32}
   Out.all([
     Out{[D.Draw.rect(D.Clip.all(), 0, 0, ww, hh, 0, 140)], [Lay.hit(0, 0, ww, hh, "vw-projx", "")]},
     Out{Lay.box(D.Clip.all(), x, 80, w, bh, 0, T.Th.panel(), T.Th.line()), [Lay.hit(x, 80, w, bh, "", "")]},
-    Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, U.Proj.dir(u), (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), 84, 26, T.Th.dim())),
-    Out.ops(Ty.text(ty, 0n, Bool.pick(String, String.is_empty(q), "Filter, name a new folder, or type a path", q), D.Clip.all(), (x + 16 : U32), 110, 36,
+    Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, Bool.pick(String, dir, U.Proj.dir(u), "Projects"), (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), 84, 26, T.Th.dim())),
+    Out.ops(Ty.text(ty, 0n, Bool.pick(String, String.is_empty(q), Bool.pick(String, dir, "Filter, name a new folder, or type a path", "Find a project, or type a path"), q), D.Clip.all(), (x + 16 : U32), 110, 36,
       Bool.pick(U32, String.is_empty(q), T.Th.faint(), T.Th.text()))),
     Out.ops([D.Draw.rect(D.Clip.all(), (x + 16 + Bool.pick(U32, String.is_empty(q), 0, Ty.width(ty, 0n, q)) : U32), 119, 1, 18, T.Th.accent(), Bool.pick(U32, blink, 255, 0)),
       D.Draw.rect(D.Clip.all(), x, 150, w, 1, T.Th.line(), 255)]),
     Out.when(Bool.not(String.is_empty(err)), Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, err, (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), 152, 26, T.Th.bad()))),
-    Proj.rows(ty, List.drop(&2, U.PItem, ps, top), top, sel, x, (154 + ey : U32), w, rows),
-    Out.ops(Ty.text(ty, 2n, "enter  choose     tab  open     backspace  up     esc  close", D.Clip.all(), (x + 16 : U32), (158 + ey + n * 28 : U32), 36, T.Th.faint()))])
+    Proj.rows(ty, u, List.drop(&2, U.PItem, ps, top), top, sel, x, (154 + ey : U32), w, rows),
+    Out.ops(Ty.text(ty, 2n, Bool.pick(String, dir, "enter  choose     tab  open     backspace  up     esc  projects", "enter  choose     esc  close"), D.Clip.all(), (x + 16 : U32), (158 + ey + n * 28 : U32), 36, T.Th.faint()))])
 
 def Lay.term_on(+n: S.Nui) -> Bool:
   Bool.and(U.Ui.flag(S.Nui.ui(n), "term"), Bool.not(String.is_empty(U.Ui.sel(S.Nui.ui(n)))))

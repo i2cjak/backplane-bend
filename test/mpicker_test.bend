@@ -45,18 +45,25 @@ def rows(+u: U.Ui) -> String:
 def field(+u: U.Ui) -> String:
   J.Json.get_str(PK.MPick.json(u), "text", "?")
 
-# opened (its fs.list of ~/ is request 0) and that listing arrived
+# opened (its fs.list of ~/ is request 0, its fs.find 1), that listing
+# arrived, and ~/ typed
 def listed() -> U.Ui:
-  recv(ui(PK.MPick.open(U.Ui.init(0n))), listing("0", "/home/h"))
+  ui(PK.MPick.type(recv(ui(PK.MPick.open(U.Ui.init(0n))), listing("0", "/home/h")), "~/"))
+
+def found() -> J.Json:
+  json("{\"t\":\"reply\",\"id\":1,\"ok\":true,\"result\":{\"home\":\"/home/h\",\"found\":[\"/home/h/kart\"]}}")
 
 def main() -> IO(Unit):
   +l = listed()
   +docs = PK.MPick.type(l, "~/docs/")
   +filtered = PK.MPick.type(l, "~/dev")
-  +made = recv(ui(PK.MPick.mkdir(l, "/home/h/new")), json("{\"t\":\"reply\",\"id\":1,\"ok\":true,\"result\":{\"dir\":\"/home/h/new\",\"entries\":[]}}"))
-  +missing = recv(ui(PK.MPick.type(l, "~/nope/")), json("{\"t\":\"reply\",\"id\":1,\"ok\":false,\"result\":{\"error\":\"no such folder: /home/h/nope\"}}"))
+  +made = recv(ui(PK.MPick.mkdir(l, "/home/h/new")), json("{\"t\":\"reply\",\"id\":2,\"ok\":true,\"result\":{\"dir\":\"/home/h/new\",\"entries\":[]}}"))
+  +missing = recv(ui(PK.MPick.type(l, "~/nope/")), json("{\"t\":\"reply\",\"id\":2,\"ok\":false,\"result\":{\"error\":\"no such folder: /home/h/nope\"}}"))
   do IO<Unit>:
-    C.Check.str("opens at home", asks(PK.MPick.open(U.Ui.init(0n))), "{\"path\":\"~/\"}")
+    C.Check.str("opens at home", asks(PK.MPick.open(U.Ui.init(0n))), "{\"path\":\"~/\"}{}")
+    C.Check.str("opens on projects", field(recv(ui(PK.MPick.open(U.Ui.init(0n))), found())), "")
+    C.Check.str("projects", rows(recv(ui(PK.MPick.open(U.Ui.init(0n))), found())), "Add a project from a folder=~/|Add kart=/home/h/kart|")
+    C.Check.str("projects filtered", rows(ui(PK.MPick.type(recv(ui(PK.MPick.open(U.Ui.init(0n))), found()), "zz"))), "Add a project from a folder=~/|")
     C.Check.str("closed is null", J.Json.show(PK.MPick.json(U.Ui.init(0n))), "null")
     C.Check.str("field", field(l), "~/")
     C.Check.str("home learned", U.Ui.info(l, "proj.home"), "/home/h")
