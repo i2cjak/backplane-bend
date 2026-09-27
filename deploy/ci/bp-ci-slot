@@ -1,0 +1,83 @@
+#!/bin/sh
+# One CI runner slot: registers a just-in-time (single-job) runner with
+# GitHub, runs it in a bwrap sandbox, and exits when its job is done;
+# systemd starts it again with a clean slot. Started by
+# bp-ci-runner@<slot>.service, in bpci.slice (docs/ci.md).
+#
+# The sandbox sees the machine read-only and none of the real home: the
+# job's home is a fresh directory, /tmp its own, /run/user empty (no
+# systemd bus, so no `systemctl --user` on the hub), and its own PID
+# namespace (it cannot signal the hub or anything else). The GitHub token
+# that registers the runner stays out here.
+#   bp-ci-slot SLOT            register and run one job (the service)
+#   bp-ci-slot SLOT CMD...     run CMD in the same sandbox, no runner (checks)
+set -eu
+slot=$1
+shift
+share=${BP_CI_SHARE:-$HOME/.local/share/bp-ci}
+conf=${BP_CI_CONF:-$HOME/.config/bp-ci}
+cache=$HOME/.cache/bp-ci
+repo=$(sed -n 's/^REPO=//p' "$conf/config" 2>/dev/null || true)
+repo=${repo:-i2cjak/backplane-bend}
+zig=$(sed -n 's/^ZIG=//p' "$conf/config" 2>/dev/null || true)
+zig=${zig:-$HOME/.local/opt/zig-x86_64-linux-0.16.0}
+[ -f "$conf/slots/$slot.env" ] || { echo "no slot $slot ($conf/slots/$slot.env)"; exit 1; }
+. "$conf/slots/$slot.env"   # ROLE, LABELS, and per-role job env (JOB_ENV)
+
+# a runner a month out of date is refused jobs: fetch the latest now and then
+stamp="$share/runner/.checked"
+if [ -z "$(find "$stamp" -mmin -720 2>/dev/null)" ]; then
+  "$share/bp-ci" upgrade >/dev/null 2>&1 || echo "runner upgrade check failed; keeping $(cat "$share/runner/current")"
+fi
+ver=$(cat "$share/runner/current")
+
+H=$HOME   # the sandbox's home sits at the same path, holding only what is bound below
+dir="$cache/slots/$slot"
+[ $# = 0 ] || dir="$cache/slots/$slot-shell"
+rm -rf "$dir"
+mkdir -p "$dir/home" "$dir/tmp" "$cache/shared/toolcache" "$cache/shared/zig" "$cache/shared/bun" "$cache/shared/build"
+cp -a "$share/runner/$ver" "$dir/runner"
+
+if [ $# = 0 ]; then
+  name="bp-$(hostname -s)-$slot-$(date +%s)"
+  labels="self-hosted,linux,x64,backplane-local,$LABELS"
+  cfg=$(gh api -X POST "repos/$repo/actions/runners/generate-jitconfig" \
+    -f name="$name" -F runner_group_id=1 -f work_folder=_work \
+    $(printf '%s\n' "$labels" | tr ',' '\n' | sed 's/^/-f labels[]=/') \
+    --jq .encoded_jit_config)
+  set -- "$H/runner/run.sh" --jitconfig "$cfg"
+fi
+
+# the job's environment (the runner hands .env to every step)
+{
+  echo "BP_CI_LOCAL=1"
+  echo "BP_CI_CACHE=$H/.cache/bp-ci/shared"
+  echo "RUNNER_TOOL_CACHE=$H/.cache/bp-ci/shared/toolcache"
+  echo "ZIG_GLOBAL_CACHE_DIR=$H/.cache/bp-ci/shared/zig"
+  echo "BUN_INSTALL_CACHE_DIR=$H/.cache/bp-ci/shared/bun"
+  echo "BACKPLANE_X11=$H/.local/x11"
+  echo "BEND_NO_TELEMETRY=1"
+  echo "PATH=$H/.local/bin:/usr/local/bin:/usr/bin:/bin"
+  printf '%s\n' ${JOB_ENV:-} | tr '~' ' ' 
+} > "$dir/runner/.env"
+
+# the machine-wide native build lock (scripts/build-app.sh): CI builds wait
+# for the agents' dev builds and the other way round
+touch /tmp/bp-wt-build.lock
+exec bwrap --die-with-parent --new-session \
+  --unshare-pid --unshare-ipc --unshare-uts --hostname "bp-ci-$slot" \
+  --ro-bind / / --dev /dev --proc /proc \
+  --tmpfs /home --bind "$dir/home" "$H" \
+  --bind "$dir/runner" "$H/runner" \
+  --bind "$cache/shared" "$H/.cache/bp-ci/shared" \
+  --ro-bind "$zig" "$H/.local/opt/zig" \
+  --ro-bind "$H/.local/x11" "$H/.local/x11" \
+  --ro-bind "$share/bin" "$H/.local/bin" \
+  --bind "$dir/tmp" /tmp \
+  --bind /tmp/bp-wt-build.lock /tmp/bp-wt-build.lock \
+  --tmpfs /run/user \
+  --clearenv \
+  --setenv HOME "$H" --setenv USER h --setenv LANG C.UTF-8 --setenv TMPDIR /tmp \
+  --setenv PATH "$H/.local/bin:/usr/local/bin:/usr/bin:/bin" \
+  --chdir "$H/runner" \
+  "$@"

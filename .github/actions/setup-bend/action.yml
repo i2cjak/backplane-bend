@@ -1,5 +1,5 @@
 name: Setup Bend
-description: Install a pinned Bend release, verified by sha256.
+description: Install a pinned Bend release, verified by sha256 (kept in the runner's tool cache).
 inputs:
   version:
     description: Bend version
@@ -19,13 +19,21 @@ runs:
         esac
         [ "${{ inputs.version }}" = "2.0.25" ] || { echo "update the pinned sha256 sums for ${{ inputs.version }}"; exit 1; }
         name="bend-${{ inputs.version }}-${plat}.tar.gz"
+        # the self-hosted runners keep RUNNER_TOOL_CACHE between jobs; the
+        # archive is checked against the pinned sum on every use
+        kept="${RUNNER_TOOL_CACHE:-$HOME/.cache}/bend/$name"
+        if ! { [ -f "$kept" ] && echo "$sum  $kept" | shasum -a 256 -c - >/dev/null 2>&1; }; then
+          mkdir -p "$(dirname "$kept")"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$kept.$$" \
+            "https://github.com/bendlang/bend/releases/download/v${{ inputs.version }}/$name"
+          echo "$sum  $kept.$$" | shasum -a 256 -c -
+          mv "$kept.$$" "$kept"
+        fi
         tmp=$(mktemp -d)
-        curl --proto '=https' --tlsv1.2 -fsSL -o "$tmp/$name" \
-          "https://github.com/bendlang/bend/releases/download/v${{ inputs.version }}/$name"
-        echo "$sum  $tmp/$name" | shasum -a 256 -c -
-        tar -xzf "$tmp/$name" -C "$tmp"
+        tar -xzf "$kept" -C "$tmp"
         mkdir -p "$HOME/.bend/bin"
         mv "$tmp/bend/bend2" "$tmp/bend/guide" "$HOME/.bend/"
         mv "$tmp/bend/bin/bend" "$HOME/.bend/bin/bend"
         echo "$HOME/.bend/bin" >> "$GITHUB_PATH"
         echo "BEND_NO_TELEMETRY=1" >> "$GITHUB_ENV"
+        echo "BEND_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"

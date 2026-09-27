@@ -1,0 +1,4 @@
+#!/bin/sh
+# clang for CI jobs in the sandbox: zig's bundled clang, bound read-only at
+# ~/.local/opt/zig by bp-ci-slot (no root, no apt)
+exec "$HOME/.local/opt/zig/zig" cc "$@"

@@ -1,21 +1,132 @@
 name: CI
 
+# Where jobs run (docs/ci.md):
+#   - pushes and same-repo PRs go to the self-hosted runners on the dev
+#     machine (labels backplane-local + backplane-light / -heavy) while the
+#     repo variable BP_CI_LOCAL is "on" (`bp-ci stop` turns it off);
+#   - fork PRs, and everything while BP_CI_LOCAL is off, go to GitHub's runners;
+#   - a PR labelled `priority` (read when the run starts: add the label, then
+#     push or re-run) or a manual run with priority=true goes to
+#     backplane-priority, which one slot keeps for it alone.
+# What runs: the plan job lists the changed files. Docs and mobile/ alone run
+# nothing; Bend that no binary includes (src/mobile, tests, LAWS/PROOF) runs
+# the checks and tests but no build. linux-arm64 (GitHub's runners) builds on
+# main, for the `arm64` label, and when C or the build scripts change.
+
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      priority:
+        description: Run on the reserved priority runner
+        type: boolean
+        default: false
+      arm64:
+        description: Build linux-arm64 too
+        type: boolean
+        default: false
 
+# One run per PR (a new push cancels the one in flight) and per branch. On
+# main a run in flight finishes, since its build is that merge's artifact;
+# pushes that arrive meanwhile collapse into the one pending run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      light: ${{ steps.plan.outputs.light }}
+      heavy: ${{ steps.plan.outputs.heavy }}
+      check: ${{ steps.plan.outputs.check }}
+      build: ${{ steps.plan.outputs.build }}
+      arm64: ${{ steps.plan.outputs.arm64 }}
+    steps:
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          PR: ${{ github.event.pull_request.number }}
+          # fork PRs never reach the self-hosted runners
+          TRUSTED: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          LOCAL: ${{ vars.BP_CI_LOCAL }}
+          PRIORITY_INPUT: ${{ inputs.priority }}
+          ARM64_INPUT: ${{ inputs.arm64 }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref }}
+        run: |
+          set -eu
+          R=$GITHUB_REPOSITORY
+          labels=""
+          [ -z "$PR" ] || labels=$(gh api "repos/$R/issues/$PR/labels" --jq '.[].name')
+          has() { printf '%s\n' "$labels" | grep -qx "$1"; }
+          priority=false
+          { [ "$PRIORITY_INPUT" = true ] || has priority; } && priority=true
+          if [ "$TRUSTED" = true ] && [ "$LOCAL" = on ]; then
+            pool=backplane-light; heavy=backplane-heavy
+            [ $priority = false ] || { pool=backplane-priority; heavy=backplane-priority; }
+            echo "light=[\"self-hosted\",\"backplane-local\",\"$pool\"]" >> "$GITHUB_OUTPUT"
+            echo "heavy=[\"self-hosted\",\"backplane-local\",\"$heavy\"]" >> "$GITHUB_OUTPUT"
+            where="this repo's self-hosted runners ($pool, $heavy)"
+          else
+            echo 'light="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            echo 'heavy="ubuntu-24.04"' >> "$GITHUB_OUTPUT"
+            where="GitHub's runners (trusted=$TRUSTED, BP_CI_LOCAL=${LOCAL:-unset})"
+          fi
+
+          # the changed files; unknown (a new branch, a manual run, a big
+          # compare) means everything
+          files=""; all=true
+          if [ "$EVENT" = pull_request ]; then
+            files=$(gh api --paginate "repos/$R/pulls/$PR/files" --jq '.[].filename') && all=false
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            n=$(gh api "repos/$R/compare/$BEFORE...$SHA" --jq '.files | length') || n=300
+            [ "$n" -ge 300 ] || { files=$(gh api "repos/$R/compare/$BEFORE...$SHA" --jq '.files[].filename') && all=false; }
+          fi
+          check=$all; build=$all; c=false
+          for f in $files; do
+            case $f in
+              docs/*|*.md|LICENSE|mobile/*|deploy/aur/*|deploy/ci/*|.gitignore) ;;
+              src/mobile/*|test/*_test.bend|test/tools/*|LAWS.bend|PROOF.bend|scripts/check.sh|scripts/test.sh) check=true ;;
+              *) check=true; build=true ;;
+            esac
+            case $f in *.c|*.h|scripts/build*.sh|scripts/cc-split.py|.github/*) c=true ;; esac
+          done
+          arm64=false
+          if [ $build = true ]; then
+            { [ "$REF" = refs/heads/main ] && [ "$EVENT" = push ]; } && arm64=true
+            { [ "$ARM64_INPUT" = true ] || has arm64 || [ $c = true ]; } && arm64=true
+          fi
+          echo "check=$check" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "arm64=$arm64" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Plan"
+            echo "- runners: $where"
+            echo "- priority: $priority"
+            echo "- checks and tests: $check; build: $build; linux-arm64: $arm64"
+            echo "- changed files: $( [ $all = true ] && echo all || printf '%s\n' "$files" | wc -l)"
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_STEP_SUMMARY"
+
   laws:
     name: Check and prove
-    runs-on: ubuntu-24.04
+    needs: [plan]
+    if: needs.plan.outputs.check == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.light) }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-bend
@@ -23,25 +134,23 @@ jobs:
 
   test:
     name: Tests
-    runs-on: ubuntu-24.04
+    needs: [plan]
+    if: needs.plan.outputs.check == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.light) }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-bend
       - uses: oven-sh/setup-bun@v2
       - run: scripts/test.sh
 
+  # no `needs: laws`: the build runs beside the checks, not after them
   build:
-    name: Build ${{ matrix.target }}
-    needs: [laws]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { target: linux-x64,    os: ubuntu-24.04 }
-          - { target: linux-arm64,  os: ubuntu-24.04-arm }
-          # macOS is on hold; scripts/build.sh builds it as hub + web server
-          # - { target: darwin-arm64, os: macos-15 }
-    runs-on: ${{ matrix.os }}
+    name: Build linux-x64
+    needs: [plan]
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ${{ fromJSON(needs.plan.outputs.heavy) }}
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-bend
@@ -49,25 +158,43 @@ jobs:
       - name: Swap for the compile
         # clang takes about 20 GB to compile the app's C (one large file);
         # the Linux runners have 16, so without swap the compile can be killed
-        if: runner.os == 'Linux'
-        # the swap file goes on /mnt when the runner has it, and never takes
-        # more than the free space less 8 GB (a full disk kills the runner)
-        run: |
-          dir=/; [ -d /mnt ] && dir=/mnt
-          df -h / /mnt || true
-          free_gb=$(df -BG --output=avail "$dir" | tail -1 | tr -dc 0-9)
-          size=$(( free_gb - 8 )); [ "$size" -gt 16 ] && size=16
-          if [ "$size" -ge 2 ]; then
-            sudo fallocate -l "${size}G" "$dir/swap-build"
-            sudo chmod 600 "$dir/swap-build"
-            sudo mkswap "$dir/swap-build"
-            sudo swapon "$dir/swap-build"
-          else
-            echo "only ${free_gb} GB free on $dir: no swap"
-          fi
-          free -h
+        if: runner.environment == 'github-hosted'
+        run: .github/swap.sh
       - name: Install clang 19
-        if: runner.os == 'Linux'
+        # the self-hosted runners use zig's clang, no root needed (bp-ci-slot)
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-19 libx11-dev
+          sudo ln -sf /usr/bin/clang-19 /usr/local/bin/clang
+      - run: clang --version
+      - name: Build
+        # bend's heap as scripts/build-app.sh sets it (a light slot's
+        # smaller one must not apply here)
+        env:
+          BUN_JSC_forceRAMSize: "12884901888"
+        run: scripts/ci/build.sh
+      - run: scripts/smoke.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backplane-linux-x64
+          path: dist/
+          retention-days: 7
+          compression-level: 1
+
+  build-arm64:
+    name: Build linux-arm64
+    needs: [plan]
+    if: needs.plan.outputs.arm64 == 'true'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-bend
+      - uses: oven-sh/setup-bun@v2
+      - name: Swap for the compile
+        run: .github/swap.sh
+      - name: Install clang 19
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-19 libx11-dev
@@ -77,6 +204,7 @@ jobs:
       - run: scripts/smoke.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: backplane-${{ matrix.target }}
+          name: backplane-linux-arm64
           path: dist/
           retention-days: 7
+          compression-level: 1

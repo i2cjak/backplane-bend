@@ -1,0 +1,20 @@
+[Unit]
+Description=Backplane CI runner slot %i (one job, then a fresh slot)
+PartOf=bp-ci.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Slice=bpci.slice
+ExecStart=%h/.local/share/bp-ci/bp-ci-slot %i
+Restart=always
+RestartSec=5
+# idle slots wait on GitHub; stopping mid-job ends the job
+KillMode=control-group
+TimeoutStopSec=30
+Nice=10
+OOMScoreAdjust=500
+
+[Install]
+WantedBy=bp-ci.target

@@ -66,6 +66,8 @@ Trying a branch without CI or a release (use this, not a release, whenever the u
 - `scripts/dev.sh web` rebuilds only the web client (seconds); reload the page, no restart.
 - `scripts/dev.sh install [user@host]` puts a full build over `~/.local/share/backplane` (here, or on that host over ssh) and restarts the service. The restart ends every session in the app, yours included, so update this machine last. The build is stamped `<next patch>-dev.<date>.<time>`, so the next real release replaces it and the updater never rolls it back.
 
+CI (`docs/ci.md`): pushes and same-repo PRs run on self-hosted runners on the dev machine (`deploy/ci/bp-ci`: sandboxed single-job slots in `bpci.slice`, below the hub; `bp-ci stop` sends CI back to GitHub's runners); fork PRs, releases and nightlies on GitHub's. A PR labelled `priority` takes the reserved slot. `scripts/ci/build.sh` reuses a `dist/` built from the same sources.
+
 Releases: `scripts/package.sh` makes the tarball the updater and install.sh use; `scripts/package-linux.sh` turns it into the AppImage and the `.deb`; `deploy/aur/PKGBUILD.in` is filled in by `release.yml`. A packaged install (`BACKPLANE_NO_UPDATE`, `$APPIMAGE`: `SV.Chan.managed`, laws `update_*_managed`) never updates itself; Settings says so (`U.Update.line`).
 
 Native builds go through `scripts/build-app.sh`: bend emits the C, `scripts/cc-split.py` splits it into units, and clang compiles them at nice 19 on cores 0-3 (`BACKPLANE_JOBS`, `BACKPLANE_CPUS`), one build at a time machine-wide (`/tmp/bp-wt-build.lock`). About 2 minutes instead of 4+, and far less memory than one 30 MB file. Never run a bare `bend src/app/main.bend -o ...` on a machine someone is using.

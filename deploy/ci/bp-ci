@@ -1,0 +1,156 @@
+#!/bin/sh
+# Self-hosted GitHub Actions runners for backplane-bend on this machine,
+# as systemd user services in bpci.slice (docs/ci.md).
+#
+#   deploy/ci/bp-ci install        runner + units + the default slots, started
+#   bp-ci stop                     stop every slot; CI falls back to GitHub's runners
+#   bp-ci start                    start them again; CI uses them again
+#   bp-ci add NAME heavy|light|priority
+#   bp-ci remove NAME
+#   bp-ci status                   local slots and the runners GitHub sees
+#   bp-ci shell SLOT [CMD...]      a shell (or CMD) in SLOT's sandbox, no runner
+#   bp-ci prune                    unregister this machine's offline runners
+#   bp-ci upgrade                  fetch the latest actions/runner (sha256-checked)
+#   bp-ci uninstall                stop, unregister, delete everything but caches
+#
+# Each slot runs one job in a bwrap sandbox, then starts over clean
+# (just-in-time runners, bp-ci-slot). The repo variable BP_CI_LOCAL tells
+# the workflows whether to route to these runners (on) or GitHub's (off).
+set -eu
+share=${BP_CI_SHARE:-$HOME/.local/share/bp-ci}
+conf=${BP_CI_CONF:-$HOME/.config/bp-ci}
+units=$HOME/.config/systemd/user
+repo=$(sed -n 's/^REPO=//p' "$conf/config" 2>/dev/null || true)
+repo=${repo:-i2cjak/backplane-bend}
+here=$(cd "$(dirname "$0")" && pwd)
+prefix="bp-$(hostname -s)-"
+
+die() { echo "bp-ci: $*" >&2; exit 1; }
+
+# every slot takes priority jobs too; a priority slot takes nothing else,
+# so a priority run always finds one free
+role_labels() {
+  case $1 in
+    heavy) echo "backplane-heavy,backplane-priority" ;;
+    light) echo "backplane-light,backplane-priority" ;;
+    priority) echo "backplane-priority" ;;
+    *) die "role is heavy, light or priority" ;;
+  esac
+}
+
+# what every slot's jobs see (any slot may take a priority build; the
+# build lock keeps it to one at a time): compiles on any core (the slice's
+# low CPU weight keeps the hub first), 48 small units at 2 GB each rather
+# than 16 at 4.5 GB, no debug info (zig cc adds it by default); bend's Bun
+# heap is told the machine is smaller so parallel checks stay inside the
+# slice (the build step sets it back to 12 GB)
+role_env() {
+  echo "BP_CI_ROLE=$1 BACKPLANE_JOBS=6 BACKPLANE_UNITS=48 BACKPLANE_CPUS= BACKPLANE_CFLAGS=-O3~-g0 BEND_JOBS=4 BUN_JSC_forceRAMSize=6442450944"
+}
+
+upgrade() {
+  mkdir -p "$share/runner"
+  tag=$(gh api repos/actions/runner/releases/latest --jq .tag_name)
+  ver=${tag#v}
+  if [ ! -x "$share/runner/$ver/run.sh" ]; then
+    asset="actions-runner-linux-x64-$ver.tar.gz"
+    sum=$(gh api repos/actions/runner/releases/latest --jq ".assets[]|select(.name==\"$asset\")|.digest")
+    sum=${sum#sha256:}
+    [ -n "$sum" ] || die "no sha256 for $asset"
+    tmp=$(mktemp -d)
+    curl -fsSL -o "$tmp/$asset" "https://github.com/actions/runner/releases/download/$tag/$asset"
+    echo "$sum  $tmp/$asset" | sha256sum -c - >/dev/null || die "sha256 mismatch for $asset"
+    mkdir -p "$tmp/x" && tar -xzf "$tmp/$asset" -C "$tmp/x"
+    rm -rf "$share/runner/$ver" && mv "$tmp/x" "$share/runner/$ver"
+    rm -rf "$tmp"
+    echo "actions/runner $ver installed"
+  fi
+  echo "$ver" > "$share/runner/current.new" && mv "$share/runner/current.new" "$share/runner/current"
+  touch "$share/runner/.checked"
+  # keep the current and the one before it
+  ls -1 "$share/runner" | grep -E '^[0-9.]+$' | sort -V | head -n -2 | while read -r old; do rm -rf "${share:?}/runner/$old"; done
+}
+
+add() {
+  name=$1 role=$2
+  case $name in *[!a-z0-9]*|"") die "slot names are [a-z0-9]+" ;; esac
+  labels=$(role_labels "$role")
+  mkdir -p "$conf/slots"
+  cat > "$conf/slots/$name.env" <<EOF
+ROLE=$role
+LABELS=$labels
+JOB_ENV="$(role_env "$role")"   # "~" is a space
+EOF
+  systemctl --user enable --now "bp-ci-runner@$name.service"
+  echo "slot $name ($role) started"
+}
+
+remove() {
+  name=$1
+  systemctl --user disable --now "bp-ci-runner@$name.service" 2>/dev/null || true
+  rm -f "$conf/slots/$name.env"
+  rm -rf "${HOME:?}/.cache/bp-ci/slots/$name"
+  prune "$prefix$name-"
+  echo "slot $name removed"
+}
+
+# unregister this machine's runners that are offline (a slot killed before
+# its job, or a removed slot); busy or idle online ones are left alone
+prune() {
+  p=${1:-$prefix}
+  gh api --paginate "repos/$repo/actions/runners" --jq ".runners[] | select(.status==\"offline\" and (.name|startswith(\"$p\"))) | .id" |
+    while read -r id; do gh api -X DELETE "repos/$repo/actions/runners/$id" && echo "unregistered runner $id"; done
+}
+
+route() { gh variable set BP_CI_LOCAL --repo "$repo" --body "$1" && echo "BP_CI_LOCAL=$1 (workflows use $([ "$1" = on ] && echo this machine || echo "GitHub's runners"))"; }
+
+install() {
+  command -v bwrap >/dev/null || die "bwrap is missing (apt install bubblewrap)"
+  command -v gh >/dev/null && gh auth status >/dev/null 2>&1 || die "gh is not logged in"
+  bwrap --ro-bind / / --dev /dev --proc /proc --unshare-pid true || die "bwrap cannot make a sandbox here (user namespaces?)"
+  mkdir -p "$share/bin" "$conf/slots" "$units"
+  [ -f "$conf/config" ] || printf 'REPO=%s\nZIG=%s\n' "$repo" "$HOME/.local/opt/zig-x86_64-linux-0.16.0" > "$conf/config"
+  zig=$(sed -n 's/^ZIG=//p' "$conf/config")
+  [ -x "$zig/zig" ] || die "no zig at $zig (set ZIG= in $conf/config)"
+  [ -d "$HOME/.local/x11/include/X11" ] || die "no X11 headers at ~/.local/x11 (see AGENTS.md)"
+  cp "$here/bp-ci" "$here/bp-ci-slot" "$share/"
+  cp "$here/clang" "$share/bin/clang"
+  chmod +x "$share/bp-ci" "$share/bp-ci-slot" "$share/bin/clang"
+  ln -sf "$share/bp-ci" "$HOME/.local/bin/bp-ci"
+  cp "$here/bpci.slice" "$here/bp-ci.target" "$here/bp-ci-runner@.service" "$units/"
+  systemctl --user daemon-reload
+  upgrade
+  # default: one heavy slot (native builds, one at a time), two light
+  # (checks and tests), one reserved for the priority queue
+  [ -n "$(ls "$conf/slots" 2>/dev/null)" ] || { add heavy1 heavy; add light1 light; add light2 light; add prio1 priority; }
+  systemctl --user enable bp-ci.target
+  systemctl --user start bp-ci.target
+  route on
+}
+
+case ${1:-} in
+  install) install ;;
+  upgrade) upgrade ;;
+  add) [ $# = 3 ] || die "add NAME heavy|light|priority"; add "$2" "$3" ;;
+  remove) [ $# = 2 ] || die "remove NAME"; remove "$2" ;;
+  prune) prune ;;
+  shell) [ $# -ge 2 ] || die "shell SLOT [CMD...]"; s=$2; shift 2; [ $# -gt 0 ] || set -- bash; exec "$share/bp-ci-slot" "$s" "$@" ;;
+  start) systemctl --user start bp-ci.target; route on ;;
+  stop) route off || true; systemctl --user stop bp-ci.target ;;
+  status)
+    systemctl --user list-units 'bp-ci-runner@*' --all --no-pager --no-legend
+    systemctl --user show bpci.slice -p MemoryCurrent,MemoryPeak,MemoryMax,CPUWeight
+    echo "BP_CI_LOCAL=$(gh api "repos/$repo/actions/variables/BP_CI_LOCAL" --jq .value 2>/dev/null || echo unset)"
+    gh api --paginate "repos/$repo/actions/runners" --jq '.runners[] | "\(.name)\t\(.status)\tbusy=\(.busy)\t\([.labels[].name]|join(","))"' ;;
+  uninstall)
+    route off || true
+    systemctl --user stop bp-ci.target || true
+    for f in "$conf"/slots/*.env; do [ -e "$f" ] || continue; n=$(basename "$f" .env); systemctl --user disable "bp-ci-runner@$n.service" || true; done
+    systemctl --user disable bp-ci.target || true
+    sleep 2; prune
+    rm -f "$units/bpci.slice" "$units/bp-ci.target" "$units/bp-ci-runner@.service" "$HOME/.local/bin/bp-ci"
+    systemctl --user daemon-reload
+    rm -rf "${share:?}" "$conf/slots" "$HOME/.cache/bp-ci/slots"
+    echo "removed (caches kept in ~/.cache/bp-ci/shared)" ;;
+  *) sed -n '2,17p' "$0"; exit 1 ;;
+esac

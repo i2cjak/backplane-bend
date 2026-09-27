@@ -1,0 +1,15 @@
+[Unit]
+# (not "bp-ci.slice": a dash nests it under bp.slice, and CPU weights only
+# compare siblings; this one sits beside app.slice, where the hub runs)
+Description=Backplane CI runners (below the hub: capped memory, low CPU weight)
+
+[Slice]
+# the hub (backplane-bend.service, app.slice) keeps the default weight 100;
+# under contention CI gets a fifth of what the hub gets
+CPUWeight=20
+# a runaway compile is reclaimed at MemoryHigh and killed at MemoryMax,
+# inside this slice, never the hub
+MemoryHigh=20G
+MemoryMax=22G
+MemorySwapMax=2G
+TasksMax=8192
