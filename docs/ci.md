@@ -32,6 +32,32 @@ should come from a clean machine.
   push to main cancelled the last, so in a burst of merges most were never
   built.
 
+### Timings
+
+Before (GitHub's runners, the last runs on main and PRs): 25-27 min, the x64
+build (17 min) waiting on the checks (5-8 min). After, on PR #75:
+
+| | before | self-hosted, cold | same tree again |
+| --- | --- | --- | --- |
+| Check and prove | 5.2-8.1 min | 2.7 min | 2.5 min |
+| Tests | 2.8-3.3 min | 1.9 min | 1.7 min |
+| Build linux-x64 | 16.9-18.2 min | 13.2 min | 0.8 min |
+| whole run | 25-27 min | 13.4 min | ~2.5 min without arm64 |
+
+A cold build is bend's emit (about 3 min for the app) and clang; the tree
+cache makes the push to main after a merge a copy. Docs-only and
+`mobile/`-only changes run only the plan job (seconds).
+
+### Native compile on the slots
+
+`build-app.sh` splits the emitted C into units; each unit carries the
+prelude (~10 MB of tables) and its share of the segments, and a unit's
+clang peak follows the segment code in it: 16 units take ~62 s and 4.5 GB
+each, 48 take ~24 s and 2 GB. Eight 16-unit compiles thrashed the slice;
+the slots use 48 units and 6 jobs (`BACKPLANE_UNITS`, `BACKPLANE_JOBS`).
+They compile with zig's clang, which adds DWARF by default (a 115 MB
+server), so `BACKPLANE_CFLAGS=-O3 -g0` (about 20% faster, 16 MB).
+
 ### Caches (self-hosted only)
 
 Everything lives in `~/.cache/bp-ci/shared`, outside the job's sandbox home,
@@ -81,7 +107,9 @@ bp-ci uninstall   # everything but ~/.cache/bp-ci/shared
 `stop` and `start` also set the repo variable `BP_CI_LOCAL` (off / on); the
 plan job routes on it, so jobs never queue for runners that are down.
 `systemctl --user stop bp-ci.target` alone stops the slots but leaves the
-variable on (jobs would then wait for them).
+variable on (jobs would then wait for them). A stopped slot unregisters its
+runner (`bp-ci forget`, the unit's `ExecStopPost`): GitHub otherwise keeps
+a killed runner "online" for minutes and hands it jobs that never start.
 
 ### One job per runner, in a sandbox
 
@@ -145,8 +173,10 @@ machine; no autoscaler.
   nothing to keep. Capacity is bounded by RAM and the one-build lock, not by
   how many runners are registered, so scaling runner count up and down on
   one box saves nothing.
-- `bp-ci add` / `remove` is the knob. Four slots fit: one build (~14 GB) plus
-  checks and tests stays under the slice's 22 GB.
+- `bp-ci add` / `remove` is the knob. Four slots are about the limit: a
+  build overlapping checks and tests peaked at 20.4 GB, at the slice's
+  `MemoryHigh` (reclaim, not a kill; the hard cap is 22 GB). More slots
+  would mean throttled jobs, not more throughput.
 - **actions-runner-controller** (ARC, on k3s): the standard for autoscaling
   (scale sets, ephemeral pods, webhook- or listener-driven). It needs
   Kubernetes and a container runtime (root to install), and the build would
