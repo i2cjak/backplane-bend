@@ -28,9 +28,9 @@ should come from a clean machine.
   are as before.
 - **Concurrency**: one run per PR, and a new push cancels the one in flight.
   On main a run in flight finishes (its build is that merge's artifact) and
-  pushes that arrive meanwhile collapse into one pending run; before, each
-  push to main cancelled the last, so a burst of merges left main red-less but
-  unbuilt.
+  pushes that arrive meanwhile collapse into one pending run. Before, each
+  push to main cancelled the last, so in a burst of merges most were never
+  built.
 
 ### Caches (self-hosted only)
 
@@ -106,7 +106,7 @@ starts the slot again from scratch.
 ### Keeping the hub safe
 
 - `bpci.slice` sits beside `app.slice` (where `backplane-bend.service` runs):
-  `CPUWeight=20` against the hub's 100, `MemoryHigh=18G`, `MemoryMax=21G`,
+  `CPUWeight=20` against the hub's 100, `MemoryHigh=20G`, `MemoryMax=22G`,
   `MemorySwapMax=2G`. A runaway compile is reclaimed and then killed inside
   the slice. (Named without a dash on purpose: `bp-ci.slice` would nest under
   `bp.slice`, and weights only compare siblings.)
@@ -146,7 +146,7 @@ machine; no autoscaler.
   how many runners are registered, so scaling runner count up and down on
   one box saves nothing.
 - `bp-ci add` / `remove` is the knob. Four slots fit: one build (~14 GB) plus
-  checks and tests stays under the slice's 21 GB.
+  checks and tests stays under the slice's 22 GB.
 - **actions-runner-controller** (ARC, on k3s): the standard for autoscaling
   (scale sets, ephemeral pods, webhook- or listener-driven). It needs
   Kubernetes and a container runtime (root to install), and the build would

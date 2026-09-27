@@ -102,6 +102,17 @@ prune() {
     while read -r id; do gh api -X DELETE "repos/$repo/actions/runners/$id" && echo "unregistered runner $id"; done
 }
 
+# a slot that stopped: unregister the runner it had registered (a finished
+# single-job runner is gone already; a busy one GitHub refuses to delete)
+forget() {
+  f="$HOME/.cache/bp-ci/slots/$1.name"
+  [ -f "$f" ] || return 0
+  n=$(cat "$f"); rm -f "$f"
+  gh api --paginate "repos/$repo/actions/runners" --jq ".runners[] | select(.name==\"$n\") | .id" |
+    while read -r id; do gh api -X DELETE "repos/$repo/actions/runners/$id" >/dev/null 2>&1 && echo "unregistered $n"; done
+  return 0
+}
+
 route() { gh variable set BP_CI_LOCAL --repo "$repo" --body "$1" && echo "BP_CI_LOCAL=$1 (workflows use $([ "$1" = on ] && echo this machine || echo "GitHub's runners"))"; }
 
 install() {
@@ -134,6 +145,7 @@ case ${1:-} in
   add) [ $# = 3 ] || die "add NAME heavy|light|priority"; add "$2" "$3" ;;
   remove) [ $# = 2 ] || die "remove NAME"; remove "$2" ;;
   prune) prune ;;
+  forget) [ $# = 2 ] || die "forget SLOT"; forget "$2" ;;
   shell) [ $# -ge 2 ] || die "shell SLOT [CMD...]"; s=$2; shift 2; [ $# -gt 0 ] || set -- bash; exec "$share/bp-ci-slot" "$s" "$@" ;;
   start) systemctl --user start bp-ci.target; route on ;;
   stop) route off || true; systemctl --user stop bp-ci.target ;;

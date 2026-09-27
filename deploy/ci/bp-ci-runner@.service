@@ -8,6 +8,7 @@ StartLimitIntervalSec=0
 Type=simple
 Slice=bpci.slice
 ExecStart=%h/.local/share/bp-ci/bp-ci-slot %i
+ExecStopPost=%h/.local/share/bp-ci/bp-ci forget %i
 Restart=always
 RestartSec=5
 # idle slots wait on GitHub; stopping mid-job ends the job

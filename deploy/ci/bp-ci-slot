@@ -40,6 +40,9 @@ cp -a "$share/runner/$ver" "$dir/runner"
 
 if [ $# = 0 ]; then
   name="bp-$(hostname -s)-$slot-$(date +%s)"
+  # bp-ci forget (ExecStopPost) unregisters it if the slot is stopped
+  # before its job is done: GitHub would keep it "online" and hand it jobs
+  echo "$name" > "$cache/slots/$slot.name"
   labels="self-hosted,linux,x64,backplane-local,$LABELS"
   cfg=$(gh api -X POST "repos/$repo/actions/runners/generate-jitconfig" \
     -f name="$name" -F runner_group_id=1 -f work_folder=_work \
