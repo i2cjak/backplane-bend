@@ -101,7 +101,10 @@ data class Term(val title: String, val fg: Int, val bg: Int, val lines: List<Lis
 
 // settings: rows of a label, a note and buttons (each sends action with value)
 data class SetButton(val label: String, val action: String, val value: String, val on: Boolean)
-data class SetRow(val label: String, val note: String, val buttons: List<SetButton>)
+// a field to type in: each change goes out as "bfield" (name, text); a
+// secret one shows dots
+data class SetField(val name: String, val hint: String, val secret: Boolean, val value: String)
+data class SetRow(val label: String, val note: String, val buttons: List<SetButton>, val fields: List<SetField> = emptyList())
 data class Settings(val rows: List<SetRow>)
 
 // thread search ("search") or the file picker ("files"): its query and rows
@@ -487,7 +490,8 @@ fun parseScreen(o: JSONObject) = Screen(
     o.optJSONObject("settings")?.let { st ->
         Settings(st.optJSONArray("rows").map { r ->
             SetRow(r.optString("label"), r.optString("note"),
-                r.optJSONArray("buttons").map { SetButton(it.optString("label"), it.optString("action"), it.optString("value"), it.optBoolean("on")) })
+                r.optJSONArray("buttons").map { SetButton(it.optString("label"), it.optString("action"), it.optString("value"), it.optBoolean("on")) },
+                r.optJSONArray("fields").map { SetField(it.optString("name"), it.optString("hint"), it.optBoolean("secret"), it.optString("value")) })
         })
     },
     o.optJSONObject("find")?.let { Find(it.optString("mode"), it.optString("query"), folderRows(it.optJSONArray("rows"))) },

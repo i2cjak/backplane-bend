@@ -13,6 +13,7 @@ import ./voice.bend as VC
 import ./space.bend as SPC
 import ./refs.bend as RF
 import ./mech.bend as MC
+import ./apikeys.bend as AK
 
 # The client state, Elm-style, shared by the native window and the web
 # page: a host feeds server messages to Ui.recv and user actions to Ui.act,
@@ -830,7 +831,7 @@ def Ui.actions() -> List<&2, String>:
    "voice", "voice-key", "voice-unkey", "voice-dict", "voice-use", "voice-add", "voice-fix", "voice-fixed", "voice-skip", "voice-err", "voice-term", "voice-unterm",
    "btw-close", "vw-light", "proj-pick", "proj-found", "proj-browse", "proj-back", "space-link", "skill-move",
    "mech", "mech-part", "mech-3d", "mech-refresh", "mech-renders", "mech-render", "view-kind", "view-sheet", "view-layer",
-   "attach-up", "attach-end"]
+   "attach-up", "attach-end", "key-add", "key-del"]
 
 # Reading the client state
 # ------------------------
@@ -4420,17 +4421,53 @@ def Upload.end(+u: Ui, +v: String) -> Act:
 # a phone's upload over HTTP: it starts (value: {"name", "size"}; one over
 # the cap is refused here, and the phone sends nothing, as the screen's
 # "cap" says), and the hub answered (value: its JSON, as an attach.put's)
+# API keys (core/apikeys.bend): Settings keeps one ("key-add", from the
+# fields @f.kname and @f.kval; the secret leaves the client's state as it
+# is sent), forgets one ("key-del" with its name), and lists the names the
+# hub answers (@keys; opening Settings asks). Flags "keyform" and "keys"
+# open the form and the list.
+def ApiKeys.names(+u: Ui) -> List<&2, String>:
+  AK.Keys.keep(String.lines(Ui.scratch(u, "@keys")))
+
+def ApiKeys.add(+u: Ui) -> Act:
+  Voice.rpc(Ui.flag_off(Ui.scratch_set(Ui.scratch_set(u, "@f.kval", ""), "@f.kname", ""), "keyform"), "api-add",
+    [J.KV{"name", J.Str{Ui.scratch(u, "@f.kname")}}, J.KV{"value", J.Str{Ui.scratch(u, "@f.kval")}}])
+
+def ApiKeys.del(+u: Ui, +name: String) -> Act:
+  Voice.rpc(u, "api-del", [J.KV{"name", J.Str{name}}])
+
+# what Settings says about them (every client)
+def ApiKeys.note(+u: Ui) -> String:
+  Bool.pick(String, List.is_empty(&2, String, ApiKeys.names(u)), "Keys for the services agents use, kept in this machine's secrets. Agents use them without ever reading them. None yet.",
+    "Agents use these without ever reading them: " ++ Nat.show(List.length(&2, String, ApiKeys.names(u))) ++ " kept.")
+
+def ApiKeys.form.note() -> String:
+  "Agents find a key by its name, e.g. OPENAI_API_KEY. It is never shown again."
+
+# a secret as it shows while typed: a dot a character
+def ApiKeys.dots(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{_, t}:
+      SCon{'•', ApiKeys.dots(t)}
+
 def Upload.act(+i: Nat, +u: Ui, +value: String) -> Act:
   match i:
     case 29n:
       Upload.start(u, Maybe.default(&2, J.Json, J.Json.parse(value), J.Null{}))
     case 30n:
       Upload.end(u, value)
+    case 31n:
+      ApiKeys.add(u)
+    case 32n:
+      ApiKeys.del(u, value)
     case _:
       Mpage.act(Nat.sub(i, 20n), u, value)
 
 # past the table's own: the project picker's (14-17), then the Mechanical
-# page's (20-28; client.bend's Mpage.act), then a phone's upload (29, 30)
+# page's (20-28; client.bend's Mpage.act), then a phone's upload (29, 30),
+# then the API keys' (31, 32)
 def Voice.act.tail.k(picker: Bool, +i: Nat, +u: Ui, +value: String) -> Act:
   match picker:
     case True{}:
@@ -4527,9 +4564,9 @@ def Bots.reply.has(m: Maybe<&2, J.Json>, +into: String, +u: Ui) -> Ui:
       u
 
 def Bots.reply(+o: J.Json, +u: Ui) -> Ui:
-  Voice.reply(o, Bots.reply.has(J.Json.get(o, "googleAccounts"), "@google.accts", Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
+  Voice.reply(o, Bots.reply.has(J.Json.get(o, "apiKeys"), "@keys", Bots.reply.has(J.Json.get(o, "googleAccounts"), "@google.accts", Bots.reply.put(o, "googleUrl", "@google.url", Bots.reply.put(o, "google", "@google", Bots.reply.put(o, "invite", "@peer.invite",
     Bots.reply.put(o, "secret", "@hook.secret", Bots.reply.put(o, "hook", "@hook.id",
-      Bots.reply.put(o, "token", "@hook.token", Bots.reply.put(o, "tokenHook", "@hook.tokfor", Bots.reply.put(o, "tokenUrl", "@hook.tokurl", Bots.reply.bot(o, u)))))))))))
+      Bots.reply.put(o, "token", "@hook.token", Bots.reply.put(o, "tokenHook", "@hook.tokfor", Bots.reply.put(o, "tokenUrl", "@hook.tokurl", Bots.reply.bot(o, u))))))))))))
 
 # an answer: its request leaves the outbox; a diff opens the diff view
 def Ui.reply(u: Ui, +o: J.Json) -> Ui:

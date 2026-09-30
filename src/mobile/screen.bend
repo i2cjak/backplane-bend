@@ -847,6 +847,42 @@ def Mob.set.chips(xs: List<&2, String>, +cur: String, +key: String) -> List<&2, 
 def Mob.set.row(+label: String, +note: String, btns: List<&2, J.Json>) -> J.Json:
   J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"note", J.Json.str(note)}, J.KV{"buttons", J.Json.arr(btns)}])
 
+# a row with fields to type in: each sends "bfield" (name, text) as it is
+# typed; a secret one shows dots
+def Mob.set.field(+name: String, +hint: String, secret: Bool, +value: String) -> J.Json:
+  J.Json.obj([J.KV{"name", J.Json.str(name)}, J.KV{"hint", J.Json.str(hint)}, J.KV{"secret", J.Json.bool(secret)}, J.KV{"value", J.Json.str(value)}])
+
+def Mob.set.row.f(+label: String, +note: String, fs: List<&2, J.Json>, btns: List<&2, J.Json>) -> J.Json:
+  J.Json.obj([J.KV{"label", J.Json.str(label)}, J.KV{"note", J.Json.str(note)}, J.KV{"fields", J.Json.arr(fs)}, J.KV{"buttons", J.Json.arr(btns)}])
+
+# API keys (client.bend's ApiKeys), as on the web: Add and View, the form,
+# the names each with Delete
+def Mob.keys.rows(ns: List<&2, String>) -> List<&2, J.Json>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +n <> t:
+      Mob.set.row(n, "", [Mob.set.btn("Delete", "key-del", n, False{})]) <> Mob.keys.rows(t)
+
+def Mob.keys.list(open: Bool, +u: U.Ui) -> List<&2, J.Json>:
+  match open:
+    case True{}:
+      Bool.pick(List<&2, J.Json>, List.is_empty(&2, String, U.ApiKeys.names(u)), [Mob.set.row("No API keys yet", "", Nil{})], Mob.keys.rows(U.ApiKeys.names(u)))
+    case False{}:
+      Nil{}
+
+def Mob.keys.form(open: Bool, +u: U.Ui) -> List<&2, J.Json>:
+  match open:
+    case True{}:
+      [Mob.set.row.f("New API key", U.ApiKeys.form.note(), [Mob.set.field("kname", "Name", False{}, U.Ui.scratch(u, "@f.kname")), Mob.set.field("kval", "Key", True{}, "")],
+        [Mob.set.btn("Save", "key-add", "", True{})])]
+    case False{}:
+      Nil{}
+
+def Mob.keys(+u: U.Ui) -> List<&2, J.Json>:
+  List.concat(&2, J.Json, [[Mob.set.row("API keys", U.ApiKeys.note(u), [Mob.set.btn("Add API key", "flag", "keyform", U.Ui.flag(u, "keyform")), Mob.set.btn("View API keys", "flag", "keys", U.Ui.flag(u, "keys"))])],
+    Mob.keys.form(U.Ui.flag(u, "keyform"), u), Mob.keys.list(U.Ui.flag(u, "keys"), u)])
+
 def Mob.set.days(+d: String) -> List<&2, J.Json>:
   +n = {Maybe.default(&2, Nat, Nat.read(d), 3n) : Nat}
   [Mob.set.btn("−", "setting", "settle.days=" ++ Nat.show(Bool.pick(Nat, Nat.is_gt(n, 1n), Nat.sub(n, 1n), 1n)), False{}),
@@ -856,11 +892,11 @@ def Mob.set.days.label(+d: String) -> String:
   +n = {Maybe.default(&2, Nat, Nat.read(d), 3n) : Nat}
   "Settle after " ++ Nat.show(n) ++ Bool.pick(String, Nat.is_eq(n, 1n), " day", " days")
 
-def Mob.settings.of(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String) -> J.Json:
+def Mob.settings.of(+st: M.State, +nf: Map<&2, String>, +v: String, +note: String, more: List<&2, J.Json>) -> J.Json:
   +prov = M.Setting.get(st, "agent.provider", "claude")
   +models = U.Str.get(nf, "models")
   +model = M.Setting.get(st, "agent.model", "")
-  J.Json.obj([J.KV{"rows", J.Json.arr([
+  J.Json.obj([J.KV{"rows", J.Json.arr(List.append(&2, J.Json, [
     Mob.set.row(Mob.set.days.label(M.Setting.get(st, "settle.days", "3")), "Threads idle this long move to Settled. They stay saved.", Mob.set.days(M.Setting.get(st, "settle.days", "3"))),
     Mob.set.row("Continue after a restart", "Turns a restart cuts short go on by themselves.", Mob.set.chips(["on", "off"], Bool.pick(String, M.Carry.on(st), "on", "off"), "restart.continue")),
     Mob.set.row("Provider for new threads", Bool.pick(String, String.is_empty(U.Models.cli(models, prov)), prov ++ " is not installed", U.Models.cli(models, prov)), Mob.set.chips(["claude", "codex", "grok"], prov, "agent.provider")),
@@ -874,14 +910,19 @@ def Mob.settings.of(+st: M.State, +nf: Map<&2, String>, +v: String, +note: Strin
     Mob.set.row("Pairing link", U.Pair.note(U.Pair.link(nf)), Bool.pick(List<&2, J.Json>, String.is_empty(U.Pair.link(nf)), Nil{}, [Mob.set.btn("Copy", "copy", U.Pair.link(nf), False{})])),
     Mob.set.row("Update channel", "Stable takes releases; nightly also takes the daily builds.", Mob.set.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
     Mob.set.row("Backplane " ++ v, U.Update.line(nf, note),
-      Bool.pick(List<&2, J.Json>, U.Update.packaged(nf), Nil{}, Bool.pick(List<&2, J.Json>, String.starts_with(note, "update "), [Mob.set.btn("Install update", "update", "", False{})], [Mob.set.btn("Check now", "update-check", "", False{})])))])}])
+      Bool.pick(List<&2, J.Json>, U.Update.packaged(nf), Nil{}, Bool.pick(List<&2, J.Json>, String.starts_with(note, "update "), [Mob.set.btn("Install update", "update", "", False{})], [Mob.set.btn("Check now", "update-check", "", False{})])))], more))}])
 
-# shown while "flag settings" has it open
+def Mob.settings.k(u: U.Ui, more: List<&2, J.Json>) -> J.Json:
+  match u:
+    case U.Ui{+st, _, _, _, _, _, _, _, _, +v, _, _, _, +note, +nf, _, _}:
+      Mob.settings.of(st, nf, v, note, more)
+
+# shown while "flag settings" has it open (the API keys' rows last)
 def Mob.settings(open: Bool, +u: U.Ui) -> J.Json:
-  match open u:
-    case True{} U.Ui{+st, _, _, _, _, _, _, _, _, +v, _, _, _, +note, +nf, _, _}:
-      Mob.settings.of(st, nf, v, note)
-    case False{} _:
+  match open:
+    case True{}:
+      Mob.settings.k(u, Mob.keys(u))
+    case False{}:
       J.Null{}
 
 # A list of rows that each send an action with a value (the search, the

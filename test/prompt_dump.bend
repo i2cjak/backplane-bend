@@ -11,4 +11,4 @@ def main() -> IO(Unit):
     +dir : String <- S.Env.get("PROMPT_DIR", ".")
     b : S.Boot <- S.Main.prepare(user, exe)
     fs : K.Files <- K.Files.read(dir)
-    IO.print(S.Hub.prompt(S.Main.config(user, exe, Nil{}, b), M.State.empty(), "t1", dir, fs))
+    IO.print(S.Hub.prompt(S.Main.config(user, exe, Nil{}, b), M.State.empty(), "t1", dir, fs, ""))

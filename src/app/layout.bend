@@ -2234,6 +2234,68 @@ def Set.voice.h(+ty: Ty, +n: S.Nui, +x: U32, +w: U32) -> U32:
   (386 + (Vx.chips.rows(devs, ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32)
     + (Vx.chips.rows(Vx.term.btns(U.Voice.dict(u)), ty, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32)
 
+# API keys (client.bend's ApiKeys): the note, Add and View; the form (a
+# name, the key shown as dots, Save) and the names each with Delete
+def Set.keys.rows(ns: List<&2, String>, +ty: Ty, +x: U32, +w: U32, +y: U32) -> List<&2, Out>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +k <> t:
+      Out.all([Set.row.r(ty, k, "", x, y, w, (Lay.button.w(ty, "Delete") + 16 : U32)),
+        Lay.button(ty, D.Clip.all(), (x + w - 16 - Lay.button.w(ty, "Delete") : U32), (y + 2 : U32), "Delete", T.Th.soft(), "key-del", k)]) <> Set.keys.rows(t, ty, x, w, (y + 40 : U32))
+
+def Set.keys.list(open: Bool, +u: U.Ui, +ty: Ty, +x: U32, +w: U32, +y: U32) -> Out:
+  match open:
+    case True{}:
+      Bool.pick(Out, List.is_empty(&2, String, U.ApiKeys.names(u)), Set.row(ty, "No API keys yet", "", x, y, w), Out.all(Set.keys.rows(U.ApiKeys.names(u), ty, x, w, y)))
+    case False{}:
+      Out.none()
+
+def Set.keys.fields(+ty: Ty, +n: S.Nui, +x: U32, +w: U32, +y: U32) -> Out:
+  +u = S.Nui.ui(n)
+  +nid = S.Fld.id("kname", "key-add", "")
+  +vid = S.Fld.id("kval", "key-add", "")
+  +sw = Lay.button.w(ty, "Save")
+  +nw = {U32.shr((w - 32 : U32)) : U32}
+  Out.all([
+    Out.ops(Ty.text(ty, 2n, Ty.fit(ty, 2n, U.ApiKeys.form.note(), (w - 32 : U32)), D.Clip.all(), (x + 16 : U32), y, 20, T.Th.faint())),
+    Lay.field(ty, D.Clip.all(), (x + 16 : U32), (y + 26 : U32), (nw - 8 : U32), U.Ui.scratch(u, "@f.kname"), String.eq(S.Nui.focus_of(n), nid), S.Blink.on(n),
+      S.Nui.caret_of(n), S.Nui.mark(n), "Name", nid),
+    Lay.field(ty, D.Clip.all(), (x + 16 + nw : U32), (y + 26 : U32), (w - 32 - nw - 8 - sw : U32), U.ApiKeys.dots(U.Ui.scratch(u, "@f.kval")), String.eq(S.Nui.focus_of(n), vid), S.Blink.on(n),
+      S.Nui.caret_of(n), S.Nui.mark(n), "Key", vid),
+    Lay.button(ty, D.Clip.all(), (x + w - 16 - sw : U32), (y + 26 : U32), "Save", T.Th.accent(), "key-add", "")])
+
+def Set.keys.form(open: Bool, +ty: Ty, +n: S.Nui, +x: U32, +w: U32, +y: U32) -> Out:
+  match open:
+    case True{}:
+      Set.keys.fields(ty, n, x, w, y)
+    case False{}:
+      Out.none()
+
+def Set.keys.fh(open: Bool) -> U32:
+  Bool.pick(U32, open, 72, 0)
+
+def Set.keys.lh(open: Bool, +u: U.Ui) -> U32:
+  Bool.pick(U32, open, (U32.from_nat(Bool.pick(Nat, List.is_empty(&2, String, U.ApiKeys.names(u)), 1n, List.length(&2, String, U.ApiKeys.names(u)))) * 40 : U32), 0)
+
+# the card's height
+def Set.keys.h(+n: S.Nui) -> U32:
+  (70 + Set.keys.fh(U.Ui.flag(S.Nui.ui(n), "keyform")) + Set.keys.lh(U.Ui.flag(S.Nui.ui(n), "keys"), S.Nui.ui(n)) : U32)
+
+def Set.keys(+ty: Ty, +n: S.Nui, +x: U32, +w: U32, +y: U32) -> Out:
+  +u = S.Nui.ui(n)
+  +aw = Lay.button.w(ty, "Add API key")
+  +vw = Lay.button.w(ty, "View API keys")
+  +fh = Set.keys.fh(U.Ui.flag(u, "keyform"))
+  Out.all([
+    Set.head(ty, "API keys", x, y),
+    Set.card(x, (y + 32 : U32), w, (Set.keys.h(n) - 10 : U32)),
+    Set.row.r(ty, "API keys", U.ApiKeys.note(u), x, (y + 34 : U32), w, (aw + vw + 22 : U32)),
+    Lay.chip(ty, (x + w - 16 - vw - 6 - aw : U32), (y + 44 : U32), "Add API key", U.Ui.flag(u, "keyform"), "flag", "keyform"),
+    Lay.chip(ty, (x + w - 16 - vw : U32), (y + 44 : U32), "View API keys", U.Ui.flag(u, "keys"), "flag", "keys"),
+    Set.keys.form(U.Ui.flag(u, "keyform"), ty, n, x, w, (y + 88 : U32)),
+    Set.keys.list(U.Ui.flag(u, "keys"), u, ty, x, w, (y + 88 + fh : U32))])
+
 def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: String, +note: String, +x0: U32, +x1: U32, +h: U32, +raw: U32) -> Out:
   +w = {U32.min((x1 - x0 - 64 : U32), 720) : U32}
   +x = {(x0 + U32.shr((x1 - x0 - w : U32)) : U32) : U32}
@@ -2247,7 +2309,7 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
   +er = {(Set.rows(ty, tms, (x + 16 : U32), (x + w - 16 : U32), (x + 16 : U32)) * 34 : U32) : U32}
   +ey = {(202 + er : U32) : U32}
   +fy = {(ey + 46 : U32) : U32}
-  +total = {(1156 + dy + fy + Set.voice.h(ty, n, x, w) : U32) : U32}
+  +total = {(1156 + dy + fy + Set.voice.h(ty, n, x, w) + Set.keys.h(n) + 20 : U32) : U32}
   +pair = U.Pair.link(info)
   +off = {U32.min(raw, U32.dim(total, h)) : U32}
   +b = {(0 - off : U32) : U32}
@@ -2308,7 +2370,8 @@ def Lay.settings(+ty: Ty, +st: M.State, +n: S.Nui, +info: Map<&2, String>, +v: S
     Set.row.r(ty, "Update channel", "Stable takes releases; nightly also takes the daily builds.", x, (b2 + 932 + dy + fy : U32), w, 190),
     Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") - 6 - Lay.button.w(ty, "Stable") : U32), (b2 + 946 + dy + fy : U32), "Stable", Bool.not(String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly")), "setting", "update.channel=stable"),
     Lay.chip(ty, (x + w - 16 - Lay.button.w(ty, "Nightly") : U32), (b2 + 946 + dy + fy : U32), "Nightly", String.eq(M.Setting.get(st, "update.channel", "stable"), "nightly"), "setting", "update.channel=nightly"),
-    Set.voice(ty, st, n, x, w, (b2 + 1010 + dy + fy : U32))])),
+    Set.voice(ty, st, n, x, w, (b2 + 1010 + dy + fy : U32)),
+    Set.keys(ty, n, x, w, (b2 + 1010 + dy + fy + Set.voice.h(ty, n, x, w) : U32))])),
     Out{List.append(&2, R.Op, [D.Draw.rect(D.Clip.all(), x0, 0, (x1 - x0 : U32), 51, T.Th.bg(), 255), D.Draw.rect(D.Clip.all(), x0, 51, (x1 - x0 : U32), 1, T.Th.line(), 255)],
       Ty.text(ty, 0n, "Settings", D.Clip.all(), (x0 + 24 : U32), 0, 52, T.Th.text())), Nil{}},
     Lay.button(ty, D.Clip.all(), (x1 - 16 - Lay.button.w(ty, "Close") : U32), 12, "Close", T.Th.soft(), "flag", "settings")])

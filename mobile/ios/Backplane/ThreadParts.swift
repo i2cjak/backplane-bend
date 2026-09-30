@@ -612,6 +612,27 @@ struct FindSheet: View {
 }
 
 // the hub's settings, as the desktop has them
+// a Settings field: typed text goes to the client as "bfield"
+private struct SetFieldView: View {
+    let model: AppModel
+    let field: SetField
+    @State private var text = ""
+
+    var body: some View {
+        Group {
+            if field.secret {
+                SecureField(field.hint, text: $text)
+            } else {
+                TextField(field.hint, text: $text)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+            }
+        }
+        .onAppear { text = field.value }
+        .onChange(of: text) { _, t in model.field(field.name, t) }
+    }
+}
+
 struct SettingsSheet: View {
     let model: AppModel
     let settings: Settings
@@ -625,6 +646,7 @@ struct SettingsSheet: View {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(r.label)
                             if !r.note.isEmpty { Text(r.note).font(.footnote).foregroundStyle(.secondary) }
+                            ForEach(r.fields ?? [], id: \.self) { f in SetFieldView(model: model, field: f) }
                             if !r.buttons.isEmpty {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: 6) {

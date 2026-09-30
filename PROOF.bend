@@ -5731,3 +5731,24 @@ def Laws.bots_away_cat_posed_once(c):
 
 def Laws.bots_moving_cat_follows_clock(c):
   {==}
+
+def Laws.keys_name_env():
+  {==}
+
+def Laws.keys_name_digit():
+  {==}
+
+def Laws.keys_quote_single():
+  {==}
+
+def Laws.keys_set_replaces():
+  {==}
+
+def Laws.keys_drop_keeps_others():
+  {==}
+
+def Laws.keys_names_of_lines():
+  {==}
+
+def Laws.keys_prompt_none():
+  {==}

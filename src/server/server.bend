@@ -39,6 +39,7 @@ import ./google.bend as GS
 import ../core/google.bend as GG
 import ../core/ring.bend as RG
 import ./voice.bend as VO
+import ./apikeys.bend as AKS
 import ./perf.bend as PS
 import ./freecad.bend as FC
 import ../core/perf.bend as PF
@@ -1739,11 +1740,12 @@ def Hub.prompt.files(+cwd: String, fs: K.Files) -> String:
 
 # one thread's instructions: the shared runtime and skills, then this
 # machine's KiCad, the project's canonical files, and what it may delegate
-def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Files) -> String:
+# (keys: the API keys' block, server/apikeys.bend's Ak.prompt, "" for none)
+def Hub.prompt(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, fs: K.Files, +keys: String) -> String:
   String.join([Cfg.prompt(cfg),
     Hub.prompt.kicad(Cfg.rt(cfg), Bool.not(String.eq(M.Setting.get(st, "kicad.ipc", "on"), "off"))),
     Hub.prompt.files(cwd, fs),
-    Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n") ++ BH.Bots.prompt(st, thread, Cfg.home(cfg))
+    Q.Prompt.orchestration(M.Task.may_delegate(B.Task.depth(st, thread)), Cfg.mtext(cfg))], "\n\n") ++ Bool.pick(String, String.is_empty(keys), "", "\n\n" ++ keys) ++ BH.Bots.prompt(st, thread, Cfg.home(cfg))
 
 def Hub.agent_args(+cfg: Cfg, +thread: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, prompt: String, +effort: String) -> List<&2, String>:
   match cfg:
@@ -1771,7 +1773,8 @@ def Hub.start.go(same: Bool, m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd:
       do IO<Hub>:
         Hub.agent_stop(m)
         fs : K.Files <- K.Files.read(cwd)
-        res : Result<&1, &1, U32 & String, U32 & Socket> <- H.Proc.spawn("env", "MCP_TOOL_TIMEOUT=86400000" <> "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" <> "claude" <> Hub.agent_args(cfg, thread, model, session, r, i, Hub.prompt(cfg, st, thread, cwd, fs), effort), cwd, 0)
+        +keys : String <- AKS.Ak.prompt(Cfg.home(cfg))
+        res : Result<&1, &1, U32 & String, U32 & Socket> <- H.Proc.spawn("env", "MCP_TOOL_TIMEOUT=86400000" <> "CLAUDE_CODE_ENABLE_TODO_TOOLS=1" <> "claude" <> Hub.agent_args(cfg, thread, model, session, r, i, Hub.prompt(cfg, st, thread, cwd, fs, keys), effort), cwd, 0)
         Hub.spawned(res, Hub{st, f, ls, cl, Agents.drop(as, thread), inbox, cfg, note}, thread, Agent.key(model, r, i, effort))
 
 def Hub.start.k(+m: Maybe<&2, Agent>, h: Hub, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +i: M.InteractionMode, +effort: String) -> IO(Hub):
@@ -2179,13 +2182,15 @@ def Hub.agent_send.k(has: Bool, m: Maybe<&2, Agent>, +line: String, +cwd: String
 def Codex.go(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, +model: String, +session: String, r: M.RuntimeMode, +text: String, fs: K.Files, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     +ss : List<&2, AG.USkill> <- Skills.scan(cwd)
-    Codex.run(Codex.args(cfg, thread, model, session, r, AG.Mention.expand("codex", text, ss), Hub.prompt(cfg, st, thread, cwd, fs) ++ AG.USkill.prompt(ss), Hub.effort_of(st, thread)), cwd, thread, inbox)
+    +keys : String <- AKS.Ak.prompt(Cfg.home(cfg))
+    Codex.run(Codex.args(cfg, thread, model, session, r, AG.Mention.expand("codex", text, ss), Hub.prompt(cfg, st, thread, cwd, fs, keys) ++ AG.USkill.prompt(ss), Hub.effort_of(st, thread)), cwd, thread, inbox)
 
 def Grok.go(+cfg: Cfg, +st: M.State, +thread: String, +cwd: String, +model: String, +session: String, +r: M.RuntimeMode, +text: String, fs: K.Files, +inbox: Chan(Msg)) -> IO(Unit):
   do IO<Unit>:
     +ss : List<&2, AG.USkill> <- Skills.scan(cwd)
+    +keys : String <- AKS.Ak.prompt(Cfg.home(cfg))
     Grok.run(Grok.args(r, model, Hub.effort_of(st, thread)),
-      AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs) ++ AG.USkill.prompt(ss), AG.Mention.expand("grok", text, ss), session, Grok.asks(r)}, cwd, thread, inbox)
+      AC.AcpTurn{cwd, Hub.mcp_url(cfg, thread), Hub.prompt(cfg, st, thread, cwd, fs, keys) ++ AG.USkill.prompt(ss), AG.Mention.expand("grok", text, ss), session, Grok.asks(r)}, cwd, thread, inbox)
 
 def Term.nums(bs: List<&2, U32>) -> List<&2, String>:
   match bs:
@@ -3640,12 +3645,14 @@ def BotJob.token(+op: Nat, +inbox: Chan(Msg), +home: String, +tailnet: Bool, +ho
 # started them. "add" also comes from a bot's voice_dictionary_add (client
 # 0: no one hears the answer).
 
-# the key (masked), the dictionary and the microphones
+# the key (masked), the dictionary and the microphones, and the API keys'
+# names (server/apikeys.bend; never a secret)
 def VoiceJob.status(+inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
   do IO<Unit>:
     kvs : List<&2, J.KV> <- VO.Vo.status(home)
     +d : String <- VO.Vo.devices()
-    BotJob.reply(inbox, client, id, True{}, List.append(&2, J.KV, kvs, [J.KV{"voiceDevices", J.Str{d}}]))
+    +ks : String <- AKS.Ak.names(home)
+    BotJob.reply(inbox, client, id, True{}, List.append(&2, J.KV, kvs, [J.KV{"voiceDevices", J.Str{d}}, J.KV{"apiKeys", J.Str{ks}}]))
 
 # "" when done (then the status goes back), else "error: why"
 def VoiceJob.done(+err: String, +inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
@@ -3710,11 +3717,16 @@ def VoiceJob.op(i: Nat, +inbox: Chan(Msg), +home: String, +p: J.Json, +client: U
       IO.bind(Bool, Unit, VO.Vo.stop(home), on => VoiceJob.stopped(on, inbox, client, id, J.Json.get_str(p, "thread", "")))
     case 7n:
       IO.bind(String, Unit, VO.Vo.devices(), d => BotJob.reply(inbox, client, id, True{}, [J.KV{"voiceDevices", J.Str{d}}]))
+    # Settings' API keys: keep one, forget one (the status, names only, goes back)
+    case 8n:
+      IO.bind(String, Unit, AKS.Ak.add(home, J.Json.get_str(p, "name", ""), J.Json.get_str(p, "value", "")), e => VoiceJob.done(e, inbox, home, client, id))
+    case 9n:
+      IO.bind(String, Unit, AKS.Ak.del(home, J.Json.get_str(p, "name", "")), e => VoiceJob.done(e, inbox, home, client, id))
     case _:
       BotJob.fail(inbox, client, id, "unknown voice request")
 
 def VoiceJob.go(+p: J.Json, +inbox: Chan(Msg), +home: String, +client: U32, +id: String) -> IO(Unit):
-  VoiceJob.op(C.Codec.pos(["status", "key", "unkey", "dict", "add", "start", "stop", "devices"], J.Json.get_str(p, "op", "")), inbox, home, p, client, id)
+  VoiceJob.op(C.Codec.pos(["status", "key", "unkey", "dict", "add", "start", "stop", "devices", "api-add", "api-del"], J.Json.get_str(p, "op", "")), inbox, home, p, client, id)
 
 def VoiceJob.run(+inbox: Chan(Msg), +home: String, +params: String, +client: U32, +id: String) -> IO(Unit):
   VoiceJob.go(Maybe.default(&2, J.Json, J.Json.parse(params), J.Null{}), inbox, home, client, id)

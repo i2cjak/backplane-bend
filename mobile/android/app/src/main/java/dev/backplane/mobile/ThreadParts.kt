@@ -123,6 +123,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextDecoration
@@ -734,6 +736,12 @@ fun SettingsSheet(m: AppModel, st: Settings) {
                 Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(r.label, style = MaterialTheme.typography.bodyLarge)
                     if (r.note.isNotEmpty()) Text(r.note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+                    for (f in r.fields) {
+                        var t by remember(r.label, f.name) { mutableStateOf(f.value) }
+                        OutlinedTextField(t, { t = it; m.field(f.name, it) }, Modifier.fillMaxWidth(), singleLine = true, label = { Text(f.hint) },
+                            visualTransformation = if (f.secret) PasswordVisualTransformation() else VisualTransformation.None,
+                            keyboardOptions = KeyboardOptions(keyboardType = if (f.secret) KeyboardType.Password else KeyboardType.Ascii, autoCorrectEnabled = false))
+                    }
                     if (r.buttons.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         for (b in r.buttons) {
                             if (b.on) Button(onClick = { m.act(b.action, b.value) }, shape = corner) { Text(b.label) }
@@ -743,6 +751,8 @@ fun SettingsSheet(m: AppModel, st: Settings) {
                 }
                 HorizontalDivider()
             }
+            // the last row clears the navigation bar
+            item { Spacer(Modifier.navigationBarsPadding().height(24.dp)) }
         }
     }
 }

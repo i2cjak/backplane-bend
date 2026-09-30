@@ -343,9 +343,18 @@ struct SetButton: Decodable, Hashable {
     let on: Bool
 }
 
+// a field to type in: each change goes out as "bfield" (name, text); a
+// secret one shows dots
+struct SetField: Decodable, Hashable {
+    let name, hint: String
+    let secret: Bool
+    let value: String
+}
+
 struct SetRow: Decodable, Hashable {
     let label, note: String
     let buttons: [SetButton]
+    let fields: [SetField]?
 }
 
 struct Settings: Decodable {

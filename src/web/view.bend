@@ -645,6 +645,37 @@ def View.voice.set(+u: U.Ui, +st: M.State) -> List<&2, D.Node>:
      List.append(&2, D.Node, View.terms(U.Voice.dict(u)), [WB.WB.input("voice-term", "vterm", U.Ui.scratch(u, "@f.vterm"), "Add a term", "voice-term"),
        D.Dom.button("", "voice-term", "", "Add it to the dictionary", "Add")]))]
 
+# API keys (client.bend's ApiKeys): add one, view the names, delete one
+def View.keys.rows(ns: List<&2, String>) -> List<&2, D.Node>:
+  match ns:
+    case Nil{}:
+      Nil{}
+    case +n <> t:
+      View.setrow(n, "", [D.Dom.button("danger", "key-del", n, "Forget this key", "Delete")]) <> View.keys.rows(t)
+
+def View.keys.list(open: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      Bool.pick(List<&2, D.Node>, List.is_empty(&2, String, U.ApiKeys.names(u)), [View.setrow("No API keys yet", "", Nil{})], View.keys.rows(U.ApiKeys.names(u)))
+    case False{}:
+      Nil{}
+
+def View.keys.form(open: Bool, +u: U.Ui) -> List<&2, D.Node>:
+  match open:
+    case True{}:
+      [View.setrow("New API key", U.ApiKeys.form.note(),
+        [WB.WB.input("kname", "kname", U.Ui.scratch(u, "@f.kname"), "Name", "key-add"), WB.WB.secret("kval", "kval", U.Ui.scratch(u, "@f.kval"), "Key"),
+         D.Dom.button("primary", "key-add", "", "Keep this key", "Save")])]
+    case False{}:
+      Nil{}
+
+def View.keys.set(+u: U.Ui) -> List<&2, D.Node>:
+  List.concat(&2, D.Node, [
+    [View.setrow("API keys", U.ApiKeys.note(u),
+      [D.Dom.button(Bool.pick(String, U.Ui.flag(u, "keyform"), "on", ""), "flag", "keyform", "Add an API key", "Add API key"),
+       D.Dom.button(Bool.pick(String, U.Ui.flag(u, "keys"), "on", ""), "flag", "keys", "The names kept", "View API keys")])],
+    View.keys.form(U.Ui.flag(u, "keyform"), u), View.keys.list(U.Ui.flag(u, "keys"), u)])
+
 # the same settings as the native window
 def View.settings(+u: U.Ui, +st: M.State, +nf: Map<&2, String>, +v: String, +note: String) -> D.Node:
   +prov = M.Setting.get(st, "agent.provider", "claude")
@@ -671,7 +702,7 @@ def View.settings(+u: U.Ui, +st: M.State, +nf: Map<&2, String>, +v: String, +not
       View.setrow("Update channel", "Stable takes releases; nightly also takes the daily builds.", View.chips(["stable", "nightly"], M.Setting.get(st, "update.channel", "stable"), "update.channel")),
       View.setrow("Backplane " ++ v, U.Update.line(nf, note),
         Bool.pick(List<&2, D.Node>, U.Update.packaged(nf), Nil{}, Bool.pick(List<&2, D.Node>, String.starts_with(note, "update "), [D.Dom.button("primary", "update", "", "Install the update", "Install update")],
-          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")])))], View.voice.set(u, st))}]}
+          [D.Dom.button("", "update-check", "", "Look for an update now", "Check now")])))], List.append(&2, D.Node, View.voice.set(u, st), View.keys.set(u)))}]}
 
 def View.empty(n: Nat) -> D.Node:
   D.El{"main", "empty", [D.At{"class", "empty"}], [D.Txt{Bool.pick(String, Nat.is_eq(n, 0n), "Add a project with + to start.", "Pick a thread, or start one with + next to a project.")}]}
