@@ -63,18 +63,38 @@ def Img.pick(ws: List<&2, String>, +acc: List<&2, String>) -> List<&2, String>:
     case +w <> t:
       Img.pick(t, Img.keep(Bool.and(Img.is_image(Img.bare(w)), Bool.not(Img.has(acc, Img.bare(w)))), Img.bare(w), acc))
 
-# whether a text may name an image: it holds an image extension, any
-# case. Every path Img.paths finds ends in one, so a text without is
-# skipped with a cheap search (a phone renders each reply on every screen)
-def Img.may.go(xs: List<&2, String>, +s: String) -> Bool:
+def Img.starts(xs: List<&2, String>, +s: String) -> Bool:
   match xs:
     case Nil{}:
       False{}
     case +x <> t:
-      Bool.or(String.contains(s, x), Img.may.go(t, s))
+      Bool.or(String.starts_with(s, x), Img.starts(t, s))
 
+# after a dot: whether an image extension follows, any case (only its
+# few characters are lowered)
+def Img.dot(dot: Bool, +t: String) -> Bool:
+  match dot:
+    case True{}:
+      Img.starts(Img.exts(), "." ++ String.to_lower(String.take(t, 4n)))
+    case False{}:
+      False{}
+
+def Img.scan(s: String, found: Bool) -> Bool:
+  match s found:
+    case _ True{}:
+      True{}
+    case SNil{} False{}:
+      False{}
+    case SCon{Chr{+c}, +t} False{}:
+      Img.scan(t, Img.dot(U32.is_eq(c, 46), t))
+
+# whether a text may name an image: it holds an image extension, any
+# case. Every path Img.paths finds ends in one, so a text without is
+# skipped with a cheap search (a phone renders each reply on every screen).
+# One tail-recursive walk: lowering the whole text (String.to_lower
+# recurses once per character) overflowed the phones' V8 on a long message
 def Img.may(+s: String) -> Bool:
-  Img.may.go(Img.exts(), String.to_lower(s))
+  Img.scan(s, False{})
 
 # the images a message shows, in order, each once
 def Img.paths(+text: String) -> List<&2, String>:

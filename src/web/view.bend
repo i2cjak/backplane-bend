@@ -576,16 +576,16 @@ def View.qrows(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, D.No
     case q <> t:
       View.qrow(q, first, run) <> View.qrows(t, False{}, run)
 
-def View.tdlines(ts: List<&2, TD.Todo>) -> List<&2, D.Node>:
-  match ts:
+def View.tdlines(rs: List<&2, TD.TRow>) -> List<&2, D.Node>:
+  match rs:
     case Nil{}:
       Nil{}
-    case +t <> rest:
-      D.Dom.span("todo " ++ TD.Todo.status(t), TD.Todo.line(t)) <> View.tdlines(rest)
+    case +r <> rest:
+      D.Dom.span("todo " ++ TD.TRow.status(r), TD.TRow.text(r)) <> View.tdlines(rest)
 
 # the agent's todo list above the queue (U.Todos.shown)
 def View.todos(+ts: List<&2, TD.Todo>) -> D.Node:
-  D.El{"div", "", [D.At{"class", "todos"}], Bool.pick(List<&2, D.Node>, List.is_empty(&2, TD.Todo, ts), Nil{}, D.Dom.span("head", TD.Todo.head(ts)) <> View.tdlines(ts))}
+  D.El{"div", "", [D.At{"class", "todos"}], Bool.pick(List<&2, D.Node>, List.is_empty(&2, TD.Todo, ts), Nil{}, D.Dom.span("head", TD.Todo.head(ts)) <> View.tdlines(TD.Todo.rows(ts)))}
 
 # what waits for a later turn (stored on the server), next first, each
 # with its buttons (U.Qu.buttons)

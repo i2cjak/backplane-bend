@@ -516,16 +516,16 @@ def Mob.queue(qs: List<&2, M.QItem>, +first: Bool, +run: Bool) -> List<&2, J.Jso
       J.Json.obj([J.KV{"msg", J.Json.str(msg)}, J.KV{"text", J.Json.str(U.Qu.label(msg, text))}, J.KV{"tag", J.Json.str(U.Qu.tag(run, msg))},
         J.KV{"buttons", J.Json.arr(Mob.qbtns(U.Qu.row_buttons(run, first, msg)))}]) <> Mob.queue(t, False{}, run)
 
-def Mob.tdlines(ts: List<&2, TD.Todo>) -> List<&2, J.Json>:
-  match ts:
+def Mob.tdlines(rs: List<&2, TD.TRow>) -> List<&2, J.Json>:
+  match rs:
     case Nil{}:
       Nil{}
-    case +t <> rest:
-      J.Json.obj([J.KV{"text", J.Json.str(TD.Todo.line(t))}, J.KV{"status", J.Json.str(TD.Todo.status(t))}]) <> Mob.tdlines(rest)
+    case +r <> rest:
+      J.Json.obj([J.KV{"text", J.Json.str(TD.TRow.text(r))}, J.KV{"status", J.Json.str(TD.TRow.status(r))}]) <> Mob.tdlines(rest)
 
 # the agent's todo list (U.Todos.shown), or null while hidden
 def Mob.todos(+ts: List<&2, TD.Todo>) -> J.Json:
-  Bool.pick(J.Json, List.is_empty(&2, TD.Todo, ts), J.Null{}, J.Json.obj([J.KV{"head", J.Json.str(TD.Todo.head(ts))}, J.KV{"lines", J.Json.arr(Mob.tdlines(ts))}]))
+  Bool.pick(J.Json, List.is_empty(&2, TD.Todo, ts), J.Null{}, J.Json.obj([J.KV{"head", J.Json.str(TD.Todo.head(ts))}, J.KV{"lines", J.Json.arr(Mob.tdlines(TD.Todo.rows(ts)))}]))
 
 # Asks: what the agent waits on the user for. Each button sends "answer"
 # with its value; "primary" marks the one to lead with

@@ -538,7 +538,7 @@ def Tree.load(fuel: Nat, +todo: List<&2, String>, +tab: List<&2, HI.Kids>) -> IO
 # the root sheet: the project's schematic, else the file shown
 def Tree.root(f: K.Files, +path: String) -> String:
   match f:
-    case K.Files{_, _, +sch}:
+    case K.Files{_, _, +sch, _}:
       Bool.pick(String, String.is_empty(sch), path, sch)
 
 # `backplane --plot-tree ROOT`: the rows, as Hier.show writes them
@@ -747,7 +747,7 @@ def Pv.none(+kind: U32) -> String:
 
 def Pv.file.k(f: K.Files, +kind: U32) -> String:
   match f:
-    case K.Files{_, pcb, sch}:
+    case K.Files{_, pcb, sch, _}:
       Bool.pick(String, U32.is_eq(kind, 1), sch, pcb)
 
 # the file a phone asked for: the explicit path, else the project's

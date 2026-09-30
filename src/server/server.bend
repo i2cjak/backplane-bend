@@ -1734,8 +1734,8 @@ def Hub.prompt.kicad(rt: K.Rt, ipc: Bool) -> String:
 
 def Hub.prompt.files(+cwd: String, fs: K.Files) -> String:
   match fs:
-    case K.Files{+pro, +pcb, +sch}:
-      Q.Prompt.project(cwd, pro, pcb, sch)
+    case K.Files{+pro, +pcb, +sch, +all}:
+      Q.Prompt.project(cwd, pro, pcb, sch, all)
 
 # one thread's instructions: the shared runtime and skills, then this
 # machine's KiCad, the project's canonical files, and what it may delegate
@@ -4965,6 +4965,41 @@ def Main.listened(r: Result<&1, &1, U32 & String, Listener>, h: Hub, +web: Strin
         IO.spawn(Unit, Listen.retry(Fuel.forever(), web, inbox, cfg, addr))
         Main.headless(h, inbox, cfg, front)
 
+# One hub per home
+# ----------------
+# Two hubs on one home (a window opened while `--headless` ran for the same
+# folder) each kept a state of their own over the same log: a message sent
+# in the window never reached the web or the phones, and theirs never the
+# window. A hub notes its pid and port in <home>/hub.lock as it starts; a
+# later start that finds that hub alive joins it (the window) or leaves it
+# be (`--headless`): src/app/main.bend's Start.run.
+
+def Lock.path(+home: String) -> String:
+  home ++ "/hub.lock"
+
+# the shell's parent is this process, so $PPID is the hub's pid
+def Lock.write(+home: String, +port: U32) -> IO(Unit):
+  do IO<Unit>:
+    r : P.Ran <- P.Proc.run("sh", ["-c", "echo \"$PPID $1\" > \"$2\"", "sh", U32.show(port), Lock.path(home)], "/")
+    return Unit{}
+
+# "<pid> <port>" of another live Backplane holding the lock, else ""
+def Lock.find.sh() -> String:
+  "f=$1/hub.lock; [ -f \"$f\" ] || exit 0; read pid port < \"$f\"; [ -n \"$pid\" ] && [ \"$pid\" != \"$PPID\" ] || exit 0; kill -0 \"$pid\" 2>/dev/null || exit 0; case $(ps -p \"$pid\" -o comm= 2>/dev/null) in *backplane*) echo \"$pid $port\";; esac"
+
+def Lock.out(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, +out}:
+      String.trim(out)
+    case _:
+      ""
+
+def Lock.find(+home: String) -> IO(String):
+  IO.bind(P.Ran, String, P.Proc.run("sh", ["-c", Lock.find.sh(), "sh", home], "/"), r => IO.pure(String, Lock.out(r)))
+
+def Lock.word(+held: String, +i: Nat) -> String:
+  Maybe.default(&2, String, List.get(&2, String, String.split(held, ' '), i), "")
+
 # Browser frames
 # --------------
 
@@ -4989,6 +5024,7 @@ def Main.opened(r: Result<&1, &1, U32 & String, File>, st: M.State, ls: List<&2,
   match r cfg:
     case Done{f} Cfg{+home, +web, +host, +port, +pr, +ds, +v, nt0}:
       do IO<Unit>:
+        Lock.write(home, port)
         +inbox : Chan(Msg) <- Chan.new(Msg, 4096)
         rc : Bool <- Chan.send(Msg, inbox, Recover{})
         +bq : Chan(BR.BMsg) <- Chan.new(BR.BMsg, 256)

@@ -168,3 +168,74 @@ def Todo.line(t: Todo) -> String:
 # the card's head: "Todo 2/5"
 def Todo.head(+ts: List<&2, Todo>) -> String:
   "Todo " ++ Nat.show(Todo.done(ts)) ++ "/" ++ Nat.show(List.length(&2, Todo, ts))
+
+# What the card shows
+# -------------------
+# A long list does not fit above the composer, and its first steps are
+# mostly done: the card shows `Todo.fit()` steps from the one before the
+# first step not done, and a line each for the done steps before them and
+# the steps after them (laws todo_rows_*). Every client draws these rows.
+
+# a row of the card: a step's line, or a note for steps left out (its
+# status "completed" for done ones, "pending" for the rest)
+type TRow is Data:
+  TRow{text: String, status: String}
+
+def TRow.text(r: TRow) -> String:
+  match r:
+    case TRow{t, _}:
+      t
+
+def TRow.status(r: TRow) -> String:
+  match r:
+    case TRow{_, s}:
+      s
+
+# steps shown at once
+def Todo.fit() -> Nat:
+  6n
+
+def Todo.open.k(done: Bool, +n: Nat) -> Nat:
+  match done:
+    case True{}:
+      1n+n
+    case False{}:
+      0n
+
+# how many steps come before the first one not completed
+def Todo.open(ts: List<&2, Todo>) -> Nat:
+  match ts:
+    case Nil{}:
+      0n
+    case Todo{_, _, _, +st} <> t:
+      Todo.open.k(String.eq(st, "completed"), Todo.open(t))
+
+def Todo.rows.of(ts: List<&2, Todo>) -> List<&2, TRow>:
+  match ts:
+    case Nil{}:
+      Nil{}
+    case +t <> rest:
+      TRow{Todo.line(t), Todo.status(t)} <> Todo.rows.of(rest)
+
+def Todo.note(+n: Nat, +text: String, +st: String) -> List<&2, TRow>:
+  Bool.pick(List<&2, TRow>, Nat.is_eq(n, 0n), Nil{}, [TRow{"… " ++ Nat.show(n) ++ " " ++ text, st}])
+
+# the first step shown: one done step before the first open one, and never
+# so late that fewer than fit steps follow
+def Todo.first(+open: Nat, +len: Nat, +fit: Nat) -> Nat:
+  Bool.pick(Nat, Nat.is_lt(Nat.sub(open, 1n), Nat.sub(len, fit)), Nat.sub(open, 1n), Nat.sub(len, fit))
+
+def Todo.rows.cut(ts: List<&2, Todo>, +s: Nat, +len: Nat, +fit: Nat) -> List<&2, TRow>:
+  List.concat(&2, TRow, [Todo.note(s, "done", "completed"), Todo.rows.of(List.take(&2, Todo, List.drop(&2, Todo, ts, s), fit)),
+    Todo.note(Nat.sub(Nat.sub(len, s), fit), "more", "pending")])
+
+def Todo.rows.k(long: Bool, ts: List<&2, Todo>, +len: Nat, +fit: Nat, +open: Nat) -> List<&2, TRow>:
+  match long:
+    case True{}:
+      Todo.rows.cut(ts, Todo.first(open, len, fit), len, fit)
+    case False{}:
+      Todo.rows.of(ts)
+
+# the card's rows below its head
+def Todo.rows(+ts: List<&2, Todo>) -> List<&2, TRow>:
+  Todo.rows.k(Nat.is_gt(List.length(&2, Todo, ts), Todo.fit()), ts, List.length(&2, Todo, ts), Todo.fit(), Todo.open(ts))

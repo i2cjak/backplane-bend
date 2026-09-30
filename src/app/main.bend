@@ -62,7 +62,10 @@ type ShellMsg is Data:
 
 # which hub the window talks to: its own (url "") or another machine's
 # through a link; each connection gets its own tag so messages from one
-# already left are dropped
+# already left are dropped. Where this machine's hub is when it is not in
+# this process (a `--headless` one already ran for the home, so the window
+# joined it over a link: Start.run) is the client's "local.hub" ("" when it
+# is; kept out of Tie, whose fields the app's state flattens)
 type Tie is Data:
   Tie{home: Chan(S.Msg), url: String, tag: String, n: Nat, pics: Map<&2, BM.Bitmap>, asked: Map<&2, Bool>}
 
@@ -512,11 +515,23 @@ def Tie.url(t: Tie) -> String:
     case Tie{_, u, _, _, _, _}:
       u
 
-# the hub to join: this machine's own, or a link to another
-def Shell.hub(local: Bool, +home: Chan(S.Msg), +url: String) -> IO(Chan(S.Msg)):
-  match local:
+# where this machine's hub is joined over a link ("" when in this process)
+def Shell.local(+n: N.Nui) -> String:
+  U.Ui.info(N.Nui.ui(n), "local.hub")
+
+def Shell.hub.here(inside: Bool, +home: Chan(S.Msg), +lo: String) -> IO(Chan(S.Msg)):
+  match inside:
     case True{}:
       IO.pure(Chan(S.Msg), home)
+    case False{}:
+      LK.Link.start(lo)
+
+# the hub to join: this machine's own (in this process, or a new link to
+# the one the window joined at start), or a link to another
+def Shell.hub(local: Bool, +home: Chan(S.Msg), +url: String, +lo: String) -> IO(Chan(S.Msg)):
+  match local:
+    case True{}:
+      Shell.hub.here(String.is_empty(lo), home, lo)
     case False{}:
       LK.Link.start(url)
 
@@ -528,11 +543,11 @@ def Shell.joined(+i2: Chan(S.Msg), +q: Chan(ShellMsg), +tag: String) -> IO(Unit)
 
 def Shell.connect.k(t: Tie, a: Shell, +url: String) -> IO(Shell):
   match t a:
-    case Tie{+home, _, _, +n, _, _} Shell{nu, w, d, qd, +q, +i, Aux{ws, ty, _, fr}}:
+    case Tie{+home, _, _, +n, _, _} Shell{+nu, w, d, qd, +q, +i, Aux{ws, ty, _, fr}}:
       do IO<Shell>:
         ok : Bool <- Chan.send(S.Msg, i, S.Leave{0})
         +tag : String = url ++ "#" ++ Nat.show(n)
-        +i2 : Chan(S.Msg) <- Shell.hub(String.is_empty(url), home, url)
+        +i2 : Chan(S.Msg) <- Shell.hub(String.is_empty(url), home, url, Shell.local(nu))
         Shell.joined(i2, q, tag)
         return Shell{nu, w, True{}, qd, q, i2, Aux{ws, ty, Tie{home, url, tag, 1n+n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, fr}}
 
@@ -713,8 +728,9 @@ def Shell.cmd(a: Shell, c: N.NCmd) -> IO(Shell):
         Drafts.write(U.Ui.info(N.Nui.ui(n), "local.drafts"), id, t)
         return Shell{n, w, d, qd, q, i, wa}
 
-# a connection closed: this machine's own hub means the app is ending;
-# another machine's is tried again in a moment; an old one is let go
+# a connection closed: this machine's own hub (in this process) means the
+# app is ending; another machine's, or this machine's joined over a link,
+# is tried again in a moment; an old one is let go
 def Shell.gone(current: Bool, local: Bool, a: Shell, +tag: String) -> IO(Shell):
   match current local a:
     case True{} True{} _:
@@ -759,14 +775,14 @@ def Shell.from(current: Bool, a: Shell, +t: String) -> IO(Shell):
       IO.pure(Shell, a)
 
 # messages that belong to one connection: only the current one's count
-def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
+def Shell.tagged.k(m: ShellMsg, +ti: Tie, +lo: String, a: Shell) -> IO(Shell):
   match m:
     case FromHub{tag, t}:
       Shell.from(String.eq(tag, Tie.tag(ti)), a, t)
     case FromHubSt{tag, st, h}:
       Shell.adopt(String.eq(tag, Tie.tag(ti)), a, st, h)
     case Gone{tag}:
-      Shell.gone(String.eq(tag, Tie.tag(ti)), String.is_empty(Tie.url(ti)), a, Tie.tag(ti))
+      Shell.gone(String.eq(tag, Tie.tag(ti)), Bool.and(String.is_empty(Tie.url(ti)), String.is_empty(lo)), a, Tie.tag(ti))
     case Retry{tag}:
       Shell.retry(String.eq(tag, Tie.tag(ti)), a, Tie.url(ti))
     case PicOk{tag, +path, +w, +h, rgb}:
@@ -778,8 +794,8 @@ def Shell.tagged.k(m: ShellMsg, +ti: Tie, a: Shell) -> IO(Shell):
 
 def Shell.tagged(a: Shell, m: ShellMsg) -> IO(Shell):
   match a:
-    case Shell{n, w, d, qd, q, i, Aux{ws, ty, +ti, fr}}:
-      Shell.tagged.k(m, ti, Shell{n, w, d, qd, q, i, Aux{ws, ty, ti, fr}})
+    case Shell{+n, w, d, qd, q, i, Aux{ws, ty, +ti, fr}}:
+      Shell.tagged.k(m, ti, Shell.local(n), Shell{n, w, d, qd, q, i, Aux{ws, ty, ti, fr}})
 
 # Events
 # ------
@@ -843,7 +859,7 @@ def Src.kind(+key: String) -> U32:
 
 def Watch.file.k(+kind: U32, f: K.Files, +path: String) -> String:
   match f:
-    case K.Files{_, pcb, sch}:
+    case K.Files{_, pcb, sch, _}:
       Bool.pick(String, String.is_empty(path), Bool.pick(String, U32.is_eq(kind, 1), sch, pcb), path)
 
 # the file behind a source ("" when the project has none)
@@ -1826,25 +1842,30 @@ def Shell.fonts(m: Maybe<&1, L.Ty>) -> IO(L.Ty):
     case None{}:
       L.Ty.load()
 
-def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):
+# the first join: the in-process hub hands its state over (JoinHere); a
+# hub joined over a link sends its log like any other machine's
+def Shell.join.first(+inbox: Chan(S.Msg), +out: Chan(S.Wire), +lo: String) -> IO(Bool):
+  Bool.pick(IO(Bool), String.is_empty(lo), Chan.send(S.Msg, inbox, S.JoinHere{0, out}), Chan.send(S.Msg, inbox, S.Join{0, out, 0n, ""}))
+
+def Shell.twin(r: Window & Window, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty), +lo: String) -> IO(Unit):
   (ev, pw) = r
   do IO<Unit>:
     +q : Chan(ShellMsg) <- Chan.new(ShellMsg, 8192)
     +out : Chan(S.Wire) <- Chan.new(S.Wire, 8192)
     t : U32 <- H.Clock.epoch()
-    ok : Bool <- Chan.send(S.Msg, inbox, S.JoinHere{0, out})
+    ok : Bool <- Shell.join.first(inbox, out, lo)
     IO.spawn(Unit, Pump.loop(S.Fuel.forever(), ev, q))
     IO.spawn(Unit, Fwd.loop(S.Fuel.forever(), out, q, "#0"))
     got : Maybe<&1, L.Ty> <- Chan.recv(L.Ty, fq)
     ty : L.Ty <- Shell.fonts(got)
-    ui : U.Ui <- Drafts.load(U.Ui.init(U32.to_nat(t)), drafts)
+    ui : U.Ui <- Drafts.load(U.Ui.info_set(U.Ui.init(U32.to_nat(t)), "local.hub", lo), drafts)
     a : Shell <- Shell.later(Shell{N.Nui.init(ui, 1400, 900), pw, True{}, False{}, q, inbox, Aux{Nil{}, ty, Tie{inbox, "", "#0", 1n, Map.new(&2, BM.Bitmap), Map.new(&2, Bool)}, Kept{TI.FNone{}, Nil{}, CA.Cats.none(), [N.Park.init()], BV.Bv.wraps.none()}}})
     Shell.loop(S.Fuel.forever(), a)
 
-def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):
+def Shell.opened(r: Result<&1, &1, U32 & String, Window>, +inbox: Chan(S.Msg), +drafts: String, +fq: Chan(L.Ty), +lo: String) -> IO(Unit):
   match r:
     case Done{w}:
-      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox, drafts, fq))
+      IO.bind(Window & Window, Unit, W.Win.twin(w), p => Shell.twin(p, inbox, drafts, fq, lo))
     case Fail{e}:
       Shell.nowin(e)
 
@@ -1888,13 +1909,24 @@ def Start.detached(r: P.Ran, +log: String) -> IO(Unit):
     case P.Ran{_, +out}:
       IO.print_err("backplane: could not start in the background: " ++ out)
 
+def Start.detach.k(free: Bool, +held: String, +dir: String, +xs: List<&2, String>) -> IO(Unit):
+  match free:
+    case True{}:
+      do IO<Unit>:
+        +exe : String <- H.Sys.exe_path()
+        +log : String = dir ++ "/headless.log"
+        r : P.Ran <- P.Proc.run("sh", List.append(&2, String, ["-c", Start.detach.sh(), "sh", log, exe], xs), "/")
+        Start.detached(r, log)
+    case False{}:
+      IO.print("Backplane already runs for " ++ dir ++ " (pid " ++ S.Lock.word(held, 0n) ++ ", port " ++ S.Lock.word(held, 1n) ++ "); nothing was started")
+
+# (a hub already running for the home is said before anything detaches)
 def Start.detach(+xs: List<&2, String>) -> IO(Unit):
   do IO<Unit>:
     +home : String <- S.Env.get("HOME", "/tmp")
-    +exe : String <- H.Sys.exe_path()
-    +log : String = Start.home(xs, home ++ "/.backplane-bend") ++ "/headless.log"
-    r : P.Ran <- P.Proc.run("sh", List.append(&2, String, ["-c", Start.detach.sh(), "sh", log, exe], xs), "/")
-    Start.detached(r, log)
+    +dir : String = Start.home(xs, home ++ "/.backplane-bend")
+    +held : String <- S.Lock.find(dir)
+    Start.detach.k(String.is_empty(held), held, dir, xs)
 
 def Start.args(xs: List<&2, String>) -> List<String>:
   match xs:
@@ -1910,6 +1942,21 @@ def Start.window(headless: Bool) -> IO(Result<&1, &1, U32 & String, Window>):
     case False{}:
       W.Win.open("Backplane", 1400, 900)
 
+# the home's hub already runs (S.Lock): the window joins it on its port,
+# `--headless` says where it is and ends; else this process runs the hub
+def Start.hub(free: Bool, headless: Bool, +held: String, +cfg: S.Cfg, r: Result<&1, &1, U32 & String, Window>, +drafts: String, +fq: Chan(L.Ty)) -> IO(Unit):
+  match free headless:
+    case True{} _:
+      S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq, ""))
+    case False{} True{}:
+      IO.print("Backplane already runs for " ++ S.Cfg.home(cfg) ++ " (pid " ++ S.Lock.word(held, 0n) ++ "), serving http://" ++ S.Cfg.host(cfg) ++ ":" ++ S.Lock.word(held, 1n) ++ "/")
+    case False{} False{}:
+      do IO<Unit>:
+        +lo : String = "http://" ++ S.Cfg.host(cfg) ++ ":" ++ S.Lock.word(held, 1n)
+        IO.print("Backplane already runs for " ++ S.Cfg.home(cfg) ++ " (pid " ++ S.Lock.word(held, 0n) ++ "): the window joins it at " ++ lo)
+        i : Chan(S.Msg) <- LK.Link.start(lo)
+        Shell.opened(r, i, drafts, fq, lo)
+
 # the window opens first and the fonts load beside the hub's start, so
 # the first frame waits only for the log
 def Start.run(+xs: List<&2, String>) -> IO(Unit):
@@ -1922,7 +1969,8 @@ def Start.run(+xs: List<&2, String>) -> IO(Unit):
     b : S.Boot <- S.Main.prepare(user, exe)
     +cfg : S.Cfg = S.Main.config(user, exe, Start.args(xs), b)
     +drafts : String = S.Cfg.home(cfg) ++ "/drafts"
-    S.Main.boot(cfg, False{}, i => Shell.opened(r, i, drafts, fq))
+    +held : String <- S.Lock.find(S.Cfg.home(cfg))
+    Start.hub(String.is_empty(held), Start.headless(xs), held, cfg, r, drafts, fq)
 
 def Start.pick(detach: Bool, +xs: List<&2, String>) -> IO(Unit):
   match detach:

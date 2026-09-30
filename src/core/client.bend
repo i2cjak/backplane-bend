@@ -200,7 +200,7 @@ def Local.keep.go(ks: List<&2, String>, +old: Map<&2, String>, m: Map<&2, String
 # (and the clock this client last ticked, which a folded turn's "5m ago"
 # reads)
 def Local.keep(+old: Map<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
-  Local.keep.go(["local.machine", "local.machines", "local.drafts", "clock", "local.fixed"], old, m)
+  Local.keep.go(["local.machine", "local.machines", "local.drafts", "local.hub", "clock", "local.fixed"], old, m)
 
 def Machines.home.k(home: Bool, +nf: Map<&2, String>) -> Map<&2, String>:
   Bool.pick(Map<&2, String>, Bool.and(home, Bool.not(String.is_empty(Str.get(nf, "machines")))), Map.set(&2, String, nf, "local.machines", Str.get(nf, "machines")), nf)

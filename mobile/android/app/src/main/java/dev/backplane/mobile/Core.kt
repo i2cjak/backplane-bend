@@ -84,6 +84,20 @@ class Core(private val app: Application) : Application.ActivityLifecycleCallback
             }
             connect()
         }
+        // the engine started over (Engine.onReset): every socket anew, from
+        // the kept state as at launch
+        engine.onReset = {
+            scope.launch {
+                for (h in hubs.values) h.stop()
+                hubs.clear()
+                val text = withContext(Dispatchers.IO) { kept.load() }
+                if (text != null) {
+                    apply(engine.load(text))
+                    for (l in links) Pairing.key(l)?.let { apply(engine.offline(it)) }
+                }
+                connect()
+            }
+        }
     }
 
     // the state written down when it changed (the app may be stopped at any

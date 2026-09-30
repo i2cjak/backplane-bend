@@ -4639,6 +4639,15 @@ def Laws.todo_shown_while_running():
 def Laws.todo_hidden_when_done():
   {==}
 
+def Laws.todo_rows_around_open():
+  {==}
+
+def Laws.todo_rows_last():
+  {==}
+
+def Laws.todo_rows_short():
+  {==}
+
 def Laws.todo_write_sets_list():
   {==}
 

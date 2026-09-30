@@ -165,17 +165,33 @@ def Prompt.path(+label: String, +p: String) -> String:
 def Prompt.project.k(none: Bool, +pro: String, +pcb: String, +sch: String) -> String:
   match none:
     case True{}:
-      "No KiCad project was found in this project root. When you create one, give the .kicad_pro, .kicad_pcb and .kicad_sch the same name so Backplane picks them up, or name them in `.backplane.json`."
+      "No KiCad project was found in this project (its root, or folders up to four deep). When you create one, give the .kicad_pro, .kicad_pcb and .kicad_sch the same name so Backplane picks them up, or name it in `.backplane.json`."
     case False{}:
       "This project's canonical KiCad files:" ++ Prompt.path("project", pro) ++ Prompt.path("board", pcb) ++ Prompt.path("schematic", sch)
       ++ "\nWork on these exact paths. Backplane's viewer watches them and shows every save live, so save each meaningful step."
 
+def Prompt.list(ls: List<&2, String>) -> String:
+  match ls:
+    case Nil{}:
+      ""
+    case +l <> t:
+      "\n- `" ++ l ++ "`" ++ Prompt.list(t)
+
+# every KiCad project found in the folder, when there is more than one
+def Prompt.projects(+all: String) -> String:
+  Bool.pick(String, Nat.is_gt(List.length(&2, String, String.lines(all)), 1n),
+    "\nThis folder holds several KiCad projects (paths from the root):" ++ Prompt.list(String.lines(all))
+    ++ "\nIf the user's request is about another one than the canonical project, or it is unclear which, ask or check before editing, and make the one you work on canonical (below).", "")
+
 # the files this project is assigned: `.backplane.json` in the project root
-# ({"pcb": "...", "schematic": "..."}) wins, else the .kicad_pro's siblings
-def Prompt.project(+root: String, +pro: String, +pcb: String, +sch: String) -> String:
+# ({"project": "hw/x.kicad_pro", "pcb": "...", "schematic": "..."}) wins,
+# else the .kicad_pro in the root, else the first found in its folders (all:
+# every .kicad_pro found, one a line)
+def Prompt.project(+root: String, +pro: String, +pcb: String, +sch: String, +all: String) -> String:
   "<backplane_project>Project root: `" ++ root ++ "`. "
   ++ Prompt.project.k(Bool.and(String.is_empty(pcb), String.is_empty(sch)), pro, pcb, sch)
-  ++ "\nTo change which files are canonical, edit `.backplane.json` in the project root (keys `pcb`, `schematic`, relative paths). To show the user a board, schematic, 3D model or STEP file, call the backplane MCP tool `viewer_show` with its path.</backplane_project>"
+  ++ Prompt.projects(all)
+  ++ "\nA KiCad project may sit in a folder below the root. To choose which one is canonical (the one Backplane's viewers, the Open in KiCad button and this list follow), write `.backplane.json` in the project root: `{\"project\": \"<path to the .kicad_pro, from the root>\"}`; its board and schematic are the files beside it with the same name, or name them with the keys `pcb` and `schematic` (paths from the root). Keep any other keys in that file. Backplane reads it at each turn and whenever a viewer opens. To show the user a board, schematic, 3D model or STEP file, call the backplane MCP tool `viewer_show` with its path.</backplane_project>"
 
 def Prompt.orchestration.k(may: Bool, +models: String) -> String:
   match may:

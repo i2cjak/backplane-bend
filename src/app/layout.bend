@@ -2043,28 +2043,28 @@ def Lay.qrows(qs: List<&2, M.QItem>, +ty: Ty, +i: Nat, +n: Nat, +run: Bool, +mor
 def Lay.qn(+qs: List<&2, M.QItem>) -> Nat:
   Bool.pick(Nat, Nat.is_gt(List.length(&2, M.QItem, qs), U.Qu.shown()), U.Qu.shown(), List.length(&2, M.QItem, qs))
 
-# The todo list above the queue: its head, then one line per step (six at
-# most; the steps being done or left first come from the agent's order)
+# The todo list above the queue: its head, then its rows (TD.Todo.rows:
+# the steps around the one being done, and a line for the rest)
 def Lay.tdn(+ts: List<&2, TD.Todo>) -> Nat:
-  Bool.pick(Nat, Nat.is_gt(List.length(&2, TD.Todo, ts), 6n), 6n, List.length(&2, TD.Todo, ts))
+  List.length(&2, TD.TRow, TD.Todo.rows(ts))
 
 def Lay.tdh(+ts: List<&2, TD.Todo>) -> U32:
   Bool.pick(U32, List.is_empty(&2, TD.Todo, ts), 0, ((U32.from_nat(Lay.tdn(ts)) * 22 : U32) + 34 : U32))
 
-def Lay.tdlines(ts: List<&2, TD.Todo>, +ty: Ty, +x0: U32, +x1: U32, +y: U32) -> List<&2, R.Op>:
-  match ts:
+def Lay.tdlines(rs: List<&2, TD.TRow>, +ty: Ty, +x0: U32, +x1: U32, +y: U32) -> List<&2, R.Op>:
+  match rs:
     case Nil{}:
       Nil{}
-    case +t <> rest:
-      List.append(&2, R.Op, Ty.text(ty, 2n, Ty.fit(ty, 2n, TD.Todo.line(t), (x1 - x0 - 24 : U32)), D.Clip.all(), (x0 + 12 : U32), y, 22,
-          Bool.pick(U32, String.eq(TD.Todo.status(t), "completed"), T.Th.faint(), Bool.pick(U32, String.eq(TD.Todo.status(t), "in_progress"), T.Th.text(), T.Th.dim()))),
+    case +r <> rest:
+      List.append(&2, R.Op, Ty.text(ty, 2n, Ty.fit(ty, 2n, TD.TRow.text(r), (x1 - x0 - 24 : U32)), D.Clip.all(), (x0 + 12 : U32), y, 22,
+          Bool.pick(U32, String.eq(TD.TRow.status(r), "completed"), T.Th.faint(), Bool.pick(U32, String.eq(TD.TRow.status(r), "in_progress"), T.Th.text(), T.Th.dim()))),
         Lay.tdlines(rest, ty, x0, x1, (y + 22 : U32)))
 
 def Lay.todos(+ty: Ty, +ts: List<&2, TD.Todo>, +x0: U32, +x1: U32, +bottom: U32) -> Out:
   Out.when(Bool.not(List.is_empty(&2, TD.Todo, ts)),
     Out.ops(List.concat(&2, R.Op, [Lay.box(D.Clip.all(), x0, (bottom - Lay.tdh(ts) : U32), (x1 - x0 : U32), (Lay.tdh(ts) - 4 : U32), 0, T.Th.raise(), T.Th.line()),
       Ty.text(ty, 2n, TD.Todo.head(ts), D.Clip.all(), (x0 + 12 : U32), (bottom - Lay.tdh(ts) + 2 : U32), 26, T.Th.soft()),
-      Lay.tdlines(List.take(&2, TD.Todo, ts, Lay.tdn(ts)), ty, x0, x1, (bottom - Lay.tdh(ts) + 28 : U32))])))
+      Lay.tdlines(TD.Todo.rows(ts), ty, x0, x1, (bottom - Lay.tdh(ts) + 28 : U32))])))
 
 # the queue's height above the composer
 def Lay.qh(+qs: List<&2, M.QItem>) -> U32:

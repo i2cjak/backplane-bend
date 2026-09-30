@@ -87,11 +87,17 @@ class Engine(private val app: android.content.Context, private val source: Strin
     private val thread = Executors.newSingleThreadExecutor { Thread(null, it, "bend", 64L shl 20) }
     private val dispatcher = thread.asCoroutineDispatcher()
     private var ctx: Js? = null
+    // V8's sandbox died once: QuickJS for the rest of this process
+    private var noV8 = false
+    // called (on the engine's thread) when the client started over in a
+    // new engine: its state is gone, so the app loads the kept state and
+    // connects again
+    var onReset: (() -> Unit)? = null
 
     private fun context(): Js =
         ctx ?: run {
             val t0 = android.os.SystemClock.elapsedRealtime()
-            val js: Js = V8Js.open(app, source) ?: run {
+            val js: Js = (if (noV8) null else V8Js.open(app, source)) ?: run {
                 QuickJSLoader.init()
                 QuickJSContext.create().let {
                     it.setMaxStackSize(48 shl 20)
@@ -119,12 +125,30 @@ class Engine(private val app: android.content.Context, private val source: Strin
         runCatching { java.io.File(dir, "$name.tmp").also { it.writeBytes(code) }.renameTo(kept) }
     }
 
+    // The sandbox is another process: when it dies (a native crash in it,
+    // such as a stack overflow its V8 does not catch) every call on it
+    // throws, and the app died with it. Now the client starts again in
+    // QuickJS, in this process, and the call is made there.
+    private fun dead(t: Throwable) = generateSequence(t) { it.cause }.any { it is androidx.javascriptengine.IsolateTerminatedException }
+
+    private fun eval(e: String): String = try {
+        context().evaluate(e)
+    } catch (t: Throwable) {
+        if (ctx !is V8Js || !dead(t)) throw t
+        android.util.Log.w("Backplane", "V8 sandbox died ($t): the client starts again in QuickJS")
+        ctx = null
+        noV8 = true
+        val r = context().evaluate(e)
+        onReset?.invoke()
+        r
+    }
+
     // calls queued whose answer carries a screen: while one is, the screen
     // before it is out of date before it could be drawn, so it is skipped
     private val ahead = AtomicInteger(0)
 
     private suspend fun call(expr: String): String =
-        withContext(dispatcher) { context().evaluate(expr) }
+        withContext(dispatcher) { eval(expr) }
 
     // parsed here, off the main thread: a thread's screen is large.
     // behind: the call to make instead when newer calls wait behind this
@@ -134,7 +158,7 @@ class Engine(private val app: android.content.Context, private val source: Strin
         return withContext(dispatcher) {
             val e = if (behind != null && ahead.get() > 1) behind else expr
             val t0 = android.os.SystemClock.elapsedRealtime()
-            val text = context().evaluate(e)
+            val text = eval(e)
             val ms = android.os.SystemClock.elapsedRealtime() - t0
             // a slow step of the Bend client, for finding what to make faster
             if (ms > 100) android.util.Log.i("Backplane", "slow ${e.substringBefore('(')}: $ms ms")

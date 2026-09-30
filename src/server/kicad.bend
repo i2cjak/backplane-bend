@@ -15,7 +15,7 @@ type Rt is Data:
 
 # a project's canonical design files ("" when it has none)
 type Files is Data:
-  Files{pro: String, pcb: String, sch: String}
+  Files{pro: String, pcb: String, sch: String, all: String}
 
 # why a KiCad export cannot run: no kicad-cli anywhere (Rt.first)
 def KiCad.missing() -> String:
@@ -208,20 +208,59 @@ def Files.in(ns: List<&2, String>, +want: String) -> Bool:
 def Files.named(+ns: List<&2, String>, +stem: String, +ext: String) -> String:
   Files.named.k(Files.in(ns, stem ++ ext), stem ++ ext, Files.pick(ns, ext))
 
-# .backplane.json may name "pcb" and "schematic" (project-relative); the
-# rest is found from the .kicad_pro in the project root
-def Files.of(+root: String, +ns: List<&2, String>, +cfg: J.Json) -> Files:
-  +pro = Files.pick(ns, ".kicad_pro")
-  +stem = Files.stem(pro, ".kicad_pro")
-  Files{Files.abs(root, pro),
-    Files.abs(root, Bool.pick(String, String.is_empty(J.Json.get_str(cfg, "pcb", "")), Files.named(ns, stem, ".kicad_pcb"), J.Json.get_str(cfg, "pcb", ""))),
-    Files.abs(root, Bool.pick(String, String.is_empty(J.Json.get_str(cfg, "schematic", "")), Files.named(ns, stem, ".kicad_sch"), J.Json.get_str(cfg, "schematic", "")))}
+# a path's folder ("" for a name at the root) and its last part
+def Files.last(+p: String) -> String:
+  Maybe.default(&2, String, List.last(&2, String, String.split(p, '/')), p)
 
-def Files.read(+root: String) -> IO(Files):
+def Files.dir(+p: String) -> String:
+  String.take(p, Nat.sub(Nat.sub(String.length(p), String.length(Files.last(p))), Bool.pick(Nat, String.contains(p, "/"), 1n, 0n)))
+
+def Files.in.dir(+dir: String, +name: String) -> String:
+  Bool.pick(String, Bool.or(String.is_empty(dir), String.is_empty(name)), name, dir ++ "/" ++ name)
+
+# which .kicad_pro is the project's (a path from the root): the one
+# .backplane.json names ("project"), else one in the root, else the first
+# found below it (Files.found: shallowest first)
+def Files.pro(+named: String, +top: String, +found: String) -> String:
+  Bool.pick(String, String.is_empty(named), Bool.pick(String, String.is_empty(top), Maybe.default(&2, String, List.head(&2, String, String.lines(found)), ""), top), named)
+
+# .backplane.json may name "project" (a .kicad_pro), "pcb" and "schematic"
+# (all project-relative); the board and schematic are otherwise found
+# beside the .kicad_pro (ns: the names in its folder)
+def Files.of(+root: String, +pro: String, +ns: List<&2, String>, +cfg: J.Json, +all: String) -> Files:
+  +stem = Files.stem(Files.last(pro), ".kicad_pro")
+  Files{Files.abs(root, pro),
+    Files.abs(root, Bool.pick(String, String.is_empty(J.Json.get_str(cfg, "pcb", "")), Files.in.dir(Files.dir(pro), Files.named(ns, stem, ".kicad_pcb")), J.Json.get_str(cfg, "pcb", ""))),
+    Files.abs(root, Bool.pick(String, String.is_empty(J.Json.get_str(cfg, "schematic", "")), Files.in.dir(Files.dir(pro), Files.named(ns, stem, ".kicad_sch")), J.Json.get_str(cfg, "schematic", ""))),
+    all}
+
+# every .kicad_pro under the root, four folders deep, as paths from it,
+# shallowest first (hidden folders, KiCad's backups and node_modules left
+# out; a worktree under .backplane is not the project's)
+def Files.found.sh() -> String:
+  "cd \"$1\" 2>/dev/null || exit 0; find . -mindepth 1 -maxdepth 4 \\( -type d \\( -name '.*' -o -name node_modules -o -name '*-backups' \\) -prune \\) -o -name '*.kicad_pro' -print 2>/dev/null | sed 's|^\\./||' | awk -F/ '{print NF \"\\t\" $0}' | LC_ALL=C sort -t \"$(printf '\\t')\" -k1,1n -k2 | cut -f2- | head -n 50"
+
+def Files.found.out(r: P.Ran) -> String:
+  match r:
+    case P.Ran{0, +out}:
+      String.trim(out)
+    case _:
+      ""
+
+def Files.found(+root: String) -> IO(String):
+  IO.bind(P.Ran, String, P.Proc.run("sh", ["-c", Files.found.sh(), "sh", root], "/"), r => IO.pure(String, Files.found.out(r)))
+
+def Files.read.at(+root: String, +pro: String, +cfg: J.Json, +all: String) -> IO(Files):
+  IO.bind(List<&2, String>, Files, Io.names(Bool.pick(String, String.is_empty(Files.dir(pro)), root, Files.abs(root, Files.dir(pro)))), ns => IO.pure(Files, Files.of(root, pro, ns, cfg, all)))
+
+def Files.read.cfg(+root: String, +cfg: J.Json) -> IO(Files):
   do IO<Files>:
     +ns : List<&2, String> <- Io.names(root)
-    text : String <- Io.text(root ++ "/.backplane.json")
-    return Files.of(root, ns, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{}))
+    +all : String <- Files.found(root)
+    Files.read.at(root, Files.pro(J.Json.get_str(cfg, "project", ""), Files.pick(ns, ".kicad_pro"), all), cfg, all)
+
+def Files.read(+root: String) -> IO(Files):
+  IO.bind(String, Files, Io.text(root ++ "/.backplane.json"), text => Files.read.cfg(root, Maybe.default(&2, J.Json, J.Json.parse(text), J.Null{})))
 
 def KiStack.ensure.k(have: Bool, +dir: String) -> IO(Unit):
   match have:
@@ -314,7 +353,7 @@ def KiCad.open.said(r: P.Ran) -> String:
 
 def KiCad.open.k(fork: Bool, +cli: String, +fs: Files) -> IO(String):
   match fork fs:
-    case True{} Files{+pro, +pcb, +sch}:
+    case True{} Files{+pro, +pcb, +sch, _}:
       do IO<String>:
         r : P.Ran <- P.Proc.run("sh", ["-c",
           "r=\"$1\"; if [ -n \"$2\" ]; then set -- kicad \"$2\"; elif [ -n \"$3\" ]; then set -- pcbnew \"$3\"; elif [ -n \"$4\" ]; then set -- eeschema \"$4\"; else echo \"no KiCad project here\"; exit 1; fi; [ -x \"$r/bin/$1\" ] || { echo \"Backplane KiCad has no $1\"; exit 1; }; setsid -f \"$r/bin/$1\" \"$2\" </dev/null >/dev/null 2>&1",

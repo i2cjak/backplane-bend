@@ -2406,6 +2406,20 @@ law todo_shown_while_left:
 law todo_hidden_when_done:
   {TD.Todo.shown([TD.Todo{"1", "a", "", "completed"}], False{}) == False{} : Bool}
 
+# a long list shows the steps around the first one not done, and a line
+# each for the done steps before them and the steps after them
+law todo_rows_around_open:
+  {TD.Todo.rows([TD.Todo{"1", "a", "", "completed"}, TD.Todo{"2", "b", "", "completed"}, TD.Todo{"3", "c", "", "completed"}, TD.Todo{"4", "d", "", "pending"}, TD.Todo{"5", "e", "", "pending"}, TD.Todo{"6", "f", "", "pending"}, TD.Todo{"7", "g", "", "pending"}, TD.Todo{"8", "h", "", "pending"}, TD.Todo{"9", "i", "", "pending"}, TD.Todo{"10", "j", "", "pending"}, TD.Todo{"11", "k", "", "pending"}, TD.Todo{"12", "l", "", "pending"}])
+    == [TD.TRow{"… 2 done", "completed"}, TD.TRow{"[x] c", "completed"}, TD.TRow{"[ ] d", "pending"}, TD.TRow{"[ ] e", "pending"}, TD.TRow{"[ ] f", "pending"}, TD.TRow{"[ ] g", "pending"}, TD.TRow{"[ ] h", "pending"}, TD.TRow{"… 4 more", "pending"}] : List<&2, TD.TRow>}
+
+# near the end the card shows the last steps, with nothing after them
+law todo_rows_last:
+  {List.length(&2, TD.TRow, TD.Todo.rows([TD.Todo{"1", "a", "", "completed"}, TD.Todo{"2", "b", "", "completed"}, TD.Todo{"3", "c", "", "completed"}, TD.Todo{"4", "d", "", "completed"}, TD.Todo{"5", "e", "", "completed"}, TD.Todo{"6", "f", "", "completed"}, TD.Todo{"7", "g", "", "completed"}, TD.Todo{"8", "h", "", "completed"}, TD.Todo{"9", "i", "", "completed"}, TD.Todo{"10", "j", "", "in_progress"}, TD.Todo{"11", "k", "", "pending"}, TD.Todo{"12", "l", "", "pending"}])) == 7n : Nat}
+
+# a list that fits shows every step
+law todo_rows_short:
+  {TD.Todo.rows([TD.Todo{"1", "a", "", "completed"}, TD.Todo{"2", "b", "", "pending"}]) == [TD.TRow{"[x] a", "completed"}, TD.TRow{"[ ] b", "pending"}] : List<&2, TD.TRow>}
+
 # an assistant message with a todo tool sets the thread's list, once
 law todo_write_sets_list:
   {List.length(&2, M.Change, H.Claude.todos(M.State.empty(), "t1", 5n, [J.Json.obj([J.KV{"type", J.Str{"tool_use"}}, J.KV{"name", J.Str{"TodoWrite"}}, J.KV{"input", J.Json.obj([J.KV{"todos", J.Json.arr([])}])}])])) == 1n : Nat}
